@@ -119,7 +119,8 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			before := Fingerprint(tc.ref)
-			kind, value := tc.ref.Effective()
+			reference := tc.ref.Effective()
+			kind, value := reference.Kind, reference.Value
 			assert.Equal(t, kind, tc.kind)
 			assert.Equal(t, value, tc.value)
 			want := ""

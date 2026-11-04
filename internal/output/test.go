@@ -43,18 +43,18 @@ type TestReport struct {
 func (r *TestReport) AnyFailed() bool { return r.Failed > 0 || len(r.Blocked) > 0 }
 
 // Glyphs render at every destination; only color is gated.
-func (o Outcome) decorate() (string, func(string, bool) string) {
+func (o Outcome) decorate() decoration {
 	switch o {
 	case OutcomePassed:
-		return GlyphPass, Pass
+		return decoration{glyph: GlyphPass, paint: Pass}
 	case OutcomeFailed:
-		return GlyphFail, Fail
+		return decoration{glyph: GlyphFail, paint: Fail}
 	case OutcomeBlocked:
-		return GlyphBlocked, Dim
+		return decoration{glyph: GlyphBlocked, paint: Dim}
 	case OutcomeSkipped:
-		return GlyphSkip, Dim
+		return decoration{glyph: GlyphSkip, paint: Dim}
 	}
-	return GlyphSkip, Dim
+	return decoration{glyph: GlyphSkip, paint: Dim}
 }
 
 // Cases retain their supplied order; blocked cases follow them.
@@ -73,10 +73,11 @@ func (r *TestReport) rosterBlock(names Names, color bool) string {
 }
 
 func caseRow(c *Case, subject *Subject, kindW int, color bool) string {
-	glyph, paint := c.Outcome.decorate()
+	style := c.Outcome.decorate()
+
 	var row strings.Builder
 	fmt.Fprintf(&row, "  %s  %s  %s",
-		paint(glyph, color),
+		style.paint(style.glyph, color),
 		Dim(fmt.Sprintf("%-*s", kindW, subject.Kind), color),
 		subject.Name)
 	row.WriteString(MessageTail(c.Reason, Dim, color))
@@ -94,4 +95,9 @@ func (r *TestReport) verdict(color bool, elapsed time.Duration) string {
 		Count{N: r.Failed, Label: "failed", Paint: Fail},
 		Count{N: len(r.Blocked), Label: "blocked", Paint: Dim},
 	)
+}
+
+type decoration struct {
+	glyph string
+	paint func(string, bool) string
 }

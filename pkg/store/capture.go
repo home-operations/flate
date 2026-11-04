@@ -709,7 +709,7 @@ func (r *ReadSet) Close() {
 	}
 }
 
-func sameReadinessGate(aValue *manifest.DependencyRef, bValue *manifest.DependencyRef) bool {
+func sameReadinessGate(aValue, bValue *manifest.DependencyRef) bool {
 	a := *aValue
 	b := *bValue
 	if a.ReadyExpr != b.ReadyExpr {

@@ -126,21 +126,17 @@ func testLoadFSChartAutomaticInputErrorsCase(
 	docs, _, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(st)}),
 	)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, fs.ErrPermission) || !errors.Is(err, manifest.ErrInput) || docs != nil,
-			"%s failure selected another chart: docs=%v, error=%v", (*testCaseInput), docs,
-			err,
-		)
-	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput) ==
-				"read and close" && !errors.Is(err, closeErr), "lost joined close error: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, fs.ErrPermission) || !errors.Is(err, manifest.ErrInput) || docs != nil,
+		"%s failure selected another chart: docs=%v, error=%v", (*testCaseInput), docs,
+		err,
+	)
+	assert.FatalIf(
+		t, (*testCaseInput) ==
+			"read and close" && !errors.Is(err, closeErr), "lost joined close error: %v",
+		err,
+	)
 	assert.Equal(t, len(cli.chartCache), 0)
 	broken = false
 	loaded, err := loadDecodedChart(t.Context(), cli, hr, NewSources(st))

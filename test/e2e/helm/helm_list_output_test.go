@@ -42,7 +42,8 @@ func TestE2E_InvalidHelmList(t *testing.T) {
 			if tc.skip {
 				args = append(args, "--skip-kinds=ConfigMapList")
 			}
-			out, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+			out, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			diagnostic := harness.MustExtractLine(t, stderr, "Object 'Kind' is missing")
 			assert.FatalIf(t, code != 1 || strings.Count(stderr, "Object 'Kind' is missing") != 1 ||
 				strings.Count(
@@ -78,7 +79,7 @@ items:
 	)
 	for _, tc := range []struct{ current, original, status string }{{after, before, "added"}, {before, after, "removed"}} {
 		t.Run(tc.status, func(t *testing.T) {
-			out, stderr := harness.RequireCLIOK(
+			requireCLIOKResult2 := harness.RequireCLIOK(
 				t,
 				"diff",
 				"all",
@@ -94,6 +95,7 @@ items:
 				"--cache-dir",
 				t.TempDir(),
 			)
+			out, stderr := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 			var result struct {
 				Changes []struct {
 					Name   string `json:"Name"`

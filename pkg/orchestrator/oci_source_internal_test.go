@@ -121,20 +121,16 @@ spec:
 		Tree{Path: root + "/flux", RepoRoot: root},
 		Config{SourceRetry: retry, CacheDir: t.TempDir(), Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	f := &generatedOCIFetcher{root: artifact, err: testCaseInput.fetchErr, wantRetry: retry}
 	o.src.Fetchers[manifest.KindOCIRepository] = f
 	res, err := o.render(t.Context())
-	{
-		assert.FatalIf(
-			t,
-			(err == nil) != (testCaseInput.producer && testCaseInput.fetchErr == nil),
-			"Render error=%v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(err == nil) != (testCaseInput.producer && testCaseInput.fetchErr == nil),
+		"Render error=%v",
+		err,
+	)
 	id := testutil.KustomizationID("flux-system", "consumer")
 	if testCaseInput.fetchErr != nil {
 		o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade)
@@ -158,15 +154,14 @@ spec:
 			)
 		}
 		{
-			{
-				name, _ := manifest.DocMetadata(outputByParent(res.Manifests)[id][0])
-				assert.FatalIf(
-					t,
-					name != "artifact-output",
-					"rendered %q from the working tree instead of the OCI artifact",
-					name,
-				)
-			}
+			metadata := manifest.DocMetadata(outputByParent(res.Manifests)[id][0])
+			name := metadata.Name
+			assert.FatalIf(
+				t,
+				name != "artifact-output",
+				"rendered %q from the working tree instead of the OCI artifact",
+				name,
+			)
 		}
 	default:
 		missing := manifest.NamedResource{
@@ -179,13 +174,11 @@ spec:
 			!slices.Contains(status.BlockedBy(), missing) {
 			t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
 		}
-		{
-			assert.FatalIf(
-				t,
-				len(outputByParent(res.Manifests)[id]) != 0,
-				"%v",
-				"missing source emitted consumer payload",
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(outputByParent(res.Manifests)[id]) != 0,
+			"%v",
+			"missing source emitted consumer payload",
+		)
 	}
 }

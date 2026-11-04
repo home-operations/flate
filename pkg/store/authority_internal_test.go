@@ -90,9 +90,7 @@ func TestStore_CollectionAuthority(t *testing.T) {
 			input, _, _ := s.GetEmission(id)
 			assert.Equal(t, input, versions[1])
 			s.AddObjects([]manifest.BaseManifest{versions[2]})
-			{
-				assert.FatalIf(t, head() <= first, "%s", "label transition did not advance collection authority")
-			}
+			assert.FatalIf(t, head() <= first, "%s", "label transition did not advance collection authority")
 			objects := s.ListObjects(id.Group, id.Kind)
 			assert.Equal(t, len(objects), 1)
 			assert.Equal(t, objects[0], versions[2])
@@ -164,14 +162,12 @@ func TestEvidenceOwnerProof_StablePublicationCut(t *testing.T) {
 	var after capture
 	sh.captureLocked(fresh.Obj.Named(), new(sh.cells[fresh.Obj.Named()]), &after)
 	sh.mu.RUnlock()
-	{
-		assert.ErrorIf(
-			t,
-			before.owner != after.owner || before.record == after.record || before.generation >= after.generation,
-			"%s",
-			"selected material did not advance its existing target authority",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		before.owner != after.owner || before.record == after.record || before.generation >= after.generation,
+		"%s",
+		"selected material did not advance its existing target authority",
+	)
 	assert.Equal(t, before.record.entries[0].child.Obj, old.Obj)
 	assert.Equal(t, after.record.entries[0].child.Obj, fresh.Obj)
 	assert.Diff(t, s.Productions(fresh.Obj.Named(), nil), []manifest.Production{{Owner: p.Named()}})
@@ -198,14 +194,12 @@ func TestFamilyAuthority_CrossFamilyWithdrawalCut(t *testing.T) {
 	s := New()
 	p := &manifest.Kustomization{Name: "p", Namespace: "apps", Path: "static"}
 	q := &manifest.ResourceSet{Name: "q", Namespace: "apps"}
-	{
-		assert.FatalIf(
-			t,
-			s.shardFor(p.Named()) == s.shardFor(q.Named()),
-			"%s",
-			"fixture requires different producer shards",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.shardFor(p.Named()) == s.shardFor(q.Named()),
+		"%s",
+		"fixture requires different producer shards",
+	)
 	s.AddObjects([]manifest.BaseManifest{p, q})
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		p.Named(): {Productions: []manifest.Production{{Owner: q.Named(), Source: manifest.BootstrapSourceID}}},
@@ -233,18 +227,14 @@ func TestFamilyAuthority_CrossFamilyWithdrawalCut(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() { s.DeleteObject(p.Named()) })
 	<-paused
-	{
-		assert.FatalIf(t, !s.DeleteObject(q.Named()), "%s", "second withdrawal did not remove its static authority")
-	}
+	assert.FatalIf(t, !s.DeleteObject(q.Named()), "%s", "second withdrawal did not remove its static authority")
 	for _, id := range []manifest.NamedResource{p.Named(), q.Named(), fromP.Obj.Named(), fromQ.Obj.Named()} {
-		{
-			assert.ErrorIf(
-				t,
-				s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil || len(s.Productions(id, nil)) != 0,
-				"rootless family retained authority for %s",
-				id,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil || len(s.Productions(id, nil)) != 0,
+			"rootless family retained authority for %s",
+			id,
+		)
 	}
 	close(resume)
 	wg.Wait()
@@ -301,14 +291,12 @@ func TestFeasibility_RevisionBeforeSeparateInstall(t *testing.T) {
 	a, b := emissionChild("child", "a"), emissionChild("child", "b")
 	s.RecordEmitted(p.Named(), &Emission{Children: []Child{a}, Complete: true}, nil)
 	target := s.shardFor(a.Obj.Named())
-	{
-		assert.FatalIf(
-			t,
-			target == s.shardFor(p.Named()),
-			"%s",
-			"fixture requires different producer and target shards",
-		)
-	}
+	assert.FatalIf(
+		t,
+		target == s.shardFor(p.Named()),
+		"%s",
+		"fixture requires different producer and target shards",
+	)
 	target.mu.Lock()
 	done := make(chan struct{})
 	go func() {
@@ -361,9 +349,7 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 		s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("anchor", "new")}, Complete: true}, nil)
 	})
 	wg.Wait()
-	{
-		assert.FatalIf(t, s.addAnchor(new(u)), "%s", "anchor accepted equality against a superseded effective record")
-	}
+	assert.FatalIf(t, s.addAnchor(new(u)), "%s", "anchor accepted equality against a superseded effective record")
 	s.AddObject(emitted.Obj)
 	assert.Equal(t, s.GetObject(seed.Obj.Named()), emitted.Obj)
 	s.RecordEmitted(p.Named(), &Emission{Complete: true}, nil)
@@ -399,27 +385,21 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 		changed := manifest.DeepCopyMap(doc)
 		changed["metadata"].(map[string]any)["annotations"] = map[string]any{"unrelated": "changed"}
 		st.RecordEmitted(producer, &Emission{Children: []Child{{Obj: obj, Doc: changed}}, Complete: true}, nil)
-		{
-			assert.FatalIf(t, !reads.Valid(), "%s", "ignored metadata changed the consumed declaration")
-		}
-		{
-			assert.FatalIf(
-				t,
-				st.addAnchor(new(update)),
-				"%s",
-				"anchor accepted equality against a superseded full document",
-			)
-		}
+		assert.FatalIf(t, !reads.Valid(), "%s", "ignored metadata changed the consumed declaration")
+		assert.FatalIf(
+			t,
+			st.addAnchor(new(update)),
+			"%s",
+			"anchor accepted equality against a superseded full document",
+		)
 		_, retained, attempt := st.GetEmission(obj.Named())
 		defer attempt.Finish()
-		{
-			assert.FatalIf(
-				t,
-				!manifest.ValueEqual(retained, changed),
-				"%s",
-				"stale anchor replaced the latest authoritative document",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!manifest.ValueEqual(retained, changed),
+			"%s",
+			"stale anchor replaced the latest authoritative document",
+		)
 	})
 }
 
@@ -441,22 +421,18 @@ func TestGetEmission_InputAuthorityStamp(t *testing.T) {
 	reads.Productions(q.Named(), nil)
 	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "b"}, nil)
 	_, _, after := s.GetEmission(q.Named())
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "producer authority transition failed to invalidate its reader")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "producer authority transition failed to invalidate its reader")
 	after.Complete = true
 	s.RecordEmitted(q.Named(), &after, nil)
 	assert.Equal(t, slot.current.Load().revision, revision)
 	assert.Equal(t, after.inputHead.owner, before.inputHead.owner)
 	assert.Equal(t, after.inputHead.generation, before.inputHead.generation)
-	{
-		assert.FatalIf(
-			t,
-			after.inputHead.revision <= before.inputHead.revision,
-			"%s",
-			"stable publication reused its captured authority revision",
-		)
-	}
+	assert.FatalIf(
+		t,
+		after.inputHead.revision <= before.inputHead.revision,
+		"%s",
+		"stable publication reused its captured authority revision",
+	)
 	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "b"}, nil)
 	_, _, repeated := s.GetEmission(q.Named())
 	assert.Equal(t, repeated.inputHead, after.inputHead)
@@ -505,9 +481,7 @@ func TestStore_ReadmissionExhaustionIsAtomic(t *testing.T) {
 	before := headsForTest(s, id)
 	func() {
 		defer func() {
-			{
-				assert.ErrorIf(t, recover() == nil, "%s", "readmission did not reject exhausted condition authority")
-			}
+			assert.ErrorIf(t, recover() == nil, "%s", "readmission did not reject exhausted condition authority")
 		}()
 		s.SetIncluded(id, true)
 	}()
@@ -554,21 +528,17 @@ func testReadRegistrationSameByteAuthorityTransitionsCase(
 	first := captureReads()
 	s.RecordEmitted(q, &Emission{Children: []Child{child}, Complete: true}, nil)
 	h2 := headsForTest(s, child.Obj.Named())
-	{
-		assert.FatalIf(t, h2.object <= h1.object, "%s", "equal contributor admission did not advance authority")
-	}
+	assert.FatalIf(t, h2.object <= h1.object, "%s", "equal contributor admission did not advance authority")
 	assert.Equal(t, first.Valid(), false)
 	second := captureReads()
 	s.RecordEmitted(p, &Emission{Complete: true}, nil)
 	h3 := headsForTest(s, child.Obj.Named())
-	{
-		assert.FatalIf(
-			t,
-			h3.object <= h2.object || s.EmissionOwner(child.Obj.Named()) != q,
-			"%s",
-			"equal unselected contributor withdrawal lost authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		h3.object <= h2.object || s.EmissionOwner(child.Obj.Named()) != q,
+		"%s",
+		"equal unselected contributor withdrawal lost authority",
+	)
 	assert.Equal(t, second.Valid(), false)
 	third := captureReads()
 	if *testCaseInput {
@@ -577,14 +547,12 @@ func testReadRegistrationSameByteAuthorityTransitionsCase(
 		s.AddObject(child.Obj)
 	}
 	h4 := headsForTest(s, child.Obj.Named())
-	{
-		assert.FatalIf(
-			t,
-			h4.object <= h3.object || s.EmissionOwner(child.Obj.Named()) != (manifest.NamedResource{}),
-			"%s",
-			"same pointer static admission did not root the object",
-		)
-	}
+	assert.FatalIf(
+		t,
+		h4.object <= h3.object || s.EmissionOwner(child.Obj.Named()) != (manifest.NamedResource{}),
+		"%s",
+		"same pointer static admission did not root the object",
+	)
 	assert.Equal(t, third.Valid(), false)
 	fourth := captureReads()
 	if *testCaseInput {
@@ -605,14 +573,12 @@ func testReadRegistrationSameByteAuthorityTransitionsCase(
 	assert.Equal(t, fifth.Valid(), true)
 	s.DeleteObject(child.Obj.Named())
 	h6 := headsForTest(s, child.Obj.Named())
-	{
-		assert.FatalIf(
-			t,
-			h6.object <= h5.object || h6.condition <= h5.condition || h6.artifact <= h5.artifact,
-			"%s",
-			"cleared facets lost their tombstone identities",
-		)
-	}
+	assert.FatalIf(
+		t,
+		h6.object <= h5.object || h6.condition <= h5.condition || h6.artifact <= h5.artifact,
+		"%s",
+		"cleared facets lost their tombstone identities",
+	)
 	assert.Equal(t, fifth.Valid(), false)
 	sixth := captureReads()
 	s.RecordEmitted(q, &Emission{Complete: true}, nil)
@@ -637,9 +603,7 @@ func testReadRegistrationNoABAObject(t *testing.T) {
 	s.AddObject(b.Obj)
 	s.AddObject(a.Obj)
 	h2 := headsForTest(s, a.Obj.Named())
-	{
-		assert.FatalIf(t, h2.object <= h1.object, "%s", "A/B/A reused an object generation")
-	}
+	assert.FatalIf(t, h2.object <= h1.object, "%s", "A/B/A reused an object generation")
 	assert.Equal(t, reads.Valid(), false)
 	var readmitted ReadSet
 	readmitted.Init(s, ownerID("readmitted-reader"), nil)
@@ -647,14 +611,12 @@ func testReadRegistrationNoABAObject(t *testing.T) {
 	defer readmitted.Retire()
 	s.DeleteObject(a.Obj.Named())
 	s.AddObject(a.Obj)
-	{
-		assert.FatalIf(
-			t,
-			headsForTest(s, a.Obj.Named()).object <= h2.object,
-			"%s",
-			"delete/readmit reset the object generation",
-		)
-	}
+	assert.FatalIf(
+		t,
+		headsForTest(s, a.Obj.Named()).object <= h2.object,
+		"%s",
+		"delete/readmit reset the object generation",
+	)
 	assert.Equal(t, readmitted.Valid(), false)
 }
 
@@ -674,14 +636,12 @@ func testReadRegistrationNoABAProducer(t *testing.T) {
 	s.DeleteObject(p.Named())
 	s.AddObject(p)
 	s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("aba", "a")}, Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			headsForTest(s, p.Named()).producer <= h1.producer,
-			"%s",
-			"producer readmission reused its authority generation",
-		)
-	}
+	assert.FatalIf(
+		t,
+		headsForTest(s, p.Named()).producer <= h1.producer,
+		"%s",
+		"producer readmission reused its authority generation",
+	)
 	assert.Equal(t, reads.Valid(), false)
 }
 
@@ -729,9 +689,7 @@ func testReadRegistrationNoABAConditionExhaustion(t *testing.T) {
 	defer reads.Retire()
 	func() {
 		defer func() {
-			{
-				assert.ErrorIf(t, recover() == nil, "%s", "condition exhaustion did not fail before mutation")
-			}
+			assert.ErrorIf(t, recover() == nil, "%s", "condition exhaustion did not fail before mutation")
 		}()
 		s.UpdateStatus(id, StatusInfo{Status: StatusFailed, Reason: "", Message: "changed"})
 	}()

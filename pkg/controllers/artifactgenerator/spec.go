@@ -130,7 +130,8 @@ func validateOperation(op *operation) error {
 		len(op.Exclude) > 100 {
 		return fmt.Errorf("copy operation outside API bounds")
 	}
-	if _, _, err := sourcePath(op.From); err != nil {
+	sourcePathResult1, sourcePathResult1Err := sourcePath(op.From)
+	if _, _, err := sourcePathResult1.alias, sourcePathResult1.pattern, sourcePathResult1Err; err != nil {
 		return err
 	}
 	if _, err := destinationPath(op.To); err != nil {

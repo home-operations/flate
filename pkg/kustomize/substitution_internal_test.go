@@ -37,23 +37,17 @@ func TestSubstitute_StrictOperators(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := Substitute([]byte(tc.input), tc.vars, true)
-			{
-				assert.FatalIf(t, (err != nil) != tc.fail, "error=%v", err)
-			}
+			assert.FatalIf(t, (err != nil) != tc.fail, "error=%v", err)
 			if tc.fail {
-				{
-					assert.FatalIf(t, !strings.Contains(err.Error(), "variable not set (strict mode)") ||
-						!strings.Contains(err.Error(), "VALUE"), "engine diagnostic changed: %v", err)
-				}
+				assert.FatalIf(t, !strings.Contains(err.Error(), "variable not set (strict mode)") ||
+					!strings.Contains(err.Error(), "VALUE"), "engine diagnostic changed: %v", err)
 			} else if string(got) != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
 	out, err := Substitute([]byte("${UNDEFINED}"), nil, false)
-	{
-		assert.FatalIf(t, err != nil || len(out) != 0, "default exported caller changed: %q, %v", out, err)
-	}
+	assert.FatalIf(t, err != nil || len(out) != 0, "default exported caller changed: %q, %v", out, err)
 }
 
 func TestPrepare_LayersAndImmutability(t *testing.T) {
@@ -63,13 +57,10 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
     substitute: {VALUE: inline, EXTRA: "one\ntwo"}
     substituteFrom: [{kind: ConfigMap, name: first}, {kind: ConfigMap, name: second}]
 `)))
-	{
-		assert.NoError(t, err)
-	}
-	obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
+	parsed, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+	obj := parsed.Object
+	assert.NoError(t, err)
 	original := obj.(*manifest.Kustomization)
 	snapshot := original.Clone()
 	projected := original.WithNamespace("effective").(*manifest.Kustomization)
@@ -82,9 +73,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	}
 	provider := values.NewStoreProvider(st, true)
 	prepared, err := Prepare(projected, provider)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	want := map[string]string{"VALUE": "inline", "REF": "second", "NORMALIZED": "onetwo", "EXTRA": "one\ntwo"}
 	{
 		d := cmp.Diff(want, prepared.PostBuild.Substitute)
@@ -115,26 +104,20 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 			ks := &manifest.Kustomization{Name: "plain", Namespace: "apps"}
 			ks.PostBuild = tc.postBuild
 			got, prepareErr := Prepare(ks, provider)
-			{
-				assert.NoError(t, prepareErr)
-			}
-			{
-				assert.FatalIf(
-					t,
-					(got.PostBuild != nil && len(got.PostBuild.Substitute) > 0) != tc.want,
-					"%s",
-					"empty authored postBuild enabled substitution",
-				)
-			}
+			assert.NoError(t, prepareErr)
+			assert.FatalIf(
+				t,
+				(got.PostBuild != nil && len(got.PostBuild.Substitute) > 0) != tc.want,
+				"%s",
+				"empty authored postBuild enabled substitution",
+			)
 		})
 	}
 	bad := original.Clone()
 	bad.PostBuild.Substitute = map[string]string{"z-invalid": "private", "a-invalid": "private"}
 	invalid, err := Prepare(bad, provider)
-	{
-		assert.FatalIf(t, invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
-			err.Error() != "invalid substitute variables a-invalid, z-invalid", "invalid keys not classified/sorted: %v", err)
-	}
+	assert.FatalIf(t, invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
+		err.Error() != "invalid substitute variables a-invalid, z-invalid", "invalid keys not classified/sorted: %v", err)
 }
 
 func TestPrepare_EntrySubstitutionContext(t *testing.T) {
@@ -149,25 +132,19 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 		&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}},
 	)
 	_, err := Prepare(entry, values.NewStoreProvider(st, true))
-	{
-		assert.FatalIf(t, err == nil || strings.Contains(err.Error(), owner.String()) ||
-			strings.Contains(err.Error(), `entry path "clusters/test"`) ||
-			strings.Contains(err.Error(), entry.Named().String()), "substituteFrom repeated its owner: %v", err)
-	}
+	assert.FatalIf(t, err == nil || strings.Contains(err.Error(), owner.String()) ||
+		strings.Contains(err.Error(), `entry path "clusters/test"`) ||
+		strings.Contains(err.Error(), entry.Named().String()), "substituteFrom repeated its owner: %v", err)
 	entry.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ENABLED": "yes"}}
 	prepared, err := Prepare(entry, nil)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	documents := []manifest.DocOccurrence{{Document: map[string]any{"data": map[string]any{"value": "${MISSING}"}}}}
 	err = Shape(prepared, documents, true)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInvalidSubstituteReference) || strings.Contains(err.Error(), owner.String()) ||
-				strings.Contains(err.Error(), entry.Named().String()),
-			"shape lost copied provenance or sentinel: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrInvalidSubstituteReference) || strings.Contains(err.Error(), owner.String()) ||
+			strings.Contains(err.Error(), entry.Named().String()),
+		"shape lost copied provenance or sentinel: %v",
+		err,
+	)
 }

@@ -32,9 +32,7 @@ func TestConfigure_MissingCRDs(t *testing.T) {
 	assert.Equal(t, controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade) == nil, true)
 	c.StartLifecycle()
 	defer func() {
-		{
-			assert.ErrorIf(t, recover() == nil, "%v", "Configure after start must panic")
-		}
+		assert.ErrorIf(t, recover() == nil, "%v", "Configure after start must panic")
 		assert.Equal(
 			t,
 			controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade) == nil,

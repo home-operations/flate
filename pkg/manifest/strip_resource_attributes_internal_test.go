@@ -34,9 +34,7 @@ func TestStripResourceAttributes(t *testing.T) {
 		_, ok := ann["helm.sh/chart"]
 		assert.ErrorIf(t, ok, "annotation not stripped")
 	}
-	{
-		assert.ErrorIf(t, ann["keep"] != "yes", "kept annotation lost")
-	}
+	assert.ErrorIf(t, ann["keep"] != "yes", "kept annotation lost")
 	{
 		_, ok := meta["labels"]
 		assert.ErrorIf(t, ok, "empty labels map should have been removed")
@@ -141,13 +139,11 @@ func TestStripResourceAttributes_StatefulSetPVCs(t *testing.T) {
 		_, ok := data["labels"].(map[string]any)["helm.sh/chart"]
 		assert.ErrorIf(t, ok, "PVC[0].metadata.labels.helm.sh/chart should have been stripped")
 	}
-	{
-		assert.ErrorIf(
-			t,
-			data["labels"].(map[string]any)["app"] != "pg",
-			"PVC[0].metadata.labels.app (non-stripped) should remain",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		data["labels"].(map[string]any)["app"] != "pg",
+		"PVC[0].metadata.labels.app (non-stripped) should remain",
+	)
 	wal := pvcs[1].(map[string]any)["metadata"].(map[string]any)
 	{
 		_, ok := wal["annotations"]
@@ -186,12 +182,10 @@ func TestStripResourceAttributes_ChecksumPrefix(t *testing.T) {
 			assert.ErrorIf(t, ok, "prefix strip left %q behind", k)
 		}
 	}
-	{
-		assert.ErrorIf(
-			t,
-			ann["reloader.stakater.com/auto"] != "true",
-			"non-checksum annotation should survive prefix strip; got %v",
-			ann,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		ann["reloader.stakater.com/auto"] != "true",
+		"non-checksum annotation should survive prefix strip; got %v",
+		ann,
+	)
 }

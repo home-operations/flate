@@ -65,7 +65,7 @@ func testFetchHTTPChartNetworkRoutesCase(t *testing.T, route *string,
 		if err != nil {
 			return err
 		}
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, target, http.NoBody)
 		_, err = (&http.Client{Transport: tr}).Do(req)
 		failing.Store(false)
 		terminal, ok := errors.AsType[*sourcecache.TerminalError](err)

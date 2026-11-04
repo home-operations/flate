@@ -86,7 +86,8 @@ func (w *Waiter) classify(
 	ready := false
 	if hasExpr {
 		var failMsg string
-		ready, failMsg = w.tryReadyExpr(dep, obj, info.Conditions)
+		readiness := w.tryReadyExpr(dep, obj, info.Conditions)
+		ready, failMsg = readiness.ready, readiness.failure
 		if failMsg != "" {
 			return failedClassification(id, obj, failMsg, nil), false
 		}

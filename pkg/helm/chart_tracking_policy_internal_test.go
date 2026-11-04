@@ -55,20 +55,14 @@ func testTemplateCacheNonOCITrackingModeCase(
 			}
 		}
 
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		merged, err := cli.mergeChartValuesFiles(
 			t.Context(), &loaded, hr.ChartValuesFiles,
 			hr.IgnoreMissingValuesFiles,
 		)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		nextKey := computeTemplateKey(&loaded, merged, opts, hr)
 		if first != nil {
 			assert.Diff(t, out, first)

@@ -144,21 +144,17 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 	}
 
 	if testCaseInput.tc.invalid {
-		{
-			assert.FatalIf(
-				t,
-				err == nil || freshErr == nil || err.Error() != freshErr.Error() || len(out) != 0,
-				"fresh render failure: %v, %v; want %v",
-				out,
-				err,
-				freshErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || freshErr == nil || err.Error() != freshErr.Error() || len(out) != 0,
+			"fresh render failure: %v, %v; want %v",
+			out,
+			err,
+			freshErr,
+		)
 		return
 	}
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	if testCaseInput.tc.corrupt {
 		assert.NoError(t, freshErr)
 		assert.Diff(t, out, fresh)
@@ -178,19 +174,15 @@ func testRenderCacheFramesCase(t *testing.T, testCaseInput *testRenderCacheFrame
 	}
 	switch {
 	case testCaseInput.tc.immutable:
-		{
-			assert.FatalIf(
-				t,
-				!hasRenderField(out, "witness", "STALE"),
-				"immutable pin replayed mutable validation: %s",
-				out,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!hasRenderField(out, "witness", "STALE"),
+			"immutable pin replayed mutable validation: %s",
+			out,
+		)
 
 	case testCaseInput.tc.empty:
-		{
-			assert.FatalIf(t, len(out) != 0, "complete empty frame missed: %s", out)
-		}
+		assert.FatalIf(t, len(out) != 0, "complete empty frame missed: %s", out)
 
 	default:
 		assert.FatalIf(t, !hasRenderField(out, "name", "fresh"), "candidate prevented a fresh render: %s", out)

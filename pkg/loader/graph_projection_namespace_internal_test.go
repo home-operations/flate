@@ -40,9 +40,7 @@ func testAdmitGraphProjectionEffectiveNamesIncludeNamespaceTransformation(t *tes
 		for i := range occurrences {
 			o := occurrences[i]
 			ids = append(ids, o.Identity)
-			{
-				assert.FatalIf(t, o.object.Named() != o.Authored, "%s", "projection mutated an authored object")
-			}
+			assert.FatalIf(t, o.object.Named() != o.Authored, "%s", "projection mutated an authored object")
 		}
 		assert.Diff(
 			t,
@@ -201,13 +199,11 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 
 	projected := testutil.KustomizationID("apps", "sibling")
 	authored := testutil.KustomizationID("flux-system", "sibling")
-	file := filepath.Join(root, "app/sibling.yaml")
+	file := filepath.Join(root, "app", "sibling.yaml")
 	check := func() *manifest.Kustomization {
 		t.Helper()
 		ks, ok := l.Store.Get[*manifest.Kustomization](projected)
-		{
-			assert.FatalIf(t, !ok, "%s", "projected bootstrap sibling lost at admission fixpoint")
-		}
+		assert.FatalIf(t, !ok, "%s", "projected bootstrap sibling lost at admission fixpoint")
 		record, ok := l.Index.Lookup(projected)
 		assert.FatalIf(
 			t,
@@ -216,14 +212,12 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 			record,
 			ok,
 		)
-		{
-			assert.FatalIf(
-				t,
-				!l.AdmitsRoot(l.IndexedObject(projected, l.Index.Records[projected]).Obj, file),
-				"%s",
-				"projected bootstrap sibling is not admitted",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!l.AdmitsRoot(l.IndexedObject(projected, l.Index.Records[projected]).Obj, file),
+			"%s",
+			"projected bootstrap sibling is not admitted",
+		)
 		{
 			_, ok := l.Index.Lookup(authored)
 			assert.FatalIf(
@@ -235,7 +229,8 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 		}
 		doc, err := ks.RenderDocument()
 		assert.NoError(t, err)
-		name, namespace := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name, namespace := metadata.Name, metadata.Namespace
 		assert.FatalIf(
 			t,
 			name != "sibling" || namespace != "apps" || doc["spec"].(map[string]any)["targetNamespace"] != "apps",
@@ -252,9 +247,7 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	{
-		assert.FatalIf(t, check() != first, "%s", "repeat admission replaced the stable projected candidate")
-	}
+	assert.FatalIf(t, check() != first, "%s", "repeat admission replaced the stable projected candidate")
 }
 
 func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
@@ -270,21 +263,17 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	assert.NoError(t, err)
 	for _, p := range packages {
 		for _, o := range p.Occurrences {
-			{
-				assert.FatalIf(
-					t,
-					o.Identity.Name == "sibling",
-					"%s",
-					"unlisted bootstrap sibling entered package evidence",
-				)
-			}
+			assert.FatalIf(
+				t,
+				o.Identity.Name == "sibling",
+				"%s",
+				"unlisted bootstrap sibling entered package evidence",
+			)
 		}
 	}
 	l.Admit(root)
 	sibling := testutil.KustomizationID("apps", "sibling")
-	{
-		assert.FatalIf(t, l.Store.GetObject(sibling) != nil, "%s", "omitted bootstrap sibling admitted")
-	}
+	assert.FatalIf(t, l.Store.GetObject(sibling) != nil, "%s", "omitted bootstrap sibling admitted")
 	doc := l.candidates[sibling].Doc
 	assert.FatalIf(
 		t,
@@ -305,7 +294,7 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 		assert.FatalIf(t, !ok || l.Store.GetObject(sibling) != nil ||
 			l.AdmitsRoot(
 				l.IndexedObject(sibling, l.Index.Records[sibling]).Obj,
-				filepath.Join(root, "app/sibling.yaml"),
+				filepath.Join(root, "app", "sibling.yaml"),
 			), "%s", "inactive declaration lost evidence or became runnable")
 	}
 }

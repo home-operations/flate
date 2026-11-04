@@ -39,9 +39,7 @@ func localSource(tb testing.TB, root string) *store.SourceArtifact {
 func testTreeFS(t *testing.T, root string) filesys.FileSystem {
 	t.Helper()
 	input, _, err := source.OperationView(t.Context(), localSource(t, root).FS)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	return newTreeFS(input, root, nil)
 }
 
@@ -54,9 +52,7 @@ func testIgnoreTreeFS(t *testing.T, root string) filesys.FileSystem {
 		plumbing.ZeroHash,
 		gittree.ViewOptions{Mode: gittree.Source, Current: localSource(t, root).FS},
 	)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	return newTreeFS(input, root, nil)
 }
 
@@ -94,7 +90,8 @@ func ksDoc(spec map[string]any) map[string]any {
 
 func parsedKS(tb testing.TB, doc map[string]any) *manifest.Kustomization {
 	tb.Helper()
-	obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj := parsed.Object
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -433,7 +430,12 @@ func TestGenerateManifest_TypedOverrides(t *testing.T) {
 			ks := parsedKS(t, ksDoc(tc.authored)).Clone()
 			plain := parsedKS(t, ksDoc(tc.effective))
 			ks.KustomizationSpec = plain.KustomizationSpec
-			got, _, err := generateManifest(testTreeFS(t, root), root, renderDoc(t, ks))
+			generateManifestResult1, generateManifestResult1Err := generateManifest(
+				testTreeFS(t, root),
+				root,
+				renderDoc(t, ks),
+			)
+			got, _, err := generateManifestResult1.data, generateManifestResult1.path, generateManifestResult1Err
 			assert.NoError(t, err)
 			oracle := fluxkustomize.NewGenerator(
 				root,
@@ -480,7 +482,8 @@ func TestRender_NamespaceIdentity(t *testing.T) {
 			assert.Equal(t, len(docs), 3)
 			namespaces := make(map[string]string, len(docs))
 			for _, doc := range docs {
-				_, ns := manifest.DocMetadata(doc)
+				metadata := manifest.DocMetadata(doc)
+				ns := metadata.Namespace
 				namespaces[manifest.DocKind(doc)] = ns
 			}
 			assert.Diff(t, namespaces, map[string]string{
@@ -506,10 +509,13 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 	// Behind the ignore filesystem, scanManifests never sees .sops.yaml so a
 	// path:./ build over the working tree renders the ConfigMap.
 	fsys := testIgnoreTreeFS(t, root)
-	data, kfile, err := generateManifest(fsys, root, renderDoc(t, parsedKS(t, ksDoc(nil))))
-	{
-		assert.FatalIf(t, err != nil, "generateManifest(ignore): %v", err)
-	}
+	generateManifestResult2, generateManifestResult2Err := generateManifest(
+		fsys,
+		root,
+		renderDoc(t, parsedKS(t, ksDoc(nil))),
+	)
+	data, kfile, err := generateManifestResult2.data, generateManifestResult2.path, generateManifestResult2Err
+	assert.FatalIf(t, err != nil, "generateManifest(ignore): %v", err)
 	{
 		writeFileErr := fsys.WriteFile(kfile, data)
 		assert.FatalIf(t, writeFileErr != nil, "write: %v", writeFileErr)
@@ -517,22 +523,21 @@ func TestGenerateManifest_SourceIgnoreFiltersScan(t *testing.T) {
 	kustomizestate.BuildMutex.Lock()
 	rm, err := fluxkustomize.Build(fsys, root)
 	kustomizestate.BuildMutex.Unlock()
-	{
-		assert.FatalIf(t, err != nil, "build over ignored tree: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "build over ignored tree: %v", err)
 	out, err := rm.AsYaml()
-	{
-		assert.FatalIf(t, err != nil, "AsYaml: %v", err)
-	}
-	{
-		assert.FatalIf(t, !strings.Contains(string(out), "name: config"), "expected rendered ConfigMap, got:\n%s", out)
-	}
+	assert.FatalIf(t, err != nil, "AsYaml: %v", err)
+	assert.FatalIf(t, !strings.Contains(string(out), "name: config"), "expected rendered ConfigMap, got:\n%s", out)
 
 	// Without the filter (a fetched artifact, already filtered, would not hit
 	// this), scanManifests includes .sops.yaml and fails to decode it — the bug
 	// the filter fixes.
 	{
-		_, _, err := generateManifest(testTreeFS(t, root), root, renderDoc(t, parsedKS(t, ksDoc(nil))))
+		generateManifestResult3, generateManifestResult3Err := generateManifest(
+			testTreeFS(t, root),
+			root,
+			renderDoc(t, parsedKS(t, ksDoc(nil))),
+		)
+		_, _, err := generateManifestResult3.data, generateManifestResult3.path, generateManifestResult3Err
 		assert.FatalIf(t, err == nil, "%s", "expected generate/scan to fail on the unfiltered .sops.yaml, got nil")
 	}
 }
@@ -557,32 +562,25 @@ func TestFindOrGenerate_MemoryPopulatedSubdirNotDescended(t *testing.T) {
 		assert.FatalIf(t, err != nil, "seed memory: %v", err)
 	}
 
-	data, _, foundExisting, err := findOrGenerateKustomization(fsys, root)
-	{
-		assert.FatalIf(t, err != nil, "findOrGenerateKustomization: %v", err)
-	}
-	{
-		assert.FatalIf(t, foundExisting, "%s", "expected auto-generate (root has no kustomization.yaml)")
-	}
+	findOrGenerateKustomizationResult4, findOrGenerateKustomizationResult4Err := findOrGenerateKustomization(fsys, root)
+	data, _, foundExisting, err := findOrGenerateKustomizationResult4.data, findOrGenerateKustomizationResult4.path, findOrGenerateKustomizationResult4.existing, findOrGenerateKustomizationResult4Err
+	assert.FatalIf(t, err != nil, "findOrGenerateKustomization: %v", err)
+	assert.FatalIf(t, foundExisting, "%s", "expected auto-generate (root has no kustomization.yaml)")
 	got := string(data)
-	{
+	assert.ErrorIf(
+		t,
+		strings.Contains(got, "kustomization.yaml"),
+		"auto-generated kustomization lists a kustomization.yaml file as a resource:\n%s",
+		got,
+	)
+	for _, want := range []string{"./cnpg", "./other"} {
 		assert.ErrorIf(
 			t,
-			strings.Contains(got, "kustomization.yaml"),
-			"auto-generated kustomization lists a kustomization.yaml file as a resource:\n%s",
+			!strings.Contains(got, want),
+			"auto-generated kustomization missing %q resource:\n%s",
+			want,
 			got,
 		)
-	}
-	for _, want := range []string{"./cnpg", "./other"} {
-		{
-			assert.ErrorIf(
-				t,
-				!strings.Contains(got, want),
-				"auto-generated kustomization missing %q resource:\n%s",
-				want,
-				got,
-			)
-		}
 	}
 }
 
@@ -605,30 +603,31 @@ func testGenerateManifestByteEquivalentToFluxCase(
 
 	borrowed := renderDoc(t, parsedKS(t, manifest.DeepCopyMap(doc)))
 	snapshot := manifest.DeepCopyMap(borrowed)
-	got, _, err := generateManifest(testTreeFS(t, root), filepath.Join(root, testCaseInput.subPath), borrowed)
+	generateManifestResult5, generateManifestResult5Err := generateManifest(
+		testTreeFS(t, root),
+		filepath.Join(root, testCaseInput.subPath),
+		borrowed,
+	)
+	got, _, err := generateManifestResult5.data, generateManifestResult5.path, generateManifestResult5Err
 	assert.Diff(t, borrowed, snapshot)
 	if wantErr != nil || err != nil {
-		{
-			assert.FatalIf(
-				t,
-				fmt.Sprint(err) != fmt.Sprint(wantErr),
-				"generator error = %v, want %v",
-				err,
-				wantErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			fmt.Sprint(err) != fmt.Sprint(wantErr),
+			"generator error = %v, want %v",
+			err,
+			wantErr,
+		)
 		return
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			string(got) != string(want),
-			"kustomization.yaml mismatch\n--- flux (want) ---\n%s\n--- in-memory (got) ---\n%s",
-			want,
-			got,
-		)
-	}
+	assert.FatalIf(
+		t,
+		string(got) != string(want),
+		"kustomization.yaml mismatch\n--- flux (want) ---\n%s\n--- in-memory (got) ---\n%s",
+		want,
+		got,
+	)
 }
 
 func generateManifestByteEquivalentToFluxName(t *testing.T, tc *struct {

@@ -494,25 +494,28 @@ func mustSetRefToHEAD(t *testing.T, dir, refName string) string {
 
 func malformedViewRepo(t *testing.T) string {
 	t.Helper()
-	root, repo, _, hash := localFixture(t)
-	commit, err := repo.CommitObject(hash)
+	fixture := localFixture(t)
+
+	commit, err := fixture.repo.CommitObject(fixture.head)
 	assert.NoError(t, err)
 	tree, err := commit.Tree()
 	assert.NoError(t, err)
 	tree.Entries[0].Name = "bad/name"
-	tree.Entries = append([]object.TreeEntry{{Name: "a-module", Mode: filemode.Submodule, Hash: hash}}, tree.Entries...)
-	encoded := repo.Storer.NewEncodedObject()
+	tree.Entries = append(
+		[]object.TreeEntry{{Name: "a-module", Mode: filemode.Submodule, Hash: fixture.head}},
+		tree.Entries...)
+	encoded := fixture.repo.Storer.NewEncodedObject()
 	assert.NoError(t, tree.Encode(encoded))
-	commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
+	commit.TreeHash, err = fixture.repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
-	encoded = repo.Storer.NewEncodedObject()
+	encoded = fixture.repo.Storer.NewEncodedObject()
 	assert.NoError(t, commit.Encode(encoded))
-	hash, err = repo.Storer.SetEncodedObject(encoded)
+	fixture.head, err = fixture.repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
-	head, err := repo.Head()
+	head, err := fixture.repo.Head()
 	assert.NoError(t, err)
-	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(head.Name(), hash)))
-	return root
+	assert.NoError(t, fixture.repo.Storer.SetReference(plumbing.NewHashReference(head.Name(), fixture.head)))
+	return fixture.root
 }
 
 func TestFetcher_GenerationAdmission(t *testing.T) {

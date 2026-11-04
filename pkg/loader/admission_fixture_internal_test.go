@@ -94,7 +94,7 @@ func newAdmission(tb testing.TB, cfg admissionConfig) *admissionFixture {
 func (f *admissionFixture) prepare(child store.Child, reads *store.ReadSet, commit bool) []manifest.NamedResource {
 	f.tb.Helper()
 	proposal := &Admission{}
-	_, _, _, proposal.Revision = f.loader.Options.Filter.Membership(manifest.NamedResource{})
+	proposal.Revision = f.loader.Options.Filter.Membership(manifest.NamedResource{}).Revision
 	var reader admissionReader = f.loader.Store
 	if instrumented, ok := f.objs.(admissionReader); ok {
 		reader = instrumented
@@ -188,7 +188,7 @@ func (f *admissionFixture) AddEmitted(
 		}
 	}
 	f.mu.Unlock()
-	_, _, _, revision := f.loader.Options.Filter.Membership(manifest.NamedResource{})
+	revision := f.loader.Options.Filter.Membership(manifest.NamedResource{}).Revision
 	f.loader.Options.Filter.AddEmitted(needs, selected, selected, revision)
 	child.Productions = append(slices.Clone(child.Productions), manifest.Production{Owner: parent})
 	reads, _ := reader.(*store.ReadSet)

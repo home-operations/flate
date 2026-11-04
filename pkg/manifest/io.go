@@ -81,7 +81,8 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 			return stream.finishDecode(out, err, ordinal)
 		}
 		preserveTimestampStrings(&node)
-		m, shapeFailure, err := loadDocumentNode(&node, role, constructionOption)
+		loaded, err := loadDocumentNode(&node, role, constructionOption)
+		m, shapeFailure := loaded.document, loaded.shapeFailure
 		if err != nil {
 			ReleaseDoc(m)
 			out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
@@ -155,11 +156,16 @@ func (s *documentStream) finishDecode(out []DocOccurrence, err error, ordinal in
 	return out, nil
 }
 
+type loadedDocument struct {
+	document     map[string]any
+	shapeFailure bool
+}
+
 func loadDocumentNode(
 	node *yaml.Node,
 	role DocumentRole,
 	constructionOption yaml.Option,
-) (map[string]any, bool, error) {
+) (loadedDocument, error) {
 	mapping := node
 	if mapping.Kind == yaml.DocumentNode && len(mapping.Content) != 0 {
 		mapping = mapping.Content[0]
@@ -178,5 +184,5 @@ func loadDocumentNode(
 			shapeFailure = true
 		}
 	}
-	return m, shapeFailure, err
+	return loadedDocument{document: m, shapeFailure: shapeFailure}, err
 }

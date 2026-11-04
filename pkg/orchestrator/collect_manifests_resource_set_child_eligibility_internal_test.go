@@ -64,16 +64,18 @@ spec:
 			assert.NoError(t, err)
 			parser := base.New(st, nil)
 			parser.Configure(base.Options{SkipKinds: skip})
-			children, docs := testutil.ParseChildren(parser, rs, batch, manifest.ParseDocOptions{})
-			{
-				assert.FatalIf(
-					t,
-					len(children) != len(batch),
-					"parsed %d of %d mixed children",
-					len(children),
-					len(batch),
-				)
+			parsedChildren1 := parser.ParseChildren(rs, testutil.DocumentOccurrences(batch), manifest.ParseDocOptions{})
+			if err := manifest.DocumentFailure(parsedChildren1.Failures); err != nil {
+				panic(err)
 			}
+			children, docs := parsedChildren1.Children, testutil.DocumentMaps(parsedChildren1.Visible)
+			assert.FatalIf(
+				t,
+				len(children) != len(batch),
+				"parsed %d of %d mixed children",
+				len(children),
+				len(batch),
+			)
 			st.RecordEmitted(
 				rs.Named(),
 				&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
@@ -125,36 +127,30 @@ spec:
 			_, _, after := st.GetEmission(rs.Named())
 			after.Finish()
 			{
-				{
-					diff := cmp.Diff(
-						after.Children,
-						before.Children,
-						cmp.AllowUnexported(manifest.Kustomization{}),
-						cmpopts.IgnoreUnexported(store.Child{}),
-						cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
-						cmpopts.IgnoreUnexported(
-							manifest.HelmRelease{},
-							manifest.OCIRepository{},
-							manifest.HelmChartSource{},
-						),
-					)
-					assert.FatalIf(t, diff != "", "retained children changed (-want +got): %s", diff)
-				}
+				diff := cmp.Diff(
+					after.Children,
+					before.Children,
+					cmp.AllowUnexported(manifest.Kustomization{}),
+					cmpopts.IgnoreUnexported(store.Child{}),
+					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+					cmpopts.IgnoreUnexported(
+						manifest.HelmRelease{},
+						manifest.OCIRepository{},
+						manifest.HelmChartSource{},
+					),
+				)
+				assert.FatalIf(t, diff != "", "retained children changed (-want +got): %s", diff)
 			}
 			assert.Diff(t, after.Manifests, before.Manifests)
 			cm, ok := st.Get[*manifest.ConfigMap](children[1].Obj.Named())
-			{
-				assert.FatalIf(t, !ok || cm.Data["key"] != "value", "%v", "collection discarded ConfigMap values")
-			}
+			assert.FatalIf(t, !ok || cm.Data["key"] != "value", "%v", "collection discarded ConfigMap values")
 			secret, ok := st.Get[*manifest.Secret](children[2].Obj.Named())
-			{
-				assert.FatalIf(
-					t,
-					!ok || secret.StringData["key"] != "value",
-					"%v",
-					"collection discarded Secret values",
-				)
-			}
+			assert.FatalIf(
+				t,
+				!ok || secret.StringData["key"] != "value",
+				"%v",
+				"collection discarded Secret values",
+			)
 		})
 	}
 }
@@ -243,23 +239,19 @@ func TestCollectManifests_CoveredRetainedOutput(t *testing.T) {
 			)
 			o := &Orchestrator{store: st}
 			docs := outputByParent(o.collectManifests())[raw.Named()]
-			{
-				assert.FatalIf(
-					t,
-					survivor && (len(docs) != 1 || docs[0]["kind"] != "ConfigMap") || !survivor && len(docs) != 0,
-					"retained output survivor=%t docs=%v",
-					survivor,
-					docs,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					!survivor && (st.GetObject(raw.Named()) == nil || st.GetDeclaration(raw.Named()) != nil),
-					"%v",
-					"coverage visibility and runnable authority were conflated",
-				)
-			}
+			assert.FatalIf(
+				t,
+				survivor && (len(docs) != 1 || docs[0]["kind"] != "ConfigMap") || !survivor && len(docs) != 0,
+				"retained output survivor=%t docs=%v",
+				survivor,
+				docs,
+			)
+			assert.FatalIf(
+				t,
+				!survivor && (st.GetObject(raw.Named()) == nil || st.GetDeclaration(raw.Named()) != nil),
+				"%v",
+				"coverage visibility and runnable authority were conflated",
+			)
 		})
 	}
 }
@@ -293,7 +285,8 @@ func testCollectManifestsArtifactGeneratorsCase(
 			"metadata":   map[string]any{"name": name, "namespace": "apps"},
 			"spec":       map[string]any{},
 		}
-		obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		obj := parsed.Object
 		assert.NoError(t, err)
 		generators = append(generators, obj.Named())
 		generatorDocs = append(generatorDocs, doc)
@@ -323,7 +316,8 @@ func testCollectManifestsArtifactGeneratorsCase(
 				"spec":       map[string]any{},
 			},
 		)
-		children, docs := parseChildrenForTest(parent.Named(), generatorDocs, manifest.ParseDocOptions{})
+		parseChildrenForTestResult1 := parseChildrenForTest(parent.Named(), generatorDocs, manifest.ParseDocOptions{})
+		children, docs := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
 		st.RecordEmitted(
 			parent.Named(),
 			&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
@@ -359,12 +353,15 @@ func testCollectManifestsArtifactGeneratorsCase(
 				"metadata":   map[string]any{"name": "own-" + generator.Name},
 			},
 		}
-		children, accepted := testutil.ParseChildren(
-			parser,
+		parsedChildren2 := parser.ParseChildren(
 			st.GetObject(generator),
-			docs,
+			testutil.DocumentOccurrences(docs),
 			manifest.ParseDocOptions{DefaultNamespace: generator.Namespace},
 		)
+		if err := manifest.DocumentFailure(parsedChildren2.Failures); err != nil {
+			panic(err)
+		}
+		children, accepted := parsedChildren2.Children, testutil.DocumentMaps(parsedChildren2.Visible)
 		payload := &store.SourceArtifact{
 			Key: generator.Name,
 			FS:  fstest.MapFS{"value": {Data: []byte(generator.Name)}},
@@ -413,11 +410,12 @@ func testCollectManifestsArtifactGeneratorsCaseTail(
 			AddObject(rs)
 		rivalDoc := manifest.DeepCopyMap((*tailCaseInput.outputs)["z"][0])
 		rivalDoc["metadata"].(map[string]any)["labels"] = map[string]any{"writer": "rival"}
-		children, docs := parseChildrenForTest(
+		parseChildrenForTestResult2 := parseChildrenForTest(
 			rs.Named(),
 			[]map[string]any{rivalDoc},
 			manifest.ParseDocOptions{},
 		)
+		children, docs := parseChildrenForTestResult2.Children, parseChildrenForTestResult2.Documents
 		(*tailCaseInput.st).
 			RecordEmitted(
 				rs.Named(),
@@ -466,8 +464,9 @@ func testCollectManifestsArtifactGeneratorsCaseTail(
 	(*tailCaseInput.st).
 		AddObject(entry)
 	bare := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "bare"}}
-	children, docs, failures := base.New((*tailCaseInput.st), nil).
+	parseChildrenResult1 := base.New((*tailCaseInput.st), nil).
 		ParseChildren(entry, testutil.DocumentOccurrences([]map[string]any{bare}), manifest.ParseDocOptions{})
+	children, docs, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	(*tailCaseInput.st).
 		RecordEmitted(
 			entry.Named(),

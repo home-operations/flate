@@ -33,13 +33,9 @@ func TestTreeCache_SetGitBaseFetcher(t *testing.T) {
 		//nolint:nilnil // The fixture explicitly models an absent successful result.
 		return nil, nil
 	})
-	{
-		assert.FatalIf(t, c.gitBase == nil, "%s", "git base fetcher not set")
-	}
+	assert.FatalIf(t, c.gitBase == nil, "%s", "git base fetcher not set")
 	_, _ = c.gitBase(t.Context(), GitBaseRequest{URL: "https://example.com/x", Ref: "main"}, cache.RetryConfig{})
-	{
-		assert.FatalIf(t, !called, "%s", "wired fetcher was not invoked")
-	}
+	assert.FatalIf(t, !called, "%s", "wired fetcher was not invoked")
 }
 
 func newTestTreeCache(tb testing.TB, root string) *TreeCache {
@@ -135,9 +131,7 @@ func TestTreeCache_CloseAdmissionRace(t *testing.T) {
 		c.Close()
 		c.remoteInputs.Close()
 		tasks.BlockTillDone()
-		{
-			assert.FatalIf(t, tasks.Failures() != 0, "%s", "task accounting corrupted")
-		}
+		assert.FatalIf(t, tasks.Failures() != 0, "%s", "task accounting corrupted")
 	})
 }
 
@@ -153,17 +147,13 @@ func TestTreeCache_Close(t *testing.T) {
 	)
 	defer server.Close()
 	input, err := c.remoteInputs.Acquire(t.Context(), server.URL, cache.RetryConfig{}, nil)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	body, err := fs.ReadFile(input, "content")
-	{
-		assert.FatalIf(
-			t,
-			err != nil || string(body) != "borrowed",
-			"borrowed input after render Close: %q %v",
-			body,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || string(body) != "borrowed",
+		"borrowed input after render Close: %q %v",
+		body,
+		err,
+	)
 }

@@ -224,7 +224,7 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 			close(headEntered)
 			return errors.New("head discovery failed")
 		}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
-		var base, head Rendered
+		var baseRef, head Rendered
 		done := make(chan error, 1)
 		go func() {
 			var err error
@@ -244,7 +244,7 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 			if len(runs) != 2 {
 				t.Errorf("missing diagnostic sides: %v", err)
 			} else {
-				base, head = runs[0], runs[1]
+				baseRef, head = runs[0], runs[1]
 			}
 			done <- err
 		}()
@@ -256,23 +256,19 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 		}
 		close(release)
 		err := <-done
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, failure) || strings.Count(err.Error(), failure.Error()) != 1,
-				"discovery cause lost or duplicated: %v",
-				err,
-			)
-		}
-		for _, side := range []Rendered{base, head} {
-			{
-				assert.FatalIf(t, side.Orchestrator != nil || side.Result == nil ||
-					len(
-						side.Result.Manifests,
-					)+len(
-						side.Result.Failed,
-					) != 0, "failed preparation exposed content: %+v", side)
-			}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, failure) || strings.Count(err.Error(), failure.Error()) != 1,
+			"discovery cause lost or duplicated: %v",
+			err,
+		)
+		for _, side := range []Rendered{baseRef, head} {
+			assert.FatalIf(t, side.Orchestrator != nil || side.Result == nil ||
+				len(
+					side.Result.Manifests,
+				)+len(
+					side.Result.Failed,
+				) != 0, "failed preparation exposed content: %+v", side)
 		}
 	})
 }
@@ -368,14 +364,12 @@ func testRenderDeclarationOnlyExcludesUnrelatedWorkCase(
 		assert.Equal(t, o.store.GetArtifact(ids[3], store.ArtifactContent), store.Artifact(nil))
 	} else {
 		assert.Equal(t, admitted[ids[2]].Load(), int64(1))
-		{
-			assert.FatalIf(
-				t,
-				admitted[ids[3]].Load() < 1,
-				"%v",
-				"full-render control did not reconcile the release",
-			)
-		}
+		assert.FatalIf(
+			t,
+			admitted[ids[3]].Load() < 1,
+			"%v",
+			"full-render control did not reconcile the release",
+		)
 		assert.Equal(t, fetcher.calls.Load(), int64(1))
 	}
 	assert.Equal(t, admitted[ids[0]].Load(), int64(1))
@@ -636,14 +630,12 @@ func testRenderTreesCancellationCaseBubble(
 	}
 	if root != "" {
 		res, innerInnerInnerLocalErr := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-		{
-			assert.FatalIf(
-				t,
-				innerInnerInnerLocalErr == nil && len(res.Errors) == 0,
-				"%v",
-				"backing released before held acquisitions joined",
-			)
-		}
+		assert.FatalIf(
+			t,
+			innerInnerInnerLocalErr == nil && len(res.Errors) == 0,
+			"%v",
+			"backing released before held acquisitions joined",
+		)
 	}
 	key := sourcecache.BlobKey{Content: "backing-survives"}
 	_, _, _, err = owner.Blob(
@@ -660,11 +652,7 @@ func testRenderTreesCancellationCaseBubble(
 	for range active {
 		release <- struct{}{}
 	}
-	{
-		{
-			testRenderTreesCancellationJoinedError(t, done, &wantOrigErrors)
-		}
-	}
+	testRenderTreesCancellationJoinedError(t, done, &wantOrigErrors)
 	for range active {
 		<-completed
 	}
@@ -710,14 +698,12 @@ func testRenderTreesCancellationClosedOwner(t *testing.T, err error, reacquired 
 	}
 	if root != "" {
 		res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-		{
-			assert.FatalIf(
-				t,
-				err != nil || len(res.Errors) != 0,
-				"joined render retained owner: %+v %v",
-				res,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || len(res.Errors) != 0,
+			"joined render retained owner: %+v %v",
+			res,
+			err,
+		)
 	}
 }

@@ -76,37 +76,29 @@ data:
 		Tree{Path: dir, RepoRoot: dir},
 		Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	res, err := o.render(ctx)
-	{
-		assert.FatalIf(t, err != nil, "Render must converge: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render must converge: %v", err)
 	if ctx.Err() != nil || len(res.Failed) != 0 {
 		t.Fatalf("Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
 	}
 	for _, id := range []manifest.NamedResource{testutil.KustomizationID("flux-system", "apps"), testutil.HelmReleaseID("flux-system", "app")} {
 		info, ok := o.Store().GetStatus(id)
-		{
-			assert.FatalIf(
-				t,
-				!ok || info.Status != store.StatusReady,
-				"%s status = (%+v, %v), want Ready",
-				id,
-				info,
-				ok,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || info.Status != store.StatusReady,
+			"%s status = (%+v, %v), want Ready",
+			id,
+			info,
+			ok,
+		)
 	}
 	cm, ok := o.Store().Get[*manifest.ConfigMap](
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "greeting"},
 	)
-	{
-		assert.FatalIf(t, !ok || cm.Data["greeting"] != "hello", "shared values were not rendered: %+v", cm)
-	}
+	assert.FatalIf(t, !ok || cm.Data["greeting"] != "hello", "shared values were not rendered: %+v", cm)
 	ksArt := o.store.GetArtifact(testutil.KustomizationID("flux-system", "apps"), store.ArtifactContent).(*store.Emission)
 	var childDoc map[string]any
 	for _, doc := range ksArt.Manifests {
@@ -114,13 +106,10 @@ data:
 			childDoc = doc.Document
 		}
 	}
-	{
-		assert.FatalIf(t, childDoc == nil, "%v", "bare release document missing")
-	}
-	_, ns := manifest.DocMetadata(childDoc)
-	{
-		assert.FatalIf(t, ns != "flux-system", "release document namespace = %q", ns)
-	}
+	assert.FatalIf(t, childDoc == nil, "%v", "bare release document missing")
+	metadata := manifest.DocMetadata(childDoc)
+	ns := metadata.Namespace
+	assert.FatalIf(t, ns != "flux-system", "release document namespace = %q", ns)
 	hrID := testutil.HelmReleaseID("flux-system", "app")
 	childBefore := manifest.DeepCopyMap(childDoc)
 	hrArt := o.store.GetArtifact(hrID, store.ArtifactContent).(*store.Emission)
@@ -128,7 +117,8 @@ data:
 	for i, doc := range hrArt.Manifests {
 		retained[i] = manifest.DeepCopyMap(doc.Document)
 		{
-			name, localNs := manifest.DocMetadata(doc.Document)
+			metadata2 := manifest.DocMetadata(doc.Document)
+			name, localNs := metadata2.Name, metadata2.Namespace
 			assert.FatalIf(
 				t,
 				name == "bare" && localNs != hrID.Namespace,
@@ -139,9 +129,7 @@ data:
 		}
 	}
 	bare := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hrID.Namespace, Name: "bare"}
-	{
-		assert.FatalIf(t, o.store.GetObject(bare) == nil, "%v", "bare chart child lost release namespace identity")
-	}
+	assert.FatalIf(t, o.store.GetObject(bare) == nil, "%v", "bare chart child lost release namespace identity")
 	o.store.DeleteObject(bare)
 	publishDocuments(
 		o.ksc.Controller,
@@ -149,42 +137,32 @@ data:
 		testutil.DocumentMaps(ksArt.Manifests),
 		manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"},
 	)
-	_, replay := publishDocuments(
+	publishDocumentsResult1 := publishDocuments(
 		o.hrc.Controller,
 		hrID,
 		testutil.DocumentMaps(hrArt.Manifests),
 		manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace},
 	)
-	{
-		assert.FatalIf(t, o.store.GetObject(bare) == nil, "%v", "replay lost release namespace identity")
-	}
+	_, replay := publishDocumentsResult1.Children, publishDocumentsResult1.Documents
+	assert.FatalIf(t, o.store.GetObject(bare) == nil, "%v", "replay lost release namespace identity")
 	next, err := testutil.DecodeDocs(
 		strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\n"),
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	_, _, _, err = manifest.ParseDoc(next[0], manifest.ParseDocOptions{DefaultNamespace: ""})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
+	_, err = manifest.ParseDoc(next[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+	assert.FatalIf(t, err != nil, "%v", err)
 	manifest.ReleaseDoc(next[0])
 	{
-		{
-			delta := cmp.Diff(childBefore, childDoc)
-			assert.FatalIf(t, delta != "", "replay changed bare release (-want +got):\n%s", delta)
-		}
+		delta := cmp.Diff(childBefore, childDoc)
+		assert.FatalIf(t, delta != "", "replay changed bare release (-want +got):\n%s", delta)
 	}
 	{
-		{
-			delta := cmp.Diff(retained, replay)
-			assert.FatalIf(t, delta != "", "replay changed retained documents (-want +got):\n%s", delta)
-		}
+		delta := cmp.Diff(retained, replay)
+		assert.FatalIf(t, delta != "", "replay changed retained documents (-want +got):\n%s", delta)
 	}
-	_, ns = manifest.DocMetadata(childDoc)
-	{
-		assert.FatalIf(t, ns != "flux-system", "replay release namespace %q", ns)
-	}
+	metadata3 := manifest.DocMetadata(childDoc)
+	ns = metadata3.Namespace
+	assert.FatalIf(t, ns != "flux-system", "replay release namespace %q", ns)
 }
 
 func ksYAML(name, path, dependsOn string) string {
@@ -229,39 +207,29 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	)
 
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
+		err := o.bootstrap(context.Background())
+		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 	{
-		{
-			err := o.bootstrap(context.Background())
-			assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
-		}
+		msg, ok := o.preflightFailure(testutil.KustomizationID("flux-system", "consumer"))
+		assert.FatalIf(t, ok, "consumer should wait for rendered dependency, not fail preflight: %s", msg)
 	}
 	{
-		{
-			msg, ok := o.preflightFailure(testutil.KustomizationID("flux-system", "consumer"))
-			assert.FatalIf(t, ok, "consumer should wait for rendered dependency, not fail preflight: %s", msg)
-		}
-	}
-	{
-		{
-			err := o.run(context.Background())
-			assert.FatalIf(t, err != nil, "Run: %v", err)
-		}
+		err := o.run(context.Background())
+		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 	for _, name := range []string{"produced", "consumer", "producer"} {
 		info, ok := o.Store().GetStatus(testutil.KustomizationID("flux-system", name))
-		{
-			assert.FatalIf(
-				t,
-				!ok || info.Status != store.StatusReady,
-				"%s status = (%+v, %v), want Ready under dag",
-				name,
-				info,
-				ok,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || info.Status != store.StatusReady,
+			"%s status = (%+v, %v), want Ready under dag",
+			name,
+			info,
+			ok,
+		)
 	}
 }
 
@@ -288,38 +256,30 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	testutil.WriteFile(t, dir, "mid/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mid}\ndata: {k: v}\n")
 
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
-	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	// A short bounded context: the structural fixpoint must terminate well
 	// within it. A regression that reintroduces a
 	// blocking wait would hit this deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 20_000_000_000) // 20s ceiling
 	defer cancel()
 	res, _ := o.render(ctx)
-	{
-		assert.FatalIf(t, res == nil, "%v", "Render returned nil result")
-	}
+	assert.FatalIf(t, res == nil, "%v", "Render returned nil result")
 	leafInfo, ok := res.Failed[testutil.KustomizationID("flux-system", "leaf")]
-	{
-		assert.FatalIf(
-			t,
-			!ok || !strings.Contains(leafInfo.String(), "dependency not found"),
-			"leaf: want FAILED 'dependency not found', got %+v (ok=%v)",
-			leafInfo,
-			ok,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || !strings.Contains(leafInfo.String(), "dependency not found"),
+		"leaf: want FAILED 'dependency not found', got %+v (ok=%v)",
+		leafInfo,
+		ok,
+	)
 	midInfo, ok := res.Failed[testutil.KustomizationID("flux-system", "mid")]
-	{
-		assert.FatalIf(
-			t,
-			!ok || !strings.Contains(midInfo.String(), "leaf"),
-			"mid: want FAILED cascading leaf's failure, got %+v (ok=%v)",
-			midInfo,
-			ok,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || !strings.Contains(midInfo.String(), "leaf"),
+		"mid: want FAILED cascading leaf's failure, got %+v (ok=%v)",
+		midInfo,
+		ok,
+	)
 }
 
 //nolint:paralleltest // Parallel renders contend for the build mutex within this chain's deadline.
@@ -391,9 +351,7 @@ spec:
 			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2},
 		)
-		{
-			assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-		}
+		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 		o := renderedSingleton1[0].Orchestrator
 		res := renderedSingleton1[0].Result
 		if err != nil || len(res.Failed) != 0 {
@@ -407,19 +365,15 @@ spec:
 				Name:      fmt.Sprintf("provider-%02d", i),
 			}
 			{
-				{
-					_, ok := o.Store().Get[*manifest.ResourceSetInputProvider](nid)
-					assert.FatalIf(t, !ok, "missing chain output %s", nid)
-				}
+				_, ok := o.Store().Get[*manifest.ResourceSetInputProvider](nid)
+				assert.FatalIf(t, !ok, "missing chain output %s", nid)
 			}
 		}
 		{
-			{
-				count := len(
-					o.Store().ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider),
-				)
-				assert.FatalIf(t, count != depth+1, "provider count=%d, want %d", count, depth+1)
-			}
+			count := len(
+				o.Store().ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSetInputProvider),
+			)
+			assert.FatalIf(t, count != depth+1, "provider count=%d, want %d", count, depth+1)
 		}
 		proofs := 0
 		for _, doc := range outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", "apps")] {
@@ -427,16 +381,10 @@ spec:
 				proofs++
 			}
 		}
-		{
-			assert.FatalIf(t, proofs != depth, "rendered provider proofs=%d, want %d", proofs, depth)
-		}
+		assert.FatalIf(t, proofs != depth, "rendered provider proofs=%d, want %d", proofs, depth)
 		output, err := json.Marshal(outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", "apps")])
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
-		{
-			assert.FatalIf(t, previous != nil && !bytes.Equal(previous, output), "%v", "repeated render bytes differ")
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
+		assert.FatalIf(t, previous != nil && !bytes.Equal(previous, output), "%v", "repeated render bytes differ")
 		previous = output
 	}
 }

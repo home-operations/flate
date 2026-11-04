@@ -17,9 +17,7 @@ func TestParseHelmRelease_DependsOn(t *testing.T) {
 	hr, err := parseHelmRelease(helmReleaseDoc(t, `  dependsOn:
     - name: other
     - {name: cross, namespace: other-ns}`))
-	{
-		assert.FatalIf(t, err != nil, "parseHelmRelease: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseHelmRelease: %v", err)
 	deps := refsForUse(t, hr, "dependsOn")
 	{
 		got, want := len(deps), 2
@@ -61,9 +59,7 @@ spec:
       optional: true
 `)
 	hr, err := parseHelmRelease(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseHelmRelease: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseHelmRelease: %v", err)
 
 	cases := []struct {
 		name string
@@ -84,9 +80,7 @@ spec:
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			{
-				assert.ErrorIf(t, tc.got != tc.want, "got %v, want %v", tc.got, tc.want)
-			}
+			assert.ErrorIf(t, tc.got != tc.want, "got %v, want %v", tc.got, tc.want)
 		})
 	}
 }
@@ -146,9 +140,7 @@ spec:
     namespace: flux-system
 `)
 	hr, err := parseHelmRelease(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseHelmRelease: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseHelmRelease: %v", err)
 	assert.Equal(
 		t,
 		hr.Chart.Source,
@@ -202,9 +194,7 @@ spec:
   type: oci
 `)
 	r, err := parseHelmRepository(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseHelmRepository: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseHelmRepository: %v", err)
 	if r.Type != "oci" {
 		t.Errorf("RepoType = %q", r.Type)
 	}
@@ -237,9 +227,7 @@ func TestParseHelmRelease_DisableValidationCombinations(t *testing.T) {
 					spec += "  upgrade: " + enabled + "\n"
 				}
 				hr, err := parseHelmRelease(helmReleaseDoc(t, spec))
-				{
-					assert.NoError(t, err)
-				}
+				assert.NoError(t, err)
 				wantSchema := (stage == "install" || stage == "both") && flags.schema
 				assert.Equal(t, hr.DisableSchemaValidation, wantSchema)
 				release := helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}

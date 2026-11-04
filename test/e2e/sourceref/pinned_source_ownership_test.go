@@ -87,7 +87,7 @@ func TestE2E_SourceRef_PinnedTreeReplacesHeldConsumer(t *testing.T) {
 			}
 			harness.MutateFile(
 				t,
-				filepath.Join(root, "flux/a-entry.yaml"),
+				filepath.Join(root, "flux", "a-entry.yaml"),
 				"interval: 10m",
 				"interval: 10m\n  suspend: true",
 			)
@@ -144,7 +144,7 @@ spec:
 			assert.NoError(t, repo.Storer.SetReference(
 				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
 			))
-			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: tagged", "value: newer")
+			harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: tagged", "value: newer")
 			testutil.GitCommitAll(
 				t,
 				repo,
@@ -163,11 +163,11 @@ spec:
 				),
 			)
 			testutil.WriteFile(t, root, "apps/broken/extra.yaml", "metadata: {name: extra\n")
-			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
+			harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: newer", "value: dirty")
 			l := loader.New(store.New())
 			l.SourceRoot = root
 			{
-				_, err := l.Load(t.Context(), filepath.Join(root, "apps/broken"))
+				_, err := l.Load(t.Context(), filepath.Join(root, "apps", "broken"))
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
 			l.Admit(root)
@@ -180,8 +180,9 @@ spec:
 			)
 			transport := installSourceRefTransport(t, repo.Storer)
 			for _, concurrency := range []string{"2", "8"} {
-				out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
+				runCLIBuffersResult1 := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", concurrency, "--cache-dir", t.TempDir())
+				out, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 				if code != 0 || strings.Contains(stderr, heldError.Error()) ||
 					!strings.Contains(out, "value: tagged") || !strings.Contains(out, tt.want) ||
 					strings.Contains(
@@ -305,11 +306,12 @@ spec:
 					plumbing.NewHashReference(plumbing.NewTagReferenceName(version), head.Hash()),
 				))
 			}
-			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
+			harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: v2.0.0", "value: dirty")
 			transport := installSourceRefTransport(t, repo.Storer)
 			for _, concurrency := range []string{"1", "2", "8"} {
-				out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
+				runCLIBuffersResult2 := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"),
 					"--concurrency", concurrency, "--cache-dir", t.TempDir())
+				out, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 				if code != 0 || !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") ||
 					transport.calls.Load() != 0 {
 					t.Fatalf(
@@ -328,12 +330,13 @@ spec:
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
-	root, repo, older, head := sourceRefFixture(t)
+	sourceRefFixtureResult1 := sourceRefFixture(t)
+	root, repo, older, head := sourceRefFixtureResult1.root, sourceRefFixtureResult1.repository, sourceRefFixtureResult1.before, sourceRefFixtureResult1.after
 	wt, err := repo.Worktree()
 	assert.NoError(t, err)
 	for _, hash := range []plumbing.Hash{older, head} {
 		assert.NoError(t, wt.Checkout(&gogit.CheckoutOptions{Hash: hash}))
-		harness.MutateFile(t, filepath.Join(root, "flux/entry.yaml"), "path: ./apps", "path: ./")
+		harness.MutateFile(t, filepath.Join(root, "flux", "entry.yaml"), "path: ./apps", "path: ./")
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [apps, flux/entry.yaml]\n")
 		testutil.GitCommitAll(
 			t,
@@ -349,12 +352,13 @@ func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
 			))
 		}
 	}
-	harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
+	harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: v2.0.0", "value: dirty")
 	transport := installSourceRefTransport(t, repo.Storer)
 	for _, scope := range []string{"flux", "."} {
 		t.Run(scope, func(t *testing.T) {
-			out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, scope),
+			requireCLIOKResult3 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, scope),
 				"--concurrency", "2", "--cache-dir", t.TempDir())
+			out, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 			assert.FatalIf(t, !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "value: dirty") ||
 				strings.Contains(out, "value: v2.0.0"), "pinned root rendered the working tree:\n%s", out)
 			if transport.calls.Load() != 0 {
@@ -366,8 +370,10 @@ func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SourceRef_PinnedPathIgnoresAddedDiscoveryObjects(t *testing.T) {
-	original, _, _, _ := sourceRefFixture(t)
-	current, _, _, _ := sourceRefFixture(t)
+	sourceRefFixtureResult2 := sourceRefFixture(t)
+	original, _, _, _ := sourceRefFixtureResult2.root, sourceRefFixtureResult2.repository, sourceRefFixtureResult2.before, sourceRefFixtureResult2.after
+	sourceRefFixtureResult3 := sourceRefFixture(t)
+	current, _, _, _ := sourceRefFixtureResult3.root, sourceRefFixtureResult3.repository, sourceRefFixtureResult3.before, sourceRefFixtureResult3.after
 	for _, root := range []string{original, current} {
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/entry.yaml, apps]\n")
 	}
@@ -403,7 +409,7 @@ spec:
 	)
 	harness.MutateFile(
 		t,
-		filepath.Join(current, "apps/kustomization.yaml"),
+		filepath.Join(current, "apps", "kustomization.yaml"),
 		"- cm.yaml\n",
 		"- cm.yaml\n- added-ks.yaml\n- added-rs.yaml\n",
 	)
@@ -416,7 +422,8 @@ spec:
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SourceRef_PinnedPathRendersDeletedKustomization(t *testing.T) {
-	root, repo, _, _ := sourceRefFixture(t)
+	sourceRefFixtureResult4 := sourceRefFixture(t)
+	root, repo, _, _ := sourceRefFixtureResult4.root, sourceRefFixtureResult4.repository, sourceRefFixtureResult4.before, sourceRefFixtureResult4.after
 	testutil.WriteFile(
 		t,
 		root,
@@ -427,7 +434,7 @@ func TestE2E_SourceRef_PinnedPathRendersDeletedKustomization(t *testing.T) {
 			"  path: ./leaf\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n",
 		),
 	)
-	harness.MutateFile(t, filepath.Join(root, "apps/kustomization.yaml"), "- cm.yaml\n", "- cm.yaml\n- child.yaml\n")
+	harness.MutateFile(t, filepath.Join(root, "apps", "kustomization.yaml"), "- cm.yaml\n", "- cm.yaml\n- child.yaml\n")
 	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(
 		t,
@@ -446,15 +453,16 @@ func TestE2E_SourceRef_PinnedPathRendersDeletedKustomization(t *testing.T) {
 	assert.NoError(t, repo.Storer.SetReference(
 		plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
 	))
-	assert.NoError(t, os.Remove(filepath.Join(root, "apps/child.yaml")))
+	assert.NoError(t, os.Remove(filepath.Join(root, "apps", "child.yaml")))
 	testutil.GitCommitAll(
 		t,
 		repo,
 		"init",
 		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
 	)
-	out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+	requireCLIOKResult4 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir())
+	out, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 	assert.FatalIf(
 		t,
 		!strings.Contains(out, "name: child-output") || !strings.Contains(out, "value: pinned-child"),
@@ -465,7 +473,8 @@ func TestE2E_SourceRef_PinnedPathRendersDeletedKustomization(t *testing.T) {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_SourceRef_PinnedPathOwnsWorkingTreeReleases(t *testing.T) {
-	root, repo, older, head := sourceRefFixture(t)
+	sourceRefFixtureResult5 := sourceRefFixture(t)
+	root, repo, older, head := sourceRefFixtureResult5.root, sourceRefFixtureResult5.repository, sourceRefFixtureResult5.before, sourceRefFixtureResult5.after
 	wt, err := repo.Worktree()
 	assert.NoError(t, err)
 	for _, hash := range []plumbing.Hash{older, head} {
@@ -506,21 +515,22 @@ data:
 			))
 		}
 	}
-	loader := installSourceRefTransport(t, repo.Storer)
-	harness.MutateFile(t, filepath.Join(root, "apps/release.yaml"), "greeting: pinned", "greeting: dirty")
-	release, err := os.ReadFile(filepath.Join(root, "apps/release.yaml"))
+	transport := installSourceRefTransport(t, repo.Storer)
+	harness.MutateFile(t, filepath.Join(root, "apps", "release.yaml"), "greeting: pinned", "greeting: dirty")
+	release, err := os.ReadFile(filepath.Join(root, "apps", "release.yaml"))
 	assert.NoError(t, err)
 	testutil.WriteFile(t, root, "apps/added.yaml", strings.Replace(string(release), "name: existing", "name: added", 1))
 	harness.MutateFile(
 		t,
-		filepath.Join(root, "apps/kustomization.yaml"),
+		filepath.Join(root, "apps", "kustomization.yaml"),
 		"- release.yaml\n",
 		"- release.yaml\n- added.yaml\n",
 	)
-	out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+	requireCLIOKResult5 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "json")
-	if loader.calls.Load() != 0 {
-		t.Fatalf("local pin accessed transport %d times", loader.calls.Load())
+	out, _ := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
+	if transport.calls.Load() != 0 {
+		t.Fatalf("local pin accessed transport %d times", transport.calls.Load())
 	}
 	var docs []struct {
 		APIVersion string `json:"APIVersion"`
@@ -569,14 +579,16 @@ func e2ESourceRefPinnedPathIgnoresAddedDiscoveryObjectsScope(
 	t.Helper()
 
 	path := filepath.Join((*current), (*scope))
-	out, _ := harness.RequireCLIOK(t, "build", "all", "--path", path,
+	requireCLIOKResult6 := harness.RequireCLIOK(t, "build", "all", "--path", path,
 		"--concurrency", "2", "--cache-dir", t.TempDir())
+	out, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 	docs, err := testutil.DecodeDocs(strings.NewReader(out))
 	assert.NoError(t, err)
 	ids := map[string]int{}
 	pinned := 0
 	for _, doc := range docs {
-		name, namespace := manifest.DocMetadata(doc)
+		metadata2 := manifest.DocMetadata(doc)
+		name, namespace := metadata2.Name, metadata2.Namespace
 		ids[manifest.DocKind(doc)+"/"+namespace+"/"+name]++
 		if manifest.DocKind(doc) == manifest.KindConfigMap && name == "hello" {
 			metadata := doc["metadata"].(map[string]any)
@@ -613,11 +625,13 @@ func e2ESourceRefPinnedPathIgnoresAddedDiscoveryObjectsScope(
 			"--path-orig", filepath.Join(paths[1], (*scope)), "--concurrency", "2", "--cache-dir", t.TempDir(),
 		}
 		if (*scope) == "flux" {
-			out, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
+			requireCLIOKResult7 := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
+			out, _ := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 			assert.FatalIf(t, out != "", "working-tree discovery objects changed the pinned diff:\n%s", out)
 			continue
 		}
-		product, _ := harness.RequireCLIOK(t, append(args, "-o", "json")...)
+		requireCLIOKResult8 := harness.RequireCLIOK(t, append(args, "-o", "json")...)
+		product, _ := requireCLIOKResult8.Stdout, requireCLIOKResult8.Stderr
 		var result struct {
 			Changes []struct {
 				Kind      string `json:"Kind"`

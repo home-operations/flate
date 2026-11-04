@@ -17,7 +17,8 @@ import (
 func TestE2E_SourceRef_NonHEADRendersPreserveCheckout(t *testing.T) {
 	for _, kind := range []string{"tag", "commit", "semver", "head", "no-ref"} {
 		t.Run(kind, func(t *testing.T) {
-			root, repo, a, _ := sourceRefFixture(t)
+			sourceRefFixtureResult1 := sourceRefFixture(t)
+			root, repo, a, _ := sourceRefFixtureResult1.root, sourceRefFixtureResult1.repository, sourceRefFixtureResult1.before, sourceRefFixtureResult1.after
 			ref := "tag: v1.0.0"
 			want := "v1.0.0"
 			switch kind {
@@ -31,7 +32,7 @@ func TestE2E_SourceRef_NonHEADRendersPreserveCheckout(t *testing.T) {
 				ref, want = "", "dirty"
 			}
 			setSourceRef(t, root, ref)
-			harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
+			harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: v2.0.0", "value: dirty")
 			wt, err := repo.Worktree()
 			assert.NoError(t, err)
 			beforeHead, err := repo.Head()
@@ -43,8 +44,9 @@ func TestE2E_SourceRef_NonHEADRendersPreserveCheckout(t *testing.T) {
 				before[path], err = os.ReadFile(filepath.Join(root, path))
 				assert.NoError(t, err)
 			}
-			out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+			requireCLIOKResult1 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 				"--concurrency", "2", "--cache-dir", t.TempDir())
+			out, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 			assert.FatalIf(t, !strings.Contains(out, "value: "+want) ||
 				kind != "head" && kind != "no-ref" &&
 					strings.Contains(out, "dirty"), "expected %s content:\n%s", want, out)

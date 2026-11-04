@@ -59,41 +59,29 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 			l.Index.Readers[file],
 			[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 		)
-		{
-			assert.ErrorIf(
-				t,
-				!slices.Contains(ownersForTest(l.Index, file), owner.Named()),
-				"owner missing for %s",
-				file,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!slices.Contains(ownersForTest(l.Index, file), owner.Named()),
+			"owner missing for %s",
+			file,
+		)
 	}
-	doc, _ := l.documents.read(filepath.Join(root, "entry"))
-	{
-		assert.FatalIf(t, doc == nil, "%s", "duplicate keys discarded the typed document")
-	}
+	doc := l.documents.read(filepath.Join(root, "entry")).body
+	assert.FatalIf(t, doc == nil, "%s", "duplicate keys discarded the typed document")
 	assert.Equal(t, doc.Namespace, "two")
-	doc, _ = l.documents.read(filepath.Join(root, "shared"))
-	{
-		assert.FatalIf(t, doc == nil || len(doc.Patches) != 1, "%s", "nested duplicate keys discarded the typed patch")
-	}
+	doc = l.documents.read(filepath.Join(root, "shared")).body
+	assert.FatalIf(t, doc == nil || len(doc.Patches) != 1, "%s", "nested duplicate keys discarded the typed patch")
 	assert.Equal(t, doc.Patches[0].Path, "../inputs/patch")
-	{
-		assert.ErrorIf(t, len(l.Index.Readers["inputs/ignored"]) != 0 ||
-			slices.Contains(
-				ownersForTest(l.Index, "inputs/ignored"),
-				owner.Named(),
-			), "%s", "discarded duplicate patch gained a reader or owner")
-	}
-	doc, _ = l.documents.read(filepath.Join(root, "alias"))
-	{
-		assert.FatalIf(t, doc == nil, "%s", "alias key discarded the typed document")
-	}
+	assert.ErrorIf(t, len(l.Index.Readers["inputs/ignored"]) != 0 ||
+		slices.Contains(
+			ownersForTest(l.Index, "inputs/ignored"),
+			owner.Named(),
+		), "%s", "discarded duplicate patch gained a reader or owner")
+	doc = l.documents.read(filepath.Join(root, "alias")).body
+	assert.FatalIf(t, doc == nil, "%s", "alias key discarded the typed document")
 	assert.Equal(t, doc.Namespace, "one")
-	doc, _ = l.documents.read(filepath.Join(root, "merge"))
-	{
-		assert.FatalIf(t, doc == nil, "%s", "duplicate merge keys discarded a typed document")
-	}
+	doc = l.documents.read(filepath.Join(root, "merge")).body
+	assert.FatalIf(t, doc == nil, "%s", "duplicate merge keys discarded a typed document")
 	assert.Equal(t, doc.Namespace, "one")
 	assert.Equal(t, doc.NamePrefix, "pre-")
 }
@@ -108,7 +96,7 @@ func TestTraversal_ImplicitMountedBoundary(t *testing.T) {
 				"entry/local.yaml":        {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: local}\n")},
 				"entry/nested/decoy.yaml": {Data: []byte("decoy")},
 			},
-			filepath.Join(root, "entry/nested"): fstest.MapFS{
+			filepath.Join(root, "entry", "nested"): fstest.MapFS{
 				"private.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: private}\n")},
 			},
 		},
@@ -331,23 +319,19 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 		idx.Readers["apps/missing"],
 		[]manifest.FileReader{{Reader: required.Named(), Source: manifest.BootstrapSourceID}},
 	)
-	{
-		assert.FatalIf(
-			t,
-			len(l.documents.cache[filepath.Join(root, "apps")].body.Components) != 0,
-			"%s",
-			"injected components mutated the cached document or retained ignored input",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(l.documents.cache[filepath.Join(root, "apps")].body.Components) != 0,
+		"%s",
+		"injected components mutated the cached document or retained ignored input",
+	)
 	{
 		data, ok := lookupDataForTest[*manifest.Secret](t, s, secretID("effective", "component"))
 		assert.FatalIf(t, !ok || data == nil, "%s", "injected component lost its inherited namespace")
 	}
 	warnings := s.Warnings()
-	{
-		assert.FatalIf(t, len(warnings) != 1 || len(warnings[0].Detail) != 1 || warnings[0].Resource != a.Named() ||
-			warnings[0].Category != manifest.WarnIncompleteInputCoverage, "component warnings crossed owners: %+v", warnings)
-	}
+	assert.FatalIf(t, len(warnings) != 1 || len(warnings[0].Detail) != 1 || warnings[0].Resource != a.Named() ||
+		warnings[0].Category != manifest.WarnIncompleteInputCoverage, "component warnings crossed owners: %+v", warnings)
 }
 
 //nolint:paralleltest // The transport trap changes process-global HTTP and Git clients.
@@ -482,22 +466,18 @@ func testFinalizeIndexConfigurationBoundariesCase(
 		assert.NoError(t, err)
 	}
 	warnings := s.Warnings()
-	{
-		assert.FatalIf(t, len(warnings) != 1 || warnings[0].Resource != owner.Named() ||
-			warnings[0].Category != manifest.WarnIncompleteInputCoverage ||
-			!slices.ContainsFunc(warnings[0].Detail, func(detail string) bool {
-				return strings.Contains(detail, "configuration reference cannot be inspected locally")
-			}), "missing source-boundary uncertainty: %+v", warnings)
-	}
+	assert.FatalIf(t, len(warnings) != 1 || warnings[0].Resource != owner.Named() ||
+		warnings[0].Category != manifest.WarnIncompleteInputCoverage ||
+		!slices.ContainsFunc(warnings[0].Detail, func(detail string) bool {
+			return strings.Contains(detail, "configuration reference cannot be inspected locally")
+		}), "missing source-boundary uncertainty: %+v", warnings)
 	for _, file := range []string{"../foreign/plugin.yaml", "foreign/plugin.yaml", "source/apps/private.txt", "apps/private.txt"} {
-		{
-			assert.ErrorIf(
-				t,
-				len(l.Index.Readers[file]) != 0,
-				"foreign configuration gained attribution: %s",
-				file,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			len(l.Index.Readers[file]) != 0,
+			"foreign configuration gained attribution: %s",
+			file,
+		)
 	}
 	{
 		id := (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "foreign"})
@@ -561,14 +541,12 @@ func testFinalizeIndexNestedConfigurationLoaderCase(
 	} else if len(s.Warnings()) != 0 {
 		t.Fatalf("metadata-only nested transformer warned: %+v", s.Warnings())
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(idx.Readers["apps/operand-patch"]) != 0,
-			"%s",
-			"nested invocation retained the outer plugin loader",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(idx.Readers["apps/operand-patch"]) != 0,
+		"%s",
+		"nested invocation retained the outer plugin loader",
+	)
 }
 
 func testLoaderInputRolesAndAdmissionCase(t *testing.T, testCaseInput *struct {
@@ -645,23 +623,19 @@ func testLoaderInputRolesAndAdmissionCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path), before)
 	}
 	assert.Equal(t, l.terminalInput(filepath.Join(root, testCaseInput.terminal)), true)
-	{
+	assert.FatalIf(
+		t,
+		candidateForTest(t, l, testutil.KustomizationID("projected", "dual")) == nil,
+		"%s",
+		"generator data role suppressed the declared resource",
+	)
+	for _, id := range []manifest.NamedResource{testutil.KustomizationID("authored", "terminal"), testutil.KustomizationID("projected", "terminal"), secretID("projected", "hidden"), secretID("authored", "hidden"), testutil.KustomizationID("authored", "hidden-config"), testutil.KustomizationID("projected", "hidden-config"), testutil.KustomizationID("authored", "directory-config"), testutil.KustomizationID("configuration-only", "directory-config"), testutil.KustomizationID("projected", "directory-config"), secretID("configuration-only", "directory-secret"), secretID("projected", "directory-secret")} {
 		assert.FatalIf(
 			t,
-			candidateForTest(t, l, testutil.KustomizationID("projected", "dual")) == nil,
-			"%s",
-			"generator data role suppressed the declared resource",
+			s.GetObject(id) != nil || len(l.Index.Records[id].Productions) != 0,
+			"terminal/configuration input was admitted, projected or registered as producer: %v",
+			id,
 		)
-	}
-	for _, id := range []manifest.NamedResource{testutil.KustomizationID("authored", "terminal"), testutil.KustomizationID("projected", "terminal"), secretID("projected", "hidden"), secretID("authored", "hidden"), testutil.KustomizationID("authored", "hidden-config"), testutil.KustomizationID("projected", "hidden-config"), testutil.KustomizationID("authored", "directory-config"), testutil.KustomizationID("configuration-only", "directory-config"), testutil.KustomizationID("projected", "directory-config"), secretID("configuration-only", "directory-secret"), secretID("projected", "directory-secret")} {
-		{
-			assert.FatalIf(
-				t,
-				s.GetObject(id) != nil || len(l.Index.Records[id].Productions) != 0,
-				"terminal/configuration input was admitted, projected or registered as producer: %v",
-				id,
-			)
-		}
 	}
 	for _, file := range []string{"apps/dual.yaml", testCaseInput.terminal, "apps/configuration.yaml", "apps/configuration/flux.yaml", "apps/configuration/external.yaml"} {
 		assert.Diff(
@@ -722,15 +696,13 @@ func testFinalizeIndexConfigurationCoverageCase(
 	rendererFixture(t, l, root)
 	first := s.Warnings()
 	if testCaseInput.warn {
-		{
-			assert.FatalIf(t, len(first) != 1 || first[0].Resource != owner.Named() ||
-				first[0].Category != manifest.WarnIncompleteInputCoverage ||
-				first[0].Count != 1 ||
-				!strings.Contains(
-					first[0].Message,
-					"flate build all without --base or --path-orig",
-				), "incomplete warning = %+v", first)
-		}
+		assert.FatalIf(t, len(first) != 1 || first[0].Resource != owner.Named() ||
+			first[0].Category != manifest.WarnIncompleteInputCoverage ||
+			first[0].Count != 1 ||
+			!strings.Contains(
+				first[0].Message,
+				"flate build all without --base or --path-orig",
+			), "incomplete warning = %+v", first)
 	} else {
 		assert.FatalIf(t, len(first) != 0, "safe namespace wrapper warned: %+v", first)
 	}
@@ -746,29 +718,23 @@ func testFinalizeIndexConfigurationCoverageCase(
 		if testCaseInput.name == "unknown plugin" {
 			declaring = "config/unknown.yaml"
 		}
-		{
-			assert.FatalIf(t, len(first[0].Detail) == 0 || !strings.Contains(first[0].Detail[0], declaring) ||
-				!slices.IsSorted(first[0].Detail), "missing declaring source or unstable detail: %+v", first)
-		}
+		assert.FatalIf(t, len(first[0].Detail) == 0 || !strings.Contains(first[0].Detail[0], declaring) ||
+			!slices.IsSorted(first[0].Detail), "missing declaring source or unstable detail: %+v", first)
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(l.Index.Readers["shared/value.txt"]) != 0,
-			"%s",
-			"opaque remote content invented a local reader",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			testCaseInput.name == "unknown plugin" && !slices.ContainsFunc(first[0].Detail, func(detail string) bool {
-				return strings.Contains(detail, "unknown plugin configuration may read additional files")
-			}),
-			"missing unknown-plugin uncertainty: %+v",
-			first,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(l.Index.Readers["shared/value.txt"]) != 0,
+		"%s",
+		"opaque remote content invented a local reader",
+	)
+	assert.FatalIf(
+		t,
+		testCaseInput.name == "unknown plugin" && !slices.ContainsFunc(first[0].Detail, func(detail string) bool {
+			return strings.Contains(detail, "unknown plugin configuration may read additional files")
+		}),
+		"missing unknown-plugin uncertainty: %+v",
+		first,
+	)
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)

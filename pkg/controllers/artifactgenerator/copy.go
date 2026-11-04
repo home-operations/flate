@@ -24,15 +24,20 @@ import (
 
 const strategyExtract = "Extract"
 
-func sourcePath(value string) (string, string, error) {
+type sourceSelection struct {
+	alias   string
+	pattern string
+}
+
+func sourcePath(value string) (sourceSelection, error) {
 	alias, pattern, ok := strings.Cut(value, "/")
 	if !ok || !strings.HasPrefix(alias, "@") || !aliasName.MatchString(strings.TrimPrefix(alias, "@")) {
-		return "", "", fmt.Errorf("invalid source %q", value)
+		return sourceSelection{alias: "", pattern: ""}, fmt.Errorf("invalid source %q", value)
 	}
 	if _, err := safepath.ArchiveName(pattern); pattern != "" && err != nil {
-		return "", "", err
+		return sourceSelection{alias: "", pattern: ""}, err
 	}
-	return alias[1:], pattern, nil
+	return sourceSelection{alias: alias[1:], pattern: pattern}, nil
 }
 
 func destinationPath(value string) (string, error) {
@@ -80,7 +85,8 @@ type copyPlan struct {
 }
 
 func (e *evaluation) prepareCopy(op operation) (copyPlan, error) {
-	alias, pattern, err := sourcePath(op.From)
+	sourcePathResult1, sourcePathResult1Err := sourcePath(op.From)
+	alias, pattern, err := sourcePathResult1.alias, sourcePathResult1.pattern, sourcePathResult1Err
 	if err != nil {
 		return copyPlan{}, err
 	}

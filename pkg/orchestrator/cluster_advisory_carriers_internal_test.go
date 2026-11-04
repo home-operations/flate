@@ -63,15 +63,13 @@ func testRenderTreesClusterAdvisoriesCase(t *testing.T, testCaseInput *string,
 	}
 	runs, err := RenderTrees(t.Context(), trees, cfg)
 	failed := (*testCaseInput) == "head_failed" || (*testCaseInput) == "base_failed"
-	{
-		assert.FatalIf(
-			t,
-			(err != nil) != failed || failed && !errors.Is(err, manifest.ErrFlux),
-			"render failure=%v, want failed=%t",
-			err,
-			failed,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(err != nil) != failed || failed && !errors.Is(err, manifest.ErrFlux),
+		"render failure=%v, want failed=%t",
+		err,
+		failed,
+	)
 	assertRenderClusterAdvisoryCarriers(t, runs, testCaseInput, len(clusters))
 }
 
@@ -87,14 +85,12 @@ func assertRenderClusterAdvisoryCarriers(t *testing.T, runs []Rendered, testCase
 			for warningIndex := range warningValues {
 				warning := warningValues[warningIndex]
 
-				{
-					assert.FatalIf(
-						t,
-						warning.Category == manifest.WarnSuppliedPrecedence,
-						"%v",
-						"cluster advisory escaped through side warnings",
-					)
-				}
+				assert.FatalIf(
+					t,
+					warning.Category == manifest.WarnSuppliedPrecedence,
+					"%v",
+					"cluster advisory escaped through side warnings",
+				)
 			}
 		}
 		if len(run.Result.ClusterWarnings) == 0 {

@@ -77,14 +77,12 @@ func testFinalizeIndexOwnersOfFileDanglingResourceCase(
 	assert.NoError(t, l.FinalizeIndex(t.Context(), dir, true))
 	if testCaseInput.statError != nil {
 		failed := l.documents.cache[filepath.Join(dir, input.missing)].objects
-		{
-			assert.FatalIf(
-				t,
-				len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrNotExist),
-				"unreadable resource = %+v",
-				failed,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrNotExist),
+			"unreadable resource = %+v",
+			failed,
+		)
 	}
 	{
 		err := l.FinalizeIndex(t.Context(), dir, true)

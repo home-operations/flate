@@ -97,14 +97,12 @@ func testRecordEmittedWithdrawalVisibilityCase(
 		s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 	}
 	s.SetArtifact(data.Obj.Named(), &SourceArtifact{Key: "live-data"})
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(data.Obj.Named(), ArtifactContent) == nil,
-			"%s",
-			"fixture data artifact was not retained before withdrawal",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(data.Obj.Named(), ArtifactContent) == nil,
+		"%s",
+		"fixture data artifact was not retained before withdrawal",
+	)
 	captured, lateRelease, withdrawRelease := make(
 		chan struct{},
 	), make(
@@ -170,14 +168,12 @@ func testRecordEmittedWithdrawalVisibilityCase(
 		checkEffectiveObject(t, s, data.Obj.Named(), independent)
 		assert.Equal(t, s.EmissionOwner(data.Obj.Named()), q)
 	}
-	{
-		assert.FatalIf(
-			t,
-			(*testCaseInput.shared) && s.GetArtifact(data.Obj.Named(), ArtifactContent) == payload,
-			"%s",
-			"hidden producer supplied bytes to the independently visible declaration",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*testCaseInput.shared) && s.GetArtifact(data.Obj.Named(), ArtifactContent) == payload,
+		"%s",
+		"hidden producer supplied bytes to the independently visible declaration",
+	)
 	testRecordEmittedWithdrawalVisibilityCaseCompletion(
 		t,
 		&testRecordEmittedWithdrawalVisibilityCaseCompletionState{
@@ -213,14 +209,12 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(
 		scope.s.UpdateFailure(id, manifest.NewError(manifest.ErrInput, nil, "hidden successor"))
 		scope.s.SetArtifact(id, &SourceArtifact{Key: "late"})
 		assert.Equal(t, scope.s.EmissionOwner(id), manifest.NamedResource{})
-		{
-			assert.FatalIf(
-				t,
-				scope.s.GetObject(id) != nil || scope.s.GetArtifact(id, ArtifactContent) != nil,
-				"%s",
-				"hidden payload leaked",
-			)
-		}
+		assert.FatalIf(
+			t,
+			scope.s.GetObject(id) != nil || scope.s.GetArtifact(id, ArtifactContent) != nil,
+			"%s",
+			"hidden payload leaked",
+		)
 		{
 			obj, _ := scope.s.Get[*manifest.Kustomization](id)
 			assert.FatalIf(t, obj != nil, "%s", "typed getter leaked")
@@ -233,21 +227,17 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(
 		obj, observation := scope.s.Snapshot(id, true)
 		info := observation.StatusInfo
 		conditions := observation.Conditions
-		{
-			assert.FatalIf(
-				t,
-				obj != nil || info != (StatusInfo{}) || len(conditions) != 0 || observation.Statusful,
-				"%s",
-				"hidden snapshot leaked",
-			)
-		}
+		assert.FatalIf(
+			t,
+			obj != nil || info != (StatusInfo{}) || len(conditions) != 0 || observation.Statusful,
+			"%s",
+			"hidden snapshot leaked",
+		)
 		if obj, _, attempt := scope.s.GetEmission(id); obj != nil {
 			attempt.Finish()
 			t.Fatal("hidden attempt leaked")
 		}
-		{
-			assert.FatalIf(t, len(scope.s.Productions(id, nil)) != 0, "%s", "hidden productions leaked")
-		}
+		assert.FatalIf(t, len(scope.s.Productions(id, nil)) != 0, "%s", "hidden productions leaked")
 		{
 			_, ok := scope.s.FailedResources()[id]
 			assert.FatalIf(t, ok, "%s", "hidden failure leaked")
@@ -259,39 +249,29 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(
 		}
 		checkEffectiveObject(t, scope.s, id, Child{})
 	}
-	{
-		assert.FatalIf(t, len(
-			scope.s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
-		) != (*scope.testCaseInput.workers)-1+boolInt((*scope.testCaseInput.shared)), "%s", "typed listing leaked hidden cycle")
-	}
+	assert.FatalIf(t, len(
+		scope.s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization),
+	) != (*scope.testCaseInput.workers)-1+boolInt((*scope.testCaseInput.shared)), "%s", "typed listing leaked hidden cycle")
 	for event := EventObjectAdded; event <= EventArtifactUpdated; event++ {
 		scope.s.AddListener(event, func(id manifest.NamedResource, _ any) {
-			{
-				assert.ErrorIf(t, slices.Contains((*scope.hidden), id), "%s", "hidden replay leaked")
-			}
+			assert.ErrorIf(t, slices.Contains((*scope.hidden), id), "%s", "hidden replay leaked")
 		}, true)()
 	}
-	{
-		assert.FatalIf(t, len(scope.s.Warnings()) != 0, "%s", "hidden payload contributed a conflict warning")
-	}
+	assert.FatalIf(t, len(scope.s.Warnings()) != 0, "%s", "hidden payload contributed a conflict warning")
 	scope.s.AddObject(&manifest.Kustomization{Name: scope.k.Name, Namespace: scope.k.Namespace})
-	{
-		assert.FatalIf(
-			t,
-			scope.s.GetObject((*scope.k)) == nil || scope.s.GetObject((*scope.l)) == nil ||
-				scope.s.GetObject(scope.late.Obj.Named()) == nil,
-			"%s",
-			"external anchor did not restore supported descendants",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			scope.s.GetArtifact(scope.late.Obj.Named(), ArtifactContent) != scope.payload,
-			"%s",
-			"reanchoring lost privately completed generated payload",
-		)
-	}
+	assert.FatalIf(
+		t,
+		scope.s.GetObject((*scope.k)) == nil || scope.s.GetObject((*scope.l)) == nil ||
+			scope.s.GetObject(scope.late.Obj.Named()) == nil,
+		"%s",
+		"external anchor did not restore supported descendants",
+	)
+	assert.FatalIf(
+		t,
+		scope.s.GetArtifact(scope.late.Obj.Named(), ArtifactContent) != scope.payload,
+		"%s",
+		"reanchoring lost privately completed generated payload",
+	)
 	for _, id := range *scope.hidden {
 		obj := scope.s.GetObject(id)
 		{
@@ -314,25 +294,19 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(
 			assert.ErrorIf(t, ok, "%s", "reanchoring restored retained Ready")
 		}
 	}
-	{
-		assert.FatalIf(t, !scope.s.DeleteObject((*scope.k)), "%s", "independent cycle anchor was not removed")
-	}
+	assert.FatalIf(t, !scope.s.DeleteObject((*scope.k)), "%s", "independent cycle anchor was not removed")
 	for _, id := range *scope.hidden {
-		{
-			assert.ErrorIf(
-				t,
-				scope.s.GetObject(id) != nil || scope.s.GetArtifact(id, ArtifactContent) != nil,
-				"%s",
-				"removed anchor retained a detached cycle",
-			)
-		}
-	}
-	{
-		assert.FatalIf(
+		assert.ErrorIf(
 			t,
-			(*scope.testCaseInput.shared) && scope.s.GetObject(scope.data.Obj.Named()) == nil,
+			scope.s.GetObject(id) != nil || scope.s.GetArtifact(id, ArtifactContent) != nil,
 			"%s",
-			"removed cycle anchor lost surviving Q support",
+			"removed anchor retained a detached cycle",
 		)
 	}
+	assert.FatalIf(
+		t,
+		(*scope.testCaseInput.shared) && scope.s.GetObject(scope.data.Obj.Named()) == nil,
+		"%s",
+		"removed cycle anchor lost surviving Q support",
+	)
 }

@@ -16,30 +16,20 @@ import (
 func mustParseCert(t *testing.T, pemStr string) *x509.Certificate {
 	t.Helper()
 	block, _ := pem.Decode([]byte(pemStr))
-	{
-		assert.FatalIf(t, block == nil, "no PEM data in certificate:\n%s", pemStr)
-	}
+	assert.FatalIf(t, block == nil, "no PEM data in certificate:\n%s", pemStr)
 	c, err := x509.ParseCertificate(block.Bytes)
-	{
-		assert.FatalIf(t, err != nil, "parsing certificate: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parsing certificate: %v", err)
 	return c
 }
 
 func mustParseEd25519Key(t *testing.T, pemStr string) ed25519.PrivateKey {
 	t.Helper()
 	block, _ := pem.Decode([]byte(pemStr))
-	{
-		assert.FatalIf(t, block == nil, "no PEM data in key:\n%s", pemStr)
-	}
+	assert.FatalIf(t, block == nil, "no PEM data in key:\n%s", pemStr)
 	k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	{
-		assert.FatalIf(t, err != nil, "parsing PKCS#8 key: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parsing PKCS#8 key: %v", err)
 	ed, ok := k.(ed25519.PrivateKey)
-	{
-		assert.FatalIf(t, !ok, "key is %T, want ed25519.PrivateKey", k)
-	}
+	assert.FatalIf(t, !ok, "key is %T, want ed25519.PrivateKey", k)
 	return ed
 }
 
@@ -56,14 +46,10 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
 	ca, err := genCAFn(t, fm)("my-ca", 365)
-	{
-		assert.FatalIf(t, err != nil, "genCA: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "genCA: %v", err)
 
 	caCert := mustParseCert(t, ca.Cert)
-	{
-		assert.ErrorIf(t, !caCert.IsCA, "%s", "genCA cert is not marked IsCA")
-	}
+	assert.ErrorIf(t, !caCert.IsCA, "%s", "genCA cert is not marked IsCA")
 	assert.ErrorIf(
 		t,
 		caCert.SignatureAlgorithm != x509.PureEd25519,
@@ -85,24 +71,16 @@ func TestCertFuncs_DeterministicAndValid(t *testing.T) {
 	mustParseEd25519Key(t, ca.Key)
 
 	again, err := genCAFn(t, Funcs(SeedFor("rel", "ns")))("my-ca", 365)
-	{
-		assert.FatalIf(t, err != nil, "genCA again: %v", err)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			again.Cert != ca.Cert || again.Key != ca.Key,
-			"%s",
-			"same seed produced a different CA (genCA not deterministic)",
-		)
-	}
+	assert.FatalIf(t, err != nil, "genCA again: %v", err)
+	assert.ErrorIf(
+		t,
+		again.Cert != ca.Cert || again.Key != ca.Key,
+		"%s",
+		"same seed produced a different CA (genCA not deterministic)",
+	)
 	other, err := genCAFn(t, Funcs(SeedFor("other", "ns")))("my-ca", 365)
-	{
-		assert.FatalIf(t, err != nil, "genCA other: %v", err)
-	}
-	{
-		assert.ErrorIf(t, other.Cert == ca.Cert, "%s", "different seeds produced an identical CA")
-	}
+	assert.FatalIf(t, err != nil, "genCA other: %v", err)
+	assert.ErrorIf(t, other.Cert == ca.Cert, "%s", "different seeds produced an identical CA")
 
 	for _, tt := range []struct {
 		name string
@@ -138,17 +116,11 @@ func TestGenSignedCert_RejectsNonEd25519CA(t *testing.T) {
 	t.Parallel()
 	fm := Funcs(SeedFor("rel", "ns"))
 	ca, err := genCAFn(t, fm)("my-ca", 365)
-	{
-		assert.FatalIf(t, err != nil, "genCA: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "genCA: %v", err)
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	{
-		assert.FatalIf(t, err != nil, "rsa.GenerateKey: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "rsa.GenerateKey: %v", err)
 	der, err := x509.MarshalPKCS8PrivateKey(rsaKey)
-	{
-		assert.FatalIf(t, err != nil, "MarshalPKCS8: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "MarshalPKCS8: %v", err)
 	ca.Key = string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 
 	genSigned := fm["genSignedCert"].(func(string, []any, []any, int, certificate) (certificate, error))
@@ -165,9 +137,7 @@ func TestGenSignedCert_RejectsNonEd25519CA(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := genSigned("leaf", tt.ips, nil, 365, tt.ca)
-			{
-				assert.FatalIf(t, err == nil, "%s", "genSignedCert accepted an invalid CA")
-			}
+			assert.FatalIf(t, err == nil, "%s", "genSignedCert accepted an invalid CA")
 			assert.Equal(t, err.Error(), tt.want)
 		})
 	}
@@ -198,9 +168,7 @@ func TestGenPrivateKey_ParsesPerType(t *testing.T) {
 
 	a := Funcs(SeedFor("rel", "ns"))["genPrivateKey"].(func(string) string)("rsa")
 	b := Funcs(SeedFor("rel", "ns"))["genPrivateKey"].(func(string) string)("rsa")
-	{
-		assert.ErrorIf(t, a != b, "%s", "same seed produced different keys")
-	}
+	assert.ErrorIf(t, a != b, "%s", "same seed produced different keys")
 }
 
 type testCertFuncsDeterministicAndValidCaseInputs struct {

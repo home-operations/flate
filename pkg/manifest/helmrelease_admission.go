@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	templateInterval = regexp.MustCompile(`^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$`)
-	templateTimeout  = regexp.MustCompile(`^([0-9]+(\.[0-9]+)?(ms|s|m))+$`)
+	templateInterval = regexp.MustCompile(`^(\d+(\.\d+)?(ms|s|m|h))+$`)
+	templateTimeout  = regexp.MustCompile(`^(\d+(\.\d+)?(ms|s|m))+$`)
 )
 
 func normalizeChartTemplate(spec *helmv2.HelmReleaseSpec) error {

@@ -50,13 +50,14 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 				objects:     st,
 				comparisons: &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}},
 			}
-			relative, indexed := c.coordinates(
+			coordinates2 := c.coordinates(
 				new(manifest.Production{
 					Source: manifest.BootstrapSourceID,
 					File:   file,
 					Path:   filepath.Join(sources[1].LocalPath, file),
 				}),
 			)
+			relative, indexed := coordinates2.relative, coordinates2.indexed
 			assert.Equal(t, relative, file)
 			assert.Equal(t, indexed, "input.txt")
 			assert.Equal(t, c.fileChanged(manifest.BootstrapSourceID, "input.txt"), true)

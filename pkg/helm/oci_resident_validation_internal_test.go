@@ -51,14 +51,12 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	prepared, err := client.prepareTemplate(t.Context(), hr, nil, &input)
 	assert.NoError(t, err)
 	resident := prepared.loaded.record
-	{
-		assert.FatalIf(
-			t,
-			resident == nil || resident.identity == "",
-			"%s",
-			"fixture did not retain the validated resident generation",
-		)
-	}
+	assert.FatalIf(
+		t,
+		resident == nil || resident.identity == "",
+		"%s",
+		"fixture did not retain the validated resident generation",
+	)
 	header := resident.frame.header
 	analysis := *header.Analysis
 	analysis.Version = "invalid"

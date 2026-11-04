@@ -409,8 +409,9 @@ func finishSelected(req *selectedRequest, inv *selectedInvocation, payload *sele
 		report.Warnings = append(report.Warnings, output.Warning{Warning: req.notice, Group: -1})
 	}
 	named := len(req.roots) > 0 && req.roots[0].Name != ""
-	groupErrors, remainders := appendSelectedGroups(&report, req, inv, payload)
-	final, diagnostic = errors.Join(final, groupErrors), errors.Join(diagnostic, remainders)
+	groupErrors := appendSelectedGroups(&report, req, inv, payload)
+
+	final, diagnostic = errors.Join(final, groupErrors.group), errors.Join(diagnostic, groupErrors.remainder)
 
 	names := report.Prepare(payload.subjects)
 	if payload.prepare != nil {
@@ -627,7 +628,7 @@ func appendSelectedGroups(
 	req *selectedRequest,
 	inv *selectedInvocation,
 	payload *selectedPayload,
-) (error, error) {
+) selectedErrors {
 	var groupErrors, remainders error
 	for i, group := range inv.groups {
 		g := &report.Groups[i]
@@ -635,18 +636,25 @@ func appendSelectedGroups(
 		if i < len(payload.rosters) {
 			g.Test = &payload.rosters[i]
 		}
-		groupErr, remainder := selectedGroupErrors(&group, len(inv.groups) > 1)
-		groupErrors, remainders = errors.Join(groupErrors, groupErr), errors.Join(remainders, remainder)
+		groupResult := selectedGroupErrors(&group, len(inv.groups) > 1)
+
+		groupErrors, remainders = errors.Join(
+			groupErrors,
+			groupResult.group,
+		), errors.Join(
+			remainders,
+			groupResult.remainder,
+		)
 
 		for j, side := range group.sides {
 			model := selectedFailureModel(req, &group, side, g.Test)
-			context := ""
+			snapshot := ""
 			if req.pair {
-				context = []string{"orig snapshot", "current snapshot"}[j]
+				snapshot = []string{"orig snapshot", "current snapshot"}[j]
 			}
-			model.Context = context
+			model.Context = snapshot
 			g.Models = append(g.Models, model)
-			appendSideDiagnostics(report, i, side, context)
+			appendSideDiagnostics(report, i, side, snapshot)
 		}
 		normalizeReportModels(g)
 
@@ -657,7 +665,7 @@ func appendSelectedGroups(
 			}
 		}
 	}
-	return groupErrors, remainders
+	return selectedErrors{group: groupErrors, remainder: remainders}
 }
 
 func reportHasFailures(report *output.Report) bool {
@@ -672,7 +680,7 @@ func reportHasFailures(report *output.Report) bool {
 	return false
 }
 
-func appendSideDiagnostics(report *output.Report, i int, side *selection.Selection, context string) {
+func appendSideDiagnostics(report *output.Report, i int, side *selection.Selection, snapshot string) {
 	g := &report.Groups[i]
 	if len(side.Subjects) != 0 {
 		if g.Subjects == nil {
@@ -688,7 +696,7 @@ func appendSideDiagnostics(report *output.Report, i int, side *selection.Selecti
 		warningValues := selectedWarnings(side)
 		for warningIndex := range warningValues {
 			warning := warningValues[warningIndex]
-			report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i, Context: context})
+			report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i, Context: snapshot})
 		}
 	}
 }
@@ -712,7 +720,7 @@ func testReportsFailed(reports []output.TestReport) bool {
 	return false
 }
 
-func selectedGroupErrors(group *selectedGroup, multi bool) (error, error) {
+func selectedGroupErrors(group *selectedGroup, multi bool) selectedErrors {
 	groupErr, remainder := group.err, group.remainder
 	if multi {
 		if groupErr != nil {
@@ -722,7 +730,7 @@ func selectedGroupErrors(group *selectedGroup, multi bool) (error, error) {
 			remainder = fmt.Errorf("cluster %s: %w", group.cluster, remainder)
 		}
 	}
-	return groupErr, remainder
+	return selectedErrors{group: groupErr, remainder: remainder}
 }
 
 const (
@@ -740,7 +748,8 @@ func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedReque
 	}
 	var stop func()
 	if barSink != nil {
-		cfg.StatusListener, stop = barSink.progress(ctx)
+		session := barSink.progress(ctx)
+		cfg.StatusListener, stop = session.observe, session.stop
 	}
 	runs, runErr := orchestrator.RenderTrees(ctx, inputTrees(&req.flags), *cfg)
 	if stop != nil {
@@ -751,3 +760,5 @@ func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedReque
 	}
 	i.collectRuns(req, runs)
 }
+
+type selectedErrors struct{ group, remainder error }

@@ -123,7 +123,10 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository, policy source
 		Depth:    f.Depth,
 		CABundle: []byte(cert[2]), ClientCert: []byte(cert[0]), ClientKey: []byte(cert[1]),
 	}
-	if kind, _ := (*manifest.GitRepositoryRef)(repo.Reference).Effective(); opts.Depth > 0 && kind == commitReference {
+	if reference := (*manifest.GitRepositoryRef)(
+		repo.Reference,
+	).Effective(); opts.Depth > 0 &&
+		reference.Kind == commitReference {
 		opts.Depth = 0
 	}
 	opts.ProxyOptions, err = gitProxyOptions(repo.URL, &resolved)
@@ -341,7 +344,8 @@ func (f *Fetcher) acquire(
 ) (*git.Repository, error) {
 	request := *requestValue
 	ref := (*manifest.GitRepositoryRef)(request.spec.Reference)
-	kind, value := ref.Effective()
+	reference2 := ref.Effective()
+	kind, value := reference2.Kind, reference2.Value
 	options := request.options
 	fetch := &git.FetchOptions{
 		Auth: options.Auth, ProxyOptions: options.ProxyOptions, CABundle: options.CABundle,
@@ -421,12 +425,12 @@ func (r *gitAcquisition) clone(
 	return repo, nil
 }
 
-func initRemote(storer storage.Storer, worktree billy.Filesystem, url string) (*git.Repository, error) {
+func initRemote(storer storage.Storer, worktree billy.Filesystem, remoteURL string) (*git.Repository, error) {
 	repo, err := git.Init(storer, worktree)
 	if err != nil {
 		return nil, fmt.Errorf("initialize git repository: %w", err)
 	}
-	_, err = repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
+	_, err = repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{remoteURL}})
 	if err != nil {
 		return repo, fmt.Errorf("create git remote: %w", err)
 	}
@@ -446,8 +450,8 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository) (*transport.Endpoin
 	}
 	if f.RestrictSchemes {
 		// Restricted scp-style remotes require an explicit user.
-		ssh := endpoint.Protocol == sshScheme && (endpoint.User != "" || strings.HasPrefix(repo.URL, "ssh://"))
-		if endpoint.Protocol != "https" && !ssh {
+		allowedSSH := endpoint.Protocol == sshScheme && (endpoint.User != "" || strings.HasPrefix(repo.URL, "ssh://"))
+		if endpoint.Protocol != "https" && !allowedSSH {
 			return nil, manifest.NewError(
 				manifest.ErrInput,
 				nil,

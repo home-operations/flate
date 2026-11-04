@@ -62,14 +62,12 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 	var afterRecovery chartDescription
 	afterRecovery, (*recovery.renderMapsErr) = (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
 	assert.NoError(t, (*recovery.renderMapsErr))
-	{
-		assert.FatalIf(
-			t,
-			afterRecovery.record == beforeRecovery.record || afterRecovery.record == nil,
-			"%s",
-			"recovered generation did not replace the typed record",
-		)
-	}
+	assert.FatalIf(
+		t,
+		afterRecovery.record == beforeRecovery.record || afterRecovery.record == nil,
+		"%s",
+		"recovered generation did not replace the typed record",
+	)
 	var recoveredOutput []map[string]any
 	recoveredOutput, (*recovery.renderMapsErr) = testutil.DecodeRender(afterRecovery.record.Output)
 	assert.NoError(t, (*recovery.renderMapsErr))

@@ -47,7 +47,8 @@ func TestE2E_EntryPackageJSON(t *testing.T) {
 			if verb == "diff" {
 				args = append(args, "--base", "HEAD")
 			}
-			stdout, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+			stdout, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 			for _, forbidden := range []string{`\u0000`, "\x00", "entry"} {
 				assert.ErrorIf(
 					t,
@@ -153,7 +154,8 @@ func TestE2E_EntryPackageFailure(t *testing.T) {
 			if tc.format != "" {
 				args = append(args, "-o", tc.format)
 			}
-			out, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+			out, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 			assert.FatalIf(t, code != 1 || !strings.Contains(out+stderr, ".cluster-vars.env") ||
 				!strings.Contains(out+stderr, "entry") ||
 				strings.Contains(stderr, "discovery package") ||
@@ -228,7 +230,8 @@ func TestE2E_DiscoveryPackageEntries(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			}
-			out, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult3 := harness.RequireCLIOK(t, args...)
+			out, stderr := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 			assert.FatalIf(
 				t,
 				strings.Count(out, "kind: ClusterRole") != 1 || !strings.Contains(out, "name: "+name+"-retained") ||
@@ -237,7 +240,8 @@ func TestE2E_DiscoveryPackageEntries(t *testing.T) {
 				out,
 				stderr,
 			)
-			again, _ := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult4 := harness.RequireCLIOK(t, args...)
+			again, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 			assert.Equal(t, again, out)
 		})
 	}

@@ -78,7 +78,8 @@ func Select(
 	}
 	candidates := selectionCandidates(sides)
 	prepareSelectionFailures(sides, roots, candidates)
-	selectedErr, remainder := selectionError(sides, runErr)
+	projection := selectionError(sides, runErr)
+	selectedErr, remainder := projection.selected, projection.remaining
 	return selected, selectedErr, remainder
 }
 
@@ -233,12 +234,12 @@ func (s *selectionSide) selectedObject(obj manifest.BaseManifest) bool {
 	if !s.run.filter.Enabled() || manifest.KindOf(obj).Discovery {
 		return true
 	}
-	_, selected, _, _ := s.run.filter.Membership(id)
+	selected := s.run.filter.Membership(id).Selected
 	if selected || s.run.store.GetObject(id) == nil {
 		return true
 	}
 	parent, owned := s.run.parentOf(id)
-	_, parentSelected, _, _ := s.run.filter.Membership(parent)
+	parentSelected := s.run.filter.Membership(parent).Selected
 	return owned && parentSelected
 }
 
@@ -282,11 +283,11 @@ type batchSelection struct {
 
 func (b *batchSelection) selectedOutput(id manifest.NamedResource) bool {
 	s, other := b.collection.side, b.collection.other
-	_, selected, _, _ := s.run.filter.Membership(id)
+	selected := s.run.filter.Membership(id).Selected
 	if selected || other == nil || other.run.Absent {
 		return selected
 	}
-	if _, selected, _, _ := other.run.filter.Membership(id); !selected {
+	if selected := other.run.filter.Membership(id).Selected; !selected {
 		return false
 	}
 	if !b.counterpartKnown {
@@ -313,7 +314,7 @@ func (b *batchSelection) selectDocuments(scoped bool) {
 	}
 	s := b.collection.side
 	if s.run.filter.Enabled() && !policy.DocumentScope {
-		if _, selected, _, _ := s.run.filter.Membership(b.object.Named()); !selected {
+		if selected := s.run.filter.Membership(b.object.Named()).Selected; !selected {
 			documents := []map[string]any{}
 			for _, doc := range b.batch.Documents {
 				if b.selectedOutput(manifest.DocIdentity(doc)) {
@@ -511,7 +512,7 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifes
 	if !(manifest.Selection{Roots: []manifest.NamedResource{root}}).Matches(id) {
 		return
 	}
-	if _, _, external := loader.SourceView(s.run.store, src, s.run.repoRoot); !external {
+	if !loader.SourceView(s.run.store, src, s.run.repoRoot).External {
 		return
 	}
 	info := s.status(id)
@@ -547,7 +548,7 @@ func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []ma
 		}
 		if !unavailable.IsUnavailable() {
 			owner, resolved := s.run.Orchestrator, local
-			_, selected, _, _ := s.run.filter.Membership(actual)
+			selected := s.run.filter.Membership(actual).Selected
 			if s.run.store.GetObject(actual) == nil || s.run.filter.Enabled() && !selected {
 				// Producers outside this projection MUST use the other snapshot's ancestry cache.
 				if counterpart == nil {

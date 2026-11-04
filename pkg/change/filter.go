@@ -28,15 +28,26 @@ func NewFilter() *Filter { return &Filter{} }
 // Enabled reports whether restricted execution membership is active.
 func (f *Filter) Enabled() bool { return f != nil }
 
+// Membership captures execution roles at one filter revision.
+type Membership struct {
+	Needed, Selected, Dirty bool
+	Revision                uint64
+}
+
 // Membership reads an identity's needed, selected and dirty roles with their revision.
-func (f *Filter) Membership(id manifest.NamedResource) (bool, bool, bool, uint64) {
+func (f *Filter) Membership(id manifest.NamedResource) Membership {
 	if f == nil {
-		return true, true, true, 0
+		return Membership{Needed: true, Selected: true, Dirty: true, Revision: 0}
 	}
 	f.mu.RLock()
 	roles, revision := f.keep[id], f.revision
 	f.mu.RUnlock()
-	return roles&needed != 0, roles&selected != 0, roles&dirty != 0, revision
+	return Membership{
+		Needed:   roles&needed != 0,
+		Selected: roles&selected != 0,
+		Dirty:    roles&dirty != 0,
+		Revision: revision,
+	}
 }
 
 // ShouldReconcile reports whether an identity is needed for this invocation.
@@ -68,12 +79,12 @@ func (f *Filter) AddEmitted(
 	changed := false
 	for axis, ids := range [3][]manifest.NamedResource{needs, selects, dirties} {
 		for _, id := range ids {
-			newlyNeeded, updated := f.addRoles(id, uint8(axis), max(len(needs), len(selects), len(dirties)))
-			if !updated {
+			update := f.addRoles(id, uint8(axis), max(len(needs), len(selects), len(dirties)))
+			if !update.updated {
 				continue
 			}
 			changed = true
-			if newlyNeeded {
+			if update.needed {
 				if added == nil {
 					added = make([]manifest.NamedResource, 0, max(len(needs), len(selects), len(dirties)))
 				}
@@ -89,21 +100,23 @@ func (f *Filter) AddEmitted(
 	return added, false
 }
 
+type roleUpdate struct{ needed, updated bool }
+
 // f.mu MUST be held by the caller.
-func (f *Filter) addRoles(id manifest.NamedResource, axis uint8, capacity int) (bool, bool) {
+func (f *Filter) addRoles(id manifest.NamedResource, axis uint8, capacity int) roleUpdate {
 	if id == (manifest.NamedResource{}) {
-		return false, false
+		return roleUpdate{}
 	}
 	previous := f.keep[id]
 	roles := previous | needed | 1<<axis
 	if roles == previous {
-		return false, false
+		return roleUpdate{}
 	}
 	if f.keep == nil {
 		f.keep = make(map[manifest.NamedResource]uint8, capacity)
 	}
 	f.keep[id] = roles
-	return previous&needed == 0, true
+	return roleUpdate{needed: previous&needed == 0, updated: true}
 }
 
 // LogValue snapshots membership when the log handler requests it.

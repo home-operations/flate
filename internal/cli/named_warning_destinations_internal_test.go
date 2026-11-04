@@ -16,7 +16,7 @@ func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
 			root := writeNamedScopeFixture(t)
-			body, err := os.ReadFile(filepath.Join(root, "cluster/unrelated.yaml"))
+			body, err := os.ReadFile(filepath.Join(root, "cluster", "unrelated.yaml"))
 			assert.NoError(t, err)
 			testutil.WriteFile(
 				t,
@@ -24,7 +24,7 @@ func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 				"cluster/unrelated.yaml",
 				strings.Replace(string(body), "namespace: flux-system", "namespace: other", 1),
 			)
-			out, stderr, code := runCLI(
+			cli := runCLI(
 				t,
 				verb,
 				"hr",
@@ -38,6 +38,7 @@ func TestRun_NamedScope_UnrelatedNamespaceWarnings(t *testing.T) {
 				"--concurrency",
 				"2",
 			)
+			out, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.Equal(t, code, 0)
 			assert.FatalIf(
 				t,
@@ -62,8 +63,9 @@ func TestRun_NamedScope_TestWarningDestinations(t *testing.T) {
 				appendScopeSpec(t, root, "cluster/hr.yaml", "  dependsOn: [{name: fatal-dependency}]\n")
 				wantCode = 1
 			}
-			out, stderr, code := runCLI(t, "test", "hr", "selected", "--path", filepath.Join(root, "cluster"),
+			cli := runCLI(t, "test", "hr", "selected", "--path", filepath.Join(root, "cluster"),
 				"--cache-dir", t.TempDir(), "--concurrency", "2")
+			out, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.Equal(t, code, wantCode)
 			assert.Equal(
 				t,

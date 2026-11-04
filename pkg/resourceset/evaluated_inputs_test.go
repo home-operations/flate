@@ -23,12 +23,8 @@ data:
   malformed: << if hasKey inputs "malformed" >>present<< else >>omitted<< end >>`,
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 1, "documents = %d, want 1", len(docs))
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(docs) != 1, "documents = %d, want 1", len(docs))
 	assert.Diff(t, docs[0].Document["data"], map[string]any{"value": "null", "malformed": "omitted"})
 }
 
@@ -59,12 +55,8 @@ func TestRender_EmptyInputRule(t *testing.T) {
 					}, nil
 				}
 				docs, _, err := renderProviders(rs, resolve, nil)
-				{
-					assert.NoError(t, err)
-				}
-				{
-					assert.FatalIf(t, len(docs) != want, "docs = %d, want %d", len(docs), want)
-				}
+				assert.NoError(t, err)
+				assert.FatalIf(t, len(docs) != want, "docs = %d, want %d", len(docs), want)
 			})
 		}
 	}

@@ -50,17 +50,13 @@ func TestRender_DuplicateID_NamesProducers(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected a duplicate-id build failure")
-	}
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: "),
-			"duplicate failure lost renderer attribution: %v",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected a duplicate-id build failure")
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: "),
+		"duplicate failure lost renderer attribution: %v",
+		err,
+	)
 	s := err.Error()
 	for _, want := range []string{
 		"already registered id",
@@ -68,18 +64,14 @@ func TestRender_DuplicateID_NamesProducers(t *testing.T) {
 		"./apps/a",
 		"./apps/b",
 	} {
-		{
-			assert.ErrorIf(t, !strings.Contains(s, want), "error missing %q:\n%s", want, s)
-		}
+		assert.ErrorIf(t, !strings.Contains(s, want), "error missing %q:\n%s", want, s)
 	}
-	{
-		assert.ErrorIf(
-			t,
-			strings.Index(s, "./apps/a") > strings.Index(s, "./apps/b"),
-			"producer paths must be sorted (a before b):\n%s",
-			s,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		strings.Index(s, "./apps/a") > strings.Index(s, "./apps/b"),
+		"producer paths must be sorted (a before b):\n%s",
+		s,
+	)
 }
 
 // TestRender_DistinctIDs_NoDiagnostic confirms a healthy aggregate renders
@@ -104,12 +96,8 @@ func TestRender_DistinctIDs_NoDiagnostic(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(out) == 0, "%s", "empty render")
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(out) == 0, "%s", "empty render")
 }
 
 func TestRender_NonDuplicateError_Unannotated(t *testing.T) {
@@ -131,25 +119,19 @@ func TestRender_NonDuplicateError_Unannotated(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected a build failure")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: "),
-			"build failure lost renderer attribution: %v",
-			err,
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			strings.Contains(err.Error(), "duplicate resource(s) produced"),
-			"a non-duplicate error must not carry the diagnostic:\n%s",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected a build failure")
+	assert.ErrorIf(
+		t,
+		!errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: "),
+		"build failure lost renderer attribution: %v",
+		err,
+	)
+	assert.ErrorIf(
+		t,
+		strings.Contains(err.Error(), "duplicate resource(s) produced"),
+		"a non-duplicate error must not carry the diagnostic:\n%s",
+		err,
+	)
 }
 
 func TestRender_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
@@ -166,17 +148,13 @@ func TestRender_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected a build failure")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			strings.Contains(err.Error(), "duplicate resource(s) produced"),
-			"non-duplicate error carries the diagnostic:\n%s",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected a build failure")
+	assert.ErrorIf(
+		t,
+		strings.Contains(err.Error(), "duplicate resource(s) produced"),
+		"non-duplicate error carries the diagnostic:\n%s",
+		err,
+	)
 }
 
 func TestRender_DuplicateID_Unattributable_FallsBack(t *testing.T) {
@@ -203,29 +181,21 @@ func TestRender_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected a duplicate-id build failure")
-	}
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: "),
-			"duplicate failure lost renderer attribution: %v",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected a duplicate-id build failure")
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: "),
+		"duplicate failure lost renderer attribution: %v",
+		err,
+	)
 	s := err.Error()
-	{
-		assert.ErrorIf(t, !strings.Contains(s, "already registered id"), "expected the raw duplicate-id error:\n%s", s)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			strings.Contains(s, "duplicate resource(s) produced"),
-			"a file-level dup is unattributable; diagnostic must stay silent:\n%s",
-			s,
-		)
-	}
+	assert.ErrorIf(t, !strings.Contains(s, "already registered id"), "expected the raw duplicate-id error:\n%s", s)
+	assert.ErrorIf(
+		t,
+		strings.Contains(s, "duplicate resource(s) produced"),
+		"a file-level dup is unattributable; diagnostic must stay silent:\n%s",
+		s,
+	)
 }
 
 func TestRender_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
@@ -248,31 +218,23 @@ func TestRender_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected duplicate-id failure")
-	}
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: "),
-			"duplicate failure lost renderer attribution: %v",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected duplicate-id failure")
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: "),
+		"duplicate failure lost renderer attribution: %v",
+		err,
+	)
 	_, diagnostic, ok := strings.Cut(err.Error(), "duplicate resource(s) produced by multiple accumulated paths:")
-	{
-		assert.FatalIf(t, !ok, "missing diagnostic attribution: %v", err)
-	}
+	assert.FatalIf(t, !ok, "missing diagnostic attribution: %v", err)
 	for _, producer := range []string{"./apps/k00", "./apps/k01"} {
-		{
-			assert.ErrorIf(
-				t,
-				!strings.Contains(diagnostic+"\n", "\n      - "+producer+"\n"),
-				"diagnostic missing producer %s: %s",
-				producer,
-				diagnostic,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!strings.Contains(diagnostic+"\n", "\n      - "+producer+"\n"),
+			"diagnostic missing producer %s: %s",
+			producer,
+			diagnostic,
+		)
 	}
 }
 

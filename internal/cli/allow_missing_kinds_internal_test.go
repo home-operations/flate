@@ -41,7 +41,7 @@ func TestRun_AllowMissingKindsValidation(t *testing.T) {
 	root := substitutionFixture(t, "", "literal")
 	for _, arg := range []string{"secret", "Unknown", "true", "Secret,,ConfigMap", "Secret,"} {
 		t.Run(arg, func(t *testing.T) {
-			_, diagnostic, code := runCLI(
+			cli := runCLI(
 				t,
 				"build",
 				"all",
@@ -51,11 +51,13 @@ func TestRun_AllowMissingKindsValidation(t *testing.T) {
 				filepath.Join(root, "absent.yaml"),
 				"--allow-missing-kinds="+arg,
 			)
+			diagnostic, code := cli.stderr, cli.code
 			assert.FatalIf(t, code != 1 || !strings.Contains(diagnostic, "--allow-missing-kinds") ||
 				strings.Contains(diagnostic, "--supply"), "validation after input I/O: exit=%d %s", code, diagnostic)
 		})
 	}
-	_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--allow-missing-kinds")
+	cli2 := runCLI(t, "build", "all", "--path", root, "--allow-missing-kinds")
+	diagnostic, code := cli2.stderr, cli2.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(diagnostic, "needs an argument"),
@@ -80,7 +82,8 @@ func TestEnv_AllowMissingKindsPrecedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("FLATE_ALLOW_MISSING_KINDS", tc.environment)
 			args := append([]string{"build", "all", "--path", root, "--concurrency=2"}, tc.flags...)
-			_, diagnostic, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			diagnostic, code := cli.stderr, cli.code
 			assert.FatalIf(t, (code != 0) != tc.fail, "exit=%d %s", code, diagnostic)
 		})
 	}

@@ -9,52 +9,73 @@ import (
 	"github.com/home-operations/flate/internal/cli"
 )
 
+type cliResult struct {
+	Stdout string
+	Stderr string
+	Code   int
+}
+
 // RunCLIBuffers runs the CLI in process and returns separate stdout, stderr and exit status.
-func RunCLIBuffers(args ...string) (string, string, int) {
+func RunCLIBuffers(args ...string) cliResult {
 	var code int
 
 	var out, err bytes.Buffer
 	code = cli.Run(args, &out, &err)
-	return out.String(), err.String(), code
+	return cliResult{Stdout: out.String(), Stderr: err.String(), Code: code}
+}
+
+type cliOutput struct {
+	Stdout string
+	Stderr string
 }
 
 // RequireCLIOK requires a successful CLI exit and returns separate stdout and stderr.
-func RequireCLIOK(t *testing.T, args ...string) (string, string) {
+func RequireCLIOK(t *testing.T, args ...string) cliOutput {
 	t.Helper()
 	var stdout string
 	var stderr string
-	stdout, stderr, code := RunCLIBuffers(args...)
+	runCLIBuffersResult1 := RunCLIBuffers(args...)
+	stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 	if code != 0 {
 		t.Fatalf("flate %s exited %d\nstdout:\n%s\nstderr:\n%s",
 			strings.Join(args, " "), code, stdout, stderr)
 	}
-	return stdout, stderr
+	return cliOutput{Stdout: stdout, Stderr: stderr}
 }
 
 // RunCLI requires a successful CLI exit and returns stdout followed by stderr.
 func RunCLI(t *testing.T, args ...string) string {
 	t.Helper()
-	stdout, stderr := RequireCLIOK(t, args...)
+	requireCLIOKResult2 := RequireCLIOK(t, args...)
+	stdout, stderr := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	return stdout + stderr
 }
 
 // RunCLIOutputOnly returns stdout followed by stderr regardless of exit status.
 func RunCLIOutputOnly(t *testing.T, args ...string) string {
 	t.Helper()
-	stdout, stderr, _ := RunCLIBuffers(args...)
+	runCLIBuffersResult3 := RunCLIBuffers(args...)
+	stdout, stderr, _ := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 	return stdout + stderr
 }
 
 // RunCLIStdout requires a successful CLI exit and returns only stdout.
 func RunCLIStdout(t *testing.T, args ...string) string {
 	t.Helper()
-	stdout, _ := RequireCLIOK(t, args...)
+	requireCLIOKResult4 := RequireCLIOK(t, args...)
+	stdout, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 	return stdout
 }
 
+type cliError struct {
+	Output string
+	Code   int
+}
+
 // RunCLIExpectErr returns stdout followed by stderr and the CLI exit status.
-func RunCLIExpectErr(t *testing.T, args ...string) (string, int) {
+func RunCLIExpectErr(t *testing.T, args ...string) cliError {
 	t.Helper()
-	stdout, stderr, code := RunCLIBuffers(args...)
-	return stdout + stderr, code
+	runCLIBuffersResult5 := RunCLIBuffers(args...)
+	stdout, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
+	return cliError{Output: stdout + stderr, Code: code}
 }

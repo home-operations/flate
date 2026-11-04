@@ -101,48 +101,40 @@ func testTemplateCacheTemplateIntegrationFreshAnalysisHandoff(t *testing.T) {
 		assert.NoError(t, err)
 		docs, receipt, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(
-				t,
-				len(docs) != 1 || receipt == nil,
-				"fresh render %s returned %d documents and receipt %v",
-				marker,
-				len(docs),
-				receipt,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(docs) != 1 || receipt == nil,
+			"fresh render %s returned %d documents and receipt %v",
+			marker,
+			len(docs),
+			receipt,
+		)
 		cli.chartMu.RLock()
 		canonical := cli.chartCache[prepared.loaded.key].analysis
 		cli.chartMu.RUnlock()
 		frame := receipt.Value().(renderFrame)
-		{
-			assert.FatalIf(
-				t,
-				frame.header.Analysis != canonical,
-				"fresh render %s cloned immutable chart analysis",
-				marker,
-			)
-		}
-		{
-			assert.FatalIf(
-				t,
-				frame.chart != nil || frame.encoded != nil,
-				"%s",
-				"fresh receipt retained noncompact backing",
-			)
-		}
+		assert.FatalIf(
+			t,
+			frame.header.Analysis != canonical,
+			"fresh render %s cloned immutable chart analysis",
+			marker,
+		)
+		assert.FatalIf(
+			t,
+			frame.chart != nil || frame.encoded != nil,
+			"%s",
+			"fresh receipt retained noncompact backing",
+		)
 		again, reused, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 		assert.NoError(t, err)
 		assert.Diff(t, docs, again)
 		cached := reused.Value().(renderFrame)
-		{
-			assert.FatalIf(
-				t,
-				cached.header.Analysis != canonical,
-				"%s",
-				"cached render reconstructed canonical analysis",
-			)
-		}
+		assert.FatalIf(
+			t,
+			cached.header.Analysis != canonical,
+			"%s",
+			"cached render reconstructed canonical analysis",
+		)
 		assert.Diff(t, frame.output, cached.output)
 		docs[0]["data"].(map[string]any)["marker"] = "mutated"
 		assert.Equal(t, again[0]["data"].(map[string]any)["marker"].(string), marker)
@@ -174,15 +166,13 @@ func testTemplateCacheTemplateIntegrationCase(
 		cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: sources}),
 	)
 	if testCaseInput.invalid {
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(firstErr, manifest.ErrInput) || first != nil,
-				"cold invalid list = %#v, %v",
-				first,
-				firstErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(firstErr, manifest.ErrInput) || first != nil,
+			"cold invalid list = %#v, %v",
+			first,
+			firstErr,
+		)
 	} else {
 		assert.NoError(t, firstErr)
 		assert.NoError(
@@ -255,16 +245,14 @@ func testTemplateCacheTemplateIntegrationCase(
 			),
 		)
 		if testCaseInput.invalid {
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, manifest.ErrInput) || err.Error() != firstErr.Error() || out != nil,
-					"persisted invalid list = %#v, %v; cold = %v",
-					out,
-					err,
-					firstErr,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, manifest.ErrInput) || err.Error() != firstErr.Error() || out != nil,
+				"persisted invalid list = %#v, %v; cold = %v",
+				out,
+				err,
+				firstErr,
+			)
 		} else {
 			assert.NoError(t, err)
 			assert.Diff(t, out, first)
@@ -376,17 +364,15 @@ func testTemplateCacheTemplateIntegrationCase2(
 		)
 		assert.Equal(t, key != "", keyed)
 		assert.Equal(t, len(probe), i+1)
-		{
-			assert.FatalIf(
-				t,
-				len(out) != 0 || err == nil || !strings.HasPrefix(err.Error(), "helm template: ") ||
-					!strings.Contains(err.Error(), want),
-				"keyed=%t: output %v, error %v",
-				keyed,
-				out,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(out) != 0 || err == nil || !strings.HasPrefix(err.Error(), "helm template: ") ||
+				!strings.Contains(err.Error(), want),
+			"keyed=%t: output %v, error %v",
+			keyed,
+			out,
+			err,
+		)
 		{
 			_, storage := errors.AsType[*cache.CacheError](err)
 			assert.FatalIf(t, storage, "keyed=%t: producer failure classified as storage: %v", keyed, err)
@@ -509,9 +495,7 @@ extra: {sequence: [{value: original}]}
 		}
 	}
 
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	canonical, err := loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 	assert.NoError(t, err)
 	beforeReads := reads["mychart/templates/configmap.yaml"]
@@ -533,9 +517,7 @@ extra: {sequence: [{value: original}]}
 		}
 	}
 
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	assert.Diff(t, second, first)
 	admittedKey := ""
 	blocked, receipt15, err := testutil.RenderMaps(
@@ -559,9 +541,7 @@ extra: {sequence: [{value: original}]}
 
 	assert.NoError(t, err)
 	assert.Diff(t, blocked, []map[string]any(nil))
-	{
-		assert.FatalIf(t, admittedKey == "", "%s", "completed output bypassed admission")
-	}
+	assert.FatalIf(t, admittedKey == "", "%s", "completed output bypassed admission")
 	if (*testCaseInput) != "acquired" {
 		assert.Equal(t, reads["mychart/templates/configmap.yaml"], beforeReads+2)
 	}
@@ -587,14 +567,10 @@ extra: {sequence: [{value: original}]}
 		}
 	}
 
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	assert.Equal(t, reflect.DeepEqual(third, first), false)
 	loaded, err := loadDecodedChart(t.Context(), cli, newHR(), cliSources)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	values := map[string]any{"greeting": "hi", "fail": true}
 	loaded.values, loaded.valuesErr = cli.observeValuesFiles(
 		t.Context(), &loaded, newHR().ChartValuesFiles,
@@ -618,9 +594,7 @@ extra: {sequence: [{value: original}]}
 			return cache.ProducerResult{}, writeTestRecordErr
 		},
 	)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 
 	{
 		closeErr := owner.Close()
@@ -682,14 +656,12 @@ extra: {sequence: [{value: original}]}
 			assert.NoError(t, recordErr)
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			err == nil || !strings.Contains(err.Error(), "cache miss action"),
-			"changed input did not miss completed output: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err == nil || !strings.Contains(err.Error(), "cache miss action"),
+		"changed input did not miss completed output: %v",
+		err,
+	)
 	testTemplateCacheTemplateIntegrationCase3Loop(t, struct {
 		testCaseInput **string
 		chartRoot     *string
@@ -714,9 +686,7 @@ func testTemplateCacheTemplateIntegrationCase3Loop(t *testing.T, loopInputs stru
 	if (*(*loopInputs.testCaseInput)) == "acquired" {
 		assert.NoError(t, os.RemoveAll(filepath.Join((*loopInputs.chartRoot), "oci", "blobs")))
 		_, err := fs.ReadFile((*loopInputs.input), "mychart/templates/configmap.yaml")
-		{
-			assert.FatalIf(t, err == nil, "%s", "backing removal did not prevent chart reads")
-		}
+		assert.FatalIf(t, err == nil, "%s", "backing removal did not prevent chart reads")
 		repeated, receipt27, err := testutil.RenderMaps(
 			(*loopInputs.cli).Template(
 				t.Context(),

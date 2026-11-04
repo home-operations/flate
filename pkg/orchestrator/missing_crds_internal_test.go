@@ -152,9 +152,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 		Name:      "flux-operator",
 	}
 	info, ok := o.store.GetStatus(id)
-	{
-		assert.FatalIf(t, !ok || info.Status != store.StatusReady, "ResourceSet status=%+v", info)
-	}
+	assert.FatalIf(t, !ok || info.Status != store.StatusReady, "ResourceSet status=%+v", info)
 	art, ok := o.store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
 	if !ok || len(art.Manifests) != 2 {
 		t.Fatalf(
@@ -166,9 +164,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 		)
 	}
 	docs, err := testutil.DecodeDocs(strings.NewReader(issueResourceSet))
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	spec := docs[0]["spec"].(map[string]any)
 	children := spec["resources"].([]any)
 	want := make([]map[string]any, 0, len(children))
@@ -180,21 +176,18 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 			"resourceset.fluxcd.controlplane.io/namespace": "flux-system",
 		}
 		want = append(want, doc)
-		obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
+		parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
+		obj := parsed.Object
+		assert.FatalIf(t, err != nil, "%v", err)
 		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
-		{
-			{
-				diff := cmp.Diff(
-					o.store.GetObject(obj.Named()),
-					obj,
-					cmp.AllowUnexported(manifest.Kustomization{}, manifest.OCIRepository{}, manifest.HelmChartSource{}),
-					cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
-					cmpopts.IgnoreUnexported(manifest.HelmRelease{}),
-				)
-				assert.FatalIf(t, diff != "", "stored objects changed (-want +got): %s", diff)
-			}
+			diff := cmp.Diff(
+				o.store.GetObject(obj.Named()),
+				obj,
+				cmp.AllowUnexported(manifest.Kustomization{}, manifest.OCIRepository{}, manifest.HelmChartSource{}),
+				cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"),
+				cmpopts.IgnoreUnexported(manifest.HelmRelease{}),
+			)
+			assert.FatalIf(t, diff != "", "stored objects changed (-want +got): %s", diff)
 		}
 	}
 	slices.SortFunc(
@@ -507,21 +500,17 @@ func testMissingCRDsChildrenAndProducersCase(
 		[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingKinds: allowed},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
 	res := renderedSingleton1[0].Result
 	if (testCaseInput.mode == "absent" || testCaseInput.mode == "unreferenced") &&
 		!testCaseInput.enabled {
-		{
-			assert.FatalIf(
-				t,
-				err == nil || !strings.Contains(err.Error(), "dependency not found"),
-				"strict absent error=%v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || !strings.Contains(err.Error(), "dependency not found"),
+			"strict absent error=%v",
+			err,
+		)
 		assert.Equal(
 			t,
 			o.store.GetArtifact(
@@ -537,9 +526,7 @@ func testMissingCRDsChildrenAndProducersCase(
 		)
 		return
 	}
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	assertIssueChildren(t, o)
 	crd := manifest.NamedResource{
 		Group: "apiextensions.k8s.io",

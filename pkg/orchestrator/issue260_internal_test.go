@@ -111,20 +111,24 @@ spec:
 `)
 
 	dir := t.TempDir()
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/flux/cluster/ks.yaml"), clusterKS)
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/ks.yaml"), homepageKS)
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/repos/ocirepository.yaml"), ociRepo)
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes", "flux", "cluster", "ks.yaml"), clusterKS)
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes", "apps", "default", "homepage", "ks.yaml"), homepageKS)
 	testutil.WriteFileAt(
 		t,
-		filepath.Join(dir, "kubernetes/apps/default/homepage/config/kustomization.yaml"),
+		filepath.Join(dir, "kubernetes", "apps", "default", "homepage", "repos", "ocirepository.yaml"),
+		ociRepo,
+	)
+	testutil.WriteFileAt(
+		t,
+		filepath.Join(dir, "kubernetes", "apps", "default", "homepage", "config", "kustomization.yaml"),
 		"resources: []\n",
 	)
 	testutil.WriteFileAt(
 		t,
-		filepath.Join(dir, "kubernetes/apps/default/homepage/app/kustomization.yaml"),
+		filepath.Join(dir, "kubernetes", "apps", "default", "homepage", "app", "kustomization.yaml"),
 		"resources: []\n",
 	)
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/networking/echo.yaml"), echoCM)
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes", "apps", "networking", "echo.yaml"), echoCM)
 
 	o, err := newTestOrchestrator(t, Tree{
 		Path:            dir,

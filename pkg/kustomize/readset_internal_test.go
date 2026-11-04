@@ -83,14 +83,12 @@ func TestReadSet_Snapshot(t *testing.T) {
 	}
 	frame := testRenderFrame(t, new(snap), []byte("output"))
 	reversed := record([]string{"a", "z"})
-	{
-		assert.FatalIf(
-			t,
-			!bytes.Equal(frame, testRenderFrame(t, new(reversed.snapshot()), []byte("output"))),
-			"%s",
-			"snapshot frame depends on observation order",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!bytes.Equal(frame, testRenderFrame(t, new(reversed.snapshot()), []byte("output"))),
+		"%s",
+		"snapshot frame depends on observation order",
+	)
 	rs.recordFile(filepath.Join(root, "a.yaml"), []byte("changed"), nil)
 	rs.recordDir(filepath.Join(root, "a-dir"), []string{"new-child"})
 	rs.recordNode(filepath.Join(root, "a-node"), kindFile)
@@ -99,14 +97,12 @@ func TestReadSet_Snapshot(t *testing.T) {
 		diff := cmp.Diff(want, snap)
 		assert.FatalIf(t, diff != "", "frozen snapshot mutated (-want +got):\n%s", diff)
 	}
-	{
-		assert.FatalIf(
-			t,
-			!bytes.Equal(frame, testRenderFrame(t, new(snap), []byte("output"))),
-			"%s",
-			"frozen snapshot frame changed after recording",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!bytes.Equal(frame, testRenderFrame(t, new(snap), []byte("output"))),
+		"%s",
+		"frozen snapshot frame changed after recording",
+	)
 	empty := readSetSnapshot{Files: []localEntry{}, Dirs: []localEntry{}, Nodes: []localEntry{}}
 	{
 		diff := cmp.Diff(empty, newReadSet(root).snapshot())
@@ -143,14 +139,12 @@ func TestReadSet_SnapshotConcurrentRecording(t *testing.T) {
 	snap := <-read
 	<-written
 	for _, entries := range [][]localEntry{snap.Files, snap.Dirs} {
-		{
-			assert.FatalIf(
-				t,
-				!slices.IsSortedFunc(entries, func(a, b localEntry) int { return strings.Compare(a.Path, b.Path) }),
-				"unsorted snapshot entries: %+v",
-				entries,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!slices.IsSortedFunc(entries, func(a, b localEntry) int { return strings.Compare(a.Path, b.Path) }),
+			"unsorted snapshot entries: %+v",
+			entries,
+		)
 	}
 	assert.FatalIf(
 		t,
@@ -160,14 +154,12 @@ func TestReadSet_SnapshotConcurrentRecording(t *testing.T) {
 	)
 	for _, node := range snap.Nodes {
 		matches := func(entry localEntry) bool { return entry.Path == node.Path }
-		{
-			assert.ErrorIf(
-				t,
-				slices.ContainsFunc(snap.Files, matches) || slices.ContainsFunc(snap.Dirs, matches),
-				"redundant node in snapshot: %+v",
-				node,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			slices.ContainsFunc(snap.Files, matches) || slices.ContainsFunc(snap.Dirs, matches),
+			"redundant node in snapshot: %+v",
+			node,
+		)
 	}
 	want := readSetSnapshot{
 		Files: []localEntry{
@@ -364,9 +356,7 @@ func validReadSet(t *testing.T, incoming *readSetSnapshot, lower fs.FS) bool {
 	t.Helper()
 	snap := *incoming
 	valid, err := snap.stillValid(t.Context(), nil, &treeFS{lower: lower}, false)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	return valid
 }
 
@@ -390,9 +380,7 @@ func TestReadSet_RemotePolicyValidation(t *testing.T) {
 		{Operation: remoteGit, URL: "file:///repo", Timeout: time.Minute, Submodules: false},
 	} {
 		_, identity, err := input.acquire(t.Context(), c, &treeFS{})
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		rec.recordRemote(input, &identity, nil)
 	}
 	snap := rec.snapshot()
@@ -473,14 +461,12 @@ func testReadSetHitAndInvalidationUnchangedTreeIsAHit(
 ) {
 	t.Helper()
 
-	{
-		assert.ErrorIf(
-			t,
-			!validReadSet(t, testCaseInput.snap, (*testCaseInput.base)()),
-			"%s",
-			"identical tree must validate (cache hit)",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!validReadSet(t, testCaseInput.snap, (*testCaseInput.base)()),
+		"%s",
+		"identical tree must validate (cache hit)",
+	)
 }
 
 type testReadSetHitAndInvalidationEditingARecordedFileMissesInputs struct {
@@ -496,14 +482,12 @@ func testReadSetHitAndInvalidationEditingARecordedFileMisses(
 
 	d := (*testCaseInput.base)()
 	d["a.yaml"] = &fstest.MapFile{Data: []byte("kind: ConfigMap\ndata: {x: y}\n")}
-	{
-		assert.ErrorIf(
-			t,
-			validReadSet(t, testCaseInput.snap, d),
-			"%s",
-			"an edit to a recorded input must invalidate (cache miss)",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		validReadSet(t, testCaseInput.snap, d),
+		"%s",
+		"an edit to a recorded input must invalidate (cache miss)",
+	)
 }
 
 type testReadSetHitAndInvalidationEditingAnUNREADFileStaysAHitGranularityInputs struct {
@@ -519,14 +503,12 @@ func testReadSetHitAndInvalidationEditingAnUNREADFileStaysAHitGranularity(
 
 	d := (*testCaseInput.base)()
 	d["b.yaml"] = &fstest.MapFile{Data: []byte("kind: Secret\nstringData: {k: v}\n")}
-	{
-		assert.ErrorIf(
-			t,
-			!validReadSet(t, testCaseInput.snap, d),
-			"%s",
-			"b.yaml was never read by this build; editing it must NOT invalidate",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!validReadSet(t, testCaseInput.snap, d),
+		"%s",
+		"b.yaml was never read by this build; editing it must NOT invalidate",
+	)
 }
 
 type testReadSetHitAndInvalidationAddingAFileToTheListedDirMissesInputs struct {
@@ -542,14 +524,12 @@ func testReadSetHitAndInvalidationAddingAFileToTheListedDirMisses(
 
 	d := (*testCaseInput.base)()
 	d["c.yaml"] = &fstest.MapFile{Data: []byte("kind: Service\n")}
-	{
-		assert.ErrorIf(
-			t,
-			validReadSet(t, testCaseInput.snap, d),
-			"%s",
-			"a new file in the auto-scanned dir must invalidate",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		validReadSet(t, testCaseInput.snap, d),
+		"%s",
+		"a new file in the auto-scanned dir must invalidate",
+	)
 }
 
 type testReadSetHitAndInvalidationDeletingARecordedFileMissesInputs struct {
@@ -565,9 +545,7 @@ func testReadSetHitAndInvalidationDeletingARecordedFileMisses(
 
 	d := (*testCaseInput.base)()
 	delete(d, "a.yaml")
-	{
-		assert.ErrorIf(t, validReadSet(t, testCaseInput.snap, d), "%s", "deleting a recorded input must invalidate")
-	}
+	assert.ErrorIf(t, validReadSet(t, testCaseInput.snap, d), "%s", "deleting a recorded input must invalidate")
 }
 
 type testReadSetHitAndInvalidationAProbedAbsentComponentAppearingMissesInputs struct {
@@ -583,14 +561,12 @@ func testReadSetHitAndInvalidationAProbedAbsentComponentAppearingMisses(
 
 	d := (*testCaseInput.base)()
 	d["comp/kustomization.yaml"] = &fstest.MapFile{}
-	{
-		assert.ErrorIf(
-			t,
-			validReadSet(t, testCaseInput.snap, d),
-			"%s",
-			"an optional component that materialized must invalidate",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		validReadSet(t, testCaseInput.snap, d),
+		"%s",
+		"an optional component that materialized must invalidate",
+	)
 }
 
 func testReadSetHitAndInvalidationCase(t *testing.T, testCaseInput *struct {
@@ -603,14 +579,12 @@ func testReadSetHitAndInvalidationCase(t *testing.T, testCaseInput *struct {
 	const root = "/src/app"
 
 	snap := recordAgainst(root, testCaseInput.before, reads{probed: []string{"comp"}})
-	{
-		assert.FatalIf(
-			t,
-			!validReadSet(t, &snap, testCaseInput.before) || validReadSet(t, &snap, testCaseInput.after),
-			"%s",
-			"probed node transition did not invalidate",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!validReadSet(t, &snap, testCaseInput.before) || validReadSet(t, &snap, testCaseInput.after),
+		"%s",
+		"probed node transition did not invalidate",
+	)
 }
 
 type testReadSetRemoteObservationsCaseInputs struct {
@@ -624,14 +598,12 @@ type testReadSetRemoteObservationsCaseInputs struct {
 func testReadSetRemoteObservationsCase(t *testing.T, testCaseInput *testReadSetRemoteObservationsCaseInputs) {
 	t.Helper()
 	rs := newReadSet("/src")
-	{
-		assert.FatalIf(
-			t,
-			rs.remotes != nil || rs.snapshot().Remotes != nil,
-			"%s",
-			"local-only recorder allocated remote observations",
-		)
-	}
+	assert.FatalIf(
+		t,
+		rs.remotes != nil || rs.snapshot().Remotes != nil,
+		"%s",
+		"local-only recorder allocated remote observations",
+	)
 	ordered := slices.Clone((*testCaseInput.entries))
 	if *testCaseInput.reverse {
 		slices.Reverse(ordered)
@@ -653,9 +625,7 @@ func testReadSetRemoteObservationsCase(t *testing.T, testCaseInput *testReadSetR
 		assert.FatalIf(t, diff != "", "observations (-want +got):\n%s", diff)
 	}
 	frame, err := encodeFrame(&renderHeader{Reads: snap}, []byte("output"))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	decodedFrame, err := decodeFrame(frame)
 	decoded := decodedFrame.header.Reads
 	assert.FatalIf(
@@ -666,14 +636,12 @@ func testReadSetRemoteObservationsCase(t *testing.T, testCaseInput *testReadSetR
 		err,
 	)
 	testCaseInput.firstOnce.Do(func() { *testCaseInput.first = frame })
-	{
-		assert.FatalIf(
-			t,
-			!bytes.Equal(frame, (*testCaseInput.first)),
-			"%s",
-			"snapshot order depends on observation order",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!bytes.Equal(frame, (*testCaseInput.first)),
+		"%s",
+		"snapshot order depends on observation order",
+	)
 	rs.recordRemote(
 		(*testCaseInput.entries)[3].Input,
 		&(*testCaseInput.entries)[3].Identity,
@@ -683,7 +651,5 @@ func testReadSetRemoteObservationsCase(t *testing.T, testCaseInput *testReadSetR
 		diff := cmp.Diff((*testCaseInput.want), snap.Remotes)
 		assert.FatalIf(t, diff != "", "frozen snapshot mutated (-want +got):\n%s", diff)
 	}
-	{
-		assert.FatalIf(t, len(rs.snapshot().Remotes[0].Parents) != 5, "%s", "additional parent was not recorded")
-	}
+	assert.FatalIf(t, len(rs.snapshot().Remotes[0].Parents) != 5, "%s", "additional parent was not recorded")
 }

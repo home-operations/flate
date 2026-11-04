@@ -19,10 +19,11 @@ import (
 func TestFetcher_Freshness_WarmConnections(t *testing.T) {
 	t.Parallel()
 	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-	srv, _ := newMutableFakeRegistry(t, artifact)
+	registry := newMutableFakeRegistry(t, artifact)
+
 	var heads, manifests, layers, connections atomic.Int32
-	handler := srv.Config.Handler
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := registry.server.Config.Handler
+	registry.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		testFetcherFreshnessWarmConnectionsCallback(
 			w,
 			r,
@@ -35,15 +36,15 @@ func TestFetcher_Freshness_WarmConnections(t *testing.T) {
 		)
 	},
 	)
-	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+	registry.server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
 		if state == http.StateNew {
 			connections.Add(1)
 		}
 	}
-	srv.StartTLS()
+	registry.server.StartTLS()
 	root := t.TempDir()
 	repo := &manifest.OCIRepository{
-		Name: "first", Namespace: "test", URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
+		Name: "first", Namespace: "test", URL: "oci://" + mustURL(t, registry.server.URL).Host + "/app", Insecure: true,
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
 	for _, invocation := range []string{"cold", "reopened"} {

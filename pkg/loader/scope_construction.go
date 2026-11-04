@@ -64,15 +64,15 @@ func (l *Loader) scopeSource(stateArg *sourceState) int {
 			return i
 		}
 	}
-	root, pinned, external := SourceView(l.Store, state.id, state.repoRoot)
+	location := SourceView(l.Store, state.id, state.repoRoot)
 	l.scopes.sources = append(
 		l.scopes.sources,
 		sourceScope{
 			sourceState: state,
-			root:        root,
-			pinned:      pinned,
-			external:    external,
-			origin:      new(l.documents).localBase(root, state.repoRoot),
+			root:        location.Path,
+			pinned:      location.Pinned,
+			external:    location.External,
+			origin:      new(l.documents).localBase(location.Path, state.repoRoot),
 		},
 	)
 	return len(l.scopes.sources) - 1

@@ -66,10 +66,12 @@ type testFetcherTLSOperationsCaseCaseInputs struct {
 func testFetcherTLSOperationsCaseCase(t *testing.T, testCaseInput testFetcherTLSOperationsCaseCaseInputs) {
 	t.Helper()
 
-	cert, ca := tlsGitCertificate(t)
-	crt, key := testutil.SelfSignedClientCert(t)
+	certificate2 := tlsGitCertificate(t)
+
+	certificate3 := testutil.SelfSignedClientCert(t)
+
 	clients := x509.NewCertPool()
-	clients.AppendCertsFromPEM([]byte(crt))
+	clients.AppendCertsFromPEM([]byte(certificate3.Cert))
 	handler := gitHTTPHandler(t, (*(*testCaseInput.root)))
 	var requests, advertisements, connections atomic.Int32
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +85,7 @@ func testFetcherTLSOperationsCaseCase(t *testing.T, testCaseInput testFetcherTLS
 		handler.ServeHTTP(w, r)
 	}))
 	srv.TLS = &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		Certificates: []tls.Certificate{certificate2.certificate},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    clients,
 	}
@@ -107,9 +109,9 @@ func testFetcherTLSOperationsCaseCase(t *testing.T, testCaseInput testFetcherTLS
 			StringData: map[string]any{
 				"username": "alice",
 				"password": "p",
-				"ca.crt":   ca,
-				"tls.crt":  crt,
-				"tls.key":  key,
+				"ca.crt":   certificate2.pem,
+				"tls.crt":  certificate3.Cert,
+				"tls.key":  certificate3.Key,
 			},
 		}
 	}}

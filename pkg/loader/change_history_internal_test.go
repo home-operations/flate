@@ -455,7 +455,7 @@ func testRefineHistorySourceQualifiedRootsCase(
 		testutil.WriteFile(t, root, "apps/red/file", "same")
 		testutil.WriteFile(t, root, "parts/deep/placeholder", "same")
 		testutil.WriteFile(t, root, "parts/shared/file", "changed")
-		assert.NoError(t, os.Symlink("../../parts/deep", filepath.Join(root, "apps/red/link")))
+		assert.NoError(t, os.Symlink("../../parts/deep", filepath.Join(root, "apps", "red", "link")))
 		art.FS = os.DirFS(root)
 		roots, changed = []string{"apps/red/link/../shared"}, "parts/shared/file"
 	}

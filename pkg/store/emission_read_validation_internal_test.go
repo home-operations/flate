@@ -73,14 +73,12 @@ func testRecordEmittedReadsInvalidatedBeforeCommitCase(
 	defer reads.Retire()
 	reads.GetObject(input.Obj.Named())
 	rejectedHead := reads.input(input.Obj.Named()).object.head
-	{
-		assert.FatalIf(
-			t,
-			acceptedHead == rejectedHead,
-			"%s",
-			"accepted and successor-only inputs share a registration head",
-		)
-	}
+	assert.FatalIf(
+		t,
+		acceptedHead == rejectedHead,
+		"%s",
+		"accepted and successor-only inputs share a registration head",
+	)
 	name := child.Name
 	if (*testCaseInput) == "replacement" {
 		name = "replacement"
@@ -111,62 +109,46 @@ func testRecordEmittedReadsInvalidatedBeforeCommitCase(
 	case <-done:
 		t.Fatal("publication did not reach the admission barrier")
 	}
-	{
-		assert.FatalIf(t, !reads.Valid(), "%s", "reads invalid before concurrent input replacement")
-	}
+	assert.FatalIf(t, !reads.Valid(), "%s", "reads invalid before concurrent input replacement")
 	s.AddObject(emissionChild("input", "new").Obj)
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "input replacement did not invalidate the pending publication")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "input replacement did not invalidate the pending publication")
 	resume()
 	<-done
-	{
-		assert.FatalIf(t, s.GetArtifact(owner, ArtifactContent) != previous || s.GetObject(child.Named()) != child ||
-			s.GetArtifact(child.Named(), ArtifactContent) != nil, "%s", "stale proposal replaced authoritative output")
-	}
-	{
-		assert.FatalIf(
-			t,
-			(*testCaseInput) == "replacement" && s.GetObject(barrier.ConfigMap.Named()) != nil,
-			"%s",
-			"stale proposal installed a replacement child",
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			previous.OutputReads != &accepted || accepted.retired.Load(),
-			"%s",
-			"rejected proposal retired accepted output provenance",
-		)
-	}
+	assert.FatalIf(t, s.GetArtifact(owner, ArtifactContent) != previous || s.GetObject(child.Named()) != child ||
+		s.GetArtifact(child.Named(), ArtifactContent) != nil, "%s", "stale proposal replaced authoritative output")
+	assert.FatalIf(
+		t,
+		(*testCaseInput) == "replacement" && s.GetObject(barrier.ConfigMap.Named()) != nil,
+		"%s",
+		"stale proposal installed a replacement child",
+	)
+	assert.ErrorIf(
+		t,
+		previous.OutputReads != &accepted || accepted.retired.Load(),
+		"%s",
+		"rejected proposal retired accepted output provenance",
+	)
 	reads.Retire()
 	assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
-	{
-		assert.ErrorIf(
-			t,
-			!reads.retired.Load() || rejectedHead.first.Load() != nil,
-			"%s",
-			"sweep retained rejected attempt registrations",
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			acceptedHead.first.Load() == nil || s.GetArtifact(owner, ArtifactContent) != previous,
-			"%s",
-			"sweep removed accepted output or its input registration",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!reads.retired.Load() || rejectedHead.first.Load() != nil,
+		"%s",
+		"sweep retained rejected attempt registrations",
+	)
+	assert.ErrorIf(
+		t,
+		acceptedHead.first.Load() == nil || s.GetArtifact(owner, ArtifactContent) != previous,
+		"%s",
+		"sweep removed accepted output or its input registration",
+	)
 	s.AddObject(emissionChild("accepted-input", "new").Obj)
-	{
-		assert.FatalIf(
-			t,
-			!slices.Contains(slices.Collect(s.Sweep()), owner),
-			"%s",
-			"accepted input change did not notify its owner after successor rejection",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Contains(slices.Collect(s.Sweep()), owner),
+		"%s",
+		"accepted input change did not notify its owner after successor rejection",
+	)
 }
 
 type acceptanceBarrier struct {
@@ -270,20 +252,16 @@ func testRecordEmittedRejectedSuccessorRetainsOutputReadsCase(
 	tasks.BlockTillDone()
 	assert.Equal(t, tasks.Failures(), 0)
 	assert.Equal(t, writes.Load(), 0)
-	{
-		assert.FatalIf(
-			t,
-			!first.Valid() || first.retired.Load() || st.GetArtifact(owner.Named(), ArtifactContent) != accepted,
-			"%s",
-			"rejected successor retired or replaced valid predecessor output",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			next.Footprint() != nil || successor.Valid(),
-			"%s",
-			"commit-boundary rejection supplied acceptance",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!first.Valid() || first.retired.Load() || st.GetArtifact(owner.Named(), ArtifactContent) != accepted,
+		"%s",
+		"rejected successor retired or replaced valid predecessor output",
+	)
+	assert.FatalIf(
+		t,
+		next.Footprint() != nil || successor.Valid(),
+		"%s",
+		"commit-boundary rejection supplied acceptance",
+	)
 }

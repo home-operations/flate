@@ -84,14 +84,12 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		)
 	}
 	initial := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(
-			t,
-			len(initial.Manifests) != 2 || len(initial.Children) != 2,
-			"%v",
-			"initial render did not retain both documents and identities",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(initial.Manifests) != 2 || len(initial.Children) != 2,
+		"%v",
+		"initial render did not retain both documents and identities",
+	)
 	var reader store.ReadSet
 	reader.Init(
 		s,
@@ -108,51 +106,44 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	freshProvider := *provider
 	freshProvider.Labels = map[string]string{"color": "blue", "revision": "fresh"}
 	s.AddObject(&freshProvider)
-	{
-		assert.FatalIf(t, settled.Valid(), "%v", "provider metadata change did not invalidate captured inputs")
-	}
+	assert.FatalIf(t, settled.Valid(), "%v", "provider metadata change did not invalidate captured inputs")
 	replay := c.newExecution(rs.Named())
 	defer replay.run.Close()
 	{
-		{
-			_, _, err := renderProviders(
-				rs,
-				resourceset.StoreResolver(&replay.run.Reads),
-				func(content any) (bool, error) {
-					{
-						assert.FatalIf(
-							t,
-							manifest.Fingerprint(content) != initial.Fingerprint,
-							"%v",
-							"metadata refresh changed the rendered input projection",
-						)
-					}
-					return true, nil
-				},
-			)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		_, _, err := renderProviders(
+			rs,
+			resourceset.StoreResolver(&replay.run.Reads),
+			func(content any) (bool, error) {
+				assert.FatalIf(
+					t,
+					manifest.Fingerprint(content) != initial.Fingerprint,
+					"%v",
+					"metadata refresh changed the rendered input projection",
+				)
+				return true, nil
+			},
+		)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	_, _, inventory := replay.run.Reads.GetEmission(rs.Named())
-	inventory.Children, inventory.Manifests, inventory.Failures = c.ParseChildren(
+	parseChildrenResult1 := c.ParseChildren(
 		rs,
 		initial.Manifests,
 		manifest.ParseDocOptions{WipeSecrets: true},
 	)
+	inventory.Children, inventory.Manifests, inventory.Failures = parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	inventory.Complete = true
 	replay.run.Emit(t.Context(), rs.Named(), &inventory, nil)
 	inventory.Finish()
 	{
-		{
-			accepted := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-			assert.ErrorIf(t, accepted.Fingerprint != initial.Fingerprint ||
-				!cmp.Equal(accepted.Manifests, initial.Manifests) ||
-				!cmp.Equal(
-					accepted.Children,
-					initial.Children,
-					cmpopts.IgnoreUnexported(store.Child{}),
-				), "%v", "same-inventory publication lost its rendered identity or bytes")
-		}
+		accepted := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+		assert.ErrorIf(t, accepted.Fingerprint != initial.Fingerprint ||
+			!cmp.Equal(accepted.Manifests, initial.Manifests) ||
+			!cmp.Equal(
+				accepted.Children,
+				initial.Children,
+				cmpopts.IgnoreUnexported(store.Child{}),
+			), "%v", "same-inventory publication lost its rendered identity or bytes")
 	}
 	var objectEvents, statusEvents atomic.Int64
 	var statusChange atomic.Value
@@ -187,14 +178,12 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 			statusChange.Load(),
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			initial.Fingerprint != after.Fingerprint || !cmp.Equal(initial.Manifests, after.Manifests),
-			"%v",
-			"equal effective inputs changed accepted content",
-		)
-	}
+	assert.FatalIf(
+		t,
+		initial.Fingerprint != after.Fingerprint || !cmp.Equal(initial.Manifests, after.Manifests),
+		"%v",
+		"equal effective inputs changed accepted content",
+	)
 	fresh := *rs
 	fresh.ResourcesTemplate += "\n"
 	s.AddObject(&fresh)
@@ -244,7 +233,8 @@ func publishResourceSetDocuments(
 	parent.EmissionPolicy().Stamp(docs)
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
-	next.Children, next.Manifests, next.Failures = c.ParseChildren(parent, docs, manifest.ParseDocOptions{})
+	parseChildrenResult2 := c.ParseChildren(parent, docs, manifest.ParseDocOptions{})
+	next.Children, next.Manifests, next.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 	next.Complete = true
 	controllertest.Emit(tb.Context(), c.Controller, id, &next)
 }
@@ -286,7 +276,8 @@ func benchmarkReadRegistrationCollectionCase(b *testing.B, count *int, mode *str
 
 	rs := selectorFixture("consumer", "blue")
 	s.AddObject(rs)
-	pivot, versions := registrationProviders(s, count, mode)
+	registrationProvidersResult1 := registrationProviders(s, count, mode)
+	pivot, versions := registrationProvidersResult1.pivot, registrationProvidersResult1.versions
 	assessment := c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone)
 	defer func() { assessment.Close() }()
 	var renders atomic.Int64
@@ -408,11 +399,16 @@ func benchmarkDirtyRerunIndependentWritersCase(b *testing.B, order *string, work
 	b.ReportMetric(float64(dispatches.Load())/float64(b.N), "dispatches/op")
 }
 
+type providerVersions struct {
+	pivot    *manifest.ResourceSetInputProvider
+	versions [2]*manifest.ResourceSetInputProvider
+}
+
 func registrationProviders(
 	s *store.Store,
 	count *int,
 	mode *string,
-) (*manifest.ResourceSetInputProvider, [2]*manifest.ResourceSetInputProvider) {
+) providerVersions {
 	var pivot *manifest.ResourceSetInputProvider
 	for i := range *count {
 		color := "blue"
@@ -438,7 +434,7 @@ func registrationProviders(
 		}
 		versions[i] = &fresh
 	}
-	return pivot, versions
+	return providerVersions{pivot: pivot, versions: versions}
 }
 
 type independentWriterRounds struct {
@@ -485,12 +481,13 @@ func runIndependentWriterRounds(b *testing.B, scope *independentWriterRounds) {
 				var fp string
 				docs, _, err := renderProviders(rs, resolve, func(content any) (bool, error) {
 					var err error
-					fp, _, err = execution.run.FingerprintDedup(
+					fingerprintDedupResult3, fingerprintDedupResult3Err := execution.run.FingerprintDedup(
 						b.Context(),
 						rs.Named(),
 						content,
 						&store.Emission{},
 					)
+					fp, _, err = fingerprintDedupResult3.Fingerprint, fingerprintDedupResult3.Reused, fingerprintDedupResult3Err
 					return false, err
 				})
 				scope.renders.Add(1)
@@ -507,11 +504,12 @@ func runIndependentWriterRounds(b *testing.B, scope *independentWriterRounds) {
 			outcomes := artifacts[i].Manifests
 			scope.sets[i].EmissionPolicy().Stamp(outcomes)
 			_, _, next := (*scope.s).GetEmission(id)
-			next.Children, next.Manifests, next.Failures = (*scope.c).ParseChildren(
+			parseChildrenResult4 := (*scope.c).ParseChildren(
 				(*scope.c).Store.GetObject(id),
 				outcomes,
 				manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace},
 			)
+			next.Children, next.Manifests, next.Failures = parseChildrenResult4.Children, parseChildrenResult4.Visible, parseChildrenResult4.Failures
 			next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
 			controllertest.Emit(b.Context(), (*scope.c).Controller, id, &next)
 			scope.expected[i].fingerprint, scope.expected[i].manifests = next.Fingerprint, next.Manifests

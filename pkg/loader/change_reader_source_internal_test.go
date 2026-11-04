@@ -593,7 +593,7 @@ func testFilterReadSourceAlternativesCase(t *testing.T, testCaseInput *string,
 			Readers: map[string][]manifest.FileReader{".selected/input.yaml": reads},
 		}
 		indexes[side] = index
-		owners, _ := index.OwnersOfFile(".selected/input.yaml")
+		owners := index.OwnersOfFile(".selected/input.yaml").Owners
 		assert.Diff(t, owners, []manifest.NamedResource{reader.Named()})
 		if (*testCaseInput) == "structural_collision" {
 			st.AddObject(reader)

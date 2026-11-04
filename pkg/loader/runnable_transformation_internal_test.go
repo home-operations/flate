@@ -38,9 +38,7 @@ func TestFinalizeIndex_TransformedRunnableIdentity(t *testing.T) {
 		assert.Equal(t, record.Path, "")
 		assert.Equal(t, index.IsFileIndexed(id), false)
 		productions := st.Productions(id, index)
-		{
-			assert.FatalIf(t, len(productions) != 1, "productions for %s: %v", id, productions)
-		}
+		assert.FatalIf(t, len(productions) != 1, "productions for %s: %v", id, productions)
 		assert.Equal(t, productions[0].Owner, owner.Named())
 		assert.Equal(t, productions[0].Authored, authored)
 		assert.Equal(t, productions[0].Materializer(id), owner.Named())

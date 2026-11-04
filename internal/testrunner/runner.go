@@ -24,7 +24,7 @@ func Run(result *selection.Selection) output.TestReport {
 			rep.Blocked = append(rep.Blocked, c)
 			return
 		case output.OutcomeFailed:
-			fallthrough
+			rep.Failed++
 		default:
 			rep.Failed++
 		}
@@ -70,7 +70,10 @@ func classify(id manifest.NamedResource, info store.StatusInfo) output.Case {
 	case store.OutcomePassed:
 		return output.Case{ID: id, Outcome: output.OutcomePassed}
 	case store.OutcomePending:
-		fallthrough
+		return output.Case{
+			ID: id, Outcome: output.OutcomeFailed,
+			Reason: "still " + string(info.Status) + ": " + info.String(),
+		}
 	default:
 		return output.Case{
 			ID: id, Outcome: output.OutcomeFailed,

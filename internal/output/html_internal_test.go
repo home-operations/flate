@@ -43,13 +43,16 @@ func TestEncoderLines_PreservesStatus(t *testing.T) {
 func TestRuneDiffRange(t *testing.T) {
 	t.Parallel()
 	// a value edit in the middle: only the differing run is flagged on each side.
-	if lo, hi, _, _ := runeDiffRange("v1.19.6", "v1.20.0"); string([]rune("v1.19.6")[lo:hi]) != "19.6" {
-		t.Errorf(`middle edit: got %q, want "19.6"`, string([]rune("v1.19.6")[lo:hi]))
+	spans := runeDiffRange("v1.19.6", "v1.20.0")
+
+	if string([]rune("v1.19.6")[spans.origLow:spans.origHigh]) != "19.6" {
+		t.Errorf(`middle edit: got %q, want "19.6"`, string([]rune("v1.19.6")[spans.origLow:spans.origHigh]))
 	}
 	// a suffix removed: the left flags the removed run, the right flags nothing.
-	aLo, aHi, bLo, bHi := runeDiffRange("name: ceph-csi-controller-manager", "name: ceph-csi")
+	spans2 := runeDiffRange("name: ceph-csi-controller-manager", "name: ceph-csi")
+
 	{
-		got := string([]rune("name: ceph-csi-controller-manager")[aLo:aHi])
+		got := string([]rune("name: ceph-csi-controller-manager")[spans2.origLow:spans2.origHigh])
 		assert.ErrorIf(
 			t,
 			got != "-controller-manager",
@@ -57,10 +60,23 @@ func TestRuneDiffRange(t *testing.T) {
 			got,
 		)
 	}
-	assert.ErrorIf(t, bHi != bLo, "suffix removed (right): want empty range, got [%d,%d)", bLo, bHi)
+	assert.ErrorIf(
+		t,
+		spans2.currentHigh != spans2.currentLow,
+		"suffix removed (right): want empty range, got [%d,%d)",
+		spans2.currentLow,
+		spans2.currentHigh,
+	)
 	// no shared prefix or suffix: nothing flagged, so the line is just tinted.
 	{
-		lo, hi, _, _ := runeDiffRange("abc", "xyz")
-		assert.ErrorIf(t, lo != 0 || hi != 0, "unrelated lines: want empty range, got [%d,%d)", lo, hi)
+		spans3 := runeDiffRange("abc", "xyz")
+
+		assert.ErrorIf(
+			t,
+			spans3.origLow != 0 || spans3.origHigh != 0,
+			"unrelated lines: want empty range, got [%d,%d)",
+			spans3.origLow,
+			spans3.origHigh,
+		)
 	}
 }

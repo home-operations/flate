@@ -196,61 +196,43 @@ data.k  (v1/ConfigMap/apps/other)
 		t.Run(cmp.Or(string(tc.format), "default"), func(t *testing.T) {
 			t.Parallel()
 			out, warnings, err := RenderDocs(l, r, Options{Format: tc.format, Suppressed: suppressed})
-			{
-				assert.FatalIf(t, err != nil, "render: %v", err)
-			}
+			assert.FatalIf(t, err != nil, "render: %v", err)
 			assert.Equal(t, len(warnings), 0)
 			body, _, err := RenderDocs(l, r, Options{Format: tc.format})
-			{
-				assert.FatalIf(t, err != nil, "body: %v", err)
-			}
-			{
-				assert.ErrorIf(t, string(body) != tc.body, "body = %q, want %q", body, tc.body)
-			}
+			assert.FatalIf(t, err != nil, "body: %v", err)
+			assert.ErrorIf(t, string(body) != tc.body, "body = %q, want %q", body, tc.body)
 			{
 				want := tc.body
 				assert.ErrorIf(t, string(out) != want, "output = %q, want %q", out, want)
 			}
 			out, warnings, err = RenderDocs(nil, nil, Options{Format: tc.format, Suppressed: suppressed})
 			assert.Equal(t, len(warnings), 0)
-			{
-				assert.ErrorIf(
-					t,
-					err != nil || len(out) != 0,
-					"suppression only = %q, %v; want empty product",
-					out,
-					err,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				err != nil || len(out) != 0,
+				"suppression only = %q, %v; want empty product",
+				out,
+				err,
+			)
 			out, _, err = RenderDocs(nil, nil, Options{Format: tc.format})
-			{
-				assert.ErrorIf(t, err != nil || len(out) != 0, "empty = %q, %v; want empty bytes, nil", out, err)
-			}
+			assert.ErrorIf(t, err != nil || len(out) != 0, "empty = %q, %v; want empty bytes, nil", out, err)
 		})
 	}
 
 	t.Run("html", func(t *testing.T) {
 		t.Parallel()
 		out, _, err := RenderDocs(l, r, Options{Format: FormatHTML, Suppressed: suppressed})
-		{
-			assert.FatalIf(t, err != nil, "render: %v", err)
-		}
+		assert.FatalIf(t, err != nil, "render: %v", err)
 		body, _, bodyErr := RenderDocs(l, r, Options{Format: FormatHTML})
 		assert.NoError(t, bodyErr)
-		{
-			assert.ErrorIf(t, string(out) != string(body), "%s", "suppression changed the HTML product")
-		}
+		assert.ErrorIf(t, string(out) != string(body), "%s", "suppression changed the HTML product")
 	})
 
 	t.Run("suppression alone has no product", func(t *testing.T) {
 		t.Parallel()
 		out, _, err := RenderDocs(nil, nil, Options{Format: FormatHTML, Suppressed: suppressed})
-		{
-			assert.NoError(t, err)
-		}
-		{
-			assert.ErrorIf(t, len(out) != 0, "suppression-only HTML must have no product; got %q", out)
-		}
+		assert.NoError(t, err)
+		assert.ErrorIf(t, len(out) != 0, "suppression-only HTML must have no product; got %q", out)
 	})
 }
 

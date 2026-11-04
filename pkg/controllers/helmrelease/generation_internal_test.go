@@ -95,14 +95,12 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 	stop := st.AddListener(store.EventObjectAdded, func(got manifest.NamedResource, value any) {
 		if got == id && value != nil {
 			arrivals++
-			{
-				assert.ErrorIf(
-					t,
-					!filter.ShouldReconcile(got),
-					"%v",
-					"generated source arrived before keep-set admission",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!filter.ShouldReconcile(got),
+				"%v",
+				"generated source arrived before keep-set admission",
+			)
 		}
 	}, false)
 	defer stop()
@@ -113,20 +111,16 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 	}
 	_, _, partial := st.GetEmission(hr.Named())
 	defer partial.Finish()
+	assert.FatalIf(
+		t,
+		len(partial.Children) != 1 || !partial.Children[0].Generated || len(partial.Manifests) != 0 ||
+			!st.ReportHidden(id),
+		"provisional inventory=%+v",
+		partial,
+	)
 	{
-		assert.FatalIf(
-			t,
-			len(partial.Children) != 1 || !partial.Children[0].Generated || len(partial.Manifests) != 0 ||
-				!st.ReportHidden(id),
-			"provisional inventory=%+v",
-			partial,
-		)
-	}
-	{
-		{
-			_, ready := st.GetStatus(id)
-			assert.FatalIf(t, ready, "%v", "parent assigned readiness to its generated source")
-		}
+		_, ready := st.GetStatus(id)
+		assert.FatalIf(t, ready, "%v", "parent assigned readiness to its generated source")
 	}
 	st.SetArtifact(
 		id,
@@ -150,20 +144,16 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 	second := reconcile(manifest.DrainNone)
 	defer second.Close()
 	{
-		{
-			info, _ := st.GetStatus(hr.Named())
-			assert.FatalIf(t, info.Status != store.StatusReady, "render after source arrival: %+v", info)
-		}
+		info, _ := st.GetStatus(hr.Named())
+		assert.FatalIf(t, info.Status != store.StatusReady, "render after source arrival: %+v", info)
 	}
 	_, _, completed := st.GetEmission(hr.Named())
 	defer completed.Finish()
-	{
-		assert.FatalIf(t, len(completed.Manifests) != 1 ||
-			!slices.ContainsFunc(
-				completed.Children,
-				func(child store.Child) bool { return child.Generated && child.Obj.Named() == id },
-			), "%v", "complete render lost the current generated source")
-	}
+	assert.FatalIf(t, len(completed.Manifests) != 1 ||
+		!slices.ContainsFunc(
+			completed.Children,
+			func(child store.Child) bool { return child.Generated && child.Obj.Named() == id },
+		), "%v", "complete render lost the current generated source")
 	shouldReturn := testGeneratedObjectsPublishBeforeSourceWaitCaseTail(
 		t,
 		&testGeneratedObjectsPublishBeforeSourceWaitCaseTailInputs{
@@ -194,24 +184,20 @@ func testGeneratedObjectsPublishBeforeSourceWaitCaseTail(
 	failed := (*tailCaseInput.reconcile)(manifest.DrainForce)
 	defer failed.Close()
 	{
-		{
-			info, _ := (*tailCaseInput.st).GetStatus((*tailCaseInput.hr).Named())
-			assert.FatalIf(
-				t,
-				info.Status != store.StatusFailed,
-				"source failure was hidden by fingerprint replay: %+v",
-				info,
-			)
-		}
-	}
-	{
+		info, _ := (*tailCaseInput.st).GetStatus((*tailCaseInput.hr).Named())
 		assert.FatalIf(
 			t,
-			(*tailCaseInput.st).GetObject((*tailCaseInput.id)) == nil,
-			"%v",
-			"failed render discarded its current generated source",
+			info.Status != store.StatusFailed,
+			"source failure was hidden by fingerprint replay: %+v",
+			info,
 		)
 	}
+	assert.FatalIf(
+		t,
+		(*tailCaseInput.st).GetObject((*tailCaseInput.id)) == nil,
+		"%v",
+		"failed render discarded its current generated source",
+	)
 	return false
 }
 
@@ -274,16 +260,14 @@ func checkGeneratedSourceReplacement(
 		func(got manifest.NamedResource, _ any) {
 			if got == (*tailCaseInput.id) && (*tailCaseInput.st).GetObject((*tailCaseInput.id)) == nil {
 				{
-					{
-						info, _ := (*tailCaseInput.st).GetStatus(
+					info, _ := (*tailCaseInput.st).GetStatus(
+						replacement,
+					)
+					assert.ErrorIf(t, info.Status == store.StatusReady || (*tailCaseInput.st).
+						GetArtifact(
 							replacement,
-						)
-						assert.ErrorIf(t, info.Status == store.StatusReady || (*tailCaseInput.st).
-							GetArtifact(
-								replacement,
-								store.ArtifactContent,
-							) != nil, "%v", "obsolete source withdrew after replacement settled")
-					}
+							store.ArtifactContent,
+						) != nil, "%v", "obsolete source withdrew after replacement settled")
 				}
 				withdrawn <- struct{}{}
 			}
@@ -318,42 +302,36 @@ func checkGeneratedSourceReplacement(
 	assert.Equal(t, (*tailCaseInput.filter).ShouldReconcile(sibling.Named()), false)
 	_, _, waiting := (*tailCaseInput.st).GetEmission((*tailCaseInput.hr).Named())
 	defer waiting.Finish()
-	{
-		assert.FatalIf(
-			t,
-			waiting.Complete || len(waiting.Failures) != 0,
-			"%v",
-			"source transition forced completion or failure",
-		)
-	}
+	assert.FatalIf(
+		t,
+		waiting.Complete || len(waiting.Failures) != 0,
+		"%v",
+		"source transition forced completion or failure",
+	)
 	for _, child := range tailCaseInput.completed.Children {
 		if child.Generated {
 			continue
 		}
-		{
-			assert.FatalIf(t, !slices.ContainsFunc(
-				waiting.Children,
-				func(current store.Child) bool { return current.Obj.Named() == child.Obj.Named() },
-			) || (*tailCaseInput.st).
-				GetObject(
-					child.Obj.Named(),
-				) == nil, "%v", "blocked replacement discarded ordinary partial inventory")
-		}
+		assert.FatalIf(t, !slices.ContainsFunc(
+			waiting.Children,
+			func(current store.Child) bool { return current.Obj.Named() == child.Obj.Named() },
+		) || (*tailCaseInput.st).
+			GetObject(
+				child.Obj.Named(),
+			) == nil, "%v", "blocked replacement discarded ordinary partial inventory")
 	}
 	assert.Diff(
 		t,
 		testutil.DocumentMaps(waiting.Manifests),
 		testutil.DocumentMaps(tailCaseInput.completed.Manifests),
 	)
-	{
-		assert.FatalIf(
-			t, (*tailCaseInput.st).
-				GetObject((*tailCaseInput.id)) != nil || (*tailCaseInput.st).
-				HasGeneratedObjects(
-					(*tailCaseInput.hr).Named(),
-				) != ((*tailCaseInput.testCaseInput).replacement != "chartRef"), "%v",
-			"blocked replacement retained obsolete generated membership",
-		)
-	}
+	assert.FatalIf(
+		t, (*tailCaseInput.st).
+			GetObject((*tailCaseInput.id)) != nil || (*tailCaseInput.st).
+			HasGeneratedObjects(
+				(*tailCaseInput.hr).Named(),
+			) != ((*tailCaseInput.testCaseInput).replacement != "chartRef"), "%v",
+		"blocked replacement retained obsolete generated membership",
+	)
 	return true
 }

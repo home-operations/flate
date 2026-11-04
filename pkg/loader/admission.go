@@ -101,7 +101,7 @@ func (l *Loader) Prepare(
 	closure := admissionClosure{loader: l, incoming: incoming, history: history}
 	proposal := &closure.result
 	closure.proposal = proposal
-	_, _, _, proposal.Revision = l.Options.Filter.Membership(manifest.NamedResource{})
+	proposal.Revision = l.Options.Filter.Membership(manifest.NamedResource{}).Revision
 	var objects admissionReader = l.Store
 	if reads != nil {
 		objects = reads
@@ -163,8 +163,11 @@ func (c *admissionClosure) evaluate(ctx context.Context, reads *store.ReadSet) (
 
 func (c *admissionClosure) role(id manifest.NamedResource) admissionRole {
 	role := c.states[id].role
-	needed, selected, dirty, _ := c.loader.Options.Filter.Membership(id)
-	role.needed, role.selected, role.dirty = role.needed || needed, role.selected || selected, role.dirty || dirty
+	membership2 := c.loader.Options.Filter.Membership(id)
+	role.needed, role.selected, role.dirty = role.needed ||
+		membership2.Needed, role.selected ||
+		membership2.Selected, role.dirty ||
+		membership2.Dirty
 	return role
 }
 

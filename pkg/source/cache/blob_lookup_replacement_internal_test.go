@@ -463,7 +463,7 @@ func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
 	)
 }
 
-func testBlobLookupAndReplacementCase2(t *testing.T, identities *map[string]string,
+func testBlobLookupAndReplacementCase2(t *testing.T, identities map[string]string,
 	backing *string,
 ) {
 	t.Helper()
@@ -489,7 +489,7 @@ func testBlobLookupAndReplacementCase2(t *testing.T, identities *map[string]stri
 		&testBlobLookupAndReplacementCase2CompletionInputs{
 			c:          &c,
 			key:        &key,
-			identities: &identities,
+			identities: identities,
 			backing:    &backing,
 			root:       &root,
 		},
@@ -518,7 +518,7 @@ func testBlobLookupAndReplacementCase2Completion(
 		assert.Equal(t, readerPin, digest.FromString(payload).String())
 		assert.Equal(t, AcquisitionIdentity(struct{ fs.FS }{r}), "")
 		pin := AcquisitionIdentity(view)
-		assert.Equal(t, pin, (*(*captures.identities))[payload])
+		assert.Equal(t, pin, captures.identities[payload])
 		assert.FatalIf(t, pin == "" || pin == AcquisitionIdentity(NameBlob("other.tgz", r)) ||
 			AcquisitionIdentity(
 				struct{ fs.FS }{view},
@@ -617,7 +617,7 @@ func testBlobLookupAndReplacementCase2Completion(
 type testBlobLookupAndReplacementCase2CompletionInputs struct {
 	c          **Cache
 	key        *BlobKey
-	identities **map[string]string
+	identities map[string]string
 	backing    **string
 	root       *string
 }

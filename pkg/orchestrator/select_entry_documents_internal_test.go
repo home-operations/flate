@@ -122,8 +122,9 @@ func TestSelect_EntryBatchSubjects(t *testing.T) {
 func publishEntryForTest(run Rendered, docs []map[string]any) {
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 	run.store.AddObject(entry)
-	children, retained, failures := base.New(run.store, nil).
+	parseChildrenResult1 := base.New(run.store, nil).
 		ParseChildren(entry, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
+	children, retained, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	run.store.RecordEmitted(
 		entry.Named(),
 		&store.Emission{Children: children, Manifests: retained, Failures: failures, Complete: true},
@@ -166,19 +167,15 @@ func TestSelect_SyntheticFailureContext(t *testing.T) {
 				[]manifest.NamedResource{testutil.KustomizationID("", "")},
 				nil,
 			)
-			{
-				assert.FatalIf(t, err == nil || strings.Contains(err.Error(), entry.Named().String()) ||
-					!strings.Contains(err.Error(), `entry path "clusters/test"`) ||
-					!strings.Contains(err.Error(), authored.Named().String()), "selected diagnostic=%v", err)
-			}
-			{
-				assert.FatalIf(
-					t,
-					owner != (manifest.NamedResource{}) && !strings.Contains(err.Error(), owner.String()),
-					"real owner lost: %v",
-					err,
-				)
-			}
+			assert.FatalIf(t, err == nil || strings.Contains(err.Error(), entry.Named().String()) ||
+				!strings.Contains(err.Error(), `entry path "clusters/test"`) ||
+				!strings.Contains(err.Error(), authored.Named().String()), "selected diagnostic=%v", err)
+			assert.FatalIf(
+				t,
+				owner != (manifest.NamedResource{}) && !strings.Contains(err.Error(), owner.String()),
+				"real owner lost: %v",
+				err,
+			)
 			if len(selected[0].Failed) != 2 || len(selected[0].Objects) != 1 ||
 				selected[0].Objects[0].Named() != authored.Named() {
 				t.Fatalf("display changed selection: %+v", selected[0])
@@ -414,14 +411,12 @@ func testSelectEntryDocumentsFailedAndSkippedDeclarations(t *testing.T) {
 				[]manifest.NamedResource{testutil.KustomizationID("", "")},
 				nil,
 			)
-			{
-				assert.FatalIf(
-					t,
-					(err != nil) != (outcome.Status == store.StatusFailed),
-					"failure attribution: %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				(err != nil) != (outcome.Status == store.StatusFailed),
+				"failure attribution: %v",
+				err,
+			)
 			if len(selected[0].Manifests) != 1 || selected[0].Manifests[0].Parent == nil ||
 				len(selected[0].Objects) != 1 {
 				t.Fatalf("real driver declaration lost: %+v", selected[0])
@@ -485,9 +480,7 @@ func testSelectEntryDocumentsWinningEmissionsRetainDriverDescendants(t *testing.
 	assert.NoError(t, err)
 	counts := map[string]int{}
 	for _, batch := range selected[0].Manifests {
-		{
-			assert.FatalIf(t, batch.Parent == nil, "%v", "winning emissions duplicated as ownerless documents")
-		}
+		assert.FatalIf(t, batch.Parent == nil, "%v", "winning emissions duplicated as ownerless documents")
 		for _, doc := range batch.Documents {
 			counts[manifest.DocIdentity(doc).Name]++
 			if manifest.DocIdentity(doc) == shared.Named() {
@@ -498,12 +491,10 @@ func testSelectEntryDocumentsWinningEmissionsRetainDriverDescendants(t *testing.
 	assert.Diff(t, counts, map[string]int{"actual": 1, "shared": 1, "descendant": 1})
 	selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{hr.Named()}, nil)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, len(selected[0].Manifests) != 1 ||
-			manifest.DocIdentity(
-				selected[0].Manifests[0].Documents[0],
-			).Name != "descendant", "%v", "deduplicated driver lost its independent output")
-	}
+	assert.FatalIf(t, len(selected[0].Manifests) != 1 ||
+		manifest.DocIdentity(
+			selected[0].Manifests[0].Documents[0],
+		).Name != "descendant", "%v", "deduplicated driver lost its independent output")
 }
 
 func testSelectEntryDocumentsProofOnlyBatch(t *testing.T) {
@@ -688,16 +679,12 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 	}
 	output, _, notes, err := diff.Compare(left, right, nil, diff.Options{Format: diff.FormatJSON})
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			len(notes) != 1 || notes[0].Count != 1 || notes[0].Parent.NamedResource != old,
-			"withheld inventory attribution=%+v",
-			notes,
-		)
-	}
-	{
-		assert.FatalIf(t, strings.Contains(string(output), "root-inventory") ||
-			(!old.ReportHidden() && old != runs[failed].entryBinding.Producer && !strings.Contains(string(output), "unrelated-output")), "suppression leaked inventory or hid retargeted owner: %s", output)
-	}
+	assert.FatalIf(
+		t,
+		len(notes) != 1 || notes[0].Count != 1 || notes[0].Parent.NamedResource != old,
+		"withheld inventory attribution=%+v",
+		notes,
+	)
+	assert.FatalIf(t, strings.Contains(string(output), "root-inventory") ||
+		(!old.ReportHidden() && old != runs[failed].entryBinding.Producer && !strings.Contains(string(output), "unrelated-output")), "suppression leaked inventory or hid retargeted owner: %s", output)
 }

@@ -32,7 +32,7 @@ func testFSGitContentEvidenceCase(t *testing.T, mode *string,
 	testutil.WriteFile(t, root, "dir/ignored", "ignored")
 	testutil.WriteFile(t, root, ".sourceignore", "dir/ignored\n")
 	old := time.Unix(946684800, 0)
-	assert.NoError(t, os.Chtimes(filepath.Join(root, "dir/file"), old, old))
+	assert.NoError(t, os.Chtimes(filepath.Join(root, "dir", "file"), old, old))
 	commit := testutil.GitCommitAll(
 		t,
 		repo,
@@ -46,15 +46,15 @@ func testFSGitContentEvidenceCase(t *testing.T, mode *string,
 		testutil.WriteFile(t, root, "dir/file", want)
 	}
 	if (*mode) == "staged" {
-		assert.NoError(t, os.Chtimes(filepath.Join(root, "dir/file"), old, old))
+		assert.NoError(t, os.Chtimes(filepath.Join(root, "dir", "file"), old, old))
 		wt, err := repo.Worktree()
 		assert.NoError(t, err)
 		_, err = wt.Add("dir/file")
 		assert.NoError(t, err)
 	}
 	if (*mode) == "racy" {
-		assert.NoError(t, os.Chtimes(filepath.Join(root, "dir/file"), old, old))
-		assert.NoError(t, os.Chtimes(filepath.Join(root, ".git/index"), old, old))
+		assert.NoError(t, os.Chtimes(filepath.Join(root, "dir", "file"), old, old))
+		assert.NoError(t, os.Chtimes(filepath.Join(root, ".git", "index"), old, old))
 	}
 	if (*mode) == "untracked" {
 		testutil.WriteFile(t, root, "dir/new", "untracked")
@@ -143,7 +143,7 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 		(*(*captures.mode)) == "subtree" ||
 		(*(*captures.mode)) ==
 			"scoped_local" {
-		file := filepath.Join((*captures.root), "dir/file")
+		file := filepath.Join((*captures.root), "dir", "file")
 		assert.NoError(t, os.Chmod(file, 0))
 		t.Cleanup(func() { assert.NoError(t, os.Chmod(file, 0o644)) })
 		if _, readFileErr3 := os.ReadFile(file); !errors.Is(readFileErr3, fs.ErrPermission) {

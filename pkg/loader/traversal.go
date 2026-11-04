@@ -85,12 +85,10 @@ func (r documentReader) references(
 func (r *documentReader) replayEdges() {
 	if r.edgesDirty {
 		var pending []string
-		{
-			//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-			for dir, doc := range r.cache {
-				if !doc.edgesKnown && doc.traversed && doc.body != nil {
-					pending = append(pending, dir)
-				}
+		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+		for dir, doc := range r.cache {
+			if !doc.edgesKnown && doc.traversed && doc.body != nil {
+				pending = append(pending, dir)
 			}
 		}
 		for _, dir := range pending {
@@ -159,8 +157,8 @@ func (w *traversal) reference(
 	visit := referenceVisit{parent: &v, child: &child, reference: &ref}
 	switch w.policy {
 	case traversalAdmission:
-		if done, more := w.admitReference(ctx, &visit); done {
-			return more
+		if decision := w.admitReference(ctx, &visit); decision.done {
+			return decision.more
 		}
 	case traversalProof:
 		if ref.Role != kustomizeinput.Resource &&
@@ -177,8 +175,8 @@ func (w *traversal) reference(
 		}
 		child.dir = target
 	case traversalScope:
-		if done, more := w.scopeReference(ctx, &visit, yield); done {
-			return more
+		if decision := w.scopeReference(ctx, &visit, yield); decision.done {
+			return decision.more
 		}
 	}
 	count := w.count
@@ -191,19 +189,21 @@ func (w *traversal) reference(
 	return more
 }
 
-func (w *traversal) admitReference(ctx context.Context, visit *referenceVisit) (bool, bool) {
+type traversalDecision struct{ done, more bool }
+
+func (w *traversal) admitReference(ctx context.Context, visit *referenceVisit) traversalDecision {
 	if visit.reference.Role != kustomizeinput.Resource && visit.reference.Role != kustomizeinput.Component {
-		return true, true
+		return traversalDecision{done: true, more: true}
 	}
 	base, resolved := visit.parent.file, visit.reference.target
 	if resolved == "" || filepath.IsAbs(visit.reference.Path) {
-		return true, true
+		return traversalDecision{done: true, more: true}
 	}
-	input, name := new(w.documents).input(resolved)
-	info, err := fs.Stat(input, name)
+	inputFile := new(w.documents).input(resolved)
+	info, err := fs.Stat(inputFile.fs, inputFile.name)
 	new(w.documents).rememberStat(resolved, info, err)
 	if err != nil {
-		return true, w.proceed(ctx)
+		return traversalDecision{done: true, more: w.proceed(ctx)}
 	}
 	if !info.IsDir() {
 		if _, ok := kustpath.Resolve(
@@ -212,33 +212,36 @@ func (w *traversal) admitReference(ctx context.Context, visit *referenceVisit) (
 			kustpath.File,
 		); !ok ||
 			visit.reference.Role != kustomizeinput.Resource {
-			return true, true
+			return traversalDecision{done: true, more: true}
 		}
-		return true, w.admitFile(ctx, visit.parent.root, resolved, visit.parent.role == kustomizeinput.Component)
+		return traversalDecision{
+			done: true,
+			more: w.admitFile(ctx, visit.parent.root, resolved, visit.parent.role == kustomizeinput.Component),
+		}
 	}
 	visit.child.role = kustomizeinput.Resource
 	if visit.parent.role == kustomizeinput.Component {
 		if visit.reference.Role != kustomizeinput.Component {
-			return true, true
+			return traversalDecision{done: true, more: true}
 		}
 		visit.child.role = kustomizeinput.Component
 	}
 	visit.child.file, visit.child.deferMaterialization = resolved, false
-	return false, false
+	return traversalDecision{}
 }
 
 func (w *traversal) scopeReference(
 	ctx context.Context,
 	visit *referenceVisit,
 	yield func(graphVisit) bool,
-) (bool, bool) {
+) traversalDecision {
 	switch {
 	case visit.reference.Role == kustomizeinput.Configuration:
 		visit.child.role, visit.child.pluginRoot = kustomizeinput.Configuration, visit.parent.dir
 		visit.child.checkMetadata = visit.parent.role == kustomizeinput.Configuration &&
 			strings.HasPrefix(visit.reference.Field, ".transformers")
 		if visit.reference.Inline {
-			return true, w.inlineReference(ctx, visit, yield)
+			return traversalDecision{done: true, more: w.inlineReference(ctx, visit, yield)}
 		}
 	case visit.reference.Role == kustomizeinput.File:
 		visit.child.role = kustomizeinput.File
@@ -253,13 +256,13 @@ func (w *traversal) scopeReference(
 	if !ok || !safepath.Contains(visit.parent.root, resolved) ||
 		new(w.documents).mountedRoot(resolved) != new(w.documents).mountedRoot(visit.parent.root) {
 		if visit.child.role == kustomizeinput.Configuration {
-			return true, w.uncertain(
+			return traversalDecision{done: true, more: w.uncertain(
 				new(*visit.parent),
 				visit.reference.FieldPath()+": configuration reference cannot be inspected locally",
 				yield,
-			)
+			)}
 		}
-		return true, true
+		return traversalDecision{done: true, more: true}
 	}
 	rel, _ := filepath.Rel(visit.parent.root, resolved)
 	visit.child.dir = filepath.ToSlash(rel)
@@ -271,7 +274,7 @@ func (w *traversal) scopeReference(
 		)
 		visit.child.deferDecode = !admitted || filepath.IsAbs(visit.reference.Path)
 	}
-	return false, false
+	return traversalDecision{}
 }
 
 func (w *traversal) inlineReference(ctx context.Context, visit *referenceVisit, yield func(graphVisit) bool) bool {
@@ -354,13 +357,13 @@ func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath st
 		return 0
 	}
 	seen := map[string]struct{}{kpath: {}}
-	spec, _ := w.documents.read(dir)
+	spec := w.documents.read(dir).body
 	includeBootstrapReferences(spec, dir, seen)
 	if !w.proceed(ctx) {
 		return 0
 	}
-	input, name := new(w.documents).input(dir)
-	entries, err := fs.ReadDir(input, name)
+	inputFile2 := new(w.documents).input(dir)
+	entries, err := fs.ReadDir(inputFile2.fs, inputFile2.name)
 	if err != nil {
 		warning := manifest.Warning{
 			Category: manifest.WarnInputReadFailed,

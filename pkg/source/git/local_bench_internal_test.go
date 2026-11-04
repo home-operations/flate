@@ -10,8 +10,9 @@ import (
 )
 
 func BenchmarkResolveLocal(b *testing.B) {
-	root, _, _, _ := localFixture(b)
-	location := localLocation(b, root)
+	fixture := localFixture(b)
+
+	location := localLocation(b, fixture.root)
 	for _, name := range []string{"HEAD", "Cold", "Warm"} {
 		b.Run(name, func(b *testing.B) {
 			tag := "v1.0.0"

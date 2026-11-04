@@ -34,10 +34,9 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 			"metadata":   map[string]any{"name": "shared", "namespace": "apps", "labels": labels},
 			"spec":       map[string]any{"path": "app"},
 		}
-		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-		{
-			assert.NoError(t, err)
-		}
+		parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		obj, authoritative := parsed.Object, parsed.Document
+		assert.NoError(t, err)
 		return Child{Obj: obj, Doc: authoritative}
 	}
 	a, b := childWithLabels("p"), childWithLabels("q")
@@ -114,12 +113,10 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 		},
 	)
 	oldProductions := s.Productions(a.Obj.Named(), nil)
-	{
-		assert.FatalIf(t, !slices.ContainsFunc(
-			oldProductions,
-			func(p manifest.Production) bool { return p.Owner == ownerID("p") && p.Source == first.source },
-		), "%s", "partial update rebound predecessor context")
-	}
+	assert.FatalIf(t, !slices.ContainsFunc(
+		oldProductions,
+		func(p manifest.Production) bool { return p.Owner == ownerID("p") && p.Source == first.source },
+	), "%s", "partial update rebound predecessor context")
 	{
 		got := s.Productions(fresh.Obj.Named(), nil)
 		assert.FatalIf(
@@ -140,14 +137,12 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 	accept(t, s, p, &attempt)
 	unsub()
 	_, _, accepted := s.GetEmission(p)
-	{
-		assert.FatalIf(
-			t,
-			notifications != 1 || !slices.Equal(accepted.Unreadable, attempt.Unreadable),
-			"%s",
-			"context-only refresh was discarded",
-		)
-	}
+	assert.FatalIf(
+		t,
+		notifications != 1 || !slices.Equal(accepted.Unreadable, attempt.Unreadable),
+		"%s",
+		"context-only refresh was discarded",
+	)
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprintf("validity_memo/%d", workers), func(t *testing.T) {
 			t.Parallel()
@@ -198,19 +193,15 @@ func testRecordEmittedContributionContextCase(
 				seen = true
 			}
 		}, true)()
-		{
-			assert.ErrorIf(t, seen != want, "artifact replay = %t, want %t", seen, want)
-		}
+		assert.ErrorIf(t, seen != want, "artifact replay = %t, want %t", seen, want)
 	}
 	checkReplay(true)
-	{
-		assert.FatalIf(
-			t,
-			accepted.validated == nil || accepted.validated.Load() == nil || *accepted.validated.Load() != b.Obj,
-			"%s",
-			"listener replay did not memoize the equal representative",
-		)
-	}
+	assert.FatalIf(
+		t,
+		accepted.validated == nil || accepted.validated.Load() == nil || *accepted.validated.Load() != b.Obj,
+		"%s",
+		"listener replay did not memoize the equal representative",
+	)
 	validated := accepted.validated.Load()
 	start := make(chan struct{})
 	var readers sync.WaitGroup
@@ -218,43 +209,36 @@ func testRecordEmittedContributionContextCase(
 		readers.Go(func() {
 			<-start
 			for range 8 {
-				{
-					assert.ErrorIf(
-						t,
-						s.GetArtifact(id, ArtifactContent) != accepted,
-						"%s",
-						"equivalent input invalidated current artifact",
-					)
-				}
+				assert.ErrorIf(
+					t,
+					s.GetArtifact(id, ArtifactContent) != accepted,
+					"%s",
+					"equivalent input invalidated current artifact",
+				)
 				checkReplay(true)
 			}
 		})
 	}
 	close(start)
 	readers.Wait()
-	{
-		assert.FatalIf(
-			t,
-			accepted.validated.Load() != validated,
-			"%s",
-			"memo hits replaced the validated representative cell",
-		)
-	}
+	assert.FatalIf(
+		t,
+		accepted.validated.Load() != validated,
+		"%s",
+		"memo hits replaced the validated representative cell",
+	)
 	unequalDoc := manifest.DeepCopyMap(b.Doc)
 	unequalDoc["spec"].(map[string]any)["path"] = "different"
-	unequal, doc, _, err := manifest.ParseDoc(unequalDoc, manifest.ParseDocOptions{})
-	{
-		assert.NoError(t, err)
-	}
+	parsed2, err := manifest.ParseDoc(unequalDoc, manifest.ParseDocOptions{})
+	unequal, doc := parsed2.Object, parsed2.Document
+	assert.NoError(t, err)
 	s.RecordEmitted((*testCaseInput.q), &Emission{Children: []Child{{Obj: unequal, Doc: doc}}, Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(id, ArtifactContent) != nil,
-			"%s",
-			"unequal representative reused a validated artifact",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(id, ArtifactContent) != nil,
+		"%s",
+		"unequal representative reused a validated artifact",
+	)
 	checkReplay(false)
 	{
 		validated := accepted.validated.Load()
@@ -264,18 +248,14 @@ func testRecordEmittedContributionContextCase(
 	replacement.input, replacement.inputDoc = unequal, doc
 	s.RecordEmitted(id, &replacement, nil)
 	current := s.GetArtifact(id, ArtifactContent).(*Emission)
-	{
-		assert.FatalIf(t, current == accepted || current.validated == nil || current.validated == accepted.validated ||
-			current.validated.Load() != nil, "%s", "new emission retained its predecessor's memo")
-	}
+	assert.FatalIf(t, current == accepted || current.validated == nil || current.validated == accepted.validated ||
+		current.validated.Load() != nil, "%s", "new emission retained its predecessor's memo")
 	s.RecordEmitted((*testCaseInput.q), &Emission{Children: []Child{b}, Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(id, ArtifactContent) != nil,
-			"%s",
-			"old memo authorized the replacement emission",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(id, ArtifactContent) != nil,
+		"%s",
+		"old memo authorized the replacement emission",
+	)
 	checkReplay(false)
 }

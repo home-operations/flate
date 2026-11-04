@@ -47,9 +47,7 @@ func TestExecution_Success(t *testing.T) {
 		},
 	)
 	got, _ := s.GetStatus(id)
-	{
-		assert.ErrorIf(t, got.Status != store.StatusReady, "status = %v, want Ready", got.Status)
-	}
+	assert.ErrorIf(t, got.Status != store.StatusReady, "status = %v, want Ready", got.Status)
 }
 
 func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
@@ -94,27 +92,21 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 		return execution
 	}
 	first := publish("first")
-	{
-		assert.FatalIf(t, !first.Valid(), "%v", "initial output was invalidated by its publication")
-	}
+	assert.FatalIf(t, !first.Valid(), "%v", "initial output was invalidated by its publication")
 	first.Close()
 	for range s.Sweep() {
 	}
 	second := publish("second")
 	defer second.Close()
+	assert.FatalIf(
+		t,
+		!second.Valid(),
+		"%v",
+		"successful predecessor output became a semantic input to its replacement",
+	)
 	{
-		assert.FatalIf(
-			t,
-			!second.Valid(),
-			"%v",
-			"successful predecessor output became a semantic input to its replacement",
-		)
-	}
-	{
-		{
-			info, _ := s.GetStatus(parent.Named())
-			assert.FatalIf(t, info.Status != store.StatusReady, "replacement status=%+v, want Ready", info)
-		}
+		info, _ := s.GetStatus(parent.Named())
+		assert.FatalIf(t, info.Status != store.StatusReady, "replacement status=%+v, want Ready", info)
 	}
 }
 
@@ -169,14 +161,12 @@ func TestExecution_Failure(t *testing.T) {
 				},
 			)
 			got, _ := s.GetStatus(id)
-			{
-				assert.FatalIf(
-					t,
-					got.Status != store.StatusFailed || got.Message != "render failed",
-					"failure status = %+v",
-					got,
-				)
-			}
+			assert.FatalIf(
+				t,
+				got.Status != store.StatusFailed || got.Message != "render failed",
+				"failure status = %+v",
+				got,
+			)
 			if (detail.calls > 0) != (level == slog.LevelDebug) {
 				t.Errorf("detail evaluations at %v = %d", level, detail.calls)
 			}
@@ -213,26 +203,20 @@ func TestExecution_Panic(t *testing.T) {
 			},
 		)
 	}()
-	{
-		assert.FatalIf(
-			t,
-			rec == nil,
-			"%v",
-			"expected panic to be re-raised so task.Service.Go's recover counts it; got nil",
-		)
-	}
+	assert.FatalIf(
+		t,
+		rec == nil,
+		"%v",
+		"expected panic to be re-raised so task.Service.Go's recover counts it; got nil",
+	)
 	got, _ := s.GetStatus(id)
-	{
-		assert.ErrorIf(t, got.Status != store.StatusFailed, "status = %v, want Failed", got.Status)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(got.Message, "panic:") || !strings.Contains(got.Message, "kaboom"),
-			"message = %q, want a 'panic: kaboom' summary",
-			got.Message,
-		)
-	}
+	assert.ErrorIf(t, got.Status != store.StatusFailed, "status = %v, want Failed", got.Status)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(got.Message, "panic:") || !strings.Contains(got.Message, "kaboom"),
+		"message = %q, want a 'panic: kaboom' summary",
+		got.Message,
+	)
 }
 
 func TestExecution_MissingObject(t *testing.T) {
@@ -246,14 +230,10 @@ func TestExecution_MissingObject(t *testing.T) {
 			return nil
 		},
 	)
+	assert.ErrorIf(t, called, "%v", "fn ran for a missing object; expected silent no-op")
 	{
-		assert.ErrorIf(t, called, "%v", "fn ran for a missing object; expected silent no-op")
-	}
-	{
-		{
-			_, ok := s.GetStatus(id)
-			assert.ErrorIf(t, ok, "%v", "missing object should not get a status entry")
-		}
+		_, ok := s.GetStatus(id)
+		assert.ErrorIf(t, ok, "%v", "missing object should not get a status entry")
 	}
 	s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "re-fetching"})
 	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
@@ -263,14 +243,12 @@ func TestExecution_MissingObject(t *testing.T) {
 			return nil
 		})
 	got, _ := s.GetStatus(id)
-	{
-		assert.FatalIf(
-			t,
-			got.Outcome() != store.OutcomeSkipped || got.Message != "object not in store at reconcile time",
-			"missing-object status = %+v",
-			got,
-		)
-	}
+	assert.FatalIf(
+		t,
+		got.Outcome() != store.OutcomeSkipped || got.Message != "object not in store at reconcile time",
+		"missing-object status = %+v",
+		got,
+	)
 }
 
 func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
@@ -347,17 +325,13 @@ func TestExecution_PreservesExternalFailure(t *testing.T) {
 		},
 	)
 	got, _ := s.GetStatus(id)
-	{
-		assert.ErrorIf(t, got.Status != store.StatusFailed, "status = %v, want Failed", got.Status)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			got.Message != "dependency cycle detected",
-			"external failure message was clobbered: %q",
-			got.Message,
-		)
-	}
+	assert.ErrorIf(t, got.Status != store.StatusFailed, "status = %v, want Failed", got.Status)
+	assert.ErrorIf(
+		t,
+		got.Message != "dependency cycle detected",
+		"external failure message was clobbered: %q",
+		got.Message,
+	)
 }
 
 func testExecutionPreflightWithdrawsPublishedOutputCase(
@@ -419,15 +393,13 @@ func testExecutionPreflightWithdrawsPublishedOutputCase(
 		renders.Load() != 1 {
 		t.Fatalf("initial status=%+v attempts=%d renders=%d", info, attempts.Load(), renders.Load())
 	}
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(id, store.ArtifactContent) == nil ||
-				!(*testCaseInput) && st.GetObject(child.Named()) == nil,
-			"%v",
-			"initial output was not published",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetArtifact(id, store.ArtifactContent) == nil ||
+			!(*testCaseInput) && st.GetObject(child.Named()) == nil,
+		"%v",
+		"initial output was not published",
+	)
 	const cycle = "dependency cycle detected"
 	st.SetPreflight(id, cycle)
 	attempts.Store(0)
@@ -447,27 +419,21 @@ func testExecutionPreflightWithdrawsPublishedOutputCase(
 	}
 	if *testCaseInput {
 		{
-			{
-				artifact := st.GetArtifact(id, store.ArtifactContent)
-				assert.ErrorIf(t, artifact != nil, "stale source artifact remained visible: %+v", artifact)
-			}
+			artifact := st.GetArtifact(id, store.ArtifactContent)
+			assert.ErrorIf(t, artifact != nil, "stale source artifact remained visible: %+v", artifact)
 		}
 	} else {
-		{
-			assert.ErrorIf(t, st.GetObject(child.Named()) != nil, "%v", "stale emitted child remained visible")
-		}
+		assert.ErrorIf(t, st.GetObject(child.Named()) != nil, "%v", "stale emitted child remained visible")
 		output, ok := st.GetArtifact(id, store.ArtifactContent).(*store.Emission)
-		{
-			assert.ErrorIf(
-				t,
-				!ok || !output.Complete || output.OutputReads != &latest.Reads || !output.OutputReads.Valid() ||
-					len(
-						output.Children,
-					) != 0,
-				"withdrawal did not publish a complete current inventory: %+v",
-				output,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!ok || !output.Complete || output.OutputReads != &latest.Reads || !output.OutputReads.Valid() ||
+				len(
+					output.Children,
+				) != 0,
+			"withdrawal did not publish a complete current inventory: %+v",
+			output,
+		)
 	}
 	st.SetPreflight(id, "")
 	attempts.Store(0)
@@ -482,15 +448,13 @@ func testExecutionPreflightWithdrawsPublishedOutputCase(
 			renders.Load(),
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(id, store.ArtifactContent) == nil ||
-				!(*testCaseInput) && st.GetObject(child.Named()) == nil,
-			"%v",
-			"recovery did not republish output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetArtifact(id, store.ArtifactContent) == nil ||
+			!(*testCaseInput) && st.GetObject(child.Named()) == nil,
+		"%v",
+		"recovery did not republish output",
+	)
 	t.Logf("recovery attempts=%d renders=%d", attempts.Load(), renders.Load())
 }
 
@@ -527,9 +491,7 @@ func testExecutionPreservesInformativeReadyMessageCase(
 			return nil
 		})
 	got, _ := s.GetStatus(id)
-	{
-		assert.FatalIf(t, got != before, "Ready snapshot changed: %+v, want %+v", got, before)
-	}
+	assert.FatalIf(t, got != before, "Ready snapshot changed: %+v, want %+v", got, before)
 }
 
 func testExecutionPreservesInformativeReadyMessageCase2(
@@ -581,16 +543,14 @@ func testExecutionPreservesInformativeReadyMessageCase2(
 	if testCaseInput.reason == store.ReasonSkipped {
 		want = store.OutcomeSkipped
 	}
-	{
-		assert.FatalIf(
-			t,
-			got.Outcome() != want || got.Message != testCaseInput.want,
-			"propagated status = %+v, want %s/%q",
-			got,
-			want,
-			testCaseInput.want,
-		)
-	}
+	assert.FatalIf(
+		t,
+		got.Outcome() != want || got.Message != testCaseInput.want,
+		"propagated status = %+v, want %s/%q",
+		got,
+		want,
+		testCaseInput.want,
+	)
 }
 
 func testExecutionPreservesInformativeReadyMessageCase3(
@@ -610,12 +570,10 @@ func testExecutionPreservesInformativeReadyMessageCase3(
 			return manifest.NewError(manifest.ErrSourceSkipped, nil, (*testCaseInput))
 		})
 	got, _ := s.GetStatus(hr.Named())
-	{
-		assert.FatalIf(
-			t,
-			got.Outcome() != store.OutcomeSkipped || got.Message != strings.TrimSpace((*testCaseInput)),
-			"direct skip = %+v",
-			got,
-		)
-	}
+	assert.FatalIf(
+		t,
+		got.Outcome() != store.OutcomeSkipped || got.Message != strings.TrimSpace((*testCaseInput)),
+		"direct skip = %+v",
+		got,
+	)
 }

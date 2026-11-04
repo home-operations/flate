@@ -40,9 +40,7 @@ func TestAdmit_SourceKinds(t *testing.T) {
 			}
 			raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "source"}
 			original := l.authoredObject(filepath.Join(root, "source.yaml"), raw).Obj
-			{
-				assert.FatalIf(t, original == nil, "%s", "source not loaded")
-			}
+			assert.FatalIf(t, original == nil, "%s", "source not loaded")
 			l.Admit(root)
 			projected := raw
 			projected.Namespace = "apps"
@@ -51,14 +49,12 @@ func TestAdmit_SourceKinds(t *testing.T) {
 				_, ok := l.Index.Lookup(projected)
 				assert.FatalIf(t, !ok, "projected source %s not indexed", projected)
 			}
-			{
-				assert.FatalIf(
-					t,
-					original.Named() != raw || l.Store.GetObject(raw) != nil,
-					"%s",
-					"raw source must remain immutable and leave the store",
-				)
-			}
+			assert.FatalIf(
+				t,
+				original.Named() != raw || l.Store.GetObject(raw) != nil,
+				"%s",
+				"raw source must remain immutable and leave the store",
+			)
 			{
 				_, ok := l.Index.Lookup(raw)
 				assert.FatalIf(t, ok, "%s", "stale raw source record")
@@ -98,14 +94,12 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n")
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
 	l.mountSources()
-	{
-		assert.FatalIf(
-			t,
-			l.scopes == old || l.scopes == nil || l.scopes.projections[0] != nil || l.scopes.projections[1] != nil,
-			"%s",
-			"mounted replacement retained the old projection memo",
-		)
-	}
+	assert.FatalIf(
+		t,
+		l.scopes == old || l.scopes == nil || l.scopes.projections[0] != nil || l.scopes.projections[1] != nil,
+		"%s",
+		"mounted replacement retained the old projection memo",
+	)
 	_, err = l.Load(t.Context(), root)
 	assert.NoError(t, err)
 	after, err := l.Occurrences(t.Context(), root, "")

@@ -220,8 +220,17 @@ func e2ESourceRefHeldErrorScopeNameLoop(t *testing.T, loopInputs struct {
 	t.Helper()
 
 	for i := range *loopInputs.repeats {
-		out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join((*loopInputs.root), "flux"),
-			"--concurrency", "2", "--cache-dir", t.TempDir())
+		runCLIBuffersResult1 := harness.RunCLIBuffers(
+			"build",
+			"all",
+			"--path",
+			filepath.Join((*loopInputs.root), "flux"),
+			"--concurrency",
+			"2",
+			"--cache-dir",
+			t.TempDir(),
+		)
+		out, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 		switch {
 		case (*loopInputs.tt).unreadable:
 
@@ -310,7 +319,7 @@ spec:
 	assert.NoError(t, repo.Storer.SetReference(
 		plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
 	))
-	harness.MutateFile(t, filepath.Join(root, "broken/cm.yaml"), "value: pinned", "value: newer")
+	harness.MutateFile(t, filepath.Join(root, "broken", "cm.yaml"), "value: pinned", "value: newer")
 	testutil.GitCommitAll(
 		t,
 		repo,
@@ -534,7 +543,7 @@ spec:
 	if !tt.external {
 		harness.MutateFile(
 			t,
-			filepath.Join(root, "sources/repo.yaml"),
+			filepath.Join(root, "sources", "repo.yaml"),
 			"{branch: master}",
 			"{commit: "+head.Hash().String()+"}",
 		)
@@ -555,8 +564,9 @@ spec:
 		heldError,
 	)
 	transport := installSourceRefTransport(t, repo.Storer)
-	out, stderr, code := harness.RunCLIBuffers("build", "ks", "probe", "-n", "flux-system",
+	runCLIBuffersResult2 := harness.RunCLIBuffers("build", "ks", "probe", "-n", "flux-system",
 		"--path", filepath.Join(root, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir())
+	out, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 	aliases := 1
 	if tt.pinned || tt.external {
 		aliases = 0
@@ -622,8 +632,9 @@ func e2ESourceRefHeldErrorAcrossNamespacesNameCase(
 ) {
 	t.Helper()
 
-	out, stderr, code := harness.RunCLIBuffers("build", "ks", "apps", "-n", "alpha",
+	runCLIBuffersResult3 := harness.RunCLIBuffers("build", "ks", "apps", "-n", "alpha",
 		"--path", filepath.Join((*root), "flux"), "--concurrency", (*concurrency), "--cache-dir", t.TempDir())
+	out, stderr, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 	if code != 0 || !strings.Contains(out, "value: pinned") || strings.Contains(out, "value: newer") ||
 		strings.Contains(stderr, (*capturedInputs.heldError).Error()) || (*capturedInputs.transport).calls.Load() != 0 {
 		t.Fatalf("suspended consumer: exit=%d transport=%d stdout=%q\nstderr:\n%s",

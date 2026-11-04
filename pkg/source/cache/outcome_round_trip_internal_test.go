@@ -95,9 +95,10 @@ func testOutcomeTypedRoundTripCaseCompletion(t *testing.T, captures *testOutcome
 		(*captures.tc).
 			check(t, (*captures.replay))
 	}
-	config, data, ok := (*captures.o).encode()
-	assert.FatalIf(t, !ok || bytes.Contains(config, []byte("fixture-secret")) ||
-		bytes.Contains(data, []byte("fixture-secret")) ||
+	blobs, ok := (*captures.o).encode()
+
+	assert.FatalIf(t, !ok || bytes.Contains(blobs.config, []byte("fixture-secret")) ||
+		bytes.Contains(blobs.manifest, []byte("fixture-secret")) ||
 		strings.Contains(
 			(*captures.replay).Error(),
 			"fixture-secret",
@@ -107,16 +108,17 @@ func testOutcomeTypedRoundTripCaseCompletion(t *testing.T, captures *testOutcome
 		for _, forbidden := range []string{"fixture-secret", "machine-canary", "credential-canary", (*(*captures.u)).URL, "https://", "cause diagnostic canary", "OCIRepository", syscall.ECONNRESET.Error()} {
 			assert.FatalIf(
 				t,
-				bytes.Contains(config, []byte(forbidden)) || bytes.Contains(data, []byte(forbidden)) ||
+				bytes.Contains(blobs.config, []byte(forbidden)) || bytes.Contains(blobs.manifest, []byte(forbidden)) ||
 					strings.Contains((*captures.replay).Error(), forbidden),
 				"machine diagnostics leaked %q",
 				forbidden,
 			)
 		}
-		again, manifestAgain, encodeOk := (*captures.o).encode()
+		blobs2, encodeOk := (*captures.o).encode()
+
 		assert.FatalIf(
 			t,
-			!encodeOk || !bytes.Equal(config, again) || !bytes.Equal(data, manifestAgain),
+			!encodeOk || !bytes.Equal(blobs.config, blobs2.config) || !bytes.Equal(blobs.manifest, blobs2.manifest),
 			"%s",
 			"failure encoding is nondeterministic",
 		)

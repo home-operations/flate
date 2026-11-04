@@ -58,17 +58,13 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 		Tree{Path: root, RepoRoot: root, ExternalChanges: change.NewSet([]string{"shared/consumer.yaml"})},
 		Config{CacheDir: t.TempDir(), Concurrency: 2},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		o.stop()
 	})
 	{
-		{
-			err := o.bootstrap(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := o.bootstrap(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	reconcileEntryForTest(t, o)
 	o.configureControllers()
@@ -97,14 +93,12 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 					if level == manifest.DrainNone {
 						return &depwait.ErrBlocked{Deps: []manifest.NamedResource{consumer}}
 					}
-					{
-						assert.ErrorIf(
-							t,
-							!blocked.Load(),
-							"%v",
-							"producer settled before the transitive consumer parked",
-						)
-					}
+					assert.ErrorIf(
+						t,
+						!blocked.Load(),
+						"%v",
+						"producer settled before the transitive consumer parked",
+					)
 					settled.Store(true)
 					obj := &manifest.ConfigMap{
 						Name:      "hello",
@@ -143,10 +137,8 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	assert.NoError(t, seedErr)
 	scheduler.Seed(seeds)
 	{
-		{
-			err := scheduler.Run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := scheduler.Run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	output, ok := o.store.GetArtifact(consumer, store.ArtifactContent).(*store.Emission)
 	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 ||
@@ -189,25 +181,23 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 			"metadata":   map[string]any{"name": "withdrawn", "namespace": "apps"},
 		}
 		_, _, accepted := s.GetEmission(child)
-		children, retained := testutil.ParseChildren(
-			base.New(s, tasks),
-			s.GetObject(child),
-			[]map[string]any{doc},
-			manifest.ParseDocOptions{},
-		)
+		parsedChildren1 := base.New(s, tasks).
+			ParseChildren(s.GetObject(child), testutil.DocumentOccurrences([]map[string]any{doc}), manifest.ParseDocOptions{})
+		if err := manifest.DocumentFailure(parsedChildren1.Failures); err != nil {
+			panic(err)
+		}
+		children, retained := parsedChildren1.Children, testutil.DocumentMaps(parsedChildren1.Visible)
 		accepted.Children, accepted.Manifests = children, testutil.DocumentOccurrences(retained)
 		accepted.Complete = true
 		s.RecordEmitted(child, &accepted, nil)
 		accepted.Finish()
 		o := &Orchestrator{store: s}
-		{
-			assert.FatalIf(
-				t,
-				len(outputByParent(o.collectManifests())[child]) != 1,
-				"%v",
-				"fixture has no accepted child output",
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(outputByParent(o.collectManifests())[child]) != 1,
+			"%v",
+			"fixture has no accepted child output",
+		)
 		entered, release, harvested := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		resume := sync.OnceFunc(func() { close(release) })
 		defer resume()
@@ -238,14 +228,12 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 			done <- err
 		}()
 		<-entered
-		{
-			assert.FatalIf(
-				t,
-				s.GetObject(child) != nil || s.GetObject(accepted.Children[0].Obj.Named()) != nil,
-				"%v",
-				"paused notification precedes the withdrawal commit",
-			)
-		}
+		assert.FatalIf(
+			t,
+			s.GetObject(child) != nil || s.GetObject(accepted.Children[0].Obj.Named()) != nil,
+			"%v",
+			"paused notification precedes the withdrawal commit",
+		)
 		cancel()
 		synctest.Wait()
 		select {
@@ -255,10 +243,8 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 		}
 		resume()
 		{
-			{
-				err := <-done
-				assert.FatalIf(t, !errors.Is(err, context.Canceled), "got %v, want cancellation", err)
-			}
+			err := <-done
+			assert.FatalIf(t, !errors.Is(err, context.Canceled), "got %v, want cancellation", err)
 		}
 		if len(output) != 0 || tasks.Failures() != 0 {
 			t.Fatalf("withdrawn output survived final harvest: %v; task failures=%d", output, tasks.Failures())

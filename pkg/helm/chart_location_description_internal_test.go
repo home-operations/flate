@@ -50,9 +50,7 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 			}
 		}
 
-		{
-			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
-				!strings.Contains(err.Error(), "load chart "+location+":"), "location %q: got %v", location, err)
-		}
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+			!strings.Contains(err.Error(), "load chart "+location+":"), "location %q: got %v", location, err)
 	}
 }

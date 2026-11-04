@@ -65,20 +65,18 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 	return dirs
 }
 
-func (l *Loader) collectPackageRoots(repoRoot string, sourceRoot string, roots map[string]bool) {
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for dir, doc := range l.documents.cache {
-			if (doc.traversed || dir == l.entryPath) && doc.file != "" {
-				roots[dir] = false
-				if new(l.documents).mountedRoot(dir) == sourceRoot {
-					rel, err := filepath.Rel(repoRoot, dir)
-					roots[dir] = err == nil && !safepath.Escaped(rel) && l.anchorRoot(repoRoot, filepath.ToSlash(rel))
-				}
-				if doc.buildExcluded {
-					doc.buildExcluded = false
-					l.documents.cache[dir] = doc
-				}
+func (l *Loader) collectPackageRoots(repoRoot, sourceRoot string, roots map[string]bool) {
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for dir, doc := range l.documents.cache {
+		if (doc.traversed || dir == l.entryPath) && doc.file != "" {
+			roots[dir] = false
+			if new(l.documents).mountedRoot(dir) == sourceRoot {
+				rel, err := filepath.Rel(repoRoot, dir)
+				roots[dir] = err == nil && !safepath.Escaped(rel) && l.anchorRoot(repoRoot, filepath.ToSlash(rel))
+			}
+			if doc.buildExcluded {
+				doc.buildExcluded = false
+				l.documents.cache[dir] = doc
 			}
 		}
 	}
@@ -136,7 +134,7 @@ func (l *Loader) StandaloneRoots(repoRoot string) []string {
 	return l.scopes.roots
 }
 
-func (l *Loader) excludeStandaloneRoot(repoRoot string, dir string) bool {
+func (l *Loader) excludeStandaloneRoot(repoRoot, dir string) bool {
 	root := filepath.Join(repoRoot, filepath.FromSlash(dir))
 	doc := l.documents.cache[root]
 	if doc.buildExcluded || doc.selected || doc.built != nil ||
@@ -168,7 +166,7 @@ func (l *Loader) excludeStandaloneRoot(repoRoot string, dir string) bool {
 	return false
 }
 
-func (l *Loader) excludeExternalPackageRoots(roots map[string]bool, local string, prefix string) {
+func (l *Loader) excludeExternalPackageRoots(roots map[string]bool, local, prefix string) {
 	for dir, anchored := range roots {
 		if anchored || dir == l.entryPath || dir != local && !strings.HasPrefix(dir, prefix) {
 			continue

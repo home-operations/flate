@@ -55,22 +55,18 @@ func TestRun_RemoteInputFailure(t *testing.T) {
 	)
 	st := store.New()
 	result, err := discovery.Run(t.Context(), discovery.Config{Path: root, RepoRoot: root, Store: st})
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInput) || result != nil,
-			"fatal finalization published success: result=%+v err=%v",
-			result,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrInput) || result != nil,
+		"fatal finalization published success: result=%+v err=%v",
+		result,
+		err,
+	)
 	assert.Equal(t, requests.Load(), int32(0))
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "remote"}
 	assert.Equal(t, len(st.Productions(id, nil)), 0)
 	id.Name = "orphan"
-	{
-		assert.FatalIf(t, st.GetObject(id) != nil, "%v", "fatal finalization promoted an orphan")
-	}
+	assert.FatalIf(t, st.GetObject(id) != nil, "%v", "fatal finalization promoted an orphan")
 }
 
 func TestRun_BuiltRemoteGenerator(t *testing.T) {
@@ -106,37 +102,31 @@ func TestRun_BuiltRemoteGenerator(t *testing.T) {
 			RemoteInputs: &inputs,
 		},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	var id manifest.NamedResource
 	for candidate, record := range result.Index.Records {
 		if strings.HasPrefix(candidate.Name, "generated-") && record.Parent == result.Binding.Producer {
 			id = candidate
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			id.Name == "" || st.GetObject(id) != nil,
-			"%v",
-			"prepared generator missing ownership or published early",
-		)
-	}
+	assert.FatalIf(
+		t,
+		id.Name == "" || st.GetObject(id) != nil,
+		"%v",
+		"prepared generator missing ownership or published early",
+	)
 	{
 		_, raw := result.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"})
 		assert.FatalIf(t, raw, "%v", "raw generator declaration resurrected")
 	}
 	assert.Equal(t, requests.Load(), int32(1))
 	record, _ := result.Index.Lookup(id)
-	{
-		assert.FatalIf(
-			t,
-			!slices.Contains(record.Inputs, "kustomization.yaml") || len(result.Index.Readers) == 0,
-			"remote generator lost declaration input or acquired render ownership: %+v",
-			record,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Contains(record.Inputs, "kustomization.yaml") || len(result.Index.Readers) == 0,
+		"remote generator lost declaration input or acquired render ownership: %+v",
+		record,
+	)
 }
 
 func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
@@ -241,14 +231,12 @@ func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
 		},
 		store.ArtifactContent,
 	)
-	{
-		assert.FatalIf(
-			t,
-			alias == nil || alias.(*store.SourceArtifact).LocalPath != root,
-			"%v",
-			"remote graph lost bootstrap source classification",
-		)
-	}
+	assert.FatalIf(
+		t,
+		alias == nil || alias.(*store.SourceArtifact).LocalPath != root,
+		"%v",
+		"remote graph lost bootstrap source classification",
+	)
 	assert.Diff(
 		t,
 		ownersForTest(result.Index, "apps/kustomization.yaml"),
@@ -257,12 +245,10 @@ func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
 	record, ok := result.Index.Lookup(
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "admitted"},
 	)
-	{
-		assert.FatalIf(t, !ok || record.Parent != result.Binding.Producer ||
-			st.GetObject(
-				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "unowned"},
-			) != nil, "%v", "markerless output or scoped sibling admission changed")
-	}
+	assert.FatalIf(t, !ok || record.Parent != result.Binding.Producer ||
+		st.GetObject(
+			manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "unowned"},
+		) != nil, "%v", "markerless output or scoped sibling admission changed")
 	if probes.Load() != 1 || acquisitions.Load() == 0 {
 		t.Fatalf("markerless admission: HTTP=%d Git=%d", probes.Load(), acquisitions.Load())
 	}

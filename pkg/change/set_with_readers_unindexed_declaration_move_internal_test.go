@@ -135,7 +135,8 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 				"metadata":   map[string]any{"name": "settings", "namespace": "apps"},
 				"data":       map[string]any{"value": "same"},
 			}
-			object, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			object := parsed.Object
 			assert.NoError(t, err)
 			artifacts[side] = &store.SourceArtifact{
 				FS: fstest.MapFS{
@@ -222,11 +223,9 @@ func TestDetect_OneSidedInputReadFailure(t *testing.T) {
 				cause:     cause,
 			}
 			set, err := Detect(t.Context(), &store.SourceArtifact{FS: input}, &store.SourceArtifact{FS: fstest.MapFS{}})
-			{
-				assert.FatalIf(t, set != nil || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrInput) ||
-					!errors.Is(err, manifest.ErrFlux) ||
-					!strings.Contains(err.Error(), "input.yaml"), "read failure set=%v err=%v", set, err)
-			}
+			assert.FatalIf(t, set != nil || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrInput) ||
+				!errors.Is(err, manifest.ErrFlux) ||
+				!strings.Contains(err.Error(), "input.yaml"), "read failure set=%v err=%v", set, err)
 			if operation == "read" {
 				assert.Equal(t, input.closed.Load(), int32(1))
 			}
@@ -284,9 +283,7 @@ func TestDetect_OneSidedInputCancellation(t *testing.T) {
 		dataEOF:   true,
 	}
 	set, err := Detect(ctx, &store.SourceArtifact{FS: input}, &store.SourceArtifact{FS: fstest.MapFS{}})
-	{
-		assert.FatalIf(t, set != nil || !errors.Is(err, context.Canceled), "cancellation set=%v err=%v", set, err)
-	}
+	assert.FatalIf(t, set != nil || !errors.Is(err, context.Canceled), "cancellation set=%v err=%v", set, err)
 	assert.Equal(t, input.opened.Load(), int32(1))
 	assert.Equal(t, input.closed.Load(), input.opened.Load())
 	assert.Equal(t, input.postCancel.Load(), int32(0))
@@ -310,9 +307,7 @@ func TestCollectInputs_CancelBeforeOpen(t *testing.T) {
 	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
 	var set Set
 	err := set.CollectInputs(ctx, input, "input.yaml", false)
-	{
-		assert.FatalIf(t, !errors.Is(err, context.Canceled), "cancellation error=%v", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, context.Canceled), "cancellation error=%v", err)
 	assert.Equal(t, input.opened.Load(), int32(0))
 }
 
@@ -344,9 +339,7 @@ func TestCollectInputs_CancelAfterOpen(t *testing.T) {
 	})
 	var set Set
 	err := set.CollectInputs(checked, input, "input.yaml", false)
-	{
-		assert.FatalIf(t, !errors.Is(err, context.Canceled), "cancellation error=%v", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, context.Canceled), "cancellation error=%v", err)
 	assert.Equal(t, reads, 0)
 	assert.Equal(t, input.opened.Load(), int32(1))
 	assert.Equal(t, input.closed.Load(), int32(1))
@@ -401,15 +394,13 @@ func TestCollectInputs_ParseFailureDrain(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = testutil.DecodeDocs(f)
 	assert.NoError(t, f.Close())
-	{
-		assert.FatalIf(
-			t,
-			err == nil || probeReads != 1,
-			"malformed fixture must stop before the later read: reads=%d error=%v",
-			probeReads,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err == nil || probeReads != 1,
+		"malformed fixture must stop before the later read: reads=%d error=%v",
+		probeReads,
+		err,
+	)
 	t.Logf("pinned decoder rejects malformed prefix after %d read; later read remains pending", probeReads)
 	for _, tc := range []struct {
 		name    string
@@ -557,7 +548,8 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 			t.Context(), before, after, [2]map[manifest.NamedResource]inputprojection.Projection{},
 		)
 		assert.NoError(t, err)
-		changed, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
+		comparison := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
+		changed, known := comparison.Changed, comparison.Known
 		assert.Equal(t, known, (*testCaseInput) != "partial")
 		if known {
 			assert.Equal(t, changed, (*testCaseInput) != "equal")
@@ -568,7 +560,8 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 		if reverse {
 			side = manifest.TreeBase
 		}
-		changed, known = qualified.DeclarationChanged(side, manifest.BootstrapSourceID, id, prepared)
+		comparison2 := qualified.DeclarationChanged(side, manifest.BootstrapSourceID, id, prepared)
+		changed, known = comparison2.Changed, comparison2.Known
 		if known {
 			assert.Equal(t, changed, (*testCaseInput) != "equal")
 		}
@@ -655,19 +648,15 @@ func testCollectInputsReadResultsCase(t *testing.T, testCaseInput testCollectInp
 			[]manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}},
 		)
 	} else {
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, testCaseInput.tc.wantErr) || len(set.inputs) != 0,
-				"collected inputs=%v error=%v",
-				set.inputs,
-				err,
-			)
-		}
-		{
-			assert.FatalIf(t, !testCaseInput.tc.cancel &&
-				(!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")), "read failure classification=%v", err)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, testCaseInput.tc.wantErr) || len(set.inputs) != 0,
+			"collected inputs=%v error=%v",
+			set.inputs,
+			err,
+		)
+		assert.FatalIf(t, !testCaseInput.tc.cancel &&
+			(!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "input.yaml")), "read failure classification=%v", err)
 	}
 	assert.Equal(t, reads, testCaseInput.tc.reads)
 	assert.Equal(t, input.closed.Load(), int32(1))

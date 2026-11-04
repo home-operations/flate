@@ -21,7 +21,7 @@ func TestRun_TestNamed_MatchingFailureFromOtherKind(t *testing.T) {
 			"  path: ./missing-ghost\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
 		),
 	)
-	stdout, stderr, code := runCLI(
+	cli := runCLI(
 		t,
 		"test",
 		"hr",
@@ -33,6 +33,7 @@ func TestRun_TestNamed_MatchingFailureFromOtherKind(t *testing.T) {
 		"--concurrency",
 		"2",
 	)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, `no HelmRelease named "ghost"`) || stdout != "",

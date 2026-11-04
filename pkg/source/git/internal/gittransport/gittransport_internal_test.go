@@ -74,10 +74,8 @@ func testDefaultClientPerCallControlsCase(t *testing.T, name *string,
 	}
 	switch *name {
 	case "restricted":
-		{
-			dial, ok := errors.AsType[*net.OpError](err)
-			assert.FatalIf(t, !ok || dial.Op != "dial", "egress was not blocked at dial: %v", err)
-		}
+		dial, ok := errors.AsType[*net.OpError](err)
+		assert.FatalIf(t, !ok || dial.Op != "dial", "egress was not blocked at dial: %v", err)
 	default:
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "caller cancellation: %v", err)
 	}

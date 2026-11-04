@@ -39,14 +39,12 @@ func testCapturePayloadAuthorityCase(t *testing.T, testCaseInput *bool,
 	defer first.Retire()
 	assert.Equal(t, first.GetObject(target), declaration.Obj)
 	assert.Equal(t, first.GetArtifact(target, ArtifactContent), Artifact(payload))
-	{
-		assert.FatalIf(
-			t,
-			!first.Valid(),
-			"%s",
-			"capturing independent declaration and payload invalidated a current reader",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!first.Valid(),
+		"%s",
+		"capturing independent declaration and payload invalidated a current reader",
+	)
 	next := &SourceArtifact{Key: "next", Digest: "next", FS: fstest.MapFS{"file": {Data: []byte("next")}}}
 	s.RecordEmitted(
 		a,
@@ -54,20 +52,14 @@ func testCapturePayloadAuthorityCase(t *testing.T, testCaseInput *bool,
 		map[manifest.NamedResource]*SourceArtifact{target: next},
 	)
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{first.ID()})
-	{
-		assert.FatalIf(t, first.Valid(), "%s", "payload-only replacement did not invalidate the registered reader")
-	}
+	assert.FatalIf(t, first.Valid(), "%s", "payload-only replacement did not invalidate the registered reader")
 	assert.Equal(t, first.GetArtifact(target, ArtifactContent), Artifact(payload))
 	second.Init(s, ownerID("second-reader"), nil)
 	defer second.Retire()
 	assert.Equal(t, second.GetArtifact(target, ArtifactContent), Artifact(next))
-	{
-		assert.FatalIf(t, !second.Valid(), "%s", "new payload authority could not be captured")
-	}
+	assert.FatalIf(t, !second.Valid(), "%s", "new payload authority could not be captured")
 	s.RecordEmitted(a, &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(t, second.Valid(), "%s", "last payload withdrawal retained registered artifact authority")
-	}
+	assert.FatalIf(t, second.Valid(), "%s", "last payload withdrawal retained registered artifact authority")
 	assert.Equal(t, s.GetObject(target), declaration.Obj)
 	assert.Equal(t, s.GetArtifact(target, ArtifactContent), Artifact(nil))
 }

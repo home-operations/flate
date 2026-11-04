@@ -146,24 +146,20 @@ func TestRequire_MaterializerPurpose(t *testing.T) {
 					return run.Require(ctx, deps, level)
 				},
 			)
-			{
-				assert.FatalIf(t, run.Outcome() != schedule.Blocked ||
-					!slices.Equal(run.Blocked, []manifest.NamedResource{owner.Named()}) ||
-					len(
-						slices.Collect(run.Reads.Gates()),
-					) != 3, "%v", "authored existence gate erased materializer readiness")
-			}
+			assert.FatalIf(t, run.Outcome() != schedule.Blocked ||
+				!slices.Equal(run.Blocked, []manifest.NamedResource{owner.Named()}) ||
+				len(
+					slices.Collect(run.Reads.Gates()),
+				) != 3, "%v", "authored existence gate erased materializer readiness")
 			run.Settle(t.Context(), manifest.DrainForce)
 			info, _ := st.GetStatus(consumer.Named())
-			{
-				assert.FatalIf(
-					t,
-					!info.IsDependencyFailure() ||
-						!slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}),
-					"settlement lost gate purpose: %+v",
-					info,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!info.IsDependencyFailure() ||
+					!slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}),
+				"settlement lost gate purpose: %+v",
+				info,
+			)
 		})
 	}
 }
@@ -256,13 +252,11 @@ func testExecutionSyntheticDependencyReasonsCase(
 			},
 		)
 		info, _ := st.GetStatus(child.Named())
-		{
-			assert.FatalIf(t, !info.IsDependencyFailure() ||
-				!slices.Equal(
-					info.BlockedBy(),
-					[]manifest.NamedResource{owner.Named()},
-				), "declaration failure=%+v", info)
-		}
+		assert.FatalIf(t, !info.IsDependencyFailure() ||
+			!slices.Equal(
+				info.BlockedBy(),
+				[]manifest.NamedResource{owner.Named()},
+			), "declaration failure=%+v", info)
 		if !strings.Contains(info.String(), `entry path "clusters/test"`) ||
 			strings.Contains(info.String(), owner.Named().String()) {
 			t.Fatalf("declaration context=%s", info.String())
@@ -270,12 +264,10 @@ func testExecutionSyntheticDependencyReasonsCase(
 		return
 	}
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
-	{
-		assert.FatalIf(t, !ok || !slices.Contains(failed.Failed, owner.Named()) ||
-			failed.Reasons[owner.Named()].Subject.Resource != testutil.KustomizationID("flux-system", "sync") ||
-			strings.Contains(
-				err.Error(),
-				owner.Named().String(),
-			), "%s lost raw/display context: %#v %v", (*testCaseInput), failed, err)
-	}
+	assert.FatalIf(t, !ok || !slices.Contains(failed.Failed, owner.Named()) ||
+		failed.Reasons[owner.Named()].Subject.Resource != testutil.KustomizationID("flux-system", "sync") ||
+		strings.Contains(
+			err.Error(),
+			owner.Named().String(),
+		), "%s lost raw/display context: %#v %v", (*testCaseInput), failed, err)
 }

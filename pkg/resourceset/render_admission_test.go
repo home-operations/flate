@@ -54,14 +54,10 @@ func TestRender_Admission(t *testing.T) {
 			})
 			assert.Equal(t, calls, 1)
 			assert.Equal(t, resolved, 1)
-			{
-				assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider ||
-					warnings[0].Resource != rs.Named(), "admission lost provider warning: %+v", warnings)
-			}
-			{
-				assert.FatalIf(t, docs != nil || (tc.name == "template" && err == nil) ||
-					(tc.name != "template" && !errors.Is(err, tc.err)), "admission: documents=%v error=%v, want %v", docs, err, tc.err)
-			}
+			assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider ||
+				warnings[0].Resource != rs.Named(), "admission lost provider warning: %+v", warnings)
+			assert.FatalIf(t, docs != nil || (tc.name == "template" && err == nil) ||
+				(tc.name != "template" && !errors.Is(err, tc.err)), "admission: documents=%v error=%v, want %v", docs, err, tc.err)
 		})
 	}
 	t.Run("canonical content stays immutable", func(t *testing.T) {
@@ -99,13 +95,11 @@ func TestRender_Admission(t *testing.T) {
 	invalid := &manifest.ResourceSet{Name: "invalid", Steps: []fluxopv1.ResourceSetStep{{Name: "empty"}}}
 	called := false
 	_, _, err := renderProviders(invalid, nil, func(any) (bool, error) { called = true; return true, nil })
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInput) || called,
-			"invalid steps reached admission: called=%v error=%v",
-			called,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrInput) || called,
+		"invalid steps reached admission: called=%v error=%v",
+		called,
+		err,
+	)
 }

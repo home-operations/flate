@@ -77,9 +77,7 @@ func testStoreProductionsRetainsAcceptedOwnerFrozenBorrow(t *testing.T) {
 	snapshot := s.Productions(child.Obj.Named(), nil)
 	facts := s.ReferenceFacts(child.Obj.Named(), nil, false, manifest.NamedResource{})
 	assert.Diff(t, facts.Data, child.Obj.(manifest.Data))
-	{
-		assert.FatalIf(t, !facts.Accepted, "accepted selected facts=%+v", facts)
-	}
+	assert.FatalIf(t, !facts.Accepted, "accepted selected facts=%+v", facts)
 	want := []manifest.Production{proof, {Owner: q}}
 	accept(t, s, q, &Emission{Complete: true})
 	{
@@ -88,30 +86,24 @@ func testStoreProductionsRetainsAcceptedOwnerFrozenBorrow(t *testing.T) {
 	}
 	assert.Diff(t, facts.Productions, want)
 	parent, ok := s.RenderedParent(child.Obj.Named(), nil)
-	{
-		assert.FatalIf(t, !ok || parent != p, "frozen surviving parent=%v/%t, want %v/true", parent, ok, p)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(backing, original),
-			"query mutated borrowed discovery evidence: got %v, want %v",
-			backing,
-			original,
-		)
-	}
+	assert.FatalIf(t, !ok || parent != p, "frozen surviving parent=%v/%t, want %v/true", parent, ok, p)
+	assert.FatalIf(
+		t,
+		!slices.Equal(backing, original),
+		"query mutated borrowed discovery evidence: got %v, want %v",
+		backing,
+		original,
+	)
 	owned := child
 	owned.Productions = []manifest.Production{proof}
 	s.RecordEmitted(p, &Emission{Children: []Child{owned}}, nil)
 	borrowed := s.Productions(child.Obj.Named(), nil)
-	{
-		assert.FatalIf(
-			t,
-			len(borrowed) != 1 || &borrowed[0] != &backing[0],
-			"%s",
-			"duplicate accepted evidence copied frozen backing",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(borrowed) != 1 || &borrowed[0] != &backing[0],
+		"%s",
+		"duplicate accepted evidence copied frozen backing",
+	)
 
 	for _, evidence := range [][]manifest.Production{
 		{{Owner: q}, proof, proof},
@@ -131,15 +123,13 @@ func testStoreProductionsRetainsAcceptedOwnerFrozenBorrow(t *testing.T) {
 				want,
 			)
 		}
-		{
-			assert.FatalIf(
-				t,
-				!slices.Equal(evidence, original),
-				"query reordered borrowed discovery evidence: got %v, want %v",
-				evidence,
-				original,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!slices.Equal(evidence, original),
+			"query reordered borrowed discovery evidence: got %v, want %v",
+			evidence,
+			original,
+		)
 	}
 }
 
@@ -155,14 +145,12 @@ func testStoreProductionsRetainsAcceptedOwnerHiddenOwnerRootedChild(t *testing.T
 	}})
 	s.RecordEmitted(p, &Emission{Children: []Child{child}}, nil)
 	s.AddObject(child.Obj)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(child.Obj.Named()) != child.Obj || s.GetObject(p) != nil,
-			"%s",
-			"fixture needs an independently rooted child and hidden owner",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(child.Obj.Named()) != child.Obj || s.GetObject(p) != nil,
+		"%s",
+		"fixture needs an independently rooted child and hidden owner",
+	)
 	assert.Equal(t, len(s.Productions(child.Obj.Named(), nil)), 0)
 	{
 		parent, ok := s.RenderedParent(child.Obj.Named(), nil)
@@ -203,25 +191,21 @@ func testStoreProductionsRetainsAcceptedOwnerCase(
 	if (*testCaseInput) == 0 {
 		wantParent = q
 	}
-	{
-		assert.FatalIf(
-			t,
-			!ok || parent != wantParent,
-			"filtered parent=%v/%t, want %v/true",
-			parent,
-			ok,
-			wantParent,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(proofs, original),
-			"filter mutated borrowed discovery evidence: got %v, want %v",
-			proofs,
-			original,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || parent != wantParent,
+		"filtered parent=%v/%t, want %v/true",
+		parent,
+		ok,
+		wantParent,
+	)
+	assert.FatalIf(
+		t,
+		!slices.Equal(proofs, original),
+		"filter mutated borrowed discovery evidence: got %v, want %v",
+		proofs,
+		original,
+	)
 	want := slices.Delete(slices.Clone(original), (*testCaseInput), (*testCaseInput)+1)
 	for _, id := range owners {
 		_, _, attempt := s.GetEmission(id)
@@ -292,15 +276,13 @@ func testStoreProductionsRetainsAcceptedOwnerCapturedConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 	got := snapshot
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(got, want),
-			"captured productions changed after concurrent replacement/withdrawal: got %v, want %v",
-			got,
-			want,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Equal(got, want),
+		"captured productions changed after concurrent replacement/withdrawal: got %v, want %v",
+		got,
+		want,
+	)
 	{
 		got := s.Productions(child.Obj.Named(), nil)
 		assert.FatalIf(t, len(got) != 0, "withdrawn productions remain visible: %v", got)
@@ -345,23 +327,19 @@ func testStoreProductionsRetainsAcceptedOwnerCase2(
 	if *testCaseInput {
 		want = 1
 	}
-	{
-		assert.FatalIf(t, len(got) != want || !slices.Contains(got, proof) ||
-			!slices.ContainsFunc(
-				got,
-				func(v manifest.Production) bool { return v.Owner == p },
-			), "accepted owner lost or redundant thin evidence added: %v", got)
-	}
+	assert.FatalIf(t, len(got) != want || !slices.Contains(got, proof) ||
+		!slices.ContainsFunc(
+			got,
+			func(v manifest.Production) bool { return v.Owner == p },
+		), "accepted owner lost or redundant thin evidence added: %v", got)
 	parent, ok := s.RenderedParent(child.Obj.Named(), nil)
-	{
-		assert.FatalIf(
-			t,
-			ok == (*testCaseInput) || (!(*testCaseInput) && parent != p),
-			"authored parent=%v/%t, own evidence=%t",
-			parent,
-			ok, (*testCaseInput),
-		)
-	}
+	assert.FatalIf(
+		t,
+		ok == (*testCaseInput) || (!(*testCaseInput) && parent != p),
+		"authored parent=%v/%t, own evidence=%t",
+		parent,
+		ok, (*testCaseInput),
+	)
 	accept(t, s, p, &Emission{Complete: true})
 	{
 		got := s.Productions(child.Obj.Named(), nil)

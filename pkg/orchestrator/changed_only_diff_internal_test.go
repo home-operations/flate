@@ -90,9 +90,7 @@ spec:
 		assert.Equal(t, len(runs), len(trees))
 		for _, run := range runs {
 			assert.NoError(t, run.Err)
-			{
-				assert.FatalIf(t, run.Result == nil, "%v", "missing render result")
-			}
+			assert.FatalIf(t, run.Result == nil, "%v", "missing render result")
 			assert.Equal(t, len(run.Result.Blocked), 0)
 			assert.Equal(t, len(run.Result.Failed), 0)
 		}
@@ -297,10 +295,8 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 			}
 			testutil.WriteFile(t, dir, "apps/app-a/kustomization.yaml", control)
 			{
-				{
-					err := os.Remove(filepath.Join(dir, "apps/app-a/cm.yaml"))
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				err := os.Remove(filepath.Join(dir, "apps", "app-a", "cm.yaml"))
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 		}
 		testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks-a.yaml, ks-b.yaml, inputs]\n")
@@ -342,24 +338,20 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 		},
 	)
 	base, head := renderedTrees1[0], renderedTrees1[1]
-	{
-		assert.FatalIf(
-			t,
-			(err != nil) != (testCaseInput.namespace == ""),
-			"RenderTrees: %v, want blocked=%t",
-			err,
-			testCaseInput.namespace == "",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			base.Result == nil || head.Result == nil,
-			"both sides must render: base=%v head=%v",
-			base.Result,
-			head.Result,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(err != nil) != (testCaseInput.namespace == ""),
+		"RenderTrees: %v, want blocked=%t",
+		err,
+		testCaseInput.namespace == "",
+	)
+	assert.FatalIf(
+		t,
+		base.Result == nil || head.Result == nil,
+		"both sides must render: base=%v head=%v",
+		base.Result,
+		head.Result,
+	)
 
 	assertChangedTreeChildren(t, []Rendered{base, head}, testCaseInput.namespace)
 
@@ -379,27 +371,22 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 
 	for i, rendered := range []Rendered{base, head} {
 		obj, ok := rendered.Store().Get[*manifest.Kustomization](consumer)
-		{
-			assert.FatalIf(t, !ok, "side %d lost effective consumer identity", i)
-		}
+		assert.FatalIf(t, !ok, "side %d lost effective consumer identity", i)
 		owners := testutil.Owners(rendered.Store().Productions(consumer, nil))
-		{
-			assert.FatalIf(
-				t,
-				!slices.Contains(owners, testutil.KustomizationID("flux-system", "app-a")),
-				"side %d owners=%v",
-				i,
-				owners,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!slices.Contains(owners, testutil.KustomizationID("flux-system", "app-a")),
+			"side %d owners=%v",
+			i,
+			owners,
+		)
 		ns := obj.Namespace
 		assert.Equal(t, ns, "flux-system")
 		docs := outputByParent(rendered.Result.Manifests)[consumer]
-		{
-			assert.FatalIf(t, len(docs) != 1, "side %d consumer documents = %d", i, len(docs))
-		}
+		assert.FatalIf(t, len(docs) != 1, "side %d consumer documents = %d", i, len(docs))
 		assert.Equal(t, docs[0]["data"].(map[string]any)["k"], any(fmt.Sprintf("v%d", i+1)))
-		_, ns = manifest.DocMetadata(docs[0])
+		metadata := manifest.DocMetadata(docs[0])
+		ns = metadata.Namespace
 		assert.Equal(t, ns, "")
 	}
 
@@ -421,17 +408,13 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 		selectedErr,
 		diff.Options{Format: diff.FormatJSON},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	var output struct {
 		Changes []diff.Change `json:"changes"`
 	}
 	{
-		{
-			err := json.Unmarshal(body, &output)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := json.Unmarshal(body, &output)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	assert.Equal(t, len(output.Changes), 2)
 	changes := slices.DeleteFunc(output.Changes, func(change diff.Change) bool {
@@ -443,24 +426,20 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 		}
 		return false
 	})
-	{
-		assert.FatalIf(
-			t,
-			len(changes) != 1,
-			"want exactly 1 change (cfg-a), got %d: %+v",
-			len(changes),
-			changes,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(changes) != 1,
+		"want exactly 1 change (cfg-a), got %d: %+v",
+		len(changes),
+		changes,
+	)
 	c := changes[0]
-	{
-		assert.ErrorIf(
-			t,
-			c.Name != "cfg-a" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged,
-			"change = %+v; want ConfigMap cfg-a changed",
-			c,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		c.Name != "cfg-a" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged,
+		"change = %+v; want ConfigMap cfg-a changed",
+		c,
+	)
 }
 
 type testRenderTreesChangedOnlyAndDiffSelectorRelabelTailInputs struct {
@@ -527,9 +506,7 @@ func testRenderTreesChangedOnlyAndDiffCaseSegment(
 				)
 			}
 		}
-		{
-			assert.FatalIf(t, configMapNames(side.Result)["cfg-b"], "side %d rendered unchanged sibling", i)
-		}
+		assert.FatalIf(t, configMapNames(side.Result)["cfg-b"], "side %d rendered unchanged sibling", i)
 	}
 }
 
@@ -554,14 +531,12 @@ func assertFullRemoteTrees(t *testing.T, roots []string, query string) {
 			assert.Equal(t, configMapNames(result)["from-submodule"], query == "")
 			byParent := outputByParent(result.Manifests)
 			consumer := testutil.KustomizationID("flux-system", "consumer-a")
-			{
-				assert.FatalIf(
-					t,
-					len(byParent[consumer]) != 1 || !configMapNames(result)["cfg-b"],
-					"full remote reachability: %+v",
-					result,
-				)
-			}
+			assert.FatalIf(
+				t,
+				len(byParent[consumer]) != 1 || !configMapNames(result)["cfg-b"],
+				"full remote reachability: %+v",
+				result,
+			)
 			assert.Equal(
 				t,
 				byParent[consumer][0]["data"].(map[string]any)["k"],

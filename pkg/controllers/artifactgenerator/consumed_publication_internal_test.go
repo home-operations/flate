@@ -47,15 +47,11 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 	defer cancel()
 	st, bodies := store.New(), task.NewBounded(2)
 	owner, err := cache.New(ctx, "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	defer func() {
 		{
-			{
-				localErr := owner.Close()
-				assert.ErrorIf(t, localErr != nil, "%v", localErr)
-			}
+			localErr := owner.Close()
+			assert.ErrorIf(t, localErr != nil, "%v", localErr)
 		}
 	}()
 	acquire := func(value string) *store.SourceArtifact {
@@ -80,9 +76,7 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 				return cache.ProducerResult{}, archive.Close()
 			},
 		)
-		{
-			assert.FatalIf(t, innerLocalErr != nil, "%v", innerLocalErr)
-		}
+		assert.FatalIf(t, innerLocalErr != nil, "%v", innerLocalErr)
 		return &store.SourceArtifact{
 			FS:       input,
 			Key:      id,
@@ -97,13 +91,14 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 		delete(s1.Metadata, "org.opencontainers.image.revision")
 	}
 	selectPublicationArtifact(&change, &s1, &s2)
-	obj, doc := generatorForTest(
+	generatorForTestResult1 := generatorForTest(
 		t,
 		[]any{map[string]any{"name": "output", "revision": "@repo", "originRevision": "@repo", "copy": []any{
 			map[string]any{"from": "@repo/app/kustomization.yaml", "to": "@artifact/app/kustomization.yaml"},
 			map[string]any{"from": "@repo/app/cm.yaml", "to": "@artifact/app/cm.yaml"},
 		}}},
 	)
+	obj, doc := generatorForTestResult1.object, generatorForTestResult1.document
 	if strings.HasPrefix((*change), "unselected-") || (*change) == "origin-without-revision" || (*change) ==
 		"selected-origin-fallback" {
 		output := doc["spec"].(map[string]any)["artifacts"].([]any)[0].(map[string]any)
@@ -111,10 +106,9 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 		if strings.HasPrefix((*change), "unselected-") {
 			delete(output, "originRevision")
 		}
-		parsed, authoritative, _, innerInnerInnerLocalErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-		{
-			assert.FatalIf(t, innerInnerInnerLocalErr != nil, "%v", innerInnerInnerLocalErr)
-		}
+		parsed2, innerInnerInnerLocalErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		parsed, authoritative := parsed2.Object, parsed2.Document
+		assert.FatalIf(t, innerInnerInnerLocalErr != nil, "%v", innerInnerInnerLocalErr)
 		obj, doc = parsed.(*manifest.RawObject), authoritative
 	}
 	repo := manifest.NamedResource{
@@ -126,10 +120,9 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 	if (*publication) == "emitted" {
 		repo.Kind = manifest.KindExternalArtifact
 		doc["spec"].(map[string]any)["sources"].([]any)[0].(map[string]any)["kind"] = repo.Kind
-		parsed, authoritative, _, innerInnerInnerInnerLocalErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-		{
-			assert.FatalIf(t, innerInnerInnerInnerLocalErr != nil, "%v", innerInnerInnerInnerLocalErr)
-		}
+		parsed3, innerInnerInnerInnerLocalErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		parsed, authoritative := parsed3.Object, parsed3.Document
+		assert.FatalIf(t, innerInnerInnerInnerLocalErr != nil, "%v", innerInnerInnerInnerLocalErr)
 		obj, doc = parsed.(*manifest.RawObject), authoritative
 	}
 	st.AddObject(obj, doc)
@@ -148,10 +141,9 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 			"sourceRef": map[string]any{"kind": manifest.KindExternalArtifact, "name": "output"},
 		},
 	}
-	consumer, authoritative, _, err := manifest.ParseDoc(consumerDoc, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	parsed4, err := manifest.ParseDoc(consumerDoc, manifest.ParseDocOptions{})
+	consumer, authoritative := parsed4.Object, parsed4.Document
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.AddObject(consumer, authoritative)
 	driver := &manifest.Kustomization{Name: "driver", Namespace: "apps"}
 	st.AddObject(driver)
@@ -178,54 +170,51 @@ func consumedPublicationCase(t *testing.T, publication, change *string, document
 				"kind":       repo.Kind,
 				"metadata":   map[string]any{"name": repo.Name, "namespace": repo.Namespace},
 			}
-			children, docs := testutil.ParseChildren(
-				generator,
+			parsed6 := generator.ParseChildren(
 				supplier,
-				[]map[string]any{childDoc},
+				testutil.DocumentOccurrences([]map[string]any{childDoc}),
 				manifest.ParseDocOptions{},
 			)
+			if failure := manifest.DocumentFailure(parsed6.Failures); failure != nil {
+				panic(failure)
+			}
+			children, docs := parsed6.Children, testutil.DocumentMaps(parsed6.Visible)
 			next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(docs), true
 			{
-				{
-					innerInnerInnerInnerInnerLocalErr := producer.Emit(
-						t.Context(),
-						supplier.Named(),
-						&next,
-						map[manifest.NamedResource]*store.SourceArtifact{repo: input},
-					)
-					assert.ErrorIf(
-						t,
-						innerInnerInnerInnerInnerLocalErr != nil,
-						"%v",
-						innerInnerInnerInnerInnerLocalErr,
-					)
-				}
+				innerInnerInnerInnerInnerLocalErr := producer.Emit(
+					t.Context(),
+					supplier.Named(),
+					&next,
+					map[manifest.NamedResource]*store.SourceArtifact{repo: input},
+				)
+				assert.ErrorIf(
+					t,
+					innerInnerInnerInnerInnerLocalErr != nil,
+					"%v",
+					innerInnerInnerInnerInnerLocalErr,
+				)
 			}
 			producer.Reads.Accept()
 		}
 		publish(s1)
 		inventory, ok := st.GetArtifact(supplier.Named(), store.ArtifactContent).(*store.Emission)
-		{
-			assert.FatalIf(
-				t,
-				!ok || !inventory.Complete || st.EmissionOwner(repo) != supplier.Named(),
-				"%v",
-				"S1 supplying emission is not complete and visible",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || !inventory.Complete || st.EmissionOwner(repo) != supplier.Named(),
+			"%v",
+			"S1 supplying emission is not complete and visible",
+		)
 		st.UpdateStatus(supplier.Named(), store.StatusInfo{Status: store.StatusReady})
 	} else {
 		st.AddObject(&manifest.GitRepository{Name: repo.Name, Namespace: repo.Namespace})
 		publish(s1)
 	}
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(repo, store.ArtifactContent) != s1,
-			"%v",
-			"S1 source is not visible before scheduler start",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetArtifact(repo, store.ArtifactContent) != s1,
+		"%v",
+		"S1 source is not visible before scheduler start",
+	)
 	runConsumedPublication(
 		ctx,
 		t,
@@ -348,7 +337,7 @@ func runConsumedPublication(ctx context.Context, t *testing.T, statementInput *c
 	)
 }
 
-func selectPublicationArtifact(change **string, s1 **store.SourceArtifact, s2 **store.SourceArtifact) {
+func selectPublicationArtifact(change **string, s1, s2 **store.SourceArtifact) {
 	if (*(*change)) != "selected-union" {
 		clone := *(*s1)
 		clone.Metadata = maps.Clone((*s1).Metadata)
@@ -433,26 +422,22 @@ func assertConsumedPublication(t *testing.T, statementInput *consumedPublication
 		default:
 			t.Fatal("S2 publication did not reach its paused notification")
 		}
-		{
-			assert.FatalIf(
-				t,
-				(*(*statementInput.statementInput).st).GetArtifact(
-					(*(*statementInput.statementInput).repo),
-					store.ArtifactContent,
-				) != (*(*statementInput.statementInput).s2),
-				"%v",
-				"publication listener ran before S2 commit/unlock",
-			)
-		}
+		assert.FatalIf(
+			t,
+			(*(*statementInput.statementInput).st).GetArtifact(
+				(*(*statementInput.statementInput).repo),
+				store.ArtifactContent,
+			) != (*(*statementInput.statementInput).s2),
+			"%v",
+			"publication listener ran before S2 commit/unlock",
+		)
 		inventory := (*(*statementInput.statementInput).st).GetArtifact((*(*statementInput.statementInput).consumer).Named(), store.ArtifactContent).(*store.Emission)
-		{
-			assert.FatalIf(
-				t,
-				inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "S1",
-				"%v",
-				"paused notification did not permit the last completed S1 inventory",
-			)
-		}
+		assert.FatalIf(
+			t,
+			inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "S1",
+			"%v",
+			"paused notification did not permit the last completed S1 inventory",
+		)
 		select {
 		case <-(*statementInput.driverDone):
 			t.Fatal("driver finished before notification release")
@@ -478,14 +463,12 @@ func assertConsumedPublication(t *testing.T, statementInput *consumedPublication
 	// An explicit publication requests an acknowledged real Sweep even when the descriptor deduplicates.
 	(*statementInput.s).OnPublication()
 	synctest.Wait()
-	{
-		assert.FatalIf(
-			t,
-			(*statementInput.d).sweeps.Load() <= beforeSweep,
-			"%v",
-			"no acknowledged Sweep after publication",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*statementInput.d).sweeps.Load() <= beforeSweep,
+		"%v",
+		"no acknowledged Sweep after publication",
+	)
 	want := before
 	if strings.HasPrefix((*(*(*statementInput.statementInput).change)), "selected-") {
 		want.Admitted++
@@ -495,36 +478,30 @@ func assertConsumedPublication(t *testing.T, statementInput *consumedPublication
 	}
 	atSweep := statementInput.work.snapshot()
 	{
-		{
-			diff := cmp.Diff(want, atSweep)
-			assert.ErrorIf(
-				t,
-				diff != "",
-				"%s work after acknowledged Sweep (-want +got):\n%s",
-				(*(*(*statementInput.statementInput).change)),
-				diff,
-			)
-		}
-	}
-	{
+		diff := cmp.Diff(want, atSweep)
 		assert.ErrorIf(
 			t,
-			statementInput.work.active.Load() != 0,
-			"%v",
-			"generator closure remains in flight after acknowledged Sweep",
+			diff != "",
+			"%s work after acknowledged Sweep (-want +got):\n%s",
+			(*(*(*statementInput.statementInput).change)),
+			diff,
 		)
 	}
+	assert.ErrorIf(
+		t,
+		statementInput.work.active.Load() != 0,
+		"%v",
+		"generator closure remains in flight after acknowledged Sweep",
+	)
 	close((*statementInput.finishDriver))
 	{
-		{
-			innerInnerInnerInnerInnerInnerInnerLocalErr := <-(*statementInput.done)
-			assert.FatalIf(
-				t,
-				innerInnerInnerInnerInnerInnerInnerLocalErr != nil,
-				"%v",
-				innerInnerInnerInnerInnerInnerInnerLocalErr,
-			)
-		}
+		innerInnerInnerInnerInnerInnerInnerLocalErr := <-(*statementInput.done)
+		assert.FatalIf(
+			t,
+			innerInnerInnerInnerInnerInnerInnerLocalErr != nil,
+			"%v",
+			innerInnerInnerInnerInnerInnerInnerLocalErr,
+		)
 	}
 	(*(*statementInput.statementInput).bodies).BlockTillDone()
 	if (*(*statementInput.statementInput).bodies).Failures() != 0 || statementInput.work.active.Load() != 0 ||
@@ -533,16 +510,14 @@ func assertConsumedPublication(t *testing.T, statementInput *consumedPublication
 	}
 	after := statementInput.work.snapshot()
 	{
-		{
-			diff := cmp.Diff(atSweep, after)
-			assert.ErrorIf(
-				t,
-				diff != "",
-				"%s delayed generator work after final drain (-want +got):\n%s",
-				(*(*(*statementInput.statementInput).change)),
-				diff,
-			)
-		}
+		diff := cmp.Diff(atSweep, after)
+		assert.ErrorIf(
+			t,
+			diff != "",
+			"%s delayed generator work after final drain (-want +got):\n%s",
+			(*(*(*statementInput.statementInput).change)),
+			diff,
+		)
 	}
 
 	// No outstanding task, dispatch or Settle structurally excludes slot reacquisition and other Acquire paths.
@@ -576,18 +551,17 @@ func (p *consumedPublicationRun) publishChange(t *testing.T) {
 		selected := manifest.BaseManifest((*p.obj))
 		if (*(*p.change)) == "selected-binding" {
 			updated["spec"].(map[string]any)["sources"].([]any)[0].(map[string]any)["name"] = p.rebound.Name
-			parsed, authoritative, _, innerInnerInnerInnerInnerInnerLocalErr := manifest.ParseDoc(
+			parsed5, innerInnerInnerInnerInnerInnerLocalErr := manifest.ParseDoc(
 				updated,
 				manifest.ParseDocOptions{},
 			)
-			{
-				assert.FatalIf(
-					t,
-					innerInnerInnerInnerInnerInnerLocalErr != nil,
-					"%v",
-					innerInnerInnerInnerInnerInnerLocalErr,
-				)
-			}
+			parsed, authoritative := parsed5.Object, parsed5.Document
+			assert.FatalIf(
+				t,
+				innerInnerInnerInnerInnerInnerLocalErr != nil,
+				"%v",
+				innerInnerInnerInnerInnerInnerLocalErr,
+			)
 			selected, updated = parsed, authoritative
 		}
 		(*p.st).AddObject(selected, updated)
@@ -610,14 +584,12 @@ func assertConsumedMetadata(t *testing.T, statementInput **consumedPublicationAs
 	}
 	artifact := (*(*(*statementInput).statementInput).st).GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "output"}, store.ArtifactContent).(*store.SourceArtifact)
 	if strings.HasPrefix((*(*(*(*statementInput).statementInput).change)), "unselected-") {
-		{
-			assert.FatalIf(
-				t,
-				artifact.Revision != "latest@"+artifact.Digest || len(artifact.Metadata) != 0,
-				"content-only output consumed metadata: %+v",
-				artifact,
-			)
-		}
+		assert.FatalIf(
+			t,
+			artifact.Revision != "latest@"+artifact.Digest || len(artifact.Metadata) != 0,
+			"content-only output consumed metadata: %+v",
+			artifact,
+		)
 	} else {
 		expected := (*(*(*statementInput).statementInput).s1)
 		if strings.HasPrefix((*(*(*(*statementInput).statementInput).change)), "selected-") {
@@ -632,14 +604,12 @@ func assertConsumedMetadata(t *testing.T, statementInput **consumedPublicationAs
 			(*(*(*(*statementInput).statementInput).change)) == "selected-origin-fallback" {
 			revision = "latest@" + artifact.Digest
 		}
-		{
-			assert.FatalIf(
-				t,
-				artifact.Revision != revision || artifact.Metadata["org.opencontainers.image.revision"] != origin,
-				"final selected metadata = %+v",
-				artifact,
-			)
-		}
+		assert.FatalIf(
+			t,
+			artifact.Revision != revision || artifact.Metadata["org.opencontainers.image.revision"] != origin,
+			"final selected metadata = %+v",
+			artifact,
+		)
 	}
 	if (*(*(*(*statementInput).statementInput).change)) == "selected-uid" {
 		_, doc, emission := (*(*(*statementInput).statementInput).st).GetEmission(
@@ -651,31 +621,25 @@ func assertConsumedMetadata(t *testing.T, statementInput **consumedPublicationAs
 			},
 		)
 		defer emission.Finish()
-		{
-			assert.FatalIf(
-				t,
-				doc["metadata"].(map[string]any)["labels"].(map[string]any)["source.extensions.fluxcd.io/generator"] != "next",
-				"%v",
-				"successor retained the old UID",
-			)
-		}
+		assert.FatalIf(
+			t,
+			doc["metadata"].(map[string]any)["labels"].(map[string]any)["source.extensions.fluxcd.io/generator"] != "next",
+			"%v",
+			"successor retained the old UID",
+		)
 	}
 	inventory := (*(*(*statementInput).statementInput).st).GetArtifact((*(*(*statementInput).statementInput).consumer).Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !inventory.Complete || len(inventory.Manifests) != 1 ||
-			inventory.Manifests[0].Document["data"].(map[string]any)["value"] != value, "final consumer inventory = %+v", inventory)
-	}
+	assert.FatalIf(t, !inventory.Complete || len(inventory.Manifests) != 1 ||
+		inventory.Manifests[0].Document["data"].(map[string]any)["value"] != value, "final consumer inventory = %+v", inventory)
 	(*(*(*(*statementInput).statementInput).documents)), (*(*(*statementInput).statementInput).err) = json.Marshal(
 		inventory.Manifests,
 	)
-	{
-		assert.FatalIf(
-			t,
-			(*(*(*statementInput).statementInput).err) != nil,
-			"%v",
-			(*(*(*statementInput).statementInput).err),
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*(*(*statementInput).statementInput).err) != nil,
+		"%v",
+		(*(*(*statementInput).statementInput).err),
+	)
 }
 
 type consumedSchedulerInputs struct {
@@ -712,21 +676,23 @@ func runConsumedScheduler(ctx context.Context, t *testing.T, statementInput *con
 			}
 		}
 	}
-	for _, event := range []store.EventKind{store.EventObjectAdded, store.EventArtifactUpdated} {
-		defer (*(*statementInput.statementInput).st).AddListener(event, pause, false)()
-	}
+	defer (*(*statementInput.statementInput).st).AddListener(store.EventObjectAdded, pause, false)()
+	defer (*(*statementInput.statementInput).st).AddListener(store.EventArtifactUpdated, pause, false)()
 	defer (*(*statementInput.statementInput).st).AddListener(
 		store.EventObjectAdded,
 		func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) },
 		false,
 	)()
-	for _, event := range []store.EventKind{store.EventArtifactUpdated, store.EventStatusUpdated} {
-		defer (*(*statementInput.statementInput).st).AddListener(
-			event,
-			func(manifest.NamedResource, any) { s.OnPublication() },
-			false,
-		)()
-	}
+	defer (*(*statementInput.statementInput).st).AddListener(
+		store.EventArtifactUpdated,
+		func(manifest.NamedResource, any) { s.OnPublication() },
+		false,
+	)()
+	defer (*(*statementInput.statementInput).st).AddListener(
+		store.EventStatusUpdated,
+		func(manifest.NamedResource, any) { s.OnPublication() },
+		false,
+	)()
 	s.Seed(
 		[]schedule.NodeID{
 			(*(*statementInput.statementInput).obj).Named(),

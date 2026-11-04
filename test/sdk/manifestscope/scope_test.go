@@ -16,16 +16,16 @@ type resolver struct {
 	resolutions int
 }
 
-func (r *resolver) ResolveScope(meta yaml.TypeMeta) (bool, bool) {
+func (r *resolver) ResolveScope(meta yaml.TypeMeta) manifest.ScopeLookup {
 	r.resolutions++
 	value := meta.Kind != "ClusterRole"
 	r.memo[meta] = value
-	return value, true
+	return manifest.ScopeLookup{Namespaced: value, Found: true}
 }
 
-func (r *resolver) LookupScope(meta yaml.TypeMeta) (bool, bool) {
+func (r *resolver) LookupScope(meta yaml.TypeMeta) manifest.ScopeLookup {
 	value, ok := r.memo[meta]
-	return value, ok
+	return manifest.ScopeLookup{Namespaced: value, Found: ok}
 }
 
 //nolint:nonamedreturns,paralleltest // Panic recovery updates the result and scope registration changes process-wide state.
@@ -50,12 +50,13 @@ func TestScopeStartup(t *testing.T) {
 	)
 	r := &resolver{memo: make(map[yaml.TypeMeta]bool)}
 	manifest.RegisterScopeResolver(r)
-	obj, _, _, err := manifest.ParseDoc(
+	parsed, err := manifest.ParseDoc(
 		map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm"}},
 		manifest.ParseDocOptions{DefaultNamespace: "apps"},
 	)
+	obj := parsed.Object
 	assert.FatalIf(t, err != nil || obj.Named().Namespace != "apps", "standalone namespace default = %v, %v", obj, err)
-	obj, _, _, err = manifest.ParseDoc(map[string]any{
+	parsed2, parsedErr := manifest.ParseDoc(map[string]any{
 		"apiVersion": manifest.FluxOperatorDomain + "/v1",
 		"kind":       manifest.KindResourceSet,
 		"metadata":   map[string]any{"name": "set", "namespace": "authored"},
@@ -70,6 +71,7 @@ func TestScopeStartup(t *testing.T) {
 			},
 		},
 	}, manifest.ParseDocOptions{})
+	obj, err = parsed2.Object, parsedErr
 	assert.NoError(t, err)
 	before := r.resolutions
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {

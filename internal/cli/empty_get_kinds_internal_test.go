@@ -86,7 +86,8 @@ func runGetAllEmptyKindsKindsCaseLoop(t *testing.T, loopInputs struct {
 		if (*(*loopInputs.format)) != "" {
 			args = append(args, "-o", (*(*loopInputs.format)))
 		}
-		out, stderr, code := runClusterInputs(t, args...)
+		cluster := runClusterInputs(t, args...)
+		out, stderr, code := cluster.stdout, cluster.stderr, cluster.code
 		assert.FatalIf(t, code != 0, "exit=%d stdout=%s stderr=%s", code, out, stderr)
 		if command == "get all" {
 			(*loopInputs.all) = out

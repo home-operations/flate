@@ -47,14 +47,12 @@ func TestHelmChartSource_OCIRepository(t *testing.T) {
 	assert.Equal(t, got.Insecure, true)
 	assert.Equal(t, got.SourceInterval(), time.Hour)
 	assert.Equal(t, got.LayerOperation(), sourcev1.OCILayerExtract)
-	{
-		assert.FatalIf(
-			t,
-			got.Timeout == repository.Timeout || got.Interval == &repository.Interval,
-			"%s",
-			"adapter retained mutable duration pointers",
-		)
-	}
+	assert.FatalIf(
+		t,
+		got.Timeout == repository.Timeout || got.Interval == &repository.Interval,
+		"%s",
+		"adapter retained mutable duration pointers",
+	)
 	assert.Equal(t, got.OperationTimeout(), 3*time.Minute)
 }
 
@@ -109,14 +107,12 @@ func TestHelmChartSource_OCIRepositoryTimeout(t *testing.T) {
 			repository := &HelmRepository{URL: "oci://registry.example", Timeout: tc.timeout}
 			got := chart.OCIRepository(repository)
 			assert.Equal(t, got.OperationTimeout(), tc.want)
-			{
-				assert.FatalIf(
-					t,
-					got.Timeout == nil || got.Timeout == tc.timeout,
-					"%s",
-					"adapter did not own the effective timeout",
-				)
-			}
+			assert.FatalIf(
+				t,
+				got.Timeout == nil || got.Timeout == tc.timeout,
+				"%s",
+				"adapter did not own the effective timeout",
+			)
 		})
 	}
 }

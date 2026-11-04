@@ -64,14 +64,15 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 			)
 		}
 	}
-	_, _, enabled, err := c.RenderMetadata(t.Context(), "", "")
+	metadata, err := c.RenderMetadata(t.Context(), "", "")
+
 	{
 		_, ok := errors.AsType[*CacheError](err)
 		assert.FatalIf(
 			t,
-			!ok || !errors.Is(err, manifest.ErrInput) || enabled,
+			!ok || !errors.Is(err, manifest.ErrInput) || metadata.Enabled,
 			"invalid metadata content: enabled=%t, %v",
-			enabled,
+			metadata.Enabled,
 			err,
 		)
 	}
@@ -87,13 +88,14 @@ func testBlobRenderLifetimeCaseCase(t *testing.T, testCaseInput testBlobRenderLi
 		_, ok := errors.AsType[*CacheError](err)
 		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled), "canceled render lookup: %v", err)
 	}
-	_, _, enabled, err = c.RenderMetadata(canceled, "render", "")
+	metadata2, metadataErr := c.RenderMetadata(canceled, "render", "")
+	metadata.Enabled, err = metadata2.Enabled, metadataErr
 	{
 		_, ok := errors.AsType[*CacheError](
 			err,
 		)
 		assert.FatalIf(t, !ok || !errors.Is(err, context.Canceled) ||
-			enabled != persisted, "canceled metadata lookup: enabled=%t, %v", enabled, err)
+			metadata.Enabled != persisted, "canceled metadata lookup: enabled=%t, %v", metadata.Enabled, err)
 	}
 	assert.Equal(t, c.CanPersistRenders(), persisted)
 	raw := BlobKey{Content: "raw-source"}

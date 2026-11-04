@@ -473,6 +473,12 @@ func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
 		(e.existence == nil || !e.existence.IsFileIndexed(id)) && e.Reads.GetObject(id) == nil
 }
 
+// Deduplication omits its fingerprint when no stable content key exists.
+type Deduplication struct {
+	Fingerprint string
+	Reused      bool
+}
+
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
 func (e *Execution) FingerprintDedup(
@@ -480,33 +486,34 @@ func (e *Execution) FingerprintDedup(
 	id manifest.NamedResource,
 	content any,
 	attempt *store.Emission,
-) (string, bool, error) {
+) (Deduplication, error) {
 	if err := ctx.Err(); err != nil {
-		return "", true, fmt.Errorf("context: %w", err)
+		return Deduplication{Fingerprint: "", Reused: true}, fmt.Errorf("context: %w", err)
 	}
 	if err := e.Checkpoint(); err != nil {
-		return "", true, err
+		return Deduplication{Fingerprint: "", Reused: true}, err
 	}
 	if e.filter != nil {
-		_, selected, dirty, _ := e.filter.Membership(id)
+		membershipResult1 := e.filter.Membership(id)
+		_, selected, dirty, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
 		if selected && !dirty {
 			e.Reused = true
 			e.Store.UpdateStatus(
 				id,
 				store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
 			)
-			return "", true, nil
+			return Deduplication{Fingerprint: "", Reused: true}, nil
 		}
 	}
 	if content == nil {
-		return "", false, e.admitRender()
+		return Deduplication{Fingerprint: "", Reused: false}, e.admitRender()
 	}
 	fp := manifest.Fingerprint(content)
 	if err := e.Checkpoint(); err != nil {
-		return "", true, err
+		return Deduplication{Fingerprint: "", Reused: true}, err
 	}
 	if fp == "" {
-		return "", false, e.admitRender()
+		return Deduplication{Fingerprint: "", Reused: false}, e.admitRender()
 	}
 	receipt := attempt.Render
 	_, _, *attempt = e.Reads.GetEmission(id)
@@ -514,10 +521,10 @@ func (e *Execution) FingerprintDedup(
 	defer attempt.Finish()
 	output, matched := attempt.Replay(fp)
 	if !matched {
-		return fp, false, e.admitRender()
+		return Deduplication{Fingerprint: fp, Reused: false}, e.admitRender()
 	}
 	if err := e.Checkpoint(); err != nil {
-		return fp, true, err
+		return Deduplication{Fingerprint: fp, Reused: true}, err
 	}
 	e.Reused = true
 	if slices.Equal(output.Unreadable, e.Unreadable) {
@@ -536,7 +543,7 @@ func (e *Execution) FingerprintDedup(
 		slices.Equal(output.Unreadable, e.Unreadable) {
 		attempt.Reads = attempt.OutputReads
 	}
-	return fp, true, e.Emit(ctx, id, attempt, nil)
+	return Deduplication{Fingerprint: fp, Reused: true}, e.Emit(ctx, id, attempt, nil)
 }
 
 // Outcome returns the retained readiness decision without reading the store.
@@ -632,15 +639,18 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 			if !input.Optional && !input.Input.Private && result.Kind != schedule.Blocked && !result.Omit {
 				e.Reads.RequireData(input.NamedResource)
 			}
+			omit := result.Omit && !input.Optional
 			switch result.Kind {
 			case schedule.Blocked:
 				p.blocked = append(p.blocked, result.Blocked...)
 			case schedule.DependencyFailed:
 				failed = p.addFailure(failed, result.Failed, &result.Reason, &input)
 			case schedule.Terminal:
-				fallthrough
+				if omit {
+					omitted = append(omitted, input.NamedResource)
+				}
 			default:
-				if result.Omit && !input.Optional {
+				if omit {
 					omitted = append(omitted, input.NamedResource)
 				}
 			}

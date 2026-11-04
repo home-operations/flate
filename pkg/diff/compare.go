@@ -30,7 +30,8 @@ func Compare(
 	selectedErr error,
 	opts Options,
 ) ([]byte, []manifest.Warning, []Suppression, error) {
-	left, right, suppressed := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
+	projection := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
+	left, right, suppressed := projection.Orig, projection.Current, projection.Suppressed
 	opts.subjects = [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}
 	opts.Suppressed = append(slices.Clone(opts.Suppressed), publicSuppressions(suppressed)...)
 	prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), prepareOptions(new(opts)))
@@ -43,7 +44,8 @@ func Compare(
 // snapshots, plus removals when requested. Unavailable producer batches are
 // withheld before extraction and disclosed as structured suppressions with document counts.
 func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved bool) ([]string, []Suppression, error) {
-	left, right, suppressed := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
+	projection := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
+	left, right, suppressed := projection.Orig, projection.Current, projection.Suppressed
 	origImages := imageutil.Collect(left)
 	currentImages := imageutil.Collect(right)
 	out := make([]string, 0, len(currentImages))

@@ -21,6 +21,7 @@ func parentsForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]m
 }
 
 func ownersForTest(index *manifest.DiscoveryIndex, file string) []manifest.NamedResource {
-	owners, _ := index.OwnersOfFile(file)
+	ownership := index.OwnersOfFile(file)
+	owners := ownership.Owners
 	return owners
 }

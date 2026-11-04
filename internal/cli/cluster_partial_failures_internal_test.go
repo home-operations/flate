@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/output"
 )
 
-func runClusterGroupsPartialFailureCase(t *testing.T, command *string, root *string, format *string) {
+func runClusterGroupsPartialFailureCase(t *testing.T, command, root, format *string) {
 	t.Helper()
 
 	args := append(
@@ -24,7 +24,8 @@ func runClusterGroupsPartialFailureCase(t *testing.T, command *string, root *str
 		"--cache-dir",
 		t.TempDir(),
 	)
-	out, diagnostics, status := runClusterInputs(t, args...)
+	cluster := runClusterInputs(t, args...)
+	out, diagnostics, status := cluster.stdout, cluster.stderr, cluster.code
 	assert.FatalIf(t, status != 1 || !strings.Contains(diagnostics, "alpha: flux-system/missing") ||
 		strings.Contains(
 			diagnostics,

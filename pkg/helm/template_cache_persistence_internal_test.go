@@ -18,15 +18,13 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	t.Helper()
 
 	t.Log("verified persisted completed-output hit")
-	{
-		assert.FatalIf(
-			t,
-			(*inputs.err) != nil || !reflect.DeepEqual((*inputs.out), (*inputs.first)),
-			"completed hit: output=%q, error=%v",
-			(*inputs.out),
-			(*inputs.err),
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*inputs.err) != nil || !reflect.DeepEqual((*inputs.out), (*inputs.first)),
+		"completed hit: output=%q, error=%v",
+		(*inputs.out),
+		(*inputs.err),
+	)
 	(*inputs.out)[0]["data"].(map[string]any)["greeting"] = "mutated"
 	(*inputs.out)[0]["extra"].(map[string]any)["sequence"].([]any)[0].(map[string]any)["value"] = "mutated"
 	again, receipt18, renderMapsErr := testutil.RenderMaps(
@@ -85,14 +83,12 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	assert.NoError(t, renderMapsErr)
 	repeated, renderMapsErr := (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
 	assert.NoError(t, renderMapsErr)
-	{
-		assert.FatalIf(
-			t,
-			initial.record == nil || repeated.record != initial.record,
-			"%s",
-			"repeated hit did not share its typed record",
-		)
-	}
+	assert.FatalIf(
+		t,
+		initial.record == nil || repeated.record != initial.record,
+		"%s",
+		"repeated hit did not share its typed record",
+	)
 	alternate := maps.Clone((*inputs.values))
 	alternate["variant"] = true
 	inputs.loaded.values, inputs.loaded.valuesErr = (*inputs.cli).observeValuesFiles(
@@ -138,15 +134,13 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	assert.NoError(t, renderMapsErr)
 	distinct, renderMapsErr := (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
 	assert.NoError(t, renderMapsErr)
-	{
-		assert.FatalIf(
-			t,
-			distinct.record == initial.record || distinct.record.key != alternateKey.Content,
-			"%s",
-			"distinct release key reused a typed record",
-		)
-	}
-	testTemplateCacheSameKeyReplacements(t, inputs, &alternateKey, &alternate)
+	assert.FatalIf(
+		t,
+		distinct.record == initial.record || distinct.record.key != alternateKey.Content,
+		"%s",
+		"distinct release key reused a typed record",
+	)
+	testTemplateCacheSameKeyReplacements(t, inputs, &alternateKey, alternate)
 
 	testTemplateCachePayloadRecovery(t, inputs, struct {
 		again         *[]map[string]any

@@ -70,11 +70,13 @@ data:
 		delete(doc["metadata"].(map[string]any), "namespace")
 		before := DeepCopyMap(doc)
 		opts := ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"}
-		obj, authoritative, changed, err := ParseDoc(doc, opts)
+		parsed, err := ParseDoc(doc, opts)
+		obj, authoritative, changed := parsed.Object, parsed.Document, parsed.Changed
 		assert.NoError(t, err)
 		assert.Equal(t, obj.Named().Namespace, "apps")
 		assert.Equal(t, changed, true)
-		replay, retained, changed, err := ParseDoc(authoritative, opts)
+		parsed2, err := ParseDoc(authoritative, opts)
+		replay, retained, changed := parsed2.Object, parsed2.Document, parsed2.Changed
 		assert.NoError(t, err)
 		assert.Equal(t, replay.Named(), obj.Named())
 		assert.Equal(t, changed, false)
@@ -85,7 +87,7 @@ data:
 				),
 			)
 			assert.NoError(t, err)
-			_, _, _, err = ParseDoc(next[0], opts)
+			_, err = ParseDoc(next[0], opts)
 			assert.NoError(t, err)
 			ReleaseDoc(next[0])
 		}
@@ -106,7 +108,8 @@ func testParseDocPoolReuseConsistencyCase(t *testing.T, testCaseInput *string,
 
 	docs, err := decodeDocMaps(strings.NewReader((*testCaseInput)))
 	assert.NoError(t, err)
-	obj, _, _, err := ParseDoc(docs[0], defaultParseDocOptions())
+	parsed4, err := ParseDoc(docs[0], defaultParseDocOptions())
+	obj := parsed4.Object
 	assert.NoError(t, err)
 	before := Fingerprint(obj)
 	var projected map[string]any

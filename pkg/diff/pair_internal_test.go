@@ -112,9 +112,7 @@ func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
 					calls,
 					map[string]int{"shadow-orig": 1, "last-orig": 1, "shadow-current": 1, "last-current": 1},
 				)
-				{
-					assert.FatalIf(t, len(warnings) != 2, "want two snapshot warnings, got %+v", warnings)
-				}
+				assert.FatalIf(t, len(warnings) != 2, "want two snapshot warnings, got %+v", warnings)
 				sides := map[string]bool{}
 				for _, warning := range warnings {
 					assert.Equal(t, warning.Category, manifest.WarnDuplicateDocument)
@@ -127,10 +125,8 @@ func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
 					sides[warning.Detail[0]] = true
 				}
 				assert.Diff(t, sides, map[string]bool{"side: orig": true, "side: current": true})
-				{
-					assert.FatalIf(t, len(out) == 0 || strings.Contains(string(out), "shadowed") ||
-						strings.Contains(string(out), "shadows an earlier"), "unexpected winning product: %s", out)
-				}
+				assert.FatalIf(t, len(out) == 0 || strings.Contains(string(out), "shadowed") ||
+					strings.Contains(string(out), "shadows an earlier"), "unexpected winning product: %s", out)
 				if run == 0 {
 					first, firstWarnings = out, warnings
 				} else {
@@ -194,10 +190,8 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 					group = ""
 				}
 			}
-			{
-				assert.ErrorIf(t, c.Parent.ID != want.Parent.NamedResource ||
-					c.Resource.ID != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}), "line change dropped identity: %+v", c)
-			}
+			assert.ErrorIf(t, c.Parent.ID != want.Parent.NamedResource ||
+				c.Resource.ID != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}), "line change dropped identity: %+v", c)
 		}
 	}
 	if count != testCaseInput.pairs {
@@ -205,13 +199,11 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 	}
 	native := renderDiff(t, l, r, new(Options{Format: FormatGitHub}))
 	if testCaseInput.pairs == 2 {
-		{
-			assert.ErrorIf(t, strings.Count(native, "one document removed:") != 1 ||
-				strings.Count(
-					native,
-					"one document added:",
-				) != 1, "native lost parent/resource identity:\n%s", native)
-		}
+		assert.ErrorIf(t, strings.Count(native, "one document removed:") != 1 ||
+			strings.Count(
+				native,
+				"one document added:",
+			) != 1, "native lost parent/resource identity:\n%s", native)
 	} else {
 		assert.ErrorIf(
 			t,
@@ -220,15 +212,13 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 			native,
 		)
 	}
-	{
-		assert.ErrorIf(
-			t,
-			testCaseInput.pairs == 1 &&
-				(changes[0].Status != StatusChanged || changes[0].APIVersion != testCaseInput.apiVersion),
-			"version change must retain the current authored version: %+v",
-			changes,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		testCaseInput.pairs == 1 &&
+			(changes[0].Status != StatusChanged || changes[0].APIVersion != testCaseInput.apiVersion),
+		"version change must retain the current authored version: %+v",
+		changes,
+	)
 }
 
 type testPairPathIsPresentationCaseInputs struct {
@@ -256,77 +246,63 @@ func testPairPathIsPresentationCase(t *testing.T, testCaseInput *testPairPathIsP
 	}
 	for _, format := range []Format{FormatDiff, FormatHTML, FormatGitHub} {
 		out, _, err := RenderDocs(left, right, Options{Format: format})
-		{
-			assert.FatalIf(
-				t,
-				err != nil || len(out) != 0,
-				"%s path-only move produced output %q: %v",
-				format,
-				out,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || len(out) != 0,
+			"%s path-only move produced output %q: %v",
+			format,
+			out,
+			err,
+		)
 	}
 	right[0].Manifest["data"] = map[string]any{"k": "new"}
 	changes, _ := Changes(left, right, Options{})
-	{
-		assert.FatalIf(
-			t,
-			len(changes) != 1 || changes[0].Status != StatusChanged || changes[0].Parent != rightParent,
-			"content change must use current parent: %+v",
-			changes,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(changes) != 1 || changes[0].Status != StatusChanged || changes[0].Parent != rightParent,
+		"content change must use current parent: %+v",
+		changes,
+	)
 	for _, format := range []Format{FormatDiff, FormatHTML, FormatGitHub} {
 		out, _, err := RenderDocs(left, right, Options{Format: format})
-		{
-			assert.NoError(t, err)
-		}
-		{
-			assert.ErrorIf(
-				t,
-				strings.Contains(string(out), "old/apps"),
-				"%s heading contains old path: %s",
-				format,
-				out,
-			)
-		}
+		assert.NoError(t, err)
+		assert.ErrorIf(
+			t,
+			strings.Contains(string(out), "old/apps"),
+			"%s heading contains old path: %s",
+			format,
+			out,
+		)
 		switch format {
 		case FormatDiff:
 			want := "--- " + testCaseInput.tt.resource + "\n+++ " + testCaseInput.tt.resource + "\n"
-			{
-				assert.ErrorIf(
-					t,
-					!strings.HasPrefix(string(out), want),
-					"unified headers want %q, got %s",
-					want,
-					out,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!strings.HasPrefix(string(out), want),
+				"unified headers want %q, got %s",
+				want,
+				out,
+			)
 		case FormatGitHub:
-			{
-				assert.ErrorIf(
-					t,
-					!strings.Contains(string(out), "@@ data.k @@") ||
-						strings.Contains(string(out), "one document"),
-					"native path edit split one pair: %s",
-					out,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!strings.Contains(string(out), "@@ data.k @@") ||
+					strings.Contains(string(out), "one document"),
+				"native path edit split one pair: %s",
+				out,
+			)
 		case FormatHuman, FormatBrief, FormatGitLab, FormatGitea, FormatHTML, FormatJSON, "":
 			want := `<div class="rparent">` + testCaseInput.tt.parent + `</div>`
 			assert.ErrorIf(t, !strings.Contains(string(out), want), "HTML parent heading missing %q", want)
 		}
 	}
 	removed, _ := Changes(left, nil, Options{})
-	{
-		assert.ErrorIf(
-			t,
-			len(removed) != 1 || removed[0].Parent != (*testCaseInput.leftParent),
-			"removal must use original parent: %+v",
-			removed,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		len(removed) != 1 || removed[0].Parent != (*testCaseInput.leftParent),
+		"removal must use original parent: %+v",
+		removed,
+	)
 	want := "--- ConfigMap apps/shared (old/apps)\n+++ ConfigMap apps/shared (old/apps)\n"
 	{
 		out := unified(t, left, nil)

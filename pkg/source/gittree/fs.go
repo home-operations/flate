@@ -276,25 +276,25 @@ func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) ([]manifest.Wa
 	if g.worktree != nil && g.current == nil {
 		return nil, g.walkWorktree(ctx, ".")
 	}
-	storer := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(storer)
-	c, err := object.GetCommit(storer, commit)
+	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	defer g.storers.Put(objectStore)
+	c, err := object.GetCommit(objectStore, commit)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
-	return g.walkCommit(ctx, storer, c.TreeHash, ".")
+	return g.walkCommit(ctx, objectStore, c.TreeHash, ".")
 }
 
 func (g *gitView) walkCommit(
 	ctx context.Context,
-	storer storer.EncodedObjectStorer,
+	objectStore storer.EncodedObjectStorer,
 	hash plumbing.Hash,
 	prefix string,
 ) ([]manifest.Warning, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
-	t, err := object.GetTree(storer, hash)
+	t, err := object.GetTree(objectStore, hash)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
@@ -321,7 +321,7 @@ func (g *gitView) walkCommit(
 		g.nodes[name] = &gitNode{name: entry.Name, hash: entry.Hash, mode: mode}
 		g.nodes[prefix].children = append(g.nodes[prefix].children, gitEntry{g, name})
 		if mode.IsDir() {
-			nested, err := g.walkCommit(ctx, storer, entry.Hash, name)
+			nested, err := g.walkCommit(ctx, objectStore, entry.Hash, name)
 			warnings = append(warnings, nested...)
 			if err != nil {
 				return warnings, err
@@ -410,8 +410,8 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 	if info := node.info.Load(); info != nil {
 		return info, nil
 	}
-	storer := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(storer)
+	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	defer g.storers.Put(objectStore)
 	var size int64
 	var err error
 	if g.current != nil && !g.changes[name] && node.mode.IsRegular() {
@@ -421,7 +421,7 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 			size = current.Size()
 		}
 	} else {
-		size, err = storer.EncodedObjectSize(node.hash)
+		size, err = objectStore.EncodedObjectSize(node.hash)
 	}
 	if err != nil {
 		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
@@ -483,9 +483,9 @@ func (g *gitView) Open(name string) (fs.File, error) {
 
 func (g *gitView) openBlob(hash plumbing.Hash) (io.ReadCloser, error) {
 	// Upstream's streaming delta reader does not reset its position on backward copies.
-	storer := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(storer)
-	blob, err := object.GetBlob(storer, hash)
+	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	defer g.storers.Put(objectStore)
+	blob, err := object.GetBlob(objectStore, hash)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
@@ -636,7 +636,7 @@ func (o *ViewOptions) refreshCurrent(
 	var matcher *sourceignore.Matcher
 	current, _ := o.Current.(*FS)
 	if current == nil {
-		return current, matcher, reuse, nil
+		return nil, matcher, reuse, nil
 	}
 
 	if o.Location == nil {

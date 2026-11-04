@@ -9,7 +9,8 @@ import (
 
 func testSuppliedSharedCommand(t *testing.T, verb, root, input string) {
 	t.Helper()
-	help, diagnostic, code := runCLI(t, verb, "all", "--help")
+	cli := runCLI(t, verb, "all", "--help")
+	help, diagnostic, code := cli.stdout, cli.stderr, cli.code
 	if code != 0 {
 		t.Fatal(diagnostic)
 	}
@@ -39,7 +40,8 @@ func testSuppliedSharedCommand(t *testing.T, verb, root, input string) {
 		base := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}-base")
 		args = append(args, "--path-orig", base, "-o", "diff", "--skip-kinds", "CustomResourceDefinition")
 	}
-	out, diagnostic, code := runCLI(t, args...)
+	cli2 := runCLI(t, args...)
+	out, diagnostic, code := cli2.stdout, cli2.stderr, cli2.code
 	if code != 0 {
 		t.Fatalf("shared inputs failed: %s", diagnostic)
 	}

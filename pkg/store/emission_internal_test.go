@@ -22,7 +22,8 @@ func emissionChild(name, value string) Child {
 		"metadata":   map[string]any{"name": name, "namespace": "apps"},
 		"data":       map[string]any{"value": value},
 	}
-	obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj, authoritative := parsed.Object, parsed.Document
 	if err != nil {
 		panic(err)
 	}
@@ -72,14 +73,12 @@ func checkEffectiveObject(t *testing.T, s *Store, id manifest.NamedResource, wan
 			if object.Named() == id {
 				found = object
 			}
-			{
-				assert.FatalIf(
-					t,
-					i > 0 && objects[i-1].Named().Compare(object.Named()) >= 0,
-					"%s",
-					"effective inventory is not sorted and unique",
-				)
-			}
+			assert.FatalIf(
+				t,
+				i > 0 && objects[i-1].Named().Compare(object.Named()) >= 0,
+				"%s",
+				"effective inventory is not sorted and unique",
+			)
 		}
 		assert.Equal(t, found, want.Obj)
 	}
@@ -143,22 +142,16 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 	}
 	bad := emissionChild("a", "unequal")
 	s.RecordEmitted(q, &Emission{Children: []Child{b, bad}, Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(b.Obj.Named()) != b.Obj || s.GetObject(bad.Obj.Named()) != bad.Obj,
-			"%s",
-			"unequal contribution lost accepted content",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(b.Obj.Named()) != b.Obj || s.GetObject(bad.Obj.Named()) != bad.Obj,
+		"%s",
+		"unequal contribution lost accepted content",
+	)
 	accept(t, s, p, &Emission{Complete: true})
-	{
-		assert.FatalIf(t, s.GetObject(a.Obj.Named()) == nil, "%s", "withdrawal lost surviving supporter")
-	}
+	assert.FatalIf(t, s.GetObject(a.Obj.Named()) == nil, "%s", "withdrawal lost surviving supporter")
 	accept(t, s, q, &Emission{Complete: true})
-	{
-		assert.FatalIf(t, s.GetObject(a.Obj.Named()) != nil, "%s", "complete empty retained unsupported output")
-	}
+	assert.FatalIf(t, s.GetObject(a.Obj.Named()) != nil, "%s", "complete empty retained unsupported output")
 	accept(
 		t,
 		s,
@@ -171,33 +164,27 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 	)
 	s.UpdateFailure(p, manifest.NewError(manifest.ErrInput, nil, "failed successor"))
 	_, _, attempt := s.GetEmission(p)
-	{
-		assert.FatalIf(t, len(attempt.Manifests) != 1 || attempt.Complete, "failure lost accepted output: %+v", attempt)
-	}
+	assert.FatalIf(t, len(attempt.Manifests) != 1 || attempt.Complete, "failure lost accepted output: %+v", attempt)
 	attempt.Children = []Child{b}
 	attempt.Manifests = testutil.DocumentOccurrences([]map[string]any{b.Doc})
 	accept(t, s, p, &attempt)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(a.Obj.Named()) == nil || s.GetObject(b.Obj.Named()) == nil,
-			"%s",
-			"partial update lost predecessor",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(a.Obj.Named()) == nil || s.GetObject(b.Obj.Named()) == nil,
+		"%s",
+		"partial update lost predecessor",
+	)
 	attempt.Finish()
 	_, _, progress := s.GetEmission(p)
 	progress.Children = nil
 	accept(t, s, p, &progress)
 	_, _, retained := s.GetEmission(p)
-	{
-		assert.FatalIf(
-			t,
-			len(retained.Manifests) != 2,
-			"inherited partial documents duplicated: %d",
-			len(retained.Manifests),
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(retained.Manifests) != 2,
+		"inherited partial documents duplicated: %d",
+		len(retained.Manifests),
+	)
 	progress.Finish()
 	for _, tc := range []struct {
 		name string
@@ -325,11 +312,9 @@ func testRecordEmittedReplacementCase(t *testing.T, testCaseInput *testRecordEmi
 	testCaseInput.tc.edit(&attempt)
 	checkPredecessor := func() {
 		t.Helper()
-		{
-			assert.FatalIf(t, predecessor.Children[0].Obj != testCaseInput.a.Obj ||
-				!manifest.ValueEqual(predecessor.Manifests[0].Document, testCaseInput.a.Doc) ||
-				predecessor.Unreadable[0] != testCaseInput.a.Obj.Named(), "%s", "captured outer slice changed accepted predecessor")
-		}
+		assert.FatalIf(t, predecessor.Children[0].Obj != testCaseInput.a.Obj ||
+			!manifest.ValueEqual(predecessor.Manifests[0].Document, testCaseInput.a.Doc) ||
+			predecessor.Unreadable[0] != testCaseInput.a.Obj.Named(), "%s", "captured outer slice changed accepted predecessor")
 	}
 	checkPredecessor()
 	var events int
@@ -340,49 +325,41 @@ func testRecordEmittedReplacementCase(t *testing.T, testCaseInput *testRecordEmi
 	}, false)()
 	s.RecordEmitted((*testCaseInput.p), &attempt, nil)
 	accepted := s.GetArtifact((*testCaseInput.p), ArtifactContent).(*Emission)
-	{
-		assert.FatalIf(
-			t,
-			events != 1 || accepted == predecessor || accepted.Fingerprint != "same",
-			"%s",
-			"equal fingerprint discarded changed emission",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(accepted.Unreadable, attempt.Unreadable) || accepted.Complete != attempt.Complete ||
-				accepted.binding != attempt.binding,
-			"%s",
-			"changed emission lost output or completion context",
-		)
-	}
-	{
-		assert.FatalIf(t, !slices.EqualFunc(
-			accepted.Children,
-			attempt.Children,
-			func(a, b Child) bool { return a.Obj == b.Obj },
-		) ||
-			!slices.EqualFunc(
-				accepted.Manifests,
-				attempt.Manifests,
-				func(a, b manifest.DocOccurrence) bool { return manifest.ValueEqual(a.Document, b.Document) },
-			), "%s", "changed emission lost captured children or documents")
-	}
+	assert.FatalIf(
+		t,
+		events != 1 || accepted == predecessor || accepted.Fingerprint != "same",
+		"%s",
+		"equal fingerprint discarded changed emission",
+	)
+	assert.FatalIf(
+		t,
+		!slices.Equal(accepted.Unreadable, attempt.Unreadable) || accepted.Complete != attempt.Complete ||
+			accepted.binding != attempt.binding,
+		"%s",
+		"changed emission lost output or completion context",
+	)
+	assert.FatalIf(t, !slices.EqualFunc(
+		accepted.Children,
+		attempt.Children,
+		func(a, b Child) bool { return a.Obj == b.Obj },
+	) ||
+		!slices.EqualFunc(
+			accepted.Manifests,
+			attempt.Manifests,
+			func(a, b manifest.DocOccurrence) bool { return manifest.ValueEqual(a.Document, b.Document) },
+		), "%s", "changed emission lost captured children or documents")
 	checkPredecessor()
 	_, _, replay := s.GetEmission((*testCaseInput.p))
 	defer replay.Finish()
 	replay.binding = accepted.binding
 	replay.Complete = accepted.Complete
 	s.RecordEmitted((*testCaseInput.p), &replay, nil)
-	{
-		assert.FatalIf(
-			t,
-			events != 1 || s.GetArtifact((*testCaseInput.p), ArtifactContent) != accepted,
-			"%s",
-			"equal replay republished accepted output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		events != 1 || s.GetArtifact((*testCaseInput.p), ArtifactContent) != accepted,
+		"%s",
+		"equal replay republished accepted output",
+	)
 }
 
 func testRecordEmittedConcurrentSupportCase(t *testing.T, testCaseInput *int,
@@ -472,14 +449,12 @@ func testRecordEmittedConcurrentSupportCase(t *testing.T, testCaseInput *int,
 				s.AddObject(marker.Obj)
 			}
 		}
-		{
-			assert.ErrorIf(
-				t,
-				!slices.Equal(observed, []manifest.Production{{Owner: p}, {Owner: q}}),
-				"concurrent captured productions=%v",
-				observed,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!slices.Equal(observed, []manifest.Production{{Owner: p}, {Owner: q}}),
+			"concurrent captured productions=%v",
+			observed,
+		)
 		testRecordEmittedConcurrentSupportReads(t, &testRecordEmittedConcurrentSupportReadState{
 			s: &s, p: &p, q: &q, accepted: &accepted,
 		})
@@ -493,9 +468,7 @@ func testRecordEmittedConcurrentSupportCase(t *testing.T, testCaseInput *int,
 			assert.FatalIf(t, got == nil || got.Named() != id, "%s", "reverse position lost object")
 		}
 		obj, _ := s.Snapshot(id, true)
-		{
-			assert.FatalIf(t, obj == nil || obj.Named() != id, "%s", "reverse position changed snapshot identity")
-		}
+		assert.FatalIf(t, obj == nil || obj.Named() != id, "%s", "reverse position changed snapshot identity")
 		{
 			got := s.Productions(id, nil)
 			assert.FatalIf(
@@ -541,16 +514,14 @@ func testRecordEmittedConcurrentSupportCaseCompletion(
 	accept(t, scope.s, (*scope.p), &Emission{Complete: true})
 	for _, child := range scope.accepted.Children {
 		parent, ok := scope.s.RenderedParent(child.Obj.Named(), nil)
-		{
-			assert.FatalIf(
-				t,
-				!ok || parent != (*scope.q),
-				"withdrawal parent=%v/%t, want %v/true",
-				parent,
-				ok,
-				(*scope.q),
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || parent != (*scope.q),
+			"withdrawal parent=%v/%t, want %v/true",
+			parent,
+			ok,
+			(*scope.q),
+		)
 		{
 			got := scope.s.Productions(child.Obj.Named(), nil)
 			assert.FatalIf(
@@ -561,27 +532,23 @@ func testRecordEmittedConcurrentSupportCaseCompletion(
 			)
 		}
 	}
-	{
-		assert.FatalIf(t, scope.s.GetObject(scope.covered.Obj.Named()) != scope.covered.Obj ||
-			scope.s.GetArtifact(
-				scope.covered.Obj.Named(),
-				ArtifactContent,
-			) == nil, "%s", "surviving Q support lost frozen descendant")
-	}
+	assert.FatalIf(t, scope.s.GetObject(scope.covered.Obj.Named()) != scope.covered.Obj ||
+		scope.s.GetArtifact(
+			scope.covered.Obj.Named(),
+			ArtifactContent,
+		) == nil, "%s", "surviving Q support lost frozen descendant")
 	{
 		info, ok := scope.s.GetStatus(scope.covered.Obj.Named())
 		assert.FatalIf(t, !ok || info.Status != StatusReady, "%s", "surviving Q support lost Ready")
 	}
 	accept(t, scope.s, (*scope.q), &Emission{Complete: true})
-	{
-		assert.FatalIf(
-			t,
-			scope.s.GetObject(scope.covered.Obj.Named()) != nil ||
-				scope.s.GetArtifact(scope.covered.Obj.Named(), ArtifactContent) != nil,
-			"%s",
-			"last boundary support left frozen descendant live",
-		)
-	}
+	assert.FatalIf(
+		t,
+		scope.s.GetObject(scope.covered.Obj.Named()) != nil ||
+			scope.s.GetArtifact(scope.covered.Obj.Named(), ArtifactContent) != nil,
+		"%s",
+		"last boundary support left frozen descendant live",
+	)
 	{
 		_, ok := scope.s.GetStatus(scope.covered.Obj.Named())
 		assert.FatalIf(t, ok, "%s", "last boundary support left frozen descendant Ready")
@@ -607,16 +574,14 @@ func testRecordEmittedConcurrentSupportReads(t *testing.T, scope *testRecordEmit
 	for _, child := range (*scope.accepted).Children {
 		id := child.Obj.Named()
 		parent, ok := (*scope.s).RenderedParent(id, nil)
-		{
-			assert.ErrorIf(
-				t,
-				!ok || parent != (*scope.p),
-				"concurrent parent=%v/%t, want %v/true",
-				parent,
-				ok,
-				(*scope.p),
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!ok || parent != (*scope.p),
+			"concurrent parent=%v/%t, want %v/true",
+			parent,
+			ok,
+			(*scope.p),
+		)
 		{
 			got := (*scope.s).Productions(
 				id,
@@ -633,20 +598,16 @@ func testRecordEmittedConcurrentSupportReads(t *testing.T, scope *testRecordEmit
 		}
 		obj, _, next := (*scope.s).GetEmission(id)
 		next.Finish()
-		{
-			assert.ErrorIf(
-				t,
-				obj == nil || obj.Named() != id || (*scope.s).EmissionOwner(id) != (*scope.q),
-				"%s",
-				"concurrent rich read lost representative",
-			)
-		}
-		{
-			assert.ErrorIf(t, !slices.ContainsFunc(
-				(*scope.s).ListObjects(id.Group, id.Kind),
-				func(obj manifest.BaseManifest) bool { return obj.Named() == id },
-			), "%s", "concurrent listing lost child")
-		}
+		assert.ErrorIf(
+			t,
+			obj == nil || obj.Named() != id || (*scope.s).EmissionOwner(id) != (*scope.q),
+			"%s",
+			"concurrent rich read lost representative",
+		)
+		assert.ErrorIf(t, !slices.ContainsFunc(
+			(*scope.s).ListObjects(id.Group, id.Kind),
+			func(obj manifest.BaseManifest) bool { return obj.Named() == id },
+		), "%s", "concurrent listing lost child")
 	}
 }
 
@@ -681,14 +642,12 @@ func testRecordEmittedStableSupportReplay(
 			break
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			unrelated == nil || slices.Contains(involved, unrelated),
-			"%s",
-			"fixture has no unrelated shard",
-		)
-	}
+	assert.FatalIf(
+		t,
+		unrelated == nil || slices.Contains(involved, unrelated),
+		"%s",
+		"fixture has no unrelated shard",
+	)
 	start, ready, done := make(
 		chan struct{},
 	), make(
@@ -736,7 +695,5 @@ func testRecordEmittedStableSupportReplay(
 	}
 	unrelated.mu.Unlock()
 	<-done
-	{
-		assert.FatalIf(t, blocked, "%s", "stable replay waited for an unrelated shard")
-	}
+	assert.FatalIf(t, blocked, "%s", "stable replay waited for an unrelated shard")
 }

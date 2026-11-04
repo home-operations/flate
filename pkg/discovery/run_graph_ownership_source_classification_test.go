@@ -358,7 +358,7 @@ data: {value: fixture}
 			}
 		}
 		var err error
-		authored, _, _, err = manifest.ParseDoc(
+		parsed, parsedErr := manifest.ParseDoc(
 			map[string]any{
 				"apiVersion": manifest.SourceDomain + "/v1",
 				"kind":       kind,
@@ -367,6 +367,7 @@ data: {value: fixture}
 			},
 			manifest.ParseDocOptions{},
 		)
+		authored, err = parsed.Object, parsedErr
 		assert.FatalIf(t, err != nil, "%v", err)
 		cfg.Store.AddObject(authored)
 	}
@@ -558,7 +559,7 @@ spec:
 			testutil.WriteFile(t, root, "config/prod.yaml", "greeting: production\n")
 		}
 		if state == "deleted" {
-			assert.NoError(t, os.Remove(filepath.Join(root, "config/prod.yaml")))
+			assert.NoError(t, os.Remove(filepath.Join(root, "config", "prod.yaml")))
 		}
 		for range 2 {
 			result, st := discover("flux")

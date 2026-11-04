@@ -78,9 +78,7 @@ func TestClassify_BootstrapArtifactRequirement(t *testing.T) {
 			if artifact {
 				want = schedule.Terminal
 			}
-			{
-				assert.FatalIf(t, got.Kind != want, "classification=%+v, want kind %v", got, want)
-			}
+			assert.FatalIf(t, got.Kind != want, "classification=%+v, want kind %v", got, want)
 		})
 	}
 }
@@ -113,18 +111,16 @@ func TestClassify_SyntheticArtifactContext(t *testing.T) {
 			if mode == "skipped" {
 				sentinel = manifest.ErrSourceSkipped
 			}
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(result.Err, sentinel) || !strings.Contains(result.Err.Error(), chart.Named().String()) ||
-						strings.Contains(
-							result.Err.Error(),
-							repo.Named().String(),
-						),
-					"artifact context or sentinel lost: %+v",
-					result,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(result.Err, sentinel) || !strings.Contains(result.Err.Error(), chart.Named().String()) ||
+					strings.Contains(
+						result.Err.Error(),
+						repo.Named().String(),
+					),
+				"artifact context or sentinel lost: %+v",
+				result,
+			)
 		})
 	}
 }
@@ -186,9 +182,7 @@ func testClassifyArtifactRequirementCase(t *testing.T, testCaseInput *struct {
 	w := Waiter{Store: s}
 	if testCaseInput.promote {
 		w.Existence = &artifactPromotion{promote: func(id manifest.NamedResource) bool {
-			{
-				assert.FatalIf(t, id != source.Named(), "promotion=%s", id)
-			}
+			assert.FatalIf(t, id != source.Named(), "promotion=%s", id)
 			publish()
 			return true
 		}}
@@ -213,12 +207,10 @@ func testClassifyArtifactRequirementCase(t *testing.T, testCaseInput *struct {
 	if got.Err != nil {
 		message, kind = got.Err.Error(), schedule.DependencyFailed
 	}
-	{
-		assert.FatalIf(t, kind != testCaseInput.want || !strings.Contains(message, testCaseInput.message) ||
-			!errors.Is(got.Err, wantErr), "classification=%+v, want kind %v, message %q, error %v",
-			got, testCaseInput.
-				want, testCaseInput.
-				message, wantErr,
-		)
-	}
+	assert.FatalIf(t, kind != testCaseInput.want || !strings.Contains(message, testCaseInput.message) ||
+		!errors.Is(got.Err, wantErr), "classification=%+v, want kind %v, message %q, error %v",
+		got, testCaseInput.
+			want, testCaseInput.
+			message, wantErr,
+	)
 }

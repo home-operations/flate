@@ -11,7 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func cmDoc(parentValue *Parent, id manifest.NamedResource, dataVal string, chart string) Doc {
+func cmDoc(parentValue *Parent, id manifest.NamedResource, dataVal, chart string) Doc {
 	parent := *parentValue
 	meta := map[string]any{"name": id.Name}
 	if id.Namespace != "" {
@@ -30,7 +30,7 @@ func cmDoc(parentValue *Parent, id manifest.NamedResource, dataVal string, chart
 	}
 }
 
-func jsonChanges(t *testing.T, left []Doc, right []Doc, optsValue *Options) []Change {
+func jsonChanges(t *testing.T, left, right []Doc, optsValue *Options) []Change {
 	t.Helper()
 	opts := *optsValue
 	opts.Format = FormatJSON
@@ -79,7 +79,8 @@ func TestChanges_Classification(t *testing.T) {
 			assert.Equal(t, c.OldChart, "")
 			assert.Equal(t, c.NewChart, "fresh-2")
 		}
-		name, ns := manifest.DocMetadata(present)
+		metadata := manifest.DocMetadata(present)
+		name, ns := metadata.Name, metadata.Namespace
 		assert.Equal(t, c.Name, name)
 		assert.Equal(t, c.Namespace, ns)
 		assert.Equal(t, c.Kind, manifest.DocKind(present))
@@ -168,9 +169,7 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 				}
 			}}
 			got, _ := Changes(left, right, opts)
-			{
-				assert.FatalIf(t, len(got) != 1, "want 1 change, got %d: %+v", len(got), got)
-			}
+			assert.FatalIf(t, len(got) != 1, "want 1 change, got %d: %+v", len(got), got)
 			assert.Diff(t, jsonChanges(t, left, right, new(opts)), got)
 			c := got[0]
 			assert.Equal(t, c.Status, StatusChanged)
@@ -258,10 +257,8 @@ func TestChanges_Sorted(t *testing.T) {
 	second, _, err := RenderDocs(left, right, opts)
 	assert.NoError(t, err)
 	assert.Equal(t, string(second), string(first))
-	{
-		assert.FatalIf(t, len(got) != 3 || got[0].Parent != pa || got[1].Parent != pa || got[2].Parent != pb ||
-			got[0].APIVersion != "v1" || got[1].APIVersion != "example.test/v1", "changes not sorted by canonical parent and resource identity: %+v", got)
-	}
+	assert.FatalIf(t, len(got) != 3 || got[0].Parent != pa || got[1].Parent != pa || got[2].Parent != pb ||
+		got[0].APIVersion != "v1" || got[1].APIVersion != "example.test/v1", "changes not sorted by canonical parent and resource identity: %+v", got)
 }
 
 func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
@@ -310,9 +307,7 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, len(lines), tt.want)
 			assert.Diff(t, calls, wantCalls)
-			{
-				assert.FatalIf(t, len(got) != tt.want, "expected %d changes, got %+v", tt.want, got)
-			}
+			assert.FatalIf(t, len(got) != tt.want, "expected %d changes, got %+v", tt.want, got)
 			if tt.want > 0 {
 				c := got[0]
 				assert.Equal(t, c.Status, StatusChanged)
@@ -447,9 +442,7 @@ func testChangesReturnedManifestsIndependentCase(
 	}
 	got, _ := Changes(left, right, testCaseInput.opts)
 	assert.Diff(t, got, want)
-	{
-		assert.FatalIf(t, len(got) != 1, "want one change with unchanged resource omitted, got %d", len(got))
-	}
+	assert.FatalIf(t, len(got) != 1, "want one change with unchanged resource omitted, got %d", len(got))
 	assert.Equal(t, got[0].Old == nil, testCaseInput.status == StatusAdded)
 	assert.Equal(t, got[0].New == nil, testCaseInput.status == StatusRemoved)
 	for _, body := range []map[string]any{got[0].Old, got[0].New} {

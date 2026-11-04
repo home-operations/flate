@@ -23,10 +23,8 @@ func TestParseDoc_DependsOnNames(t *testing.T) {
 					name,
 				),
 			)
-			_, _, _, err := ParseDoc(doc, ParseDocOptions{})
-			{
-				assert.FatalIf(t, (err != nil) != (name == ""), "authored dependency %q: err=%v", name, err)
-			}
+			_, err := ParseDoc(doc, ParseDocOptions{})
+			assert.FatalIf(t, (err != nil) != (name == ""), "authored dependency %q: err=%v", name, err)
 		})
 	}
 }
@@ -44,30 +42,25 @@ spec:
   - {name: '${PREFIX}config', readyExpr: 'dep.metadata.name == "prod-config"'}
   - {name: '${PREFIX}tail', namespace: '${NS}'}
 `)
-	obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
-	{
-		assert.NoError(t, err)
-	}
+	parsed2, err := ParseDoc(doc, ParseDocOptions{})
+	obj := parsed2.Object
+	assert.NoError(t, err)
 	original := obj.(*Kustomization)
 	before := original.Clone()
 	identity := func(s string) string { return s }
-	{
-		assert.FatalIf(
-			t,
-			MapDependsOn(original, identity, identity) != original,
-			"%s",
-			"no-op transform replaced object",
-		)
-	}
+	assert.FatalIf(
+		t,
+		MapDependsOn(original, identity, identity) != original,
+		"%s",
+		"no-op transform replaced object",
+	)
 	other := &RawObject{APIVersion: "v1", Kind: KindConfigMap, Name: "config"}
-	{
-		assert.FatalIf(
-			t,
-			MapDependsOn(other, func(string) string { t.Fatal("transformed another kind"); return "" }, nil) != other,
-			"%s",
-			"another kind replaced",
-		)
-	}
+	assert.FatalIf(
+		t,
+		MapDependsOn(other, func(string) string { t.Fatal("transformed another kind"); return "" }, nil) != other,
+		"%s",
+		"another kind replaced",
+	)
 	resolve := func(s string) string { return strings.ReplaceAll(s, "${PREFIX}", "prod-") }
 	for _, namespaces := range []bool{false, true} {
 		t.Run(map[bool]string{false: "preserve-namespace", true: "resolve-namespace"}[namespaces], func(t *testing.T) {
@@ -114,9 +107,7 @@ func testMapDependsOnPreservesFieldsCase(t *testing.T, testCaseInput *testMapDep
 	if *testCaseInput.namespaces {
 		want.DependsOn[2].Namespace = "infra"
 	}
-	{
-		assert.FatalIf(t, got == (*testCaseInput.original), "%s", "changed dependency did not clone")
-	}
+	assert.FatalIf(t, got == (*testCaseInput.original), "%s", "changed dependency did not clone")
 	{
 		diff := cmp.Diff(
 			want,
@@ -133,9 +124,7 @@ func testMapDependsOnPreservesFieldsCase(t *testing.T, testCaseInput *testMapDep
 		assert.FatalIf(t, diff != "", "authored object mutated (-want +got):\n%s", diff)
 	}
 	for ref := range References(got, ReferenceRelations) {
-		{
-			assert.FatalIf(t, ref.Use == "dependsOn" && ref.Position == 1 &&
-				(ref.Namespace != "apps" || got.DependsOn[1].Namespace != ""), "%s", "omitted namespace lost inheritance")
-		}
+		assert.FatalIf(t, ref.Use == "dependsOn" && ref.Position == 1 &&
+			(ref.Namespace != "apps" || got.DependsOn[1].Namespace != ""), "%s", "omitted namespace lost inheritance")
 	}
 }

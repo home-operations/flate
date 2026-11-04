@@ -25,15 +25,17 @@ func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
 	flags := []string{"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", "debug"}
 	var rendered [2]string
 	for side, root := range roots {
-		full, _ := harness.RequireCLIOK(
+		requireCLIOKResult1 := harness.RequireCLIOK(
 			t,
 			append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, flags...)...)
+		full, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 		want := []string{"available", "fallback"}[side]
 		docs, err := testutil.DecodeDocs(strings.NewReader(full))
 		assert.NoError(t, err)
 		input := false
 		for _, doc := range docs {
-			name, _ := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name := metadata.Name
 			input = input || manifest.DocKind(doc) == manifest.KindConfigMap && name == "optional"
 		}
 		assert.FatalIf(t, !strings.Contains(full, "value: "+want) || !strings.Contains(full, "sentinel: active") ||
@@ -58,7 +60,8 @@ func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
 			"diff",
 		},
 		flags...)
-	oracle, _ := harness.RequireCLIOK(t, oracleArgs...)
+	requireCLIOKResult2 := harness.RequireCLIOK(t, oracleArgs...)
+	oracle, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	args := append(
 		[]string{
 			"diff",
@@ -73,7 +76,8 @@ func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
 		flags...)
 	var previous string
 	for run := range 2 {
-		scoped, stderr := harness.RequireCLIOK(t, args...)
+		requireCLIOKResult3 := harness.RequireCLIOK(t, args...)
+		scoped, stderr := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 		assert.FatalIf(t, scoped != oracle || !strings.Contains(scoped, "-  value: available") ||
 			!strings.Contains(scoped, "+  value: fallback") ||
 			!strings.Contains(
@@ -135,9 +139,11 @@ func TestE2E_OptionalInputChangedOnly(t *testing.T) {
 				"--log-level",
 				"debug",
 			)
-			full, _ := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult4 := harness.RequireCLIOK(t, args...)
+			full, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 			scopedArgs := append(slices.Clone(args), baseline...)
-			scoped, stderr := harness.RequireCLIOK(t, scopedArgs...)
+			requireCLIOKResult5 := harness.RequireCLIOK(t, scopedArgs...)
+			scoped, stderr := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 			assert.FatalIf(
 				t,
 				scoped != full || !strings.Contains(scoped, "value: available"),
@@ -153,7 +159,8 @@ func TestE2E_OptionalInputChangedOnly(t *testing.T) {
 				}
 				assert.ErrorIf(t, !found, "selection diagnostic omitted %s: %s", id, stderr)
 			}
-			second, _ := harness.RequireCLIOK(t, scopedArgs...)
+			requireCLIOKResult6 := harness.RequireCLIOK(t, scopedArgs...)
+			second, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 			assert.FatalIf(t, second != scoped, "scoped output changed between runs: %s\n%s", scoped, second)
 		})
 	}
@@ -210,7 +217,7 @@ func e2EOptionalInputDiffSidesOperation(t *testing.T, operation *string) {
 	for _, root := range []string{before, after} {
 		writeOptionalInputCLICluster(t, root, (*operation) != "required removal")
 		if strings.HasPrefix((*operation), "projected") {
-			cluster, err := os.ReadFile(filepath.Join(root, "flux/cluster.yaml"))
+			cluster, err := os.ReadFile(filepath.Join(root, "flux", "cluster.yaml"))
 			assert.NoError(t, err)
 			testutil.WriteFile(t, root, "flux/cluster.yaml", string(cluster)+"  dependsOn: [{name: inputs}]\n")
 			testutil.WriteFile(
@@ -273,7 +280,8 @@ func e2EOptionalInputDiffSidesOperation(t *testing.T, operation *string) {
 		},
 		flags...)
 	if (*operation) == "required removal" {
-		_, stderr, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult7 := harness.RunCLIBuffers(args...)
+		_, stderr, code := runCLIBuffersResult7.Stdout, runCLIBuffersResult7.Stderr, runCLIBuffersResult7.Code
 		assert.FatalIf(
 			t,
 			code != 1 || !strings.Contains(stderr, "optional"),
@@ -304,14 +312,17 @@ func e2EOptionalInputDiffSidesOperation(t *testing.T, operation *string) {
 			"diff",
 		},
 		flags...)
-	fullDiff, _ := harness.RequireCLIOK(t, fullArgs...)
-	scoped, stderr := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult8 := harness.RequireCLIOK(t, fullArgs...)
+	fullDiff, _ := requireCLIOKResult8.Stdout, requireCLIOKResult8.Stderr
+	requireCLIOKResult9 := harness.RequireCLIOK(t, args...)
+	scoped, stderr := requireCLIOKResult9.Stdout, requireCLIOKResult9.Stderr
 	assert.FatalIf(t, scoped != fullDiff || !strings.Contains(scoped, "-  value: "+oldValue) ||
 		!strings.Contains(
 			scoped,
 			"+  value: "+newValue,
 		), "paired diff mismatch: scoped=%s\nfull=%s\nstderr=%s", scoped, fullDiff, stderr)
-	second, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult10 := harness.RequireCLIOK(t, args...)
+	second, _ := requireCLIOKResult10.Stdout, requireCLIOKResult10.Stderr
 	assert.FatalIf(t, second != scoped, "diff changed between runs: %s\n%s", scoped, second)
 }
 
@@ -364,7 +375,8 @@ func e2EOptionalInputDiffSidesOperationLoop(t *testing.T, loopInputs struct {
 
 	for i, root := range []string{(*loopInputs.before), (*loopInputs.after)} {
 		buildArgs := append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, (*loopInputs.flags)...)
-		full, _ := harness.RequireCLIOK(t, buildArgs...)
+		requireCLIOKResult11 := harness.RequireCLIOK(t, buildArgs...)
+		full, _ := requireCLIOKResult11.Stdout, requireCLIOKResult11.Stderr
 		loopInputs.rendered[i] = t.TempDir()
 		testutil.GitInit(t, loopInputs.rendered[i])
 		testutil.WriteFile(

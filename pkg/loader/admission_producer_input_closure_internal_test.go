@@ -137,24 +137,20 @@ func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 	assert.Diff(t, f.productionOwners(target), []manifest.NamedResource{producer.Named()})
 	sentinel := &manifest.Kustomization{Name: "sentinel", Namespace: "apps"}
 	f.AddEmitted(producer.Named(), store.Child{Obj: sentinel}, objects)
-	{
-		assert.FatalIf(
-			t,
-			f.ShouldReconcile(sentinel.Named()),
-			"%s",
-			"dependency-only materializer included unrelated output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		f.ShouldReconcile(sentinel.Named()),
+		"%s",
+		"dependency-only materializer included unrelated output",
+	)
 	child := &manifest.Kustomization{Name: "runtime", Namespace: "apps", SourceRef: consumer.SourceRef}
 	f.AddEmitted(consumer.Named(), store.Child{Obj: child}, objects)
-	{
-		assert.FatalIf(
-			t,
-			!f.ShouldReconcile(child.Named()) || !f.ShouldReconcile(producer.Named()),
-			"%s",
-			"runtime content dependency lost its producer",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!f.ShouldReconcile(child.Named()) || !f.ShouldReconcile(producer.Named()),
+		"%s",
+		"runtime content dependency lost its producer",
+	)
 }
 
 func TestFilter_DeclarationSourceChange(t *testing.T) {

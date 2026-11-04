@@ -30,7 +30,8 @@ func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 				"--concurrency",
 				"2",
 			}
-			_, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stderr, code := cli.stderr, cli.code
 			assert.Equal(t, code, 1)
 			expected := "\n  ✗  Kustomization  flux-system/outside  not found\n         required by flux-system/unrelated\n" + persistenceNotice + "\n  ✗ 1 failed · 1 blocked\n"
 			if verb == "test" {

@@ -46,7 +46,7 @@ func (f *operation) fetchLayer(
 	if repo.Ignore != nil {
 		ignore = *repo.Ignore
 	}
-	content := struct {
+	contentKey := struct {
 		Source, Transport any
 		RegistryConfig    string
 		MediaTypes        []string
@@ -72,7 +72,7 @@ func (f *operation) fetchLayer(
 	case sourcev1.OCILayerCopy:
 		generation, desc, key, err := f.Cache.Blob(
 			ctx,
-			cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}},
+			cache.BlobKey{Content: contentKey, Required: []string{"upstream-digest", "revision"}},
 			policy,
 			produce,
 		)
@@ -85,7 +85,7 @@ func (f *operation) fetchLayer(
 		input, descriptor, id, err = f.Cache.Acquire(
 			ctx,
 			cache.ArchiveKey{
-				Content:  content,
+				Content:  contentKey,
 				Ignore:   ignore,
 				Policy:   "source",
 				Required: []string{"upstream-digest", "revision"},

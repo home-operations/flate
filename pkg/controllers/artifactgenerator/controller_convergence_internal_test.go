@@ -68,15 +68,11 @@ func TestArtifactGenerator_AcquireObservationControl(
 	t.Parallel()
 	// Valid fixed/extract keys, no cancellation and no producer retry keep every Acquire on the probed path.
 	owner, err := cache.New(t.Context(), "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		{
-			{
-				err := owner.Close()
-				assert.ErrorIf(t, err != nil, "%v", err)
-			}
+			err := owner.Close()
+			assert.ErrorIf(t, err != nil, "%v", err)
 		}
 	})
 	var calls, producers atomic.Int64
@@ -244,15 +240,13 @@ func TestArtifactGenerator_ConsumedInputConvergence(t *testing.T) {
 
 			first := consumedPublication(t, publication, "selected-union")
 			second := consumedPublication(t, publication, "selected-union")
-			{
-				assert.FatalIf(
-					t,
-					!bytes.Equal(first, second),
-					"final documents changed across two runs:\n%s\n%s",
-					first,
-					second,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!bytes.Equal(first, second),
+				"final documents changed across two runs:\n%s\n%s",
+				first,
+				second,
+			)
 		})
 	}
 }
@@ -304,9 +298,7 @@ func testArtifactGeneratorAcquireObservationControlCase(
 		cache.Policy{MaxAge: cache.Forever},
 		(*testCaseInput.produce),
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	data, err := fs.ReadFile(input, "file")
 	if err != nil || string(data) != "input" || testCaseInput.calls.Load()-before != 1 ||
 		testCaseInput.producers.Load() != 1 {
@@ -352,7 +344,8 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 			map[string]any{"from": "@repo/archive.tgz", "to": "@artifact/", "strategy": "Extract"},
 		}, 2
 	}
-	obj, doc := generatorForTest(t, []any{map[string]any{"name": name, "copy": operations}})
+	generatorForTestResult1 := generatorForTest(t, []any{map[string]any{"name": name, "copy": operations}})
+	obj, doc := generatorForTestResult1.object, generatorForTestResult1.document
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -403,24 +396,20 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 	} else if (*testCaseInput.phase) == "fresh-controller-warm" && artifact.Key != (*testCaseInput.generatedKey) {
 		t.Fatalf("fresh controller missed the warm output key: %s != %s", artifact.Key, (*testCaseInput.generatedKey))
 	}
-	{
-		assert.FatalIf(
-			t,
-			(*testCaseInput.phase) == "fresh-controller-warm" && (*testCaseInput.observed).opens.Load() != beforeFiles ||
-				(*testCaseInput.phase) ==
-					"extract-inner-warm" && testCaseInput.archiveOpens.Load() != beforeArchives,
-			"%v",
-			"warm Acquire invoked its suppressed producer",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			(*testCaseInput.phase) == "generator-cold" && (*testCaseInput.observed).opens.Load() <= beforeFiles ||
-				(*testCaseInput.phase) ==
-					"extract-cold" && testCaseInput.archiveOpens.Load() <= beforeArchives,
-			"%v",
-			"cold Acquire did not invoke its producer",
-		)
-	}
+	assert.FatalIf(
+		t,
+		(*testCaseInput.phase) == "fresh-controller-warm" && (*testCaseInput.observed).opens.Load() != beforeFiles ||
+			(*testCaseInput.phase) ==
+				"extract-inner-warm" && testCaseInput.archiveOpens.Load() != beforeArchives,
+		"%v",
+		"warm Acquire invoked its suppressed producer",
+	)
+	assert.FatalIf(
+		t,
+		(*testCaseInput.phase) == "generator-cold" && (*testCaseInput.observed).opens.Load() <= beforeFiles ||
+			(*testCaseInput.phase) ==
+				"extract-cold" && testCaseInput.archiveOpens.Load() <= beforeArchives,
+		"%v",
+		"cold Acquire did not invoke its producer",
+	)
 }

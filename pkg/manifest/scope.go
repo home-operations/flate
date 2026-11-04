@@ -2,9 +2,15 @@ package manifest
 
 import "sigs.k8s.io/kustomize/kyaml/yaml"
 
+// ScopeLookup distinguishes resolved scopes from unknown scopes.
+type ScopeLookup struct {
+	Namespaced bool
+	Found      bool
+}
+
 type scopeResolver interface {
-	ResolveScope(yaml.TypeMeta) (bool, bool)
-	LookupScope(yaml.TypeMeta) (bool, bool)
+	ResolveScope(yaml.TypeMeta) ScopeLookup
+	LookupScope(yaml.TypeMeta) ScopeLookup
 }
 
 //nolint:gochecknoglobals // The registry shares discovered immutable resource scopes.
@@ -26,8 +32,7 @@ func (k KindInfo) Namespaced() bool {
 	if k.Kind == "" {
 		return false
 	}
-	namespaced, _ := scopes.ResolveScope(yaml.TypeMeta{APIVersion: k.apiVersion, Kind: k.Kind})
-	return namespaced
+	return scopes.ResolveScope(yaml.TypeMeta{APIVersion: k.apiVersion, Kind: k.Kind}).Namespaced
 }
 
 // AdmitsRoot reports whether an object's scope and identity permit independent admission.

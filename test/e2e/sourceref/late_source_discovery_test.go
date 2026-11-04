@@ -105,15 +105,15 @@ spec:
 	assert.NoError(t, repo.Storer.SetReference(
 		plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), head.Hash()),
 	))
-	assert.NoError(t, os.Remove(filepath.Join(root, "apps/deleted.yaml")))
-	harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
+	assert.NoError(t, os.Remove(filepath.Join(root, "apps", "deleted.yaml")))
+	harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: pinned", "value: newer")
 	testutil.GitCommitAll(
 		t,
 		repo,
 		"init",
 		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
 	)
-	harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: newer", "value: dirty")
+	harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: newer", "value: dirty")
 	testutil.WriteFile(t, root, "apps/extra.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: extra\n")
 	transport := installSourceRefTransport(t, repo.Storer)
 	var wantError string
@@ -255,7 +255,8 @@ func e2ESourceRefPinnedSourceDiscoveredAfterConsumerNameCommandCase(
 	if (*(*command)) == "diff" {
 		args = append(args, "--base", "HEAD", "-o", "diff")
 	}
-	out, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+	out, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 	if (*capturedInputs.capturedInputs.tt).sourceURL != "" {
 		wantCode, wantReason := 0, "external source GitRepository.source.toolkit.fluxcd.io/flux-system/pinned is outside the local tree; not rendered"
 		if (*(*command)) == "build" {

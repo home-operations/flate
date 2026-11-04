@@ -299,7 +299,8 @@ func (sh *shard) sweepHead(
 	}
 	head.pending.Store(false)
 	sh.mu.Unlock()
-	live, tail, requeue := sweepRegistrations(first, cutoff, deliver, yield)
+	sweep := sweepRegistrations(first, cutoff, deliver, yield)
+	live, tail, requeue := sweep.live, sweep.tail, sweep.requeue
 	if tail == nil && head != &sh.absence {
 		head.detached.Store(false)
 		return pending
@@ -318,12 +319,18 @@ func (sh *shard) sweepHead(
 	return pending
 }
 
+type registrationSweep struct {
+	live    *registration
+	tail    *registration
+	requeue bool
+}
+
 func sweepRegistrations(
 	first *registration,
 	cutoff uint64,
 	deliver *bool,
 	yield func(manifest.NamedResource) bool,
-) (*registration, *registration, bool) {
+) registrationSweep {
 	var live, tail *registration
 	requeue := false
 	for cell := first; cell != nil; {
@@ -348,7 +355,7 @@ func sweepRegistrations(
 		}
 		cell = next
 	}
-	return live, tail, requeue
+	return registrationSweep{live: live, tail: tail, requeue: requeue}
 }
 
 func deliverRegistrationChange(

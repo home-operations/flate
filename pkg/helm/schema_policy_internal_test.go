@@ -70,9 +70,7 @@ func TestTemplate_SchemaErrorOrder(t *testing.T) {
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}
 	_, _, first := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 	_, _, second := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
-	{
-		assert.FatalIf(t, first == nil || second == nil, "schema failures: %v; %v", first, second)
-	}
+	assert.FatalIf(t, first == nil || second == nil, "schema failures: %v; %v", first, second)
 	const want = `helm template: values don't meet the specifications of the schema(s) in the following chart(s):
 mychart:
 - at '/alpha': got null, want string
@@ -109,9 +107,7 @@ func TestTemplate_SchemaPropertyOrder(t *testing.T) {
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}
 	_, _, first := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 	_, _, second := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
-	{
-		assert.FatalIf(t, first == nil || second == nil, "schema failures: %v; %v", first, second)
-	}
+	assert.FatalIf(t, first == nil || second == nil, "schema failures: %v; %v", first, second)
 	const want = `helm template: values don't meet the specifications of the schema(s) in the following chart(s):
 mychart:
 - at '': additional properties 'alpha', 'beta', 'mu', 'omega', 'theta', 'zulu' not allowed
@@ -183,14 +179,10 @@ func testTemplateActionSchemaPolicyCase(t *testing.T, testCaseInput *testTemplat
 		assert.Diff(t, hr.HelmReleaseSpec, original.HelmReleaseSpec)
 		assert.Equal(t, hr.DisableSchemaValidation, original.DisableSchemaValidation)
 		if testCaseInput.tc.wantSkip {
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			continue
 		}
-		{
-			assert.FatalIf(t, err == nil, "%s", "invalid schema accepted after warmed skipped render")
-		}
+		assert.FatalIf(t, err == nil, "%s", "invalid schema accepted after warmed skipped render")
 		assert.Equal(
 			t,
 			err.Error(),

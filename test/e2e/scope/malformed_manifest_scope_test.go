@@ -142,7 +142,7 @@ spec: {url: 'https://fixture.invalid/other'}
 		)
 		original := t.TempDir()
 		testutil.CopyTree(t, dir, original)
-		harness.MutateFile(t, filepath.Join(dir, "healthy/configmap.yaml"), "value: rendered", "value: changed")
+		harness.MutateFile(t, filepath.Join(dir, "healthy", "configmap.yaml"), "value: rendered", "value: changed")
 		args = append(args, "--path-orig", original)
 	}
 	if tc.external {
@@ -160,7 +160,8 @@ spec: {url: 'https://fixture.invalid/other'}
 			"2",
 		}
 	}
-	stdout, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+	stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 	if tc.external {
 		assert.FatalIf(
 			t,
@@ -263,7 +264,7 @@ func e2EMalformedManifestScopeNameLoop(t *testing.T, loopInputs struct {
 			"second owner escaped the malformed file failure:\n%s",
 			(*loopInputs.stderr),
 		)
-		(*loopInputs.stdout), (*loopInputs.stderr), (*loopInputs.code) = harness.RunCLIBuffers(
+		runCLIBuffersResult2 := harness.RunCLIBuffers(
 			"build",
 			"ks",
 			"sibling",
@@ -273,6 +274,7 @@ func e2EMalformedManifestScopeNameLoop(t *testing.T, loopInputs struct {
 			"--concurrency",
 			"2",
 		)
+		(*loopInputs.stdout), (*loopInputs.stderr), (*loopInputs.code) = runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 		assert.FatalIf(
 			t,
 			(*loopInputs.code) != 0 || !strings.Contains((*loopInputs.stdout), "sibling-output"),

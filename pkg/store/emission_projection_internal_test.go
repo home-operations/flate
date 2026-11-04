@@ -534,7 +534,8 @@ func projectionApplicationChild(t *testing.T, source manifest.NamedResource, mod
 			"ref":  "main",
 		}}
 	}
-	object, _, _, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	parsed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	object := parsed.Object
 	assert.NoError(t, err)
 	return Child{Obj: object, Doc: document}
 }

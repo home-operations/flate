@@ -86,11 +86,13 @@ spec:
 		t.TempDir(),
 		"--skip-kinds=",
 	}
-	stdout, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+	stdout, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 	for _, want := range []string{"name: merged", "a: after", "b: retained", "name: extracted", "value: archive", "kind: ExternalArtifact", "source.extensions.fluxcd.io/generator: authored"} {
 		assert.FatalIf(t, !strings.Contains(stdout, want), "missing %q in output:\n%s", want, stdout)
 	}
-	again, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+	again, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	assert.FatalIf(t, stdout != again, "%v", "generated output changed between equal runs")
 }
 
@@ -120,7 +122,7 @@ spec:
 		"app/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bootstrap, namespace: apps}\n",
 	)
-	stdout, _ := harness.RequireCLIOK(
+	requireCLIOKResult3 := harness.RequireCLIOK(
 		t,
 		"build",
 		"all",
@@ -132,6 +134,7 @@ spec:
 		t.TempDir(),
 		"--skip-kinds=",
 	)
+	stdout, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 	assert.FatalIf(
 		t,
 		!strings.Contains(stdout, "name: bootstrap") || !strings.Contains(stdout, "kind: ExternalArtifact"),
@@ -154,7 +157,8 @@ spec:
 		t.TempDir(),
 		"--skip-kinds=",
 	}
-	stdout, stderr := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult4 := harness.RequireCLIOK(t, args...)
+	stdout, stderr := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 	assert.FatalIf(
 		t,
 		strings.Count(stdout, "name: bootstrap") != 1,
@@ -162,7 +166,8 @@ spec:
 		stdout,
 		stderr,
 	)
-	again, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult5 := harness.RequireCLIOK(t, args...)
+	again, _ := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 	assert.FatalIf(t, again != stdout, "%v", "static generator consumer output changed between equal runs")
 }
 
@@ -213,7 +218,8 @@ spec:
 		t.TempDir(),
 		"--skip-kinds=",
 	}
-	stdout, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult6 := harness.RunCLIBuffers(args...)
+	stdout, stderr, code := runCLIBuffersResult6.Stdout, runCLIBuffersResult6.Stderr, runCLIBuffersResult6.Code
 	assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "evaluate generated-c") ||
 		!strings.Contains(stderr, "required by apps/c") ||
 		!strings.Contains(
@@ -233,7 +239,8 @@ spec:
 	docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
 	assert.NoError(t, err)
 	for _, doc := range docs {
-		name, _ := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name := metadata.Name
 		assert.FatalIf(
 			t,
 			name == "generated-c" && manifest.DocKind(doc) == "ExternalArtifact" || name == "accepted-c",
@@ -247,7 +254,8 @@ spec:
 		"root declaration missing the failed output reference:\n%s",
 		stdout,
 	)
-	again, _, againCode := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult7 := harness.RunCLIBuffers(args...)
+	again, _, againCode := runCLIBuffersResult7.Stdout, runCLIBuffersResult7.Stderr, runCLIBuffersResult7.Code
 	assert.FatalIf(
 		t,
 		againCode != code || again != stdout,
@@ -330,7 +338,7 @@ spec:
 	original := t.TempDir()
 	testutil.CopyTree(t, root, original)
 	testutil.WriteFile(t, original, ".git/shallow", strings.Repeat("f", 40)+"\n")
-	harness.MutateFile(t, filepath.Join(root, "shared/generator.yaml"), "@repo/before.yaml", "@repo/after.yaml")
+	harness.MutateFile(t, filepath.Join(root, "shared", "generator.yaml"), "@repo/before.yaml", "@repo/after.yaml")
 	cacheDir := t.TempDir()
 	for _, tc := range []struct {
 		name, command, current, original, before, after string
@@ -356,7 +364,8 @@ spec:
 			if tc.command == "diff" {
 				args = append(args, "-o", "diff")
 			}
-			stdout, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult8 := harness.RequireCLIOK(t, args...)
+			stdout, stderr := requireCLIOKResult8.Stdout, requireCLIOKResult8.Stderr
 			assert.FatalIf(
 				t,
 				!strings.Contains(stdout, "value: "+tc.after) || strings.Contains(stdout, "unrelated-config"),
@@ -368,7 +377,8 @@ spec:
 				(strings.Count(stdout, "name: generated-config") != 1 || !strings.Contains(stdout, "kind: ExternalArtifact")), "emitted generator output was missing or rendered twice:\n%s", stdout)
 			assert.FatalIf(t, tc.command == "diff" &&
 				(strings.Count(stdout, "-  value: "+tc.before) != 1 || strings.Count(stdout, "+  value: "+tc.after) != 1), "diff lost one generated side:\n%s", stdout)
-			again, _ := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult9 := harness.RequireCLIOK(t, args...)
+			again, _ := requireCLIOKResult9.Stdout, requireCLIOKResult9.Stderr
 			assert.FatalIf(
 				t,
 				again != stdout,
@@ -439,7 +449,8 @@ spec:
 		t.TempDir(),
 		"--skip-kinds=",
 	}
-	stdout, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult10 := harness.RequireCLIOK(t, args...)
+	stdout, _ := requireCLIOKResult10.Stdout, requireCLIOKResult10.Stderr
 	assert.FatalIf(t, strings.Count(stdout, "name: generated-config") != 1 ||
 		strings.Count(stdout, "\nkind: ExternalArtifact\n") != 1 ||
 		!strings.Contains(stdout, "value: transformed") ||
@@ -452,6 +463,7 @@ spec:
 	for _, want := range []string{"revision: '@repo'", "originRevision: '@repo'", "ignored: retained"} {
 		assert.FatalIf(t, !strings.Contains(stdout, want), "missing current generator selection %q:\n%s", want, stdout)
 	}
-	again, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult11 := harness.RequireCLIOK(t, args...)
+	again, _ := requireCLIOKResult11.Stdout, requireCLIOKResult11.Stderr
 	assert.FatalIf(t, again != stdout, "%v", "built generator output changed between equal runs")
 }

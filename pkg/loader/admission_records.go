@@ -163,22 +163,22 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 		}
 		return true
 	}
-	if changed, known := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), object); known {
-		if !changed {
+	if comparison := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), object); comparison.Known {
+		if !comparison.Changed {
 			return remember()
 		}
 		return false
 	}
 	record := c.record(id)
-	if changed, known := c.declarationChanged(
+	if comparison := c.declarationChanged(
 		id,
 		object,
-	); known && !changed &&
+	); comparison.Known && !comparison.Changed &&
 		!c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {
 		return remember()
 	}
-	if stable, known := c.declarationStable(id, owner, &record); known {
-		if stable {
+	if stability := c.declarationStable(id, owner, &record); stability.known {
+		if stability.stable {
 			return remember()
 		}
 		return false
@@ -423,10 +423,12 @@ func (c *admissionClosure) checkDeclarationFiles(
 	}
 }
 
+type declarationStability struct{ stable, known bool }
+
 func (c *admissionClosure) declarationStable(
 	id, owner manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
-) (bool, bool) {
+) declarationStability {
 	declaration, owned := c.declarationOwner(id, owner, record)
 	ownerRecord := c.record(owner)
 	ownerFile := ownerRecord.File
@@ -452,7 +454,7 @@ func (c *admissionClosure) declarationStable(
 			(parent != (manifest.NamedResource{}) && parent != owner && !parent.ReportHidden()) {
 			state := c.states[id]
 			if state.comparingDeclaration {
-				return false, true
+				return declarationStability{stable: false, known: true}
 			}
 			state.comparingDeclaration = true
 			c.states[id] = state
@@ -462,8 +464,8 @@ func (c *admissionClosure) declarationStable(
 			c.states[id] = state
 		}
 		if stable {
-			return true, true
+			return declarationStability{stable: true, known: true}
 		}
 	}
-	return false, false
+	return declarationStability{}
 }

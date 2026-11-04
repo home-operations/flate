@@ -166,9 +166,7 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 					warningValues := rendered.Result.Warnings
 					for warningIndex := range warningValues {
 						warning := warningValues[warningIndex]
-						{
-							assert.FatalIf(t, strings.Contains(warning.Message, "output will be empty"), "%v", warning)
-						}
+						assert.FatalIf(t, strings.Contains(warning.Message, "output will be empty"), "%v", warning)
 					}
 				}
 			}
@@ -298,37 +296,31 @@ func unavailableSourceAdmittedViews(t *testing.T, statementInput *testRenderTree
 	o.Store().
 		SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: (*statementInput.headRoot), FS: os.DirFS((*statementInput.headRoot))})
 	assert.NoError(t, o.bootstrap(t.Context()))
-	{
-		assert.FatalIf(
-			t,
-			o.Store().GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != statementInput.cfg.Input,
-			"%v",
-			"preseeded input replaced supplied input",
-		)
-	}
+	assert.FatalIf(
+		t,
+		o.Store().GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != statementInput.cfg.Input,
+		"%v",
+		"preseeded input replaced supplied input",
+	)
 	source := &manifest.GitRepository{Name: "unavailable", Namespace: "flux-system"}
 	o.Store().AddObject(source)
 	o.Store().SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: (*statementInput.headRoot)})
 	o.Store().
 		UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "fixture unavailable payload"})
 	result, err := o.collectResult(o.run(t.Context()))
-	{
-		assert.FatalIf(
-			t,
-			err == nil || result == nil || result.Failed[(*statementInput.changed)].Status != store.StatusFailed,
-			"selected producer must fail after discovery: result=%+v err=%v",
-			result,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err == nil || result == nil || result.Failed[(*statementInput.changed)].Status != store.StatusFailed,
+		"selected producer must fail after discovery: result=%+v err=%v",
+		result,
+		err,
+	)
 	if len(outputByParent(result.Manifests)[(*statementInput.changed)]) != 0 ||
 		len(outputByParent(result.Manifests)[(*statementInput.same)]) != 0 {
 		t.Fatalf("unavailable producer or unchanged sibling emitted: %v", result.Manifests)
 	}
 	for _, cm := range o.Store().ListObjects("", manifest.KindConfigMap) {
-		{
-			assert.FatalIf(t, cm.Named().Name == "cfg-a", "%v", "unavailable source admitted the host decoy ConfigMap")
-		}
+		assert.FatalIf(t, cm.Named().Name == "cfg-a", "%v", "unavailable source admitted the host decoy ConfigMap")
 	}
 }
 
@@ -446,7 +438,8 @@ func assertSelectedAliasDocuments(
 			continue
 		}
 		for _, doc := range docs {
-			name, _ := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name := metadata.Name
 			value := selectedAliasValue(name, side, statementInput)
 			assert.Diff(
 				t,

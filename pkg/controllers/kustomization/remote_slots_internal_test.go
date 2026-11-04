@@ -47,10 +47,8 @@ func TestController_RemoteValidationSlots(t *testing.T) {
 			ready <- struct{}{}
 			<-begin
 			{
-				{
-					blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone).Blocked
-					assert.ErrorIf(t, len(blocked) != 0, "unexpected blocked dependencies: %v", blocked)
-				}
+				blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone).Blocked
+				assert.ErrorIf(t, len(blocked) != 0, "unexpected blocked dependencies: %v", blocked)
 			}
 		})
 	}
@@ -67,10 +65,9 @@ func TestController_RemoteValidationSlots(t *testing.T) {
 		status, _ := s.GetStatus(id)
 		assert.Equal(t, status.Status, store.StatusReady)
 		_, _, artifact := s.GetEmission(id)
-		{
-			assert.FatalIf(t, len(artifact.Manifests) != 1, "missing rendered artifact for %s", id)
-		}
-		name, _ := manifest.DocMetadata(artifact.Manifests[0].Document)
+		assert.FatalIf(t, len(artifact.Manifests) != 1, "missing rendered artifact for %s", id)
+		metadata := manifest.DocMetadata(artifact.Manifests[0].Document)
+		name := metadata.Name
 		assert.Equal(t, name, "remote-"+id.Name)
 		assert.Equal(t, manifest.DocKind(artifact.Manifests[0].Document), "ConfigMap")
 	}

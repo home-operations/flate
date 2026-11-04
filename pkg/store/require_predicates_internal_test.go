@@ -62,14 +62,12 @@ func TestRequire_ReleasesPredicates(t *testing.T) {
 	}
 	reads.Init(s, ownerID("reader"), inputs)
 	assert.Equal(t, len(slices.Collect(reads.Gates())), 0)
-	{
-		assert.FatalIf(
-			t,
-			reads.localDetails.gates != nil || inputs[0].details.Load() != nil,
-			"%s",
-			"reset retained overflow predicates",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reads.localDetails.gates != nil || inputs[0].details.Load() != nil,
+		"%s",
+		"reset retained overflow predicates",
+	)
 }
 
 func TestRequire_CapturedIdentityDuringAdmission(t *testing.T) {
@@ -128,14 +126,12 @@ func testRequireRetainsPredicatesCase(t *testing.T, testCaseInput *[]string,
 	assert.Diff(t, slices.Collect(reads.Gates()), want)
 	assert.Diff(t, slices.Collect(reads.Required()), []manifest.NamedResource{obj.Named()})
 	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(obj))
-	{
-		assert.FatalIf(
-			t,
-			reads.inputs != &reads.local || reads.inputs.next != nil,
-			"%s",
-			"predicates created multiple captured authorities for one identity",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reads.inputs != &reads.local || reads.inputs.next != nil,
+		"%s",
+		"predicates created multiple captured authorities for one identity",
+	)
 	for range reads.Gates() {
 		break
 	}
@@ -194,12 +190,10 @@ func testRequireRetainsPredicatesCase2(t *testing.T, testCaseInput *bool,
 	assert.Diff(t, slices.Collect(reads.Gates()), want)
 	assert.Diff(t, slices.Collect(reads.Required()), []manifest.NamedResource{obj.Named()})
 	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(obj))
-	{
-		assert.FatalIf(
-			t,
-			reads.inputs != &reads.local || reads.inputs.next != nil,
-			"%s",
-			"gate facts created more than one captured authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reads.inputs != &reads.local || reads.inputs.next != nil,
+		"%s",
+		"gate facts created more than one captured authority",
+	)
 }

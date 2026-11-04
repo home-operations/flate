@@ -64,9 +64,10 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 	for _, reader := range readers {
 		assert.Equal(t, reader.opens.Load(), int64(1))
 	}
-	different, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, changed, nil)
+	comparison := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, changed, nil)
+	different, known := comparison.Changed, comparison.Known
 	assert.Equal(t, different && known, true)
-	_, known = qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, stable, nil)
+	known = qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, stable, nil).Known
 	assert.Equal(t, known, false)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -76,9 +77,7 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 		indexes[1],
 		[2]map[manifest.NamedResource]inputprojection.Projection{},
 	)
-	{
-		assert.FatalIf(t, !errors.Is(err, context.Canceled), "WithReaders error = %v, want canceled", err)
-	}
+	assert.FatalIf(t, !errors.Is(err, context.Canceled), "WithReaders error = %v, want canceled", err)
 }
 
 func TestSet_InputVisibilityAvailability(t *testing.T) {

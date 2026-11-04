@@ -16,10 +16,6 @@ func TestInputf_Allocations(t *testing.T) {
 	allocations := testing.AllocsPerRun(100, func() {
 		err = inputf("missing %s", "kind")
 	})
-	{
-		assert.FatalIf(t, allocations != 2, "input error allocates %v objects, want 2", allocations)
-	}
-	{
-		assert.FatalIf(t, !errors.Is(err, ErrInput) || err.Error() != "missing kind", "input error = %v", err)
-	}
+	assert.FatalIf(t, allocations != 2, "input error allocates %v objects, want 2", allocations)
+	assert.FatalIf(t, !errors.Is(err, ErrInput) || err.Error() != "missing kind", "input error = %v", err)
 }

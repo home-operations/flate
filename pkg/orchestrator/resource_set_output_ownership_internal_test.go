@@ -39,8 +39,7 @@ func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 	assert.NoError(t, err)
 	path := t.TempDir()
 	testutil.CopyTree(t, source, path)
-	var previous map[manifest.NamedResource][]map[string]any
-	testOrchestratorRenderResourceSetDocumentBoundarySegment(t, &path, &previous)
+	testOrchestratorRenderResourceSetDocumentBoundarySegment(t, &path)
 }
 
 func testOrchestratorRenderResourceSetEffectiveOwnershipCase(
@@ -132,8 +131,7 @@ func testOrchestratorRenderResourceSetEffectiveOwnershipCaseTail(
 	tailCaseInput *testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailInputs,
 ) {
 	t.Helper()
-	var previous map[manifest.NamedResource][]map[string]any
-	testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailSegment(t, tailCaseInput, &previous)
+	testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailSegment(t, tailCaseInput)
 }
 
 type testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailInputs struct {
@@ -148,18 +146,16 @@ type testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailInputs struct {
 func testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailSegment(
 	t *testing.T,
 	tailCaseInput *testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailInputs,
-	previous *map[manifest.NamedResource][]map[string]any,
 ) {
 	t.Helper()
+	var previous map[manifest.NamedResource][]map[string]any
 	for range 2 {
 		renderedSingleton2, err := RenderTrees(
 			t.Context(),
 			[]Tree{{Path: (*tailCaseInput.root), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{Concurrency: 2},
 		)
-		{
-			assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
-		}
+		assert.FatalIf(t, len(renderedSingleton2) != 1, "missing render: %v", err)
 		result := renderedSingleton2[0].Result
 		assert.NoError(t, err)
 		assert.Equal(t, len(result.Failed), 0)
@@ -178,28 +174,26 @@ func testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailSegment(
 			_, present := got[0]["metadata"].(map[string]any)["namespace"]
 			assert.Equal(t, present, false)
 		}
-		if (*previous) != nil {
-			assert.Diff(t, outputByParent(result.Manifests), (*previous))
+		if previous != nil {
+			assert.Diff(t, outputByParent(result.Manifests), previous)
 		}
-		(*previous) = outputByParent(result.Manifests)
+		previous = outputByParent(result.Manifests)
 	}
 }
 
 func testOrchestratorRenderResourceSetDocumentBoundarySegment(
 	t *testing.T,
 	path *string,
-	previous *map[manifest.NamedResource][]map[string]any,
 ) {
 	t.Helper()
+	var previous map[manifest.NamedResource][]map[string]any
 	for range 2 {
 		renderedSingleton3, err := RenderTrees(
 			t.Context(),
 			[]Tree{{Path: (*path), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{WipeSecrets: true, Concurrency: 2},
 		)
-		{
-			assert.FatalIf(t, len(renderedSingleton3) != 1, "missing render: %v", err)
-		}
+		assert.FatalIf(t, len(renderedSingleton3) != 1, "missing render: %v", err)
 		o := renderedSingleton3[0].Orchestrator
 		result := renderedSingleton3[0].Result
 		if !errors.Is(err, manifest.ErrFlux) || len(result.Failed) != 1 {
@@ -207,10 +201,8 @@ func testOrchestratorRenderResourceSetDocumentBoundarySegment(
 		}
 		effective := manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "flux-system", Name: "raw"}
 		{
-			{
-				child := o.Store().GetObject(effective)
-				assert.FatalIf(t, child == nil, "missing effective child %s", effective)
-			}
+			child := o.Store().GetObject(effective)
+			assert.FatalIf(t, child == nil, "missing effective child %s", effective)
 		}
 
 		counts := map[string]int{}
@@ -224,10 +216,10 @@ func testOrchestratorRenderResourceSetDocumentBoundarySegment(
 				t.Errorf("%s count=%d, want %d; all=%v", key, counts[key], want, counts)
 			}
 		}
-		if (*previous) != nil {
-			assert.Diff(t, outputByParent(result.Manifests), (*previous))
+		if previous != nil {
+			assert.Diff(t, outputByParent(result.Manifests), previous)
 		}
-		(*previous) = outputByParent(result.Manifests)
+		previous = outputByParent(result.Manifests)
 	}
 }
 
@@ -239,19 +231,18 @@ func (s *testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailInputs) asse
 	if (*s.testCaseInput).competitor && manifest.DocKind(doc) == manifest.KindConfigMap {
 		encoded, err := json.Marshal(doc)
 		assert.NoError(t, err)
-		{
-			assert.ErrorIf(t, strings.Contains(string(encoded), "aaa-omitted") ||
-				strings.Contains(
-					string(encoded),
-					"aaa-explicit",
-				), "losing marker in output: %s", encoded)
-		}
+		assert.ErrorIf(t, strings.Contains(string(encoded), "aaa-omitted") ||
+			strings.Contains(
+				string(encoded),
+				"aaa-explicit",
+			), "losing marker in output: %s", encoded)
 	}
 }
 
 func recordResourceSetDocumentBoundary(t *testing.T, doc map[string]any, counts map[string]int) {
 	t.Helper()
-	name, ns := manifest.DocMetadata(doc)
+	metadata := manifest.DocMetadata(doc)
+	name, ns := metadata.Name, metadata.Namespace
 	if name == "raw" || name == "duplicate" {
 		assert.Equal(t, ns, "")
 	}

@@ -77,10 +77,12 @@ func e2EDisabledAppDiffSidesMembershipNamespaceAuthority(t *testing.T) {
 		t.TempDir(),
 	}
 	fullArgs := append([]string{"build", "all", "--path", before}, flags...)
-	full, stderr := harness.RequireCLIOK(t, fullArgs...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, fullArgs...)
+	full, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 	checkDiagnostic(t, stderr, true)
 	checkBuild(t, full, "media", "original")
-	again, stderr := harness.RequireCLIOK(t, fullArgs...)
+	requireCLIOKResult2 := harness.RequireCLIOK(t, fullArgs...)
+	again, stderr := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	checkDiagnostic(t, stderr, true)
 	assert.Equal(t, again, full)
 	for _, tc := range []struct{ name, current, original, namespace, oldNamespace, value string }{
@@ -133,7 +135,8 @@ func e2EDisabledAppDiffSidesCase(t *testing.T, scenario *string) {
 		if command == "diff" {
 			args = append(args, "-o", "json")
 		}
-		out, stderr, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult3 := harness.RunCLIBuffers(args...)
+		out, stderr, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 		assert.FatalIf(
 			t,
 			code != 0 || strings.Contains(stderr, "dial tcp"),
@@ -226,7 +229,8 @@ func e2EDisabledAppDiffSidesName(t *testing.T, enabled *bool) {
 		if command == "diff" {
 			args = append(args, "-o", "diff")
 		}
-		out, stderr, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult4 := harness.RunCLIBuffers(args...)
+		out, stderr, code := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 		assert.FatalIf(
 			t,
 			code != 0 || strings.Contains(stderr, "[OrphanedResource]"),
@@ -265,12 +269,14 @@ func e2EDisabledAppDiffSidesMembershipNamespaceAuthorityName(t *testing.T, tc *s
 	t.Helper()
 
 	args := append([]string{"build", "all", "--path", tc.current, "--path-orig", tc.original}, (*flags)...)
-	out, stderr := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult5 := harness.RequireCLIOK(t, args...)
+	out, stderr := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 	(*capturedInputs.checkDiagnostic)(t, stderr, false)
 	(*capturedInputs.checkBuild)(t, out, tc.namespace, tc.value)
 	args[0] = "diff"
 	args = append(args, "-o", "json")
-	out, stderr = harness.RequireCLIOK(t, args...)
+	requireCLIOKResult6 := harness.RequireCLIOK(t, args...)
+	out, stderr = requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 	(*capturedInputs.checkDiagnostic)(t, stderr, false)
 	var result struct {
 		Changes []struct {
@@ -375,7 +381,8 @@ func e2EDisabledAppDiffSidesMembershipNamespaceAuthorityBody2(
 	assert.NoError(t, err)
 	var identities []manifest.NamedResource
 	for _, doc := range docs {
-		name, ns := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name, ns := metadata.Name, metadata.Namespace
 		assert.FatalIf(
 			t,
 			ns == "inner" || name == "excluded-app" || name == "commented-app" || name == "excluded-cm" ||

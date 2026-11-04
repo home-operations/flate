@@ -161,9 +161,7 @@ func testPreflightGitBaseErrorPrecedenceCase(
 	_, _, err := testutil.RenderMaps(
 		Render(t.Context(), c, RenderRequest{Source: input, Spec: demoSpec}, sourcecache.RetryConfig{}),
 	)
-	{
-		assert.FatalIf(t, err == nil, "%s", "invalid input rendered")
-	}
+	assert.FatalIf(t, err == nil, "%s", "invalid input rendered")
 	switch {
 	case testCaseInput.status != http.StatusOK:
 		if calls.Load() != 0 || !strings.Contains(err.Error(), "HTTP 404") {
@@ -171,15 +169,13 @@ func testPreflightGitBaseErrorPrecedenceCase(
 		}
 
 	case testCaseInput.timeout:
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, context.DeadlineExceeded) ||
-					!strings.Contains(err.Error(), "accumulation err="),
-				"directory timeout lost file diagnostic: %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, context.DeadlineExceeded) ||
+				!strings.Contains(err.Error(), "accumulation err="),
+			"directory timeout lost file diagnostic: %v",
+			err,
+		)
 
 	case calls.Load() != 1 || strings.Contains(err.Error(), "directory failed") || !strings.Contains(err.Error(), "yaml"):
 		t.Fatalf("malformed resource precedence: calls=%d error=%v", calls.Load(), err)

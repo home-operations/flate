@@ -32,7 +32,7 @@ func TestRun_TestAll_IncompleteInputCoverage(t *testing.T) {
 		"cfg/ns.yaml",
 		"apiVersion: builtin\nkind: NamespaceTransformer\nmetadata: {name: namespace}\nnamespace: apps\n",
 	)
-	stdout, stderr, code := runCLI(
+	cli := runCLI(
 		t,
 		"test",
 		"all",
@@ -44,6 +44,7 @@ func TestRun_TestAll_IncompleteInputCoverage(t *testing.T) {
 		"--cache-dir",
 		t.TempDir(),
 	)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0 || !strings.Contains(stdout, "✓") || !strings.Contains(stdout, "1 passed") ||
 		strings.Contains(stdout, "failed"), "full test failed: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	assert.FatalIf(
@@ -61,8 +62,9 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			orig, current := writeInputWarningsFixture(t, "5m"), writeInputWarningsFixture(t, "5m")
 			appendScopeSpec(t, current, "flux/selected.yaml", "  postBuild: {substitute: {TRIGGER: selected}}\n")
-			stdout, stderr, code := runCLI(t, verb, "all", "--path", current, "--path-orig", orig,
+			cli := runCLI(t, verb, "all", "--path", current, "--path-orig", orig,
 				"--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(
 				t,
 				code != 0,
@@ -135,8 +137,9 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_BuildAll_FullTreeIncompleteInputCoverage(t *testing.T) {
 	root := writeInputWarningsFixture(t, "10m")
-	stdout, stderr, code := runCLI(t, "build", "all", "--path", root,
+	cli := runCLI(t, "build", "all", "--path", root,
 		"--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 0 || strings.Contains(stdout+stderr, "input coverage is incomplete"),
@@ -174,7 +177,8 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 			if namespace != "" {
 				args = append(args, "--namespace", namespace)
 			}
-			stdout, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			want := ""
 			if verb == "all" {
 				want = "\nspec.interval\n  ± value change\n    - 5m\n    + 10m\n\n"

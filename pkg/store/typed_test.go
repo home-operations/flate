@@ -19,12 +19,8 @@ func TestGet_ReturnsTypedObject(t *testing.T) {
 	s.AddObject(ks)
 
 	got, ok := s.Get[*manifest.Kustomization](ks.Named())
-	{
-		assert.FatalIf(t, !ok, "expected hit; got miss")
-	}
-	{
-		assert.ErrorIf(t, got != ks, "Get returned a different pointer; want %p got %p", ks, got)
-	}
+	assert.FatalIf(t, !ok, "expected hit; got miss")
+	assert.ErrorIf(t, got != ks, "Get returned a different pointer; want %p got %p", ks, got)
 }
 
 // TestGet_MissReturnsZeroFalse covers the absent case: nothing stored
@@ -35,12 +31,8 @@ func TestGet_MissReturnsZeroFalse(t *testing.T) {
 	id := testutil.KustomizationID("flux-system", "ghost")
 
 	got, ok := s.Get[*manifest.Kustomization](id)
-	{
-		assert.FatalIf(t, ok, "expected miss; got hit")
-	}
-	{
-		assert.ErrorIf(t, got != nil, "missed Get should return nil pointer; got %v", got)
-	}
+	assert.FatalIf(t, ok, "expected miss; got hit")
+	assert.ErrorIf(t, got != nil, "missed Get should return nil pointer; got %v", got)
 }
 
 // TestGet_WrongTypeReturnsZeroFalse covers the type-mismatch case:
@@ -55,9 +47,7 @@ func TestGet_WrongTypeReturnsZeroFalse(t *testing.T) {
 
 	id := testutil.HelmReleaseID("default", "demo")
 	got, ok := s.Get[*manifest.Kustomization](id)
-	{
-		assert.ErrorIf(t, ok, "Get with wrong type should miss; got hit %v", got)
-	}
+	assert.ErrorIf(t, ok, "Get with wrong type should miss; got hit %v", got)
 }
 
 // TestGet_NilStoreSafe is the defensive guard — embedder constructed
@@ -121,17 +111,13 @@ func TestListAs_TypedSlice(t *testing.T) {
 		assert.FatalIf(t, len(got) != 0, "group-only collection = %v", got)
 	}
 	got := s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	{
-		assert.FatalIf(t, len(got) != 3, "expected 3 KSes; got %d", len(got))
-	}
+	assert.FatalIf(t, len(got) != 3, "expected 3 KSes; got %d", len(got))
 	seen := map[string]bool{}
 	for _, ks := range got {
 		seen[ks.Name] = true
 	}
 	for _, n := range []string{"a", "b", "c"} {
-		{
-			assert.ErrorIf(t, !seen[n], "missing KS %q", n)
-		}
+		assert.ErrorIf(t, !seen[n], "missing KS %q", n)
 	}
 }
 
@@ -154,10 +140,6 @@ func TestListAs_EmptyKindReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	got := s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	{
-		assert.ErrorIf(t, got == nil, "want empty slice, not nil")
-	}
-	{
-		assert.ErrorIf(t, len(got) != 0, "want length 0; got %d", len(got))
-	}
+	assert.ErrorIf(t, got == nil, "want empty slice, not nil")
+	assert.ErrorIf(t, len(got) != 0, "want length 0; got %d", len(got))
 }

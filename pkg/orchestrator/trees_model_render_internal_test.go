@@ -154,7 +154,8 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 	)
 	result.before = before
 	result.operations = operations
-	result.after, result.unsupported = applyModelOperations(before, operations)
+	applyModelOperationsResult1 := applyModelOperations(before, operations)
+	result.after, result.unsupported = applyModelOperationsResult1.world, applyModelOperationsResult1.unsupported
 	if seed == 4 {
 		putRenderModelFile(result.after, "apps/app/kustomization.yaml", "resources: [cm.yaml]\n")
 		p := result.after.producers[app]
@@ -200,7 +201,8 @@ func decodeRenderModelCase(data []byte) renderModelCase {
 		result.unsupported[category] += min(24, (len(r.data)-r.at+2)/3)
 	}
 	result.operations = modelWorldOperations(result.before, result.after)
-	result.after, _ = applyModelOperations(result.before, result.operations)
+	applyModelOperationsResult2 := applyModelOperations(result.before, result.operations)
+	result.after, _ = applyModelOperationsResult2.world, applyModelOperationsResult2.unsupported
 	result.unsupported["ResourceSet-frozen-semantics"]++
 	return result
 }
@@ -419,6 +421,7 @@ func decodeMetamorphicRenderModelCase(data []byte) renderModelCase {
 		control.unsupported["metamorphic-operations"] = min(24, (len(data)-2+2)/3)
 	}
 	control.operations = modelWorldOperations(control.before, control.after)
-	control.after, _ = applyModelOperations(control.before, control.operations)
+	applyModelOperationsResult3 := applyModelOperations(control.before, control.operations)
+	control.after, _ = applyModelOperationsResult3.world, applyModelOperationsResult3.unsupported
 	return control
 }

@@ -278,15 +278,13 @@ func testHistoryProspectiveReaderCase(t *testing.T, testCaseInput testHistoryPro
 		)
 		assert.NoError(t, err)
 		assert.NoError(t, reopened.Close())
-		{
-			assert.FatalIf(
-				t,
-				!slices.Contains(owners, producer),
-				"reopened history owners = %v, want ResourceSet %s",
-				owners,
-				producer,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!slices.Contains(owners, producer),
+			"reopened history owners = %v, want ResourceSet %s",
+			owners,
+			producer,
+		)
 	}
 	var previous map[string]any
 	for range 2 {
@@ -390,7 +388,7 @@ spec:
 		)
 	}
 	if (*testCaseInput.mode) == "values_from" {
-		release, err := os.ReadFile(filepath.Join(root, "flux/release.yaml"))
+		release, err := os.ReadFile(filepath.Join(root, "flux", "release.yaml"))
 		assert.NoError(t, err)
 		testutil.WriteFile(
 			t,
@@ -483,14 +481,12 @@ spec:
 	assert.NoError(t, fresh.lookupHistory(t.Context()))
 	assert.Equal(t, slices.Contains(fresh.loader.Options.HistoryOwners, owner), true)
 	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
-	{
-		assert.FatalIf(
-			t,
-			fresh.store.GetDeclaration(owner) == nil,
-			"normal admission omitted the declaration of %s",
-			owner,
-		)
-	}
+	assert.FatalIf(
+		t,
+		fresh.store.GetDeclaration(owner) == nil,
+		"normal admission omitted the declaration of %s",
+		owner,
+	)
 	if (*testCaseInput.mode) == "substitute_from" {
 		declaration := fresh.store.GetDeclaration(owner).(*manifest.Kustomization)
 		assert.Equal(t, len(declaration.Patches), 1)
@@ -519,9 +515,7 @@ spec:
 	result, err := fresh.collectResult(fresh.run(t.Context()))
 	assert.NoError(t, err)
 	docs := outputByParent(result.Manifests)[child]
-	{
-		assert.FatalIf(t, len(docs) != 1, "changed generated child output: %v", docs)
-	}
+	assert.FatalIf(t, len(docs) != 1, "changed generated child output: %v", docs)
 	assert.Equal(t, docs[0]["data"].(map[string]any)["value"], "after")
 	var renders [3]int
 	testBootstrapAcceptedOrphanHelmChildRootCaseSegment(t, &testCaseInput, &unrelated, &renders)

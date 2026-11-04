@@ -24,7 +24,8 @@ import (
 func (d *Session) discardPinnedWorkingTreeFiles(repoRoot string) {
 	d.loader.Admit(repoRoot)
 	occurrences := d.loader.PathObjects()
-	prefixes, pinnedSources := d.pinnedWorkingTreeClaims(repoRoot, occurrences)
+	pinnedWorkingTreeClaimsResult1 := d.pinnedWorkingTreeClaims(repoRoot, occurrences)
+	prefixes, pinnedSources := pinnedWorkingTreeClaimsResult1.claims, pinnedWorkingTreeClaimsResult1.sources
 	if len(prefixes) == 0 {
 		return
 	}
@@ -43,11 +44,16 @@ func (d *Session) discardPinnedWorkingTreeFiles(repoRoot string) {
 	}
 }
 
+type pinnedClaims struct {
+	claims  []manifest.KSClaim
+	sources map[manifest.NamedResource]struct{}
+}
+
 // scratch MUST be caller-owned; package-owned occurrence slices are immutable.
 func (d *Session) pinnedWorkingTreeClaims(
 	repoRoot string,
 	scratch []loader.Occurrence,
-) ([]manifest.KSClaim, map[manifest.NamedResource]struct{}) {
+) pinnedClaims {
 	pinned := scratch[:0]
 	sources := map[manifest.NamedResource]struct{}{}
 	{
@@ -59,13 +65,14 @@ func (d *Session) pinnedWorkingTreeClaims(
 			if !hasPath {
 				continue
 			}
-			if _, pin, _ := loader.SourceView(d.cfg.Store, ref, repoRoot); pin {
+			sourceViewResult1 := loader.SourceView(d.cfg.Store, ref, repoRoot)
+			if _, pin, _ := sourceViewResult1.Path, sourceViewResult1.Pinned, sourceViewResult1.External; pin {
 				pinned = append(pinned, o)
 				sources[ref] = struct{}{}
 			}
 		}
 	}
-	return d.loader.OccurrenceClaims(repoRoot, pinned), sources
+	return pinnedClaims{claims: d.loader.OccurrenceClaims(repoRoot, pinned), sources: sources}
 }
 
 func (d *Session) pinnedWorkingTreeFile(
@@ -156,7 +163,8 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 	if d.result != nil || admission == nil {
 		return false, nil
 	}
-	changed, refresh, err := d.admitRequiredObjects(ctx, admission.Objects)
+	admitRequiredObjectsResult2, admitRequiredObjectsResult2Err := d.admitRequiredObjects(ctx, admission.Objects)
+	changed, refresh, err := admitRequiredObjectsResult2.changed, admitRequiredObjectsResult2.refresh, admitRequiredObjectsResult2Err
 	if err != nil {
 		return false, err
 	}
@@ -192,11 +200,16 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 	return true, nil
 }
 
-func (d *Session) admitRequiredObjects(ctx context.Context, objects []store.Child) (bool, bool, error) {
+type requiredAdmission struct {
+	changed bool
+	refresh bool
+}
+
+func (d *Session) admitRequiredObjects(ctx context.Context, objects []store.Child) (requiredAdmission, error) {
 	changed, refresh := false, false
 	for _, child := range objects {
 		if err := ctx.Err(); err != nil {
-			return false, false, fmt.Errorf("context: %w", err)
+			return requiredAdmission{changed: false, refresh: false}, fmt.Errorf("context: %w", err)
 		}
 		if child.Obj != nil && d.cfg.Store.GetObject(child.Obj.Named()) == nil {
 			d.cfg.Store.AddObject(child.Obj, child.Doc)
@@ -206,7 +219,7 @@ func (d *Session) admitRequiredObjects(ctx context.Context, objects []store.Chil
 			refresh = refresh || hasPath || source
 		}
 	}
-	return changed, refresh, nil
+	return requiredAdmission{changed: changed, refresh: refresh}, nil
 }
 
 func (d *Session) neededMaterializers(needed []manifest.NamedResource) map[manifest.NamedResource]bool {

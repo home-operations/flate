@@ -11,7 +11,7 @@ import (
 func TestParseDoc_MissingFields(t *testing.T) {
 	t.Parallel()
 	{
-		_, _, _, err := ParseDoc(
+		_, err := ParseDoc(
 			map[string]any{"kind": "Foo"},
 			ParseDocOptions{DefaultNamespace: "apps"},
 		)
@@ -19,13 +19,10 @@ func TestParseDoc_MissingFields(t *testing.T) {
 			!strings.Contains(err.Error(), "apiVersion"), "expected apiVersion error, got %v", err)
 	}
 	// Bare data files (no kind:) are not Kubernetes resources.
-	obj, _, _, err := ParseDoc(map[string]any{"apiVersion": "v1"}, ParseDocOptions{DefaultNamespace: "apps"})
-	{
-		assert.ErrorIf(t, err != nil, "missing-kind docs should not error, got %v", err)
-	}
-	{
-		assert.ErrorIf(t, obj != nil, "expected nil for missing-kind doc, got %T", obj)
-	}
+	parsed2, err := ParseDoc(map[string]any{"apiVersion": "v1"}, ParseDocOptions{DefaultNamespace: "apps"})
+	obj := parsed2.Object
+	assert.ErrorIf(t, err != nil, "missing-kind docs should not error, got %v", err)
+	assert.ErrorIf(t, obj != nil, "expected nil for missing-kind doc, got %T", obj)
 	for _, tc := range []struct {
 		name             string
 		metadata         any
@@ -75,19 +72,18 @@ func testParseDocMissingFieldsCase(t *testing.T, testCaseInput *struct {
 				doc["metadata"] = testCaseInput.metadata
 			}
 			before := DeepCopyMap(doc)
-			obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
+			parsed3, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
+			obj, authoritative, changed := parsed3.Object, parsed3.Document, parsed3.Changed
 			if admission.want == "" {
 				assert.NoError(t, err)
 				assert.Equal(t, obj.Named().Namespace, "apps")
 				assert.Equal(t, changed, true)
 			} else {
-				{
-					assert.FatalIf(t, !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) ||
-						!strings.Contains(
-							err.Error(),
-							admission.want,
-						), "error = %v, want %q with ErrInput/ErrFlux", err, admission.want)
-				}
+				assert.FatalIf(t, !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) ||
+					!strings.Contains(
+						err.Error(),
+						admission.want,
+					), "error = %v, want %q with ErrInput/ErrFlux", err, admission.want)
 				assert.Equal(t, changed, false)
 				assert.Diff(t, authoritative, before)
 			}
@@ -100,14 +96,13 @@ func testParseDocMissingFieldsTypedSpecErrorPrecedesMissingMetadata(t *testing.T
 	t.Helper()
 
 	doc := map[string]any{"apiVersion": HelmReleaseDomain + "/v2", "kind": KindHelmRelease, "spec": "bad"}
-	_, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
-	{
-		assert.FatalIf(t, !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) ||
-			!strings.Contains(
-				err.Error(),
-				"HelmRelease decode: json: cannot unmarshal string",
-			), "malformed spec lost decode precedence: %v", err)
-	}
+	parsed4, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
+	authoritative, changed := parsed4.Document, parsed4.Changed
+	assert.FatalIf(t, !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) ||
+		!strings.Contains(
+			err.Error(),
+			"HelmRelease decode: json: cannot unmarshal string",
+		), "malformed spec lost decode precedence: %v", err)
 	assert.Equal(t, changed, false)
 	assert.Diff(t, authoritative, doc)
 }

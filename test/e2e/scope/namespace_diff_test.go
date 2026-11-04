@@ -82,8 +82,10 @@ func TestE2E_NamespaceDiff(t *testing.T) {
 					"-o",
 					"json",
 				)
-				first, _ := harness.RequireCLIOK(t, args...)
-				second, _ := harness.RequireCLIOK(t, args...)
+				requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+				first, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+				requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+				second, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 				assert.Equal(t, first, second)
 				var result struct {
 					Changes []struct {

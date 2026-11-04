@@ -62,7 +62,7 @@ spec:
 	}
 	original := t.TempDir()
 	testutil.CopyTree(t, root, original)
-	hr, err := os.ReadFile(filepath.Join(original, "cluster/hr.yaml"))
+	hr, err := os.ReadFile(filepath.Join(original, "cluster", "hr.yaml"))
 	assert.NoError(t, err)
 	testutil.WriteFile(t, original, "cluster/hr.yaml", strings.ReplaceAll(string(hr), "tag: after", "tag: before"))
 	flags := []string{
@@ -95,7 +95,8 @@ func runHelmOptionsCommand(t *testing.T, command *string, flags *[]string, origi
 	if strings.HasPrefix((*command), "diff") {
 		args = append(args, "--path-orig", filepath.Join((*original), "cluster"))
 	}
-	out, diagnostic, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	out, diagnostic, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 0 || out == "",
@@ -126,13 +127,14 @@ func runHelmOptionsName(t *testing.T, flags *[]string, root *string, tc *struct 
 	local := t.TempDir()
 	testutil.CopyTree(t, (*root), local)
 	if tc.disableHooks {
-		path := filepath.Join(local, "cluster/hr.yaml")
+		path := filepath.Join(local, "cluster", "hr.yaml")
 		body, err := os.ReadFile(path)
 		assert.NoError(t, err)
 		testutil.WriteFileAt(t, path, string(body)+"  install: {disableHooks: true}\n")
 	}
 	args = append(args, "--path", filepath.Join(local, "cluster"))
-	out, diagnostic, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	out, diagnostic, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 0 || !strings.Contains(out, "name: main") || strings.Contains(out, "name: extra") != tc.extra ||

@@ -38,8 +38,8 @@ func startFakeRegistry(t *testing.T, manifestBytes, configBytes []byte, layers .
 			w.Header().Set("Docker-Content-Digest", manifestDigest)
 			_, _ = w.Write(manifestBytes)
 		case strings.Contains(r.URL.Path, "/blobs/"):
-			_, digest, _ := strings.CutLast(r.URL.Path, "/")
-			if blob, ok := blobs[digest]; ok {
+			_, blobDigest, _ := strings.CutLast(r.URL.Path, "/")
+			if blob, ok := blobs[blobDigest]; ok {
 				_, _ = w.Write(blob)
 				return
 			}
@@ -80,7 +80,7 @@ func newFakeOCIArtifact(t *testing.T, files map[string]string) fakeOCIArtifact {
 	}
 }
 
-func newMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) (*httptest.Server, func(int)) {
+func newMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) mutableRegistry {
 	t.Helper()
 	assert.FatalIf(t, len(artifacts) == 0, "%s", "no OCI artifacts")
 
@@ -123,7 +123,7 @@ func newMutableFakeRegistry(t *testing.T, artifacts ...fakeOCIArtifact) (*httpte
 		defer mu.Unlock()
 		current = i
 	}
-	return srv, setArtifact
+	return mutableRegistry{server: srv, setArtifact: setArtifact}
 }
 
 type manifestBlob struct {
@@ -174,4 +174,9 @@ func mustReadFile(t *testing.T, input fs.FS, path string) string {
 	assert.NoError(t, err)
 
 	return string(b)
+}
+
+type mutableRegistry struct {
+	server      *httptest.Server
+	setArtifact func(int)
 }

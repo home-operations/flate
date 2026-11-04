@@ -226,7 +226,7 @@ func testHTTPInputsCloseBorrowedNetwork(t *testing.T) {
 	client := &http.Client{Transport: network}
 	fetch := func() string {
 		t.Helper()
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, http.NoBody)
 		assert.NoError(t, err)
 
 		resp, err := client.Do(req)

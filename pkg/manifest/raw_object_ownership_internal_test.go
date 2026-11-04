@@ -20,19 +20,13 @@ func TestRawObject_DoesNotAliasParsedDoc(t *testing.T) {
 		"spec":       map[string]any{"key": "original"},
 	}
 	obj, err := parseRawObject(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseRawObject: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseRawObject: %v", err)
 	// Mutate the RawObject's spec. The original doc must NOT change.
 	obj.Spec["key"] = "mutated"
 	got := doc["spec"].(map[string]any)["key"]
-	{
-		assert.ErrorIf(t, got != "original", "RawObject.Spec aliases parsed doc; got %q in source after mutation", got)
-	}
+	assert.ErrorIf(t, got != "original", "RawObject.Spec aliases parsed doc; got %q in source after mutation", got)
 	// Clone() produces an independent copy too.
 	clone := obj.Clone()
 	clone.Spec["key"] = "clone-only"
-	{
-		assert.ErrorIf(t, obj.Spec["key"] != "mutated", "Clone aliases original: clone mutation propagated to source")
-	}
+	assert.ErrorIf(t, obj.Spec["key"] != "mutated", "Clone aliases original: clone mutation propagated to source")
 }

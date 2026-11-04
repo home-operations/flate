@@ -72,20 +72,18 @@ func (l *Loader) allowAuthoredRecords(
 	allowed map[manifest.NamedResource]bool,
 	scopes map[string]rootAdmission,
 ) {
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, record := range next {
-			if _, known := allowed[id]; known {
-				continue
-			}
-			if obj := l.CatalogObject(id); obj == nil || !manifest.AdmitsRoot(obj) {
-				allowed[id] = false
-				continue
-			}
-			doc := l.documents.cache[record.Path]
-			allowed[id] = doc.eligible != fileInactive &&
-				(id.KindInfo().Discovery && l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[record.Path].admits(l, id, new(record)))
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for id, record := range next {
+		if _, known := allowed[id]; known {
+			continue
 		}
+		if obj := l.CatalogObject(id); obj == nil || !manifest.AdmitsRoot(obj) {
+			allowed[id] = false
+			continue
+		}
+		doc := l.documents.cache[record.Path]
+		allowed[id] = doc.eligible != fileInactive &&
+			(id.KindInfo().Discovery && l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[record.Path].admits(l, id, new(record)))
 	}
 }
 

@@ -28,7 +28,8 @@ func resolveProxy(
 
 	var material [3]string
 	for i, key := range []string{"address", "username", "password"} {
-		value, _, err := sec.Value(key)
+		valueResult, err := sec.Value(key)
+		value := valueResult.Value
 		if err != nil {
 			return nil, nil, fmt.Errorf("proxySecretRef %s/%s: %w", owner.ID.Namespace, ref.Name, err)
 		}

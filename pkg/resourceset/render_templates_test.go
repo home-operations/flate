@@ -34,12 +34,8 @@ metadata:
 		ResourcesTemplate: tmpl,
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.ErrorIf(t, len(docs) != 4, "expected 4 docs (2 inputs × 2 docs each), got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.ErrorIf(t, len(docs) != 4, "expected 4 docs (2 inputs × 2 docs each), got %d", len(docs))
 	t.Run("invalid stream separator", func(t *testing.T) {
 		t.Parallel()
 		candidate := &manifest.ResourceSet{
@@ -47,14 +43,12 @@ metadata:
 			ResourcesTemplate: "\n---oops: kept\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: rejected}",
 		}
 		_, _, err := renderProviders(candidate, nil, nil)
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-				"error = %v, want classified invalid stream separator",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
+			"error = %v, want classified invalid stream separator",
+			err,
+		)
 	})
 	t.Run("duplicate mapping keys", func(t *testing.T) {
 		t.Parallel()
@@ -67,12 +61,8 @@ spec:
   postgresql: {value: last}
 `}
 		docs, _, err := renderProviders(candidate, nil, nil)
-		{
-			assert.NoError(t, err)
-		}
-		{
-			assert.FatalIf(t, len(docs) != 1, "documents = %d, want 1", len(docs))
-		}
+		assert.NoError(t, err)
+		assert.FatalIf(t, len(docs) != 1, "documents = %d, want 1", len(docs))
 		assert.Diff(t, docs[0].Document["spec"], map[string]any{"postgresql": map[string]any{"value": "last"}})
 	})
 }
@@ -93,12 +83,8 @@ kind: ConfigMap
 metadata: {name: << inputs.name | slugify >>}`,
 			}
 			docs, _, err := renderProviders(rs, nil, nil)
-			{
-				assert.NoError(t, err)
-			}
-			{
-				assert.FatalIf(t, len(docs) != 1, "documents = %d, want 1", len(docs))
-			}
+			assert.NoError(t, err)
+			assert.FatalIf(t, len(docs) != 1, "documents = %d, want 1", len(docs))
 			assert.Equal(t, docs[0].Document["metadata"].(map[string]any)["name"].(string), tc.want)
 		})
 	}

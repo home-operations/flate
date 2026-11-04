@@ -23,8 +23,8 @@ func (f *ReferenceFacts) resolve(
 	owner := scope.consumer
 	input := *f
 	input.Data = nil
-	independent, materialized := trackReferenceProductions(&input, owner)
-	allowData := owner == (manifest.NamedResource{}) || f.Accepted || independent || !materialized
+	production := trackReferenceProductions(&input, owner)
+	allowData := owner == (manifest.NamedResource{}) || f.Accepted || production.independent || !production.materialized
 	if allowData {
 		input.Data = f.Data
 		if input.Data == nil {
@@ -77,7 +77,12 @@ func (f *ReferenceFacts) resolveReference(
 	return *f
 }
 
-func trackReferenceProductions(input *ReferenceFacts, owner manifest.NamedResource) (bool, bool) {
+type referenceProductionRoles struct {
+	independent  bool
+	materialized bool
+}
+
+func trackReferenceProductions(input *ReferenceFacts, owner manifest.NamedResource) referenceProductionRoles {
 	self, independent, materialized := false, false, false
 	for index := range input.Productions {
 		production := &input.Productions[index]
@@ -91,7 +96,7 @@ func trackReferenceProductions(input *ReferenceFacts, owner manifest.NamedResour
 		}
 	}
 	input.Private = self
-	return independent, materialized
+	return referenceProductionRoles{independent: independent, materialized: materialized}
 }
 
 func (sc *referenceResolution) applySupplied(id manifest.NamedResource, f *ReferenceFacts) {
@@ -104,7 +109,8 @@ func (sc *referenceResolution) applySupplied(id manifest.NamedResource, f *Refer
 			f.Data = supplied
 		} else {
 			var overridden []string
-			f.Data, overridden = f.Data.WithSupplied(supplied)
+			supply := f.Data.WithSupplied(supplied)
+			f.Data, overridden = supply.Data, supply.Overridden
 			if len(overridden) > 0 && sc.reads != nil {
 				sc.reads.RecordSuppliedOverride(
 					SuppliedOverride{Resource: id, SupplyPath: sc.reference.InputPath, Keys: overridden},

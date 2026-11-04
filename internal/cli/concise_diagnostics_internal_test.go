@@ -32,7 +32,7 @@ func TestRun_ConciseEntryFailureDiagnostics(t *testing.T) {
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [missing.yaml]\n")
 	var first string
 	for _, level := range []string{"error", "debug"} {
-		_, stderr, code := runCLI(
+		cli := runCLI(
 			t,
 			"build",
 			"all",
@@ -46,6 +46,7 @@ func TestRun_ConciseEntryFailureDiagnostics(t *testing.T) {
 			"--log-level",
 			level,
 		)
+		stderr, code := cli.stderr, cli.code
 		assert.FatalIf(t, code != 1, "exit=%d stderr=%s", code, stderr)
 		found := false
 		for row := range strings.SplitSeq(stderr, "\n") {
@@ -70,7 +71,7 @@ func TestRun_ConciseEntryFailureDiagnostics(t *testing.T) {
 	}
 }
 
-func runConciseFailureDiagnosticsCommand(t *testing.T, command *string, current *string, orig *string) {
+func runConciseFailureDiagnosticsCommand(t *testing.T, command, current, orig *string) {
 	t.Helper()
 
 	var first string
@@ -91,7 +92,8 @@ func runConciseFailureDiagnosticsCommand(t *testing.T, command *string, current 
 		if (*command) == "diff" {
 			args = append(args, "--path-orig", (*orig))
 		}
-		stdout, stderr, code := runCLI(t, args...)
+		cli := runCLI(t, args...)
+		stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 		assert.FatalIf(t, code != 1, "exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 		report := stderr
 		if (*command) == "test" {

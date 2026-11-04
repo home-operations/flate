@@ -213,19 +213,16 @@ spec: {name: b}`},
 			doc := mustYAML(t, tc.yaml)
 			delete(doc["metadata"].(map[string]any), "namespace")
 			before := DeepCopyMap(doc)
-			obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
-			{
-				assert.FatalIf(t, err != nil, "ParseDoc: %v", err)
-			}
+			parsed, err := ParseDoc(doc, ParseDocOptions{DefaultNamespace: "apps"})
+			obj, authoritative, changed := parsed.Object, parsed.Document, parsed.Changed
+			assert.FatalIf(t, err != nil, "ParseDoc: %v", err)
 			info := KindOf(obj)
-			{
-				assert.FatalIf(
-					t,
-					info.Tracked || info.Runnable || info.Status || info.Discovery || info.Test,
-					"got %T, want *RawObject",
-					obj,
-				)
-			}
+			assert.FatalIf(
+				t,
+				info.Tracked || info.Runnable || info.Status || info.Discovery || info.Test,
+				"got %T, want *RawObject",
+				obj,
+			)
 			assert.Equal(t, obj.Named().Namespace, "apps")
 			assert.Equal(t, obj.Named().Group, apiGroup(DocAPIVersion(doc)))
 			assert.Equal(t, changed, true)
@@ -233,14 +230,12 @@ spec: {name: b}`},
 			before["metadata"].(map[string]any)["namespace"] = "apps"
 			assert.Diff(t, authoritative, before)
 			raw := obj.(*RawObject)
-			{
-				assert.ErrorIf(
-					t,
-					raw.Kind != DocKind(mustYAML(t, tc.yaml)) || raw.Name == "",
-					"RawObject lost identity: %+v",
-					raw,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				raw.Kind != DocKind(mustYAML(t, tc.yaml)) || raw.Name == "",
+				"RawObject lost identity: %+v",
+				raw,
+			)
 		})
 	}
 }
@@ -268,10 +263,11 @@ func testParseDocDispatchCase(t *testing.T, testCaseInput *testParseDocDispatchC
 		md["namespace"] = testCaseInput.ns.authored
 	}
 	before := DeepCopyMap(doc)
-	obj, authoritative, changed, err := ParseDoc(
+	parsed2, err := ParseDoc(
 		doc,
 		ParseDocOptions{WipeSecrets: true, DefaultNamespace: testCaseInput.ns.fallback},
 	)
+	obj, authoritative, changed := parsed2.Object, parsed2.Document, parsed2.Changed
 	assert.NoError(t, err)
 	want := testCaseInput.ns.authored
 	if want == "" && !testCaseInput.tc.cluster {
@@ -287,10 +283,11 @@ func testParseDocDispatchCase(t *testing.T, testCaseInput *testParseDocDispatchC
 		before["metadata"].(map[string]any)["namespace"] = want
 	}
 	assert.Diff(t, authoritative, before)
-	replayed, replayDoc, replayChanged, err := ParseDoc(
+	parsed3, err := ParseDoc(
 		authoritative,
 		ParseDocOptions{WipeSecrets: true, DefaultNamespace: testCaseInput.ns.fallback},
 	)
+	replayed, replayDoc, replayChanged := parsed3.Object, parsed3.Document, parsed3.Changed
 	assert.NoError(t, err)
 	assert.Equal(t, replayed.Named(), obj.Named())
 	assert.Equal(t, replayChanged, false)

@@ -38,32 +38,26 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 			}
 			c.Tasks.Go(t.Context(), "oci cascade", func(ctx context.Context) {
 				{
-					{
-						blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade).Blocked
-						assert.ErrorIf(t, len(blocked) != 0, "blocked on %v", blocked)
-					}
+					blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade).Blocked
+					assert.ErrorIf(t, len(blocked) != 0, "blocked on %v", blocked)
 				}
 			})
 			c.Tasks.BlockTillDone()
 			info, _ := st.GetStatus(ks.Named())
 			want := map[bool]string{false: "dependency not found", true: "fetch failed"}[failed]
-			{
-				assert.FatalIf(
-					t,
-					info.Status != store.StatusFailed || !strings.Contains(info.Message, ks.SourceID().String()) ||
-						!strings.Contains(info.Message, want),
-					"OCI cascade status = %+v",
-					info,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					st.GetArtifact(ks.Named(), store.ArtifactContent) != nil || c.Tasks.Failures() != 0,
-					"%v",
-					"failed OCI cascade rendered or panicked",
-				)
-			}
+			assert.FatalIf(
+				t,
+				info.Status != store.StatusFailed || !strings.Contains(info.Message, ks.SourceID().String()) ||
+					!strings.Contains(info.Message, want),
+				"OCI cascade status = %+v",
+				info,
+			)
+			assert.FatalIf(
+				t,
+				st.GetArtifact(ks.Named(), store.ArtifactContent) != nil || c.Tasks.Failures() != 0,
+				"%v",
+				"failed OCI cascade rendered or panicked",
+			)
 		})
 	}
 }
@@ -100,9 +94,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 		},
 	}
 	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
-	{
-		assert.FatalIf(t, err != nil, "resolveSourceRoot: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "resolveSourceRoot: %v", err)
 	if got.LocalPath != "/repo" {
 		t.Errorf("resolveSourceRoot=%q, want %q (bootstrap LocalPath)", got.LocalPath, "/repo")
 	}
@@ -143,9 +135,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 		},
 	}
 	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
-	{
-		assert.FatalIf(t, err != nil, "resolveSourceRoot: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "resolveSourceRoot: %v", err)
 	if got.LocalPath != "/external" {
 		t.Errorf("resolveSourceRoot=%q, want %q (explicit ref)", got.LocalPath, "/external")
 	}
@@ -162,9 +152,7 @@ func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 		Path: "./app",
 	}
 	_, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
-	{
-		assert.FatalIf(t, err == nil, "expected error when bootstrap source is absent")
-	}
+	assert.FatalIf(t, err == nil, "expected error when bootstrap source is absent")
 }
 
 func TestKustomization_ContentOnlySource(t *testing.T) {
@@ -193,25 +181,17 @@ func TestKustomization_ContentOnlySource(t *testing.T) {
 	next.Revision = "metadata-only"
 	next.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
 	st.SetArtifact(ks.SourceID(), &next)
-	{
-		assert.FatalIf(t, !first.Reads.Valid(), "%v", "metadata invalidated content-only Kustomization")
-	}
+	assert.FatalIf(t, !first.Reads.Valid(), "%v", "metadata invalidated content-only Kustomization")
 	c.Tasks.Go(t.Context(), "replay", func(ctx context.Context) {
 		result := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone)
 		defer result.Close()
-		{
-			assert.ErrorIf(t, result.Progressed(), "%v", "metadata entered the renderer")
-		}
+		assert.ErrorIf(t, result.Progressed(), "%v", "metadata entered the renderer")
 	})
 	c.Tasks.BlockTillDone()
 	after := st.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, after.Fingerprint != first.Fingerprint, "%v", "metadata changed the content replay key")
-	}
+	assert.FatalIf(t, after.Fingerprint != first.Fingerprint, "%v", "metadata changed the content replay key")
 	replacement := next
 	replacement.Content = "replacement"
 	st.SetArtifact(ks.SourceID(), &replacement)
-	{
-		assert.FatalIf(t, after.Reads.Valid(), "%v", "content replacement did not invalidate Kustomization")
-	}
+	assert.FatalIf(t, after.Reads.Valid(), "%v", "content replacement did not invalidate Kustomization")
 }

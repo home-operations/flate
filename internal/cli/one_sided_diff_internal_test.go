@@ -28,7 +28,7 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 
 			for _, format := range []string{"github", "json"} {
 				t.Run(format, func(t *testing.T) {
-					stdout, stderr, code := runCLI(
+					cli := runCLI(
 						t,
 						"diff",
 						"ks",
@@ -41,6 +41,7 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 						"--concurrency",
 						"2",
 					)
+					stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 					assert.Equal(t, code, 1)
 					if format == "github" {
 						assert.Equal(t, stdout, "")
@@ -110,7 +111,7 @@ func runDiffOneSidedSkipSuppressedName(t *testing.T, tc *struct {
 	if tc.json {
 		format = "json"
 	}
-	stdout, stderr, code := runCLI(
+	cli := runCLI(
 		t,
 		"diff",
 		"hr",
@@ -127,8 +128,9 @@ func runDiffOneSidedSkipSuppressedName(t *testing.T, tc *struct {
 		"--concurrency",
 		"2",
 	)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "diff hr exited %d: stderr=%s", code, stderr)
-	images, imageStderr, imageCode := runCLI(
+	cli2 := runCLI(
 		t,
 		"diff",
 		"images",
@@ -144,6 +146,7 @@ func runDiffOneSidedSkipSuppressedName(t *testing.T, tc *struct {
 		"--concurrency",
 		"2",
 	)
+	images, imageStderr, imageCode := cli2.stdout, cli2.stderr, cli2.code
 	assert.Equal(t, imageCode, 0)
 	if tc.wantRemove {
 		assert.Equal(t, images, "ghcr.io/demo/private:v1\n")

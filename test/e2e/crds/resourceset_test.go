@@ -55,7 +55,8 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 			if verb == "get" {
 				args[1] = "ks"
 			}
-			stdout, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+			stdout, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 			assert.FatalIf(
 				t,
 				strings.Count(stderr, "[OfflineInputProvider]") != 1 || !strings.Contains(stderr, "branches") ||
@@ -175,16 +176,19 @@ spec:
 					t.TempDir(),
 				},
 				tc.flags...)
-			stdout, _ := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+			stdout, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 			if tc.name == "all" {
-				again, _ := harness.RequireCLIOK(t, args...)
+				requireCLIOKResult3 := harness.RequireCLIOK(t, args...)
+				again, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 				assert.Equal(t, again, stdout)
 			}
 			docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
 			assert.NoError(t, err)
 			identities := make([]string, 0, len(docs))
 			for _, doc := range docs {
-				name, namespace := manifest.DocMetadata(doc)
+				metadata := manifest.DocMetadata(doc)
+				name, namespace := metadata.Name, metadata.Namespace
 				identity := manifest.DocKind(doc) + "/" + namespace + "/" + name
 				identities = append(identities, identity)
 				switch identity {
@@ -213,7 +217,8 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	args := []string{"build", "all", "--path", path, "--cache-dir", t.TempDir(), "--concurrency", "2"}
 	var previous string
 	for range 2 {
-		out, stderr, code := harness.RunCLIBuffers(args...)
+		runCLIBuffersResult4 := harness.RunCLIBuffers(args...)
+		out, stderr, code := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 		assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "flux-system/documents") ||
 			!strings.Contains(stderr, "document 1:") ||
 			!strings.Contains(
@@ -239,7 +244,7 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 
 	original := t.TempDir()
 	testutil.CopyTree(t, path, original)
-	body, err := os.ReadFile(filepath.Join(path, "apps/rs.yaml"))
+	body, err := os.ReadFile(filepath.Join(path, "apps", "rs.yaml"))
 	assert.NoError(t, err)
 	testutil.WriteFile(
 		t,
@@ -253,7 +258,7 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	)
 	var previousDiff, previousWarnings string
 	for run := range 2 {
-		product, diagnostics, code := harness.RunCLIBuffers(
+		runCLIBuffersResult5 := harness.RunCLIBuffers(
 			"diff",
 			"all",
 			"--path",
@@ -263,6 +268,7 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 			"--output=json",
 			"--concurrency=2",
 		)
+		product, diagnostics, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 		assert.FatalIf(
 			t,
 			code != 1 || !strings.Contains(diagnostics, "missing metadata.name for List"),
@@ -321,7 +327,8 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 		"apps/rs.yaml",
 		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: documents, namespace: flux-system}\nspec:\n resourcesTemplate: |\n  items: [null]\n",
 	)
-	out, code := harness.RunCLIExpectErr(t, args...)
+	runCLIExpectErrResult6 := harness.RunCLIExpectErr(t, args...)
+	out, code := runCLIExpectErrResult6.Output, runCLIExpectErrResult6.Code
 	assert.Equal(t, code, 1)
 	assert.FatalIf(t, !strings.Contains(out, "read rendered list"), "malformed member failure missing: %s", out)
 }
@@ -340,7 +347,8 @@ func e2EResourceSetDocumentBoundaryLoop(t *testing.T, loopInputs struct {
 			break
 		}
 		assert.NoError(t, err)
-		name, ns := manifest.DocMetadata(doc)
+		metadata2 := manifest.DocMetadata(doc)
+		name, ns := metadata2.Name, metadata2.Namespace
 		if name == "raw" || name == "duplicate" {
 			assert.Equal(t, ns, "")
 		}

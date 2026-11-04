@@ -62,15 +62,9 @@ data:
 			RenderOptions{Options: Options{}, Sources: cliSources},
 		),
 	)
-	{
-		assert.FatalIf(t, err != nil, "Template: %v", err)
-	}
-	{
-		assert.ErrorIf(t, !hasRenderField(out, "name", "demo-cm"), "rendered output missing expected name: %s", out)
-	}
-	{
-		assert.ErrorIf(t, !hasRenderField(out, "greeting", "hello"), "values not applied: %s", out)
-	}
+	assert.FatalIf(t, err != nil, "Template: %v", err)
+	assert.ErrorIf(t, !hasRenderField(out, "name", "demo-cm"), "rendered output missing expected name: %s", out)
+	assert.ErrorIf(t, !hasRenderField(out, "greeting", "hello"), "values not applied: %s", out)
 }
 
 func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
@@ -231,24 +225,19 @@ func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
 	out, _, err := testutil.RenderMaps(
 		cli.Template(context.Background(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}),
 	)
-	{
-		assert.FatalIf(t, err != nil, "Template: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Template: %v", err)
 	// pre-install hook should render; test hook should not when
 	// spec.test.enable is unset (default behavior matches helm-controller).
-	{
-		assert.ErrorIf(t, !hasRenderField(out, "name", "demo-pre"), "expected pre-install hook in output: %s", out)
-	}
-	{
-		assert.ErrorIf(t, hasRenderField(out, "name", "demo-test"), "test hook should be skipped by default: %s", out)
-	}
+	assert.ErrorIf(t, !hasRenderField(out, "name", "demo-pre"), "expected pre-install hook in output: %s", out)
+	assert.ErrorIf(t, hasRenderField(out, "name", "demo-test"), "test hook should be skipped by default: %s", out)
 }
 
 func templateResources(t *testing.T, docs []map[string]any) []string {
 	t.Helper()
 	resources := make([]string, 0, len(docs))
 	for _, doc := range docs {
-		name, _ := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name := metadata.Name
 		resources = append(resources, manifest.DocKind(doc)+"/"+name)
 	}
 	return resources
@@ -328,9 +317,7 @@ func TestReleaseManifest_HookSeparators(t *testing.T) {
 	want := "kind: ConfigMap\n" +
 		"---\n# Source: hooks/a.yaml\nkind: Job\n" +
 		"---\n# Source: hooks/b.yaml\nkind: Secret\n"
-	{
-		assert.ErrorIf(t, got != want, "releaseManifest hook separators mismatch\nwant:\n%q\ngot:\n%q", want, got)
-	}
+	assert.ErrorIf(t, got != want, "releaseManifest hook separators mismatch\nwant:\n%q\ngot:\n%q", want, got)
 }
 
 func TestStamp_HelmMetadata(t *testing.T) {
@@ -517,17 +504,13 @@ func TestMergeChartValuesFiles(t *testing.T) {
 			t.Context(), &chartDescription{chart: c}, []string{"first.yaml", "second.yaml"},
 			false,
 		)
-		{
-			assert.FatalIf(t, err != nil, "merge: %v", err)
-		}
-		{
-			assert.ErrorIf(
-				t,
-				got["a"] != "first-only" || got["b"] != "from-second" || got["c"] != "second-only",
-				"layering failed: %v",
-				got,
-			)
-		}
+		assert.FatalIf(t, err != nil, "merge: %v", err)
+		assert.ErrorIf(
+			t,
+			got["a"] != "first-only" || got["b"] != "from-second" || got["c"] != "second-only",
+			"layering failed: %v",
+			got,
+		)
 	})
 
 	t.Run("MissingFileIgnored", func(t *testing.T) {
@@ -537,53 +520,37 @@ func TestMergeChartValuesFiles(t *testing.T) {
 			t.Context(), &chartDescription{chart: c}, []string{"a.yaml", "missing.yaml"},
 			true,
 		)
-		{
-			assert.FatalIf(t, err != nil, "merge: %v", err)
-		}
-		{
-			assert.ErrorIf(t, got["k"] != "v", "present file should still merge: %v", got)
-		}
+		assert.FatalIf(t, err != nil, "merge: %v", err)
+		assert.ErrorIf(t, got["k"] != "v", "present file should still merge: %v", got)
 	})
 
 	t.Run("MissingFileErrorsWhenStrict", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
 		_, err := cli.mergeChartValuesFiles(t.Context(), &chartDescription{chart: c}, []string{"missing.yaml"}, false)
-		{
-			assert.FatalIf(t, err == nil, "%s", "expected error for missing file when ignoreMissing=false")
-		}
-		{
-			assert.ErrorIf(
-				t,
-				!strings.Contains(err.Error(), "missing.yaml"),
-				"error should name the missing file: %v",
-				err,
-			)
-		}
+		assert.FatalIf(t, err == nil, "%s", "expected error for missing file when ignoreMissing=false")
+		assert.ErrorIf(
+			t,
+			!strings.Contains(err.Error(), "missing.yaml"),
+			"error should name the missing file: %v",
+			err,
+		)
 	})
 
 	t.Run("InvalidYAMLErrors", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"bad.yaml": "key: : not-yaml\n"})
 		_, err := cli.mergeChartValuesFiles(t.Context(), &chartDescription{chart: c}, []string{"bad.yaml"}, false)
-		{
-			assert.FatalIf(t, err == nil, "%s", "expected error for invalid YAML")
-		}
-		{
-			assert.ErrorIf(t, !strings.Contains(err.Error(), "bad.yaml"), "error should name the bad file: %v", err)
-		}
+		assert.FatalIf(t, err == nil, "%s", "expected error for invalid YAML")
+		assert.ErrorIf(t, !strings.Contains(err.Error(), "bad.yaml"), "error should name the bad file: %v", err)
 	})
 
 	t.Run("EmptyNamesReturnsEmpty", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
 		got, err := cli.mergeChartValuesFiles(t.Context(), &chartDescription{chart: c}, nil, false)
-		{
-			assert.FatalIf(t, err != nil, "merge: %v", err)
-		}
-		{
-			assert.ErrorIf(t, len(got) != 0, "expected empty result for nil names: %v", got)
-		}
+		assert.FatalIf(t, err != nil, "merge: %v", err)
+		assert.ErrorIf(t, len(got) != 0, "expected empty result for nil names: %v", got)
 	})
 }
 
@@ -593,11 +560,7 @@ func TestOptions_SkipResourceKinds(t *testing.T) {
 	got := o.SkipResourceKinds()
 	want := map[string]bool{"ConfigMap": true, "CustomResourceDefinition": true, "Secret": true}
 	for _, k := range got {
-		{
-			assert.ErrorIf(t, !want[k], "unexpected kind in skip list: %s", k)
-		}
+		assert.ErrorIf(t, !want[k], "unexpected kind in skip list: %s", k)
 	}
-	{
-		assert.ErrorIf(t, len(got) != 3, "expected 3 kinds, got %d: %v", len(got), got)
-	}
+	assert.ErrorIf(t, len(got) != 3, "expected 3 kinds, got %d: %v", len(got), got)
 }

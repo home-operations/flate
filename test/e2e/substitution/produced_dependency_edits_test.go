@@ -46,12 +46,16 @@ func verifyProducedDependencyEdit(t *testing.T, root string, intervalOnly bool) 
 		t.TempDir(),
 		"--no-progress",
 	}
-	before, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+	before, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 	payloadArgs := append([]string{"build", "ks", "consumer"}, args[2:]...)
-	payloadBefore, _ := harness.RequireCLIOK(t, payloadArgs...)
-	harness.MutateFile(t, filepath.Join(root, "flux/consumer.yaml"), oldValue, newValue)
-	after, _ := harness.RequireCLIOK(t, args...)
-	payloadAfter, _ := harness.RequireCLIOK(t, payloadArgs...)
+	requireCLIOKResult2 := harness.RequireCLIOK(t, payloadArgs...)
+	payloadBefore, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
+	harness.MutateFile(t, filepath.Join(root, "flux", "consumer.yaml"), oldValue, newValue)
+	requireCLIOKResult3 := harness.RequireCLIOK(t, args...)
+	after, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
+	requireCLIOKResult4 := harness.RequireCLIOK(t, payloadArgs...)
+	payloadAfter, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 	assert.FatalIf(t, !strings.Contains(before, "value: before") || !strings.Contains(before, "unrelated-output") ||
 		!strings.Contains(
 			after,
@@ -106,7 +110,8 @@ func verifyProducedDependencyEditMode(t *testing.T, mode *string, args *[]string
 	}
 	var previous string
 	for run := range 2 {
-		stdout, _ := harness.RequireCLIOK(t, changedArgs...)
+		requireCLIOKResult5 := harness.RequireCLIOK(t, changedArgs...)
+		stdout, _ := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 		assert.FatalIf(
 			t,
 			strings.Contains(stdout, "unrelated-output"),
@@ -153,7 +158,8 @@ func verifyProducedDependencyEditMode(t *testing.T, mode *string, args *[]string
 			assert.Diff(t, change.New, expected)
 			consumerArgs := append([]string{"diff", "ks", "consumer"}, (*args)[2:]...)
 			consumerArgs = append(consumerArgs, "--base", "HEAD", "-o", "diff")
-			consumerDiff, _ := harness.RequireCLIOK(t, consumerArgs...)
+			requireCLIOKResult6 := harness.RequireCLIOK(t, consumerArgs...)
+			consumerDiff, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
 			assert.FatalIf(t, consumerDiff != "", "interval edit changed consumer payload: %s", consumerDiff)
 
 		case *intervalOnly:

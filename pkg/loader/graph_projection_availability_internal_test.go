@@ -41,13 +41,11 @@ func testAdmitGraphProjectionInactiveUnresolvedSource(t *testing.T) {
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	child := testutil.KustomizationID("apps", "child")
-	{
-		assert.FatalIf(t, l.Store.GetObject(child) != nil ||
-			l.AdmitsRoot(
-				l.IndexedObject(child, l.Index.Records[child]).Obj,
-				filepath.Join(root, "target/child.yaml"),
-			), "%s", "inactive unresolved owner enabled builder-free descendant")
-	}
+	assert.FatalIf(t, l.Store.GetObject(child) != nil ||
+		l.AdmitsRoot(
+			l.IndexedObject(child, l.Index.Records[child]).Obj,
+			filepath.Join(root, "target", "child.yaml"),
+		), "%s", "inactive unresolved owner enabled builder-free descendant")
 }
 
 func testAdmitGraphProjectionPlainEntryUnderInactiveClaim(t *testing.T) {
@@ -69,13 +67,11 @@ func testAdmitGraphProjectionPlainEntryUnderInactiveClaim(t *testing.T) {
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	id := testutil.KustomizationID("apps", "direct")
-	{
-		assert.FatalIf(t, l.Store.GetObject(id) == nil ||
-			!l.AdmitsRoot(
-				l.IndexedObject(id, l.Index.Records[id]).Obj,
-				filepath.Join(root, "direct.yaml"),
-			), "%s", "inactive broad claim disabled the plain entry's direct manifest")
-	}
+	assert.FatalIf(t, l.Store.GetObject(id) == nil ||
+		!l.AdmitsRoot(
+			l.IndexedObject(id, l.Index.Records[id]).Obj,
+			filepath.Join(root, "direct.yaml"),
+		), "%s", "inactive broad claim disabled the plain entry's direct manifest")
 }
 
 func testAdmitGraphProjectionInactiveAliasResourceOutsideClaim(t *testing.T) {
@@ -123,22 +119,18 @@ func testAdmitGraphProjectionInactiveAliasResourceOutsideClaim(t *testing.T) {
 		Namespace: "apps",
 		Name:      "inactive-source",
 	}
-	{
-		assert.FatalIf(t, st.GetObject(id) != nil ||
-			l.AdmitsRoot(
-				l.IndexedObject(id, l.Index.Records[id]).Obj,
-				filepath.Join(root, "outside/source.yaml"),
-			), "%s", "inactive alias enabled its physical resource outside the path claim")
-	}
+	assert.FatalIf(t, st.GetObject(id) != nil ||
+		l.AdmitsRoot(
+			l.IndexedObject(id, l.Index.Records[id]).Obj,
+			filepath.Join(root, "outside", "source.yaml"),
+		), "%s", "inactive alias enabled its physical resource outside the path claim")
 	for child := range l.Sources(t.Context()) {
-		{
-			assert.FatalIf(
-				t,
-				child.Obj.Named() == id,
-				"%s",
-				"inactive alias exposed its physical source for acquisition",
-			)
-		}
+		assert.FatalIf(
+			t,
+			child.Obj.Named() == id,
+			"%s",
+			"inactive alias exposed its physical source for acquisition",
+		)
 	}
 }
 
@@ -175,14 +167,12 @@ func testAdmitGraphProjectionCase3(t *testing.T, testCaseInput *bool,
 	l.Admit(root)
 	before := l.Kustomizations()
 	l.Admit(root)
-	{
-		assert.FatalIf(
-			t,
-			!slices.EqualFunc(before, l.Kustomizations(), func(a, b store.Child) bool { return a.Obj == b.Obj }),
-			"%s",
-			"unchanged revision replaced declarations",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.EqualFunc(before, l.Kustomizations(), func(a, b store.Child) bool { return a.Obj == b.Obj }),
+		"%s",
+		"unchanged revision replaced declarations",
+	)
 	for _, ks := range before {
 		if !(*testCaseInput) {
 			t.Fatalf("inactive cycle enabled %s", ks.Obj.Named())
@@ -199,7 +189,7 @@ func testAdmitGraphProjectionCase3(t *testing.T, testCaseInput *bool,
 	}
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	id := testutil.KustomizationID("apps", "disabled")
-	file := filepath.Join(root, "apps/disabled.yaml")
+	file := filepath.Join(root, "apps", "disabled.yaml")
 	if l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file) != (*testCaseInput) {
 		t.Fatalf(
 			"finalized admission=%t want %t",
@@ -220,9 +210,7 @@ func testAdmitGraphProjectionCase3(t *testing.T, testCaseInput *bool,
 			}
 		}
 	} else {
-		{
-			assert.FatalIf(t, len(l.Kustomizations()) != 3, "%s", "independent edge did not enable nested cycle")
-		}
+		assert.FatalIf(t, len(l.Kustomizations()) != 3, "%s", "independent edge did not enable nested cycle")
 		{
 			_, ok := lookupDataForTest[*manifest.ConfigMap](
 				t,
@@ -276,12 +264,10 @@ func testAdmitGraphProjectionSubtreeAvailability(t *testing.T) {
 		}
 	}
 	owner, _ := st.Get[*manifest.Kustomization](testutil.KustomizationID("flux-system", "parent"))
-	{
-		assert.FatalIf(t, owner == nil, "%s", "parent missing")
-	}
+	assert.FatalIf(t, owner == nil, "%s", "parent missing")
 	l.Admit(root)
 	{
-		_, _, external := SourceView(st, owner.SourceID(), root)
+		external := SourceView(st, owner.SourceID(), root).External
 		assert.FatalIf(t, !external, "%s", "unavailable source borrowed bootstrap coordinates")
 	}
 	for _, id := range []manifest.NamedResource{
@@ -311,7 +297,8 @@ func testAdmitGraphProjectionSubtreeAvailability(t *testing.T) {
 		},
 	)
 	{
-		got, _, external := SourceView(st, owner.SourceID(), root)
+		location2 := SourceView(st, owner.SourceID(), root)
+		got, external := location2.Path, location2.External
 		assert.FatalIf(t, external || got != mount, "available source = %s, external=%t", got, external)
 	}
 	{
@@ -398,12 +385,10 @@ func testAdmitGraphProjectionStaleDeclaration(t *testing.T) {
 	}
 	stale := testutil.KustomizationID("pg", "immich-db")
 	_, indexed := l.Index.Lookup(stale)
-	{
-		assert.FatalIf(
-			t,
-			l.Store.GetObject(stale) != nil || indexed,
-			"%s",
-			"stale pg/immich-db declaration survived projection",
-		)
-	}
+	assert.FatalIf(
+		t,
+		l.Store.GetObject(stale) != nil || indexed,
+		"%s",
+		"stale pg/immich-db declaration survived projection",
+	)
 }

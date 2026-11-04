@@ -102,14 +102,12 @@ func testRegisterBuiltStandaloneRootsCase(t *testing.T, testCaseInput *struct {
 		}
 		const entryPath = "entry/"
 		for prefix, owners := range l.Index.Claims {
-			{
-				assert.FatalIf(
-					t,
-					strings.HasPrefix(entryPath, prefix) && slices.Contains(owners, owner.Named()),
-					"nested reader acquired a parent claim: %s",
-					prefix,
-				)
-			}
+			assert.FatalIf(
+				t,
+				strings.HasPrefix(entryPath, prefix) && slices.Contains(owners, owner.Named()),
+				"nested reader acquired a parent claim: %s",
+				prefix,
+			)
 		}
 	}
 }

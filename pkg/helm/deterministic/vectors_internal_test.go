@@ -16,9 +16,7 @@ func TestRandFuncs_MixedSequenceVector(t *testing.T) {
 	assert.Equal(t, fm["randNumeric"].(func(int) string)(12), "258471887394")
 	assert.Equal(t, fm["randAscii"].(func(int) string)(12), "<nOD=*ozHeo)")
 	bytes, err := fm["randBytes"].(func(int) (string, error))(12)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	assert.Equal(t, bytes, "Svcsot6PCYFEL6oY")
 	assert.Equal(t, fm["uuidv4"].(func() string)(), "4b13b688-d2c4-4b1c-a49b-05a3b746efe1")
 	assert.Equal(t, fm["randAlphaNum"].(func(int) string)(12), "3PKiE0bvwUwP")

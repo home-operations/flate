@@ -167,17 +167,13 @@ func TestAcceptedRender_ExactValue(t *testing.T) {
 		assert.NoError(t, json.Unmarshal(data, &b))
 		return b
 	}
-	{
-		assert.FatalIf(
-			t,
-			!original.equal(&original) || original.equal(nil) || (*acceptedRender)(nil).equal(&original),
-			"%s",
-			"accepted-value presence comparison differs",
-		)
-	}
-	{
-		assert.FatalIf(t, !(*acceptedRender)(nil).equal(nil), "%s", "nil accepted values differ")
-	}
+	assert.FatalIf(
+		t,
+		!original.equal(&original) || original.equal(nil) || (*acceptedRender)(nil).equal(&original),
+		"%s",
+		"accepted-value presence comparison differs",
+	)
+	assert.FatalIf(t, !(*acceptedRender)(nil).equal(nil), "%s", "nil accepted values differ")
 	for _, tc := range []struct {
 		name   string
 		mutate func(*acceptedRender)
@@ -308,9 +304,7 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 	calls := 0
 	oneShot := func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 		calls++
-		{
-			assert.FatalIf(t, calls > 1, "%s", "accepted inventory was traversed more than once")
-		}
+		assert.FatalIf(t, calls > 1, "%s", "accepted inventory was traversed more than once")
 		if yield(b, record) {
 			yield(a, record)
 		}
@@ -325,18 +319,14 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 		maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{a: record, b: record}),
 	)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, !got.equal(&want) || calls != 1, "%s", "one-shot unordered inventory did not canonicalize")
-	}
+	assert.FatalIf(t, !got.equal(&want) || calls != 1, "%s", "one-shot unordered inventory did not canonicalize")
 	assert.Equal(t, got.Records[0].ID, a)
 	assert.Diff(t, got.Records[0].Record.Refs, []manifest.NamedResource{a, b})
 	assert.Diff(t, got.Records[0].Roots[1].Paths, []string{"a", "z"})
 	record.Refs[0].Name = "mutated"
 	record.Productions[0].Path = "mutated"
 	record.ContentRoots[b][0] = "mutated"
-	{
-		assert.FatalIf(t, !got.equal(&want), "%s", "caller mutation changed the prepared inventory")
-	}
+	assert.FatalIf(t, !got.equal(&want), "%s", "caller mutation changed the prepared inventory")
 	_, err = prepareAccepted(a, &frame, manifest.Fingerprint(acceptedInput), func(
 		yield func(
 			manifest.NamedResource,
@@ -347,9 +337,7 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 			yield(a, record)
 		}
 	})
-	{
-		assert.FatalIf(t, err == nil, "%s", "duplicate accepted identity was accepted")
-	}
+	assert.FatalIf(t, err == nil, "%s", "duplicate accepted identity was accepted")
 }
 
 func TestRenderReceipt_CompactBacking(t *testing.T) {
@@ -368,30 +356,24 @@ func TestRenderReceipt_CompactBacking(t *testing.T) {
 	wire = append(wire, accepted...)
 	frame, err = decodeFrame(wire)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			frame.encoded != nil || cap(frame.output) >= cap(wire),
-			"%s",
-			"decoded receipt retains serialized frame backing",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			frame.accepted == nil || frame.acceptedKey == "" || frame.raw == "",
-			"%s",
-			"compact receipt lost accepted evidence",
-		)
-	}
+	assert.FatalIf(
+		t,
+		frame.encoded != nil || cap(frame.output) >= cap(wire),
+		"%s",
+		"decoded receipt retains serialized frame backing",
+	)
+	assert.FatalIf(
+		t,
+		frame.accepted == nil || frame.acceptedKey == "" || frame.raw == "",
+		"%s",
+		"compact receipt lost accepted evidence",
+	)
 	for i := range wire {
 		wire[i] = 'x'
 	}
 	assert.Equal(t, bytes.Equal(frame.output, payload), true)
 	previous, complete := frame.history(owner)
-	{
-		assert.FatalIf(t, !complete || previous == nil, "%s", "input-buffer mutation changed compact history")
-	}
+	assert.FatalIf(t, !complete || previous == nil, "%s", "input-buffer mutation changed compact history")
 	for range previous {
 		t.Fatal("complete-empty compact history gained a child")
 	}
@@ -613,14 +595,12 @@ func testAcceptedRenderExactValueCase(t *testing.T, testCaseInput *testAcceptedR
 
 	changed := (*testCaseInput.copyValue)(t, (*testCaseInput.original))
 	testCaseInput.tc.mutate(&changed)
-	{
-		assert.FatalIf(
-			t,
-			testCaseInput.original.equal(&changed) || changed.equal(testCaseInput.original),
-			"%s",
-			"changed accepted value compared equal",
-		)
-	}
+	assert.FatalIf(
+		t,
+		testCaseInput.original.equal(&changed) || changed.equal(testCaseInput.original),
+		"%s",
+		"changed accepted value compared equal",
+	)
 }
 
 type testAcceptedRenderExactValueCase2Inputs struct {
@@ -641,14 +621,12 @@ func testAcceptedRenderExactValueCase2(t *testing.T, testCaseInput *testAccepted
 
 	changed := (*testCaseInput.copyValue)(t, (*testCaseInput.original))
 	testCaseInput.component.mutate(testCaseInput.location.selectID(&changed))
-	{
-		assert.FatalIf(
-			t,
-			testCaseInput.original.equal(&changed) || changed.equal(testCaseInput.original),
-			"%s",
-			"changed full identity compared equal",
-		)
-	}
+	assert.FatalIf(
+		t,
+		testCaseInput.original.equal(&changed) || changed.equal(testCaseInput.original),
+		"%s",
+		"changed full identity compared equal",
+	)
 }
 
 type testAcceptedRenderExactValueCase3Inputs struct {
@@ -673,9 +651,7 @@ func testAcceptedRenderExactValueCase3(t *testing.T, testCaseInput *testAccepted
 	)
 	testCaseInput.tc.setNil(&a)
 	testCaseInput.tc.setEmpty(&b)
-	{
-		assert.FatalIf(t, a.equal(&b) || b.equal(&a), "%s", "nil and empty serialized slices compared equal")
-	}
+	assert.FatalIf(t, a.equal(&b) || b.equal(&a), "%s", "nil and empty serialized slices compared equal")
 }
 
 func testRenderReceiptFrameBoundsCase(t *testing.T, testCaseInput *struct {
@@ -734,9 +710,7 @@ func testRenderReceiptFrameBoundsEncodedHeaderLimit(
 		&renderHeader{Key: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))},
 		(*testCaseInput),
 	)
-	{
-		assert.FatalIf(t, err == nil, "%s", "oversized raw header was encoded")
-	}
+	assert.FatalIf(t, err == nil, "%s", "oversized raw header was encoded")
 }
 
 type testRenderReceiptFrameBoundsCase3Inputs struct {

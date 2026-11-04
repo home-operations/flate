@@ -24,12 +24,16 @@ func TestResolveLocal_WarningsSurviveFailure(t *testing.T) {
 	for _, failure := range []string{"current entry", "later entry"} {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
-			root, repo, pin, _ := localFixture(t)
-			commit, err := repo.CommitObject(pin)
+			fixture := localFixture(t)
+
+			commit, err := fixture.repo.CommitObject(fixture.base)
 			assert.NoError(t, err)
 			tree, err := commit.Tree()
 			assert.NoError(t, err)
-			tree.Entries = append(tree.Entries, object.TreeEntry{Name: "module", Mode: filemode.Submodule, Hash: pin})
+			tree.Entries = append(
+				tree.Entries,
+				object.TreeEntry{Name: "module", Mode: filemode.Submodule, Hash: fixture.base},
+			)
 			if failure == "current entry" {
 				tree.Entries = append(
 					tree.Entries,
@@ -40,21 +44,21 @@ func TestResolveLocal_WarningsSurviveFailure(t *testing.T) {
 					},
 				)
 			}
-			encoded := repo.Storer.NewEncodedObject()
+			encoded := fixture.repo.Storer.NewEncodedObject()
 			sort.Sort(object.TreeEntrySorter(tree.Entries))
 			assert.NoError(t, tree.Encode(encoded))
-			commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
+			commit.TreeHash, err = fixture.repo.Storer.SetEncodedObject(encoded)
 			assert.NoError(t, err)
-			encoded = repo.Storer.NewEncodedObject()
+			encoded = fixture.repo.Storer.NewEncodedObject()
 			assert.NoError(t, commit.Encode(encoded))
-			pin, err = repo.Storer.SetEncodedObject(encoded)
+			fixture.base, err = fixture.repo.Storer.SetEncodedObject(encoded)
 			assert.NoError(t, err)
-			first := localSource(&sourcev1.GitRepositoryRef{Commit: pin.String()})
+			first := localSource(&sourcev1.GitRepositoryRef{Commit: fixture.base.String()})
 			repositories := []*manifest.GitRepository{first}
 			if failure == "later entry" {
 				repositories = append(repositories, nil)
 			}
-			artifacts, err := ResolveLocal(t.Context(), localLocation(t, root), repositories, "")
+			artifacts, err := ResolveLocal(t.Context(), localLocation(t, fixture.root), repositories, "")
 			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "original failure lost: %v", err)
 			artifact := artifacts[first.Named()]
 			assert.FatalIf(
@@ -74,13 +78,14 @@ func testResolveLocalUnusableObjectsAndStoreCase(
 ) {
 	t.Helper()
 
-	root, repo, a, _ := localFixture(t)
+	fixture := localFixture(t)
+
 	ref := sourcev1.GitRepositoryRef{Tag: "v1.0.0"}
 	switch *kind {
 	case "tag-target":
 		assert.Equal(
 			t,
-			repo.Storer.SetReference(
+			fixture.repo.Storer.SetReference(
 				plumbing.NewHashReference(
 					plumbing.NewTagReferenceName("v1.0.0"),
 					plumbing.NewHash(strings.Repeat("f", 40)),
@@ -91,35 +96,35 @@ func testResolveLocalUnusableObjectsAndStoreCase(
 	case "head":
 		assert.Equal(
 			t,
-			repo.Storer.SetReference(
+			fixture.repo.Storer.SetReference(
 				plumbing.NewHashReference(plumbing.HEAD, plumbing.NewHash(strings.Repeat("f", 40))),
 			),
 			nil,
 		)
 	case "config":
-		testutil.WriteFile(t, root, ".git/config", "[invalid\n")
+		testutil.WriteFile(t, fixture.root, ".git/config", "[invalid\n")
 	case "store", "lookup":
-		assert.Equal(t, os.RemoveAll(filepath.Join(root, ".git")), nil)
+		assert.Equal(t, os.RemoveAll(filepath.Join(fixture.root, ".git")), nil)
 		if (*kind) == "lookup" {
-			assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)
+			assert.Equal(t, os.Symlink(".git", filepath.Join(fixture.root, ".git")), nil)
 		} else {
-			testutil.WriteFile(t, root, ".git", "corrupt gitdir")
+			testutil.WriteFile(t, fixture.root, ".git", "corrupt gitdir")
 		}
 	case "tree", "tree-tag", "recursive-tree-tag":
-		commit, err := repo.CommitObject(a)
+		commit, err := fixture.repo.CommitObject(fixture.base)
 		assert.NoError(t, err)
 
 		commit.TreeHash = plumbing.NewHash(strings.Repeat("f", 40))
-		encoded := repo.Storer.NewEncodedObject()
+		encoded := fixture.repo.Storer.NewEncodedObject()
 		assert.Equal(t, commit.Encode(encoded), nil)
-		hash, err := repo.Storer.SetEncodedObject(encoded)
+		hash, err := fixture.repo.Storer.SetEncodedObject(encoded)
 		assert.Equal(t, err, nil)
 		if (*kind) == "tree" {
 			ref = sourcev1.GitRepositoryRef{Commit: hash.String()}
 		} else {
 			assert.Equal(
 				t,
-				repo.Storer.SetReference(
+				fixture.repo.Storer.SetReference(
 					plumbing.NewHashReference(plumbing.NewTagReferenceName(ref.Tag), hash),
 				),
 				nil,
@@ -132,7 +137,7 @@ func testResolveLocalUnusableObjectsAndStoreCase(
 	{
 		got, err := ResolveLocal(
 			t.Context(),
-			localLocation(t, root),
+			localLocation(t, fixture.root),
 			[]*manifest.GitRepository{repository},
 			"",
 		)

@@ -48,9 +48,7 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 		t.Context(),
 		discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "flux"), Store: st},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	consumer := testutil.KustomizationID("apps", "consumer")
 	assert.Equal(t, res.DependencySubstitutions.Resolve("${PREFIX:-dev-}config"), "prod-config")
 	if record, exists := res.Index.Lookup(
@@ -64,9 +62,7 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 		assert.FatalIf(t, !exists, "%v", "discovered dependency target missing")
 	}
 	supplier, ok := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "supplier"))
-	{
-		assert.FatalIf(t, !ok, "%v", "independent inline supplier missing")
-	}
+	assert.FatalIf(t, !ok, "%v", "independent inline supplier missing")
 	changed := supplier.Clone()
 	changed.PostBuild.Substitute["PREFIX"] = "later-"
 	st.AddObject(changed)
@@ -105,7 +101,7 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 		),
 	)
 	st := store.New()
-	activeObject, activeDoc, _, err := manifest.ParseDoc(map[string]any{
+	parsed, err := manifest.ParseDoc(map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "active", "namespace": "apps", "uid": "admitted"},
@@ -114,39 +110,32 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 			"dependsOn": []any{map[string]any{"name": "${PREFIX:-dev-}config"}},
 		},
 	}, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	activeObject, activeDoc := parsed.Object, parsed.Document
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.AddObject(activeObject, activeDoc)
 	st.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"})
 	result, err := discovery.Run(
 		t.Context(),
 		discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "app"), RepoRoot: root, Store: st},
 	)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	_, doc, emission := st.GetEmission(activeObject.Named())
 	emission.Finish()
 	assert.Equal(t, doc["metadata"].(map[string]any)["uid"], any("admitted"))
 
-	{
-		assert.FatalIf(
-			t,
-			result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "prod-config",
-			"%v",
-			"dependency substitutions were not resolved",
-		)
-	}
+	assert.FatalIf(
+		t,
+		result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "prod-config",
+		"%v",
+		"dependency substitutions were not resolved",
+	)
 	active, ok := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "active"))
-	{
-		assert.FatalIf(
-			t,
-			!ok || active.DependsOn[0].Name != "prod-config",
-			"admitted owner dependency was not resolved: %+v",
-			active,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || active.DependsOn[0].Name != "prod-config",
+		"admitted owner dependency was not resolved: %+v",
+		active,
+	)
 	child := testutil.KustomizationID("apps", "child")
 	{
 		_, indexed := result.Index.Lookup(child)
@@ -193,9 +182,7 @@ func testRunDependsOnPreservesAdmissionInactiveSupplierAndSource(t *testing.T) {
 	)
 	st := store.New()
 	result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: root, Store: st})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	active := testutil.KustomizationID("apps", "active")
 	if record, indexed := result.Index.Lookup(
 		active,
@@ -203,14 +190,12 @@ func testRunDependsOnPreservesAdmissionInactiveSupplierAndSource(t *testing.T) {
 		st.GetObject(active) == nil {
 		t.Fatalf("discovery-only active ownership = %+v, published=%v", record, st.GetObject(active))
 	}
-	{
-		assert.FatalIf(
-			t,
-			result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "dev-config",
-			"%v",
-			"inactive declaration supplied active substitution",
-		)
-	}
+	assert.FatalIf(
+		t,
+		result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "dev-config",
+		"%v",
+		"inactive declaration supplied active substitution",
+	)
 	for _, name := range []string{"inactive-only", "inactive-source"} {
 		id := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
@@ -218,14 +203,12 @@ func testRunDependsOnPreservesAdmissionInactiveSupplierAndSource(t *testing.T) {
 			Namespace: "apps",
 			Name:      name,
 		}
-		{
-			assert.FatalIf(
-				t,
-				st.GetObject(id) != nil || st.GetArtifact(id, store.ArtifactContent) != nil,
-				"inactive evidence published a source: %s",
-				id,
-			)
-		}
+		assert.FatalIf(
+			t,
+			st.GetObject(id) != nil || st.GetArtifact(id, store.ArtifactContent) != nil,
+			"inactive evidence published a source: %s",
+			id,
+		)
 	}
 }
 

@@ -38,7 +38,8 @@ func e2ESourceRefEmptyPathMatchesRootName(
 		"source-root child not discovered or owned by root: parent=%v",
 		record.Parent,
 	)
-	owners, _ := res.Index.OwnersOfFile("cm.yaml")
+	ownership := res.Index.OwnersOfFile("cm.yaml")
+	owners := ownership.Owners
 	assert.FatalIf(
 		t,
 		!slices.Equal(owners, []manifest.NamedResource{parent}),
@@ -84,7 +85,8 @@ func e2ESourceRefEmptyPathMatchesRootName(
 			docs, err := testutil.DecodeDocs(strings.NewReader(out))
 			assert.NoError(t, err)
 			for _, doc := range docs {
-				name, _ := manifest.DocMetadata(doc)
+				metadata := manifest.DocMetadata(doc)
+				name := metadata.Name
 				if manifest.DocKind(doc) == manifest.KindKustomization && name == "root" {
 					spec := doc["spec"].(map[string]any)
 					if path.name == "explicit" {

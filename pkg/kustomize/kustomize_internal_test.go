@@ -45,9 +45,7 @@ func TestRender_RespectsCanceledContext(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.ErrorIf(t, !errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
-	}
+	assert.ErrorIf(t, !errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
 }
 
 func TestRender_UnstampedMetadata(t *testing.T) {
@@ -264,7 +262,8 @@ func testRenderUnstampedMetadataCase(t *testing.T, testCaseInput *struct {
 		ks.CommonMetadata.Annotations["note"] = "typed"
 	}
 	if testCaseInput.effectiveNamespace != "" {
-		obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
+		parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
+		obj := parsed.Object
 		assert.NoError(t, err)
 		projected := obj.WithNamespace(testCaseInput.effectiveNamespace).(*manifest.Kustomization)
 		prepared, err := Prepare(projected, nil)
@@ -340,16 +339,14 @@ func testRenderEmittedListsCase(t *testing.T, testCaseInput *struct {
 		),
 	)
 	if oracleErr != nil {
-		{
-			assert.FatalIf(
-				t,
-				err == nil || out != nil,
-				"Render = %#v, %v; upstream error = %v",
-				out,
-				err,
-				oracleErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || out != nil,
+			"Render = %#v, %v; upstream error = %v",
+			out,
+			err,
+			oracleErr,
+		)
 		return
 	}
 	assert.NoError(t, err)
@@ -359,7 +356,8 @@ func testRenderEmittedListsCase(t *testing.T, testCaseInput *struct {
 	if testCaseInput.name == "nested" {
 		var names []string
 		for _, doc := range out {
-			name, _ := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name := metadata.Name
 			names = append(names, name)
 		}
 		assert.Diff(t, names, []string{"sibling", "nested"})

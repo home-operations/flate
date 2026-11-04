@@ -37,9 +37,7 @@ func TestReview_SharedLocationAfterResolve(t *testing.T) {
 			ready.Done()
 			<-start
 			_, err := sourcegit.ResolveLocal(t.Context(), location, []*manifest.GitRepository{repository}, "")
-			{
-				assert.ErrorIf(t, err != nil, "%v", err)
-			}
+			assert.ErrorIf(t, err != nil, "%v", err)
 		})
 	}
 	ready.Wait()

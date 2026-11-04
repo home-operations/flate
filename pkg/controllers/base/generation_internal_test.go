@@ -71,20 +71,16 @@ func TestGeneratedObjects_WithdrawalBeforeBlockedSource(t *testing.T) {
 		Namespace: "apps",
 	}
 	check := func(_ struct{}, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
-		{
-			assert.ErrorIf(
-				t,
-				s.GetObject(child.Named()) != nil,
-				"%v",
-				"obsolete generated object remained visible at the source wait",
-			)
-		}
+		assert.ErrorIf(
+			t,
+			s.GetObject(child.Named()) != nil,
+			"%v",
+			"obsolete generated object remained visible at the source wait",
+		)
 		return &depwait.ErrBlocked{Deps: []manifest.NamedResource{blocked}}
 	}
 	run.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, check)
-	{
-		assert.FatalIf(t, run.Outcome() != schedule.Blocked, "%v", "execution did not retain the source wait")
-	}
+	assert.FatalIf(t, run.Outcome() != schedule.Blocked, "%v", "execution did not retain the source wait")
 	run.Settle(t.Context(), manifest.DrainNone)
 	if calls.Load() != 2 || run.Outcome() != schedule.Blocked {
 		t.Fatalf("resumed rule evaluated again: %d", calls.Load())
@@ -104,11 +100,9 @@ func TestGeneratedObjects_NoRuleNoAllocations(t *testing.T) {
 	if allocations := testing.AllocsPerRun(100, func() {
 		run.prepared = false
 		{
-			{
-				err := run.reconcile(t.Context(), object, manifest.DrainNone, reconcile)
-				if err != nil {
-					t.Fatalf("%v", err)
-				}
+			err := run.reconcile(t.Context(), object, manifest.DrainNone, reconcile)
+			if err != nil {
+				t.Fatalf("%v", err)
 			}
 		}
 	}); allocations != 0 || s.HasInventory(object.Named()) {
@@ -138,14 +132,12 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 				struct{}{},
 				func(struct{}, context.Context, *configGenerator, manifest.DrainLevel) error { return nil },
 			)
-			{
-				assert.FatalIf(
-					t,
-					s.GetObject(child.Named()) == nil,
-					"%v",
-					"initial provisional child was not published",
-				)
-			}
+			assert.FatalIf(
+				t,
+				s.GetObject(child.Named()) == nil,
+				"%v",
+				"initial provisional child was not published",
+			)
 			switch mode {
 			case "suspended":
 				next := *object
@@ -168,14 +160,12 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 					return nil
 				},
 			)
-			{
-				assert.FatalIf(
-					t,
-					s.GetObject(child.Named()) != nil || calls.Load() != 1,
-					"%v",
-					"unadmitted declaration retained or reevaluated its provisional rule",
-				)
-			}
+			assert.FatalIf(
+				t,
+				s.GetObject(child.Named()) != nil || calls.Load() != 1,
+				"%v",
+				"unadmitted declaration retained or reevaluated its provisional rule",
+			)
 		})
 	}
 }
@@ -236,14 +226,12 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 			return run.Emit(t.Context(), first.Named(), &next, nil)
 		},
 	)
-	{
-		assert.FatalIf(
-			t,
-			run.Outcome() != schedule.Terminal || s.GetObject(id) == nil,
-			"%v",
-			"first execution did not publish its generated object",
-		)
-	}
+	assert.FatalIf(
+		t,
+		run.Outcome() != schedule.Terminal || s.GetObject(id) == nil,
+		"%v",
+		"first execution did not publish its generated object",
+	)
 	next := *first
 	next.Kustomization = first.Clone()
 	next.Path = "second"
@@ -266,10 +254,14 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 				return manifest.ErrInput
 			}
 			if (*testCaseInput) == "replay" {
-				_, handled, err := run.FingerprintDedup(t.Context(), next.Named(), "same", &store.Emission{})
-				{
-					assert.ErrorIf(t, !handled, "%v", "completed output was unavailable for replay")
-				}
+				fingerprintDedupResult1, fingerprintDedupResult1Err := run.FingerprintDedup(
+					t.Context(),
+					next.Named(),
+					"same",
+					&store.Emission{},
+				)
+				_, handled, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+				assert.ErrorIf(t, !handled, "%v", "completed output was unavailable for replay")
 				return err
 			}
 			_, _, output := run.Reads.GetEmission(next.Named())
@@ -282,11 +274,12 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 					"metadata":   map[string]any{"name": id.Name, "namespace": id.Namespace},
 					"data":       map[string]any{"value": "authored"},
 				}
-				output.Children, output.Manifests, output.Failures = c.ParseChildren(
+				parseChildrenResult2 := c.ParseChildren(
 					&next,
 					[]manifest.DocOccurrence{{Document: doc}},
 					manifest.ParseDocOptions{},
 				)
+				output.Children, output.Manifests, output.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 			}
 			return run.Emit(t.Context(), next.Named(), &output, nil)
 		},
@@ -297,13 +290,11 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 	_, _, output := s.GetEmission(next.Named())
 	defer output.Finish()
 	if (*testCaseInput) == "removed" || (*testCaseInput) == "invalid_rule" {
-		{
-			assert.FatalIf(t, s.GetObject(id) != nil ||
-				slices.ContainsFunc(
-					output.Children,
-					func(child store.Child) bool { return child.Generated },
-				), "%v", "empty or invalid rule retained an obsolete generated object")
-		}
+		assert.FatalIf(t, s.GetObject(id) != nil ||
+			slices.ContainsFunc(
+				output.Children,
+				func(child store.Child) bool { return child.Generated },
+			), "%v", "empty or invalid rule retained an obsolete generated object")
 	} else {
 		value := s.GetObject(id).(*manifest.ConfigMap).Data["value"]
 		want := "second"
@@ -314,13 +305,11 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 			t.Fatalf("representative=%v hidden=%t", value, s.ReportHidden(id))
 		}
 	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput) ==
-				"failure" && s.GetObject(rendered.Obj.Named()) == nil, "%v",
-			"partial failure discarded ordinary rendered inventory",
-		)
-	}
+	assert.FatalIf(
+		t, (*testCaseInput) ==
+			"failure" && s.GetObject(rendered.Obj.Named()) == nil, "%v",
+		"partial failure discarded ordinary rendered inventory",
+	)
 }
 
 func testGeneratedObjectsReplayReadinessAndReceiptCase(
@@ -381,15 +370,13 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		)
 		s.SetIncluded(object.Named(), true)
 		{
-			{
-				info, _ := s.GetStatus(object.Named())
-				assert.FatalIf(
-					t,
-					info.Outcome() != store.OutcomePending,
-					"readmitted output remained ready: %+v",
-					info,
-				)
-			}
+			info, _ := s.GetStatus(object.Named())
+			assert.FatalIf(
+				t,
+				info.Outcome() != store.OutcomePending,
+				"readmitted output remained ready: %+v",
+				info,
+			)
 		}
 	}
 	var authority store.ReadSet
@@ -410,15 +397,19 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		manifest.DrainNone,
 		second,
 		func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
-			_, handled, err := run.FingerprintDedup(t.Context(), object.Named(), "same", &store.Emission{})
-			{
-				assert.ErrorIf(
-					t,
-					!handled,
-					"%v",
-					"completed render was unavailable after provisional publication",
-				)
-			}
+			fingerprintDedupResult3, fingerprintDedupResult3Err := run.FingerprintDedup(
+				t.Context(),
+				object.Named(),
+				"same",
+				&store.Emission{},
+			)
+			_, handled, err := fingerprintDedupResult3.Fingerprint, fingerprintDedupResult3.Reused, fingerprintDedupResult3Err
+			assert.ErrorIf(
+				t,
+				!handled,
+				"%v",
+				"completed render was unavailable after provisional publication",
+			)
 			return err
 		},
 	)
@@ -439,14 +430,12 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		t.Fatalf("replay receipt = %v, reused = %t", output, second.Reused)
 	}
 	{
-		{
-			info, _ := s.GetStatus(object.Named())
-			assert.FatalIf(
-				t,
-				info.Outcome() != store.OutcomePassed,
-				"accepted replay did not restore readiness: %+v",
-				info,
-			)
-		}
+		info, _ := s.GetStatus(object.Named())
+		assert.FatalIf(
+			t,
+			info.Outcome() != store.OutcomePassed,
+			"accepted replay did not restore readiness: %+v",
+			info,
+		)
 	}
 }

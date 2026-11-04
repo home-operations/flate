@@ -21,12 +21,8 @@ func defaultParseDocOptions() ParseDocOptions {
 func mustYAML(t *testing.T, doc string) map[string]any {
 	t.Helper()
 	docs, err := splitDocMaps([]byte(doc))
-	{
-		assert.FatalIf(t, err != nil, "SplitDocs: %v\n%s", err, doc)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 1, "expected single doc, got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "SplitDocs: %v\n%s", err, doc)
+	assert.FatalIf(t, len(docs) != 1, "expected single doc, got %d", len(docs))
 	return docs[0]
 }
 
@@ -273,10 +269,9 @@ func TestParseDoc_Suspended(t *testing.T) {
 						FluxOperatorDomain + "/reconcile": "disabled",
 					}
 				}
-				obj, _, _, err := ParseDoc(doc, defaultParseDocOptions())
-				{
-					assert.FatalIf(t, err != nil, "parse: %v", err)
-				}
+				parsed, err := ParseDoc(doc, defaultParseDocOptions())
+				obj := parsed.Object
+				assert.FatalIf(t, err != nil, "parse: %v", err)
 				assert.Equal(t, obj.Suspended(), tc.suspendable && suspend)
 			})
 		}
@@ -360,9 +355,7 @@ func TestParseHelmChartSource_DefaultsAndReconcileStrategy(t *testing.T) {
 					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: c, namespace: '"+tc.namespace+"'}\nspec: {chart: nginx, reconcileStrategy: '"+tc.strategy+"', sourceRef: "+tc.source+"}\n",
 				),
 			)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			assert.Equal(t, hc.Namespace, tc.namespace)
 			assert.Equal(t, hc.SourceRef.Kind, KindHelmRepository)
 			assert.Equal(t, hc.ReconcileStrategy, tc.strategy)
@@ -409,17 +402,13 @@ spec:
   interval: 5m
 `)
 	_, err := parseKustomization(doc)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected parse error for empty sourceRef.name with kind set")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(err.Error(), "sourceRef.name is empty"),
-			"error should mention sourceRef.name being empty; got %v",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected parse error for empty sourceRef.name with kind set")
+	assert.ErrorIf(
+		t,
+		!strings.Contains(err.Error(), "sourceRef.name is empty"),
+		"error should mention sourceRef.name being empty; got %v",
+		err,
+	)
 }
 
 func TestParseBucket_GenericWithSecret(t *testing.T) {
@@ -432,9 +421,7 @@ spec:
   endpoint: minio.minio.svc:9000
   secretRef: {name: minio-creds}
 `))
-	{
-		assert.FatalIf(t, err != nil, "parseBucket: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseBucket: %v", err)
 	if b.Provider != "generic" {
 		t.Errorf("default Provider should be 'generic', got %q", b.Provider)
 	}
@@ -463,7 +450,7 @@ spec:
   secretRef: {name: ""}`,
 			want: "spec.secretRef.name is empty",
 			parse: func(d map[string]any) error {
-				_, _, _, err := ParseDoc(d, ParseDocOptions{DefaultNamespace: ""})
+				_, err := ParseDoc(d, ParseDocOptions{DefaultNamespace: ""})
 				return err
 			},
 		},
@@ -507,9 +494,7 @@ spec:
 			t.Parallel()
 			doc := mustYAML(t, tc.yaml)
 			err := tc.parse(doc)
-			{
-				assert.FatalIf(t, err == nil, "expected error, got nil")
-			}
+			assert.FatalIf(t, err == nil, "expected error, got nil")
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("expected error containing %q, got %q", tc.want, err.Error())
 			}
@@ -536,9 +521,7 @@ spec:
         name: << inputs.tenant >>-cm
 `)
 	rs, err := parseResourceSet(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseResourceSet: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseResourceSet: %v", err)
 	if rs.Name != "apps" || rs.Namespace != "flux-system" {
 		t.Errorf("unexpected name/ns: %s/%s", rs.Namespace, rs.Name)
 	}
@@ -584,9 +567,7 @@ metadata:
 spec: {}
 `)
 	rs, err := parseResourceSet(doc)
-	{
-		assert.FatalIf(t, err != nil, "parseResourceSet: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseResourceSet: %v", err)
 	if rs.Namespace != "" {
 		t.Errorf("namespace=%q want empty before loader inheritance/defaulting", rs.Namespace)
 	}
@@ -644,7 +625,8 @@ spec:
 				)
 			}
 			before := DeepCopyMap(doc)
-			obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{})
+			parsed3, err := ParseDoc(doc, ParseDocOptions{})
+			obj, authoritative, changed := parsed3.Object, parsed3.Document, parsed3.Changed
 			assert.NoError(t, err)
 			assert.Equal(t, changed, false)
 			assert.Diff(t, doc, before)
@@ -687,9 +669,7 @@ spec:
 				t.Fatalf("unexpected child %T", obj)
 			}
 			for field, got := range fields {
-				{
-					assert.ErrorIf(t, got != value, "%s = %q, want %q", field, got, value)
-				}
+				assert.ErrorIf(t, got != value, "%s = %q, want %q", field, got, value)
 			}
 		})
 	}
@@ -712,7 +692,7 @@ func testParseResourceSetCase(t *testing.T, testCaseInput *testParseResourceSetC
 	testCaseInput.tc.ref["kind"], testCaseInput.tc.ref["name"] = KindResourceSetInputProvider, "inputs"
 	input["spec"].(map[string]any)[testCaseInput.tc.field] = []any{testCaseInput.tc.ref}
 	before := DeepCopyMap(input)
-	_, _, _, err := ParseDoc(input, defaultParseDocOptions())
+	_, err := ParseDoc(input, defaultParseDocOptions())
 	if testCaseInput.tc.valid {
 		assert.NoError(t, err)
 	} else {

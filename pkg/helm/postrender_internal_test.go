@@ -53,17 +53,11 @@ data:
 			}},
 		},
 	}})
-	{
-		assert.FatalIf(t, pr == nil, "%s", "expected non-nil post renderer")
-	}
+	assert.FatalIf(t, pr == nil, "%s", "expected non-nil post renderer")
 	out, err := pr.Run(in)
-	{
-		assert.FatalIf(t, err != nil, "Run: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Run: %v", err)
 	got := out.String()
-	{
-		assert.ErrorIf(t, !strings.Contains(got, "greeting: bonjour"), "patch not applied:\n%s", got)
-	}
+	assert.ErrorIf(t, !strings.Contains(got, "greeting: bonjour"), "patch not applied:\n%s", got)
 }
 
 func TestKustomizePostRenderer_HoldsBuildMutex(t *testing.T) {
@@ -78,9 +72,7 @@ func TestKustomizePostRenderer_HoldsBuildMutex(t *testing.T) {
 			}},
 		},
 	}})
-	{
-		assert.FatalIf(t, pr == nil, "%s", "expected non-nil post renderer")
-	}
+	assert.FatalIf(t, pr == nil, "%s", "expected non-nil post renderer")
 	in := bytes.NewBufferString(
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app, namespace: default}\ndata: {greeting: hello}\n",
 	)
@@ -143,7 +135,7 @@ spec:
 			<-start
 			for range 4 {
 				if worker == 0 {
-					testPostRendererOriginalImage(t, &fs)
+					testPostRendererOriginalImage(t, fs)
 				} else {
 					out, err := pr.Run(bytes.NewBufferString(input))
 					if err != nil {
@@ -166,24 +158,22 @@ spec:
 	wg.Wait()
 }
 
-func testPostRendererOriginalImage(t *testing.T, fs *filesys.FileSystem) {
+func testPostRendererOriginalImage(t *testing.T, fs filesys.FileSystem) {
 	t.Helper()
 
 	kustomizestate.BuildMutex.Lock()
-	rm, err := kustomizestate.Build((*fs), "/")
+	rm, err := kustomizestate.Build(fs, "/")
 	if err != nil {
 		t.Errorf("Build: %v", err)
 	} else {
 		out, err := rm.AsYaml()
-		{
-			assert.ErrorIf(
-				t,
-				err != nil || !strings.Contains(string(out), "nginx:1.19"),
-				"Build output: %s; error: %v",
-				out,
-				err,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			err != nil || !strings.Contains(string(out), "nginx:1.19"),
+			"Build output: %s; error: %v",
+			out,
+			err,
+		)
 	}
 	kustomizestate.BuildMutex.Unlock()
 }

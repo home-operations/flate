@@ -45,14 +45,12 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
 	entries, err := Plan(t.Context(), Config{Input: input, Path: root, WipeSecrets: true})
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0,
-			"expected one literal entry with prepared aliases: %+v",
-			entries,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0,
+		"expected one literal entry with prepared aliases: %+v",
+		entries,
+	)
 	before := map[string]int64{}
 	for name, count := range reads {
 		before[name] = count.Load()
@@ -190,43 +188,37 @@ func testPlanParsedInputHandoffNativeAdmissions(
 			d := newDiscoverer(
 				&Config{Input: (*testCaseInput.input), Entry: &entry, Path: entry.Path, Store: st, WipeSecrets: true},
 			)
-			{
-				assert.FatalIf(
-					t,
-					d.loader.Options.ParsedInputs == nil,
-					"%v",
-					"matching input did not borrow its parsed evidence",
-				)
-			}
+			assert.FatalIf(
+				t,
+				d.loader.Options.ParsedInputs == nil,
+				"%v",
+				"matching input did not borrow its parsed evidence",
+			)
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.NoError(t, err)
 			assert.NoError(t, d.loadManifests(t.Context(), (*testCaseInput.root), false))
 			assert.Equal(t, entry.Path, (*testCaseInput.root))
 			for _, side := range []string{"left", "right"} {
 				{
-					{
-						_, ok := d.loader.Index.Lookup(
-							manifest.NamedResource{
-								Kind:      manifest.KindConfigMap,
-								Namespace: "apps",
-								Name:      "payload",
-							},
-						)
-						assert.FatalIf(t, !ok, "%s leaf evidence missing", side)
-					}
+					_, ok := d.loader.Index.Lookup(
+						manifest.NamedResource{
+							Kind:      manifest.KindConfigMap,
+							Namespace: "apps",
+							Name:      "payload",
+						},
+					)
+					assert.FatalIf(t, !ok, "%s leaf evidence missing", side)
 				}
 			}
 			for key, view := range entry.prepared.aliasViews {
 				assert.Equal(t, d.aliasViews[key], view)
 				delete(d.aliasViews, key)
-				{
-					assert.FatalIf(
-						t,
-						entry.prepared.aliasViews[key] == nil,
-						"%v",
-						"native admission mutated the prepared alias map",
-					)
-				}
+				assert.FatalIf(
+					t,
+					entry.prepared.aliasViews[key] == nil,
+					"%v",
+					"native admission mutated the prepared alias map",
+				)
 			}
 		})
 	}

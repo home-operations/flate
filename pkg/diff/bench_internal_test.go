@@ -13,7 +13,8 @@ import (
 // shape a real `flate diff` produces on a typical CI run.
 func BenchmarkDiff_LargeTree(b *testing.B) {
 	const n = 100
-	left, right := buildDiffCorpus(n, 5)
+	buildDiffCorpusResult1 := buildDiffCorpus(n, 5)
+	left, right := buildDiffCorpusResult1.left, buildDiffCorpusResult1.right
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -31,7 +32,8 @@ func BenchmarkDiff_LargeTree(b *testing.B) {
 func BenchmarkDiff_PreparedSubjects(b *testing.B) {
 	for _, format := range []Format{FormatJSON, FormatHTML} {
 		b.Run(string(format), func(b *testing.B) {
-			left, right := buildDiffCorpus(3, 1)
+			buildDiffCorpusResult2 := buildDiffCorpus(3, 1)
+			left, right := buildDiffCorpusResult2.left, buildDiffCorpusResult2.right
 			left = left[:2]
 			right = append(right[:1], right[2:]...)
 			id := left[0].Parent.NamedResource
@@ -53,10 +55,15 @@ func BenchmarkDiff_PreparedSubjects(b *testing.B) {
 	}
 }
 
+type diffCorpus struct {
+	left  []Doc
+	right []Doc
+}
+
 // buildDiffCorpus generates two doc sets of size n. The first
 // changeCount entries differ in a single field; the rest are
 // identical.
-func buildDiffCorpus(n, changeCount int) ([]Doc, []Doc) {
+func buildDiffCorpus(n, changeCount int) diffCorpus {
 	left := make([]Doc, 0, n)
 	right := make([]Doc, 0, n)
 	for i := range n {
@@ -92,5 +99,5 @@ func buildDiffCorpus(n, changeCount int) ([]Doc, []Doc) {
 			Parent: parent,
 		})
 	}
-	return left, right
+	return diffCorpus{left: left, right: right}
 }

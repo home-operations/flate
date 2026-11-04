@@ -313,7 +313,8 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		}
 	}
 	if result.incoming != nil {
-		evidence, bare = result.incomingProductions(id, reads, bare)
+		incoming := result.incomingProductions(id, reads, bare)
+		evidence, bare = incoming.evidence, incoming.bare
 	}
 	result.out = evidence
 	sh := s.shardFor(id)
@@ -420,15 +421,13 @@ func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSe
 
 func (s *Store) discoveryCoverage(index *manifest.DiscoveryIndex) map[manifest.NamedResource]*contributor {
 	coverage := map[manifest.NamedResource]*contributor{}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, r := range index.Records {
-			if len(r.Productions) == 0 {
-				continue
-			}
-			independent := declarationIndependent(index, id)
-			s.addDiscoveryCoverage(coverage, id, &r, independent)
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for id, r := range index.Records {
+		if len(r.Productions) == 0 {
+			continue
 		}
+		independent := declarationIndependent(index, id)
+		s.addDiscoveryCoverage(coverage, id, &r, independent)
 	}
 	return coverage
 }
@@ -623,11 +622,16 @@ func (r *productionResult) addVisibleProduction(
 	r.add(p)
 }
 
+type incomingProductionEvidence struct {
+	evidence []manifest.Production
+	bare     []manifest.Production
+}
+
 func (r *productionResult) incomingProductions(
 	id manifest.NamedResource,
 	reads *ReadSet,
 	bare []manifest.Production,
-) ([]manifest.Production, []manifest.Production) {
+) incomingProductionEvidence {
 	evidence := r.incoming.Productions
 	if len(evidence) == 0 || slices.ContainsFunc(evidence, func(p manifest.Production) bool {
 		return p.Path != "" && manifest.Resolve(p.Authored, id.Namespace, "") == id
@@ -645,7 +649,7 @@ func (r *productionResult) incomingProductions(
 			}
 		}
 	}
-	return evidence, bare
+	return incomingProductionEvidence{evidence: evidence, bare: bare}
 }
 
 func bareProductionExcluded(pValue *manifest.Production, id manifest.NamedResource) bool {

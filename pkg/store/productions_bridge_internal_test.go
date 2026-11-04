@@ -285,16 +285,14 @@ func testStoreProductionsScopedFileBridgeCase2(
 	facts := s.ReferenceFacts(target, index, false, manifest.NamedResource{})
 	assert.Diff(t, facts.Productions, result)
 	parent, ok := s.RenderedParent(target, nil)
-	{
-		assert.FatalIf(
-			t,
-			!ok || parent != renderer,
-			"rendered parent=%v/%t, want %v/true",
-			parent,
-			ok,
-			renderer,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || parent != renderer,
+		"rendered parent=%v/%t, want %v/true",
+		parent,
+		ok,
+		renderer,
+	)
 	want := !(*testCaseInput.differentSource) && !(*testCaseInput.explicitNamespace) &&
 		!(*testCaseInput.differentBinding)
 	{
@@ -401,13 +399,11 @@ func testStoreProductionsScopedFileBridgeCase4(
 	slices.SortFunc(want, compareProduction)
 	assert.Diff(t, s.Productions(target, nil), want)
 	parent, ok := s.RenderedParent(target, nil)
-	{
-		assert.FatalIf(
-			t,
-			ok || parent != (manifest.NamedResource{}),
-			"authored bridge parent=%v/%t",
-			parent,
-			ok,
-		)
-	}
+	assert.FatalIf(
+		t,
+		ok || parent != (manifest.NamedResource{}),
+		"authored bridge parent=%v/%t",
+		parent,
+		ok,
+	)
 }

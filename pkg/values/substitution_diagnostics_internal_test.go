@@ -46,17 +46,13 @@ func TestExpandPostBuildSubstituteReference_DiagnosticLogContext(t *testing.T) {
 			err := json.Unmarshal(line, &record)
 			assert.NoError(t, err)
 		}
-		{
-			assert.FatalIf(
-				t,
-				record.ID != manifest.DiagnosticFor(entry.Named(), entry).String(),
-				"substitution debug identity=%q",
-				record.ID,
-			)
-		}
+		assert.FatalIf(
+			t,
+			record.ID != manifest.DiagnosticFor(entry.Named(), entry).String(),
+			"substitution debug identity=%q",
+			record.ID,
+		)
 		count++
 	}
-	{
-		assert.FatalIf(t, count != 2, "debug records=%d", count)
-	}
+	assert.FatalIf(t, count != 2, "debug records=%d", count)
 }

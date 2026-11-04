@@ -221,14 +221,12 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 			assessment := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
 			if id == f.reader && !before {
 				first.Do(func() {
-					{
-						assert.ErrorIf(
-							t,
-							assessment.Assessment.Outcome() != schedule.Blocked || f.rendered(),
-							"%v",
-							"running Ready supplier admitted frozen absence",
-						)
-					}
+					assert.ErrorIf(
+						t,
+						assessment.Assessment.Outcome() != schedule.Blocked || f.rendered(),
+						"%v",
+						"running Ready supplier admitted frozen absence",
+					)
 					parked <- struct{}{}
 				})
 			}
@@ -255,9 +253,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 	go func() { done <- sched.Run(t.Context()) }()
 	if !before {
 		awaitR4Parking(t, parked, done)
-		{
-			assert.ErrorIf(t, f.rendered(), "%v", "reader published before supplier settled")
-		}
+		assert.ErrorIf(t, f.rendered(), "%v", "reader published before supplier settled")
 		close(release)
 	}
 	assert.NoError(t, <-done)
@@ -282,14 +278,12 @@ func TestResolve_OptionalBindingArrival(t *testing.T) {
 				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
 					if id == f.reader && admitted.CompareAndSwap(false, true) {
-						{
-							assert.ErrorIf(
-								t,
-								result.Assessment.Outcome() != schedule.Blocked,
-								"%v",
-								"unadmitted supplier did not retain a wait",
-							)
-						}
+						assert.ErrorIf(
+							t,
+							result.Assessment.Outcome() != schedule.Blocked,
+							"%v",
+							"unadmitted supplier did not retain a wait",
+						)
 						sched.OnArrival(f.supplier, true)
 					}
 					return result
@@ -303,9 +297,7 @@ func TestResolve_OptionalBindingArrival(t *testing.T) {
 			output, _ := f.o.store.Get[*manifest.ConfigMap](
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"},
 			)
-			{
-				assert.FatalIf(t, output == nil || output.Data["greeting"] != "exact", "arrival output=%+v", output)
-			}
+			assert.FatalIf(t, output == nil || output.Data["greeting"] != "exact", "arrival output=%+v", output)
 		})
 	}
 }
@@ -327,24 +319,20 @@ func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
 					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
 					if id == f.reader {
 						first.Do(func() {
-							{
-								assert.ErrorIf(
-									t,
-									result.Assessment.Outcome() != schedule.Blocked,
-									"%v",
-									"missing supplier did not park",
-								)
-							}
+							assert.ErrorIf(
+								t,
+								result.Assessment.Outcome() != schedule.Blocked,
+								"%v",
+								"missing supplier did not park",
+							)
 							close(release)
 							f.o.tasks.YieldSlot(func() { <-supplied })
-							{
-								assert.ErrorIf(
-									t,
-									result.Assessment.Valid(),
-									"%v",
-									"publication before park retained stale absence",
-								)
-							}
+							assert.ErrorIf(
+								t,
+								result.Assessment.Valid(),
+								"%v",
+								"publication before park retained stale absence",
+							)
 						})
 					}
 					return result
@@ -363,14 +351,12 @@ func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
 			output, _ := f.o.store.Get[*manifest.ConfigMap](
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"},
 			)
-			{
-				assert.FatalIf(
-					t,
-					output == nil || output.Data["greeting"] != "exact",
-					"pre-registration arrival=%+v",
-					output,
-				)
-			}
+			assert.FatalIf(
+				t,
+				output == nil || output.Data["greeting"] != "exact",
+				"pre-registration arrival=%+v",
+				output,
+			)
 		})
 	}
 }
@@ -407,14 +393,12 @@ func TestResolve_OptionalBindingSetChange(t *testing.T) {
 							)
 							f.o.store.AddObject(fresh)
 						}
-						{
-							assert.ErrorIf(
-								t,
-								result.Assessment.Valid(),
-								"%v",
-								"changed reference set reused assessment",
-							)
-						}
+						assert.ErrorIf(
+							t,
+							result.Assessment.Valid(),
+							"%v",
+							"changed reference set reused assessment",
+						)
 						f.o.store.AddObject(
 							&manifest.Kustomization{Name: "extra", Namespace: f.reader.Namespace, Path: "empty"},
 						)
@@ -430,14 +414,12 @@ func TestResolve_OptionalBindingSetChange(t *testing.T) {
 			output, _ := f.o.store.Get[*manifest.ConfigMap](
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"},
 			)
-			{
-				assert.FatalIf(
-					t,
-					output == nil || output.Data["greeting"] != "exact",
-					"reference-set output=%+v",
-					output,
-				)
-			}
+			assert.FatalIf(
+				t,
+				output == nil || output.Data["greeting"] != "exact",
+				"reference-set output=%+v",
+				output,
+			)
 		})
 	}
 }
@@ -468,9 +450,7 @@ func TestResolve_OptionalForceCut(t *testing.T) {
 			output, _ := f.o.store.Get[*manifest.ConfigMap](
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"},
 			)
-			{
-				assert.FatalIf(t, output == nil || output.Data["greeting"] != "exact", "cycle output=%+v", output)
-			}
+			assert.FatalIf(t, output == nil || output.Data["greeting"] != "exact", "cycle output=%+v", output)
 		})
 	}
 }
@@ -490,9 +470,7 @@ func TestResolve_OptionalDeterminism(t *testing.T) {
 				assert.NoError(t, sched.Run(t.Context()))
 				unsub()
 				art, ok := f.o.store.GetArtifact(f.reader, store.ArtifactContent).(*store.Emission)
-				{
-					assert.FatalIf(t, !ok, "%v", "reader did not complete")
-				}
+				assert.FatalIf(t, !ok, "%v", "reader did not complete")
 				output, err := json.Marshal(art.Manifests)
 				assert.NoError(t, err)
 				currentWarnings := f.o.store.Warnings()
@@ -558,6 +536,12 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 		"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: supplier, namespace: apps}\nspec:\n  resources:\n    - apiVersion: v1\n      kind: "+(*testCaseInput.kind)+"\n      metadata: {name: input}\n      "+field+": {GREETING: exact}\n",
 	)
 	var previous map[manifest.NamedResource][]map[string]any
+	closeAssessments := make([]func(), 0, 2)
+	defer func() {
+		for _, closeAssessment := range slices.Backward(closeAssessments) {
+			closeAssessment()
+		}
+	}()
 	for range 2 {
 		cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root, RepoRoot: root}
 		if *testCaseInput.changed {
@@ -580,7 +564,8 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 			assert.NoError(t, readErr)
 			docs, err = testutil.DecodeDocs(strings.NewReader(string(body)))
 			assert.NoError(t, err)
-			obj, _, _, parseErr := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+			parsed, parseErr := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+			obj := parsed.Object
 			assert.NoError(t, parseErr)
 			o.store.AddObject(obj)
 		}
@@ -618,25 +603,23 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 			store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
 		)
 		facts := o.store.ReferenceFacts(target, o.index, false, manifest.NamedResource{})
-		{
-			assert.FatalIf(t, !slices.ContainsFunc(
-				facts.Productions,
-				func(p manifest.Production) bool { return p.Owner == supplier },
-			) ||
-				!o.filter.ShouldReconcile(supplier), "ResourceSet supplier unreachable: %+v", facts)
-		}
+
+		assert.FatalIf(t, !slices.ContainsFunc(
+			facts.Productions,
+			func(p manifest.Production) bool { return p.Owner == supplier },
+		) ||
+			!o.filter.ShouldReconcile(supplier), "ResourceSet supplier unreachable: %+v", facts)
+
 		o.configureControllers()
 		d := dagDispatcher{o}
 		assessment := d.Dispatch(t.Context(), reader, manifest.DrainNone).Assessment
-		defer assessment.Close()
-		{
-			assert.FatalIf(
-				t,
-				assessment.Outcome() != schedule.Blocked,
-				"%v",
-				"reader did not wait for ResourceSet",
-			)
-		}
+		closeAssessments = append(closeAssessments, assessment.Close)
+		assert.FatalIf(
+			t,
+			assessment.Outcome() != schedule.Blocked,
+			"%v",
+			"reader did not wait for ResourceSet",
+		)
 		sched := schedule.New(d, d)
 		unsubscribe := o.watchDAG(sched)
 		seeds, err := o.seedNodes()
@@ -647,10 +630,8 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 		output, _ := o.store.Get[*manifest.ConfigMap](
 			manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "output"},
 		)
-		{
-			assert.FatalIf(t, output == nil || output.Data["greeting"] != "exact" ||
-				o.store.EmissionOwner(target) != supplier, "ResourceSet input not consumed: %+v", output)
-		}
+		assert.FatalIf(t, output == nil || output.Data["greeting"] != "exact" ||
+			o.store.EmissionOwner(target) != supplier, "ResourceSet input not consumed: %+v", output)
 		result := outputByParent(o.collectManifests())
 		if previous != nil {
 			assert.Diff(t, result, previous)
@@ -698,9 +679,7 @@ func (f *r4Fixture) assertOutcome(t *testing.T, required bool, result string) {
 		if result == "data" {
 			want = "exact"
 		}
-		{
-			assert.FatalIf(t, output == nil || output.Data["greeting"] != want, "output=%+v want=%s", output, want)
-		}
+		assert.FatalIf(t, output == nil || output.Data["greeting"] != want, "output=%+v want=%s", output, want)
 	}
 }
 
@@ -711,13 +690,11 @@ func (f *r4Fixture) assertWarnings(t *testing.T) {
 		for wIndex := range wValues {
 			w := wValues[wIndex]
 
-			{
-				assert.ErrorIf(t, w.Resource == f.reader &&
-					slices.Contains(
-						[]string{manifest.WarnOmittedValues, manifest.WarnUnresolvedSubstitution},
-						w.Category,
-					), "optional warning=%+v", w)
-			}
+			assert.ErrorIf(t, w.Resource == f.reader &&
+				slices.Contains(
+					[]string{manifest.WarnOmittedValues, manifest.WarnUnresolvedSubstitution},
+					w.Category,
+				), "optional warning=%+v", w)
 		}
 	}
 }

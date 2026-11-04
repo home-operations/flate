@@ -661,15 +661,13 @@ func testFilterAncestorKSDoesNotPullInUnrelatedSiblingsCase(
 			t.Errorf("unrelated resource %s selected: %v", id, f.KeepNames())
 		}
 	}
-	owners, _ := index.OwnersOfFile("charts/plex/independent.yaml")
-	{
-		assert.FatalIf(
-			t,
-			slices.Contains(owners, (*testCaseInput.release).Named()),
-			"%s",
-			"chart read acquired render ownership",
-		)
-	}
+	owners := index.OwnersOfFile("charts/plex/independent.yaml").Owners
+	assert.FatalIf(
+		t,
+		slices.Contains(owners, (*testCaseInput.release).Named()),
+		"%s",
+		"chart read acquired render ownership",
+	)
 }
 
 type testFilterPinnedOwnershipKeepsProducerCaseInputs struct {
@@ -744,13 +742,11 @@ func testFilterPinnedOwnershipKeepsProducerCase(
 	if testCaseInput.tt.wantConsumer && testCaseInput.tt.changed != "flux/producer.yaml" {
 		sentinel := testutil.KustomizationID("", "sentinel")
 		f.AddEmitted((*testCaseInput.producer).Named(), store.Child{Obj: refObj(sentinel)}, f.objs)
-		{
-			assert.FatalIf(
-				t,
-				f.ShouldReconcile(sentinel),
-				"%s",
-				"dependency-only pinned producer selected an unrelated child",
-			)
-		}
+		assert.FatalIf(
+			t,
+			f.ShouldReconcile(sentinel),
+			"%s",
+			"dependency-only pinned producer selected an unrelated child",
+		)
 	}
 }

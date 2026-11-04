@@ -112,7 +112,7 @@ func testFinalizeIndexGeneratorDataCase(t *testing.T, testCaseInput *struct {
 		{
 			err := os.Symlink(
 				filepath.Join(parent, "outside.txt"),
-				filepath.Join(root, "apps/a/escape.txt"),
+				filepath.Join(root, "apps", "a", "escape.txt"),
 			)
 			assert.NoError(t, err)
 		}
@@ -159,9 +159,9 @@ func testFinalizeIndexGeneratorDataCase(t *testing.T, testCaseInput *struct {
 			"apps/a/kustomization.yaml",
 			"resources: [release.yaml]\nconfigMapGenerator:\n- name: input\n  namespace: inner\n  literals: [VALUE=fixture]\n",
 		)
-		l.documents.read(filepath.Join(root, "apps/a"))
+		l.documents.read(filepath.Join(root, "apps", "a"))
 	} else {
-		_, err := l.Load(t.Context(), filepath.Join(root, "apps/a"))
+		_, err := l.Load(t.Context(), filepath.Join(root, "apps", "a"))
 		assert.NoError(t, err)
 	}
 	testFinalizeIndexGeneratorDataCaseCompletion(
@@ -211,9 +211,7 @@ func testFinalizeIndexGeneratorDataCaseCompletion(
 		assert.NoError(t, err)
 	}
 	if (*scope.testCaseInput).probe {
-		{
-			assert.FatalIf(t, (*scope.st).GetObject((*scope.id)) != nil, "%s", "unreached generator was materialized")
-		}
+		assert.FatalIf(t, (*scope.st).GetObject((*scope.id)) != nil, "%s", "unreached generator was materialized")
 		{
 			_, indexed := (*scope.l).Index.Lookup(testutil.HelmReleaseID("", "excluded"))
 			assert.FatalIf(t, indexed, "%s", "unreached generator scope indexed its application")
@@ -221,14 +219,12 @@ func testFinalizeIndexGeneratorDataCaseCompletion(
 		return
 	}
 	obj := values.NewStoreProvider((*scope.st), true).Data((*scope.id))
-	{
-		assert.FatalIf(
-			t,
-			!(*scope.testCaseInput).existing && (*scope.st).GetObject((*scope.id)) != nil,
-			"%s",
-			"generator lookup entered canonical inventory",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!(*scope.testCaseInput).existing && (*scope.st).GetObject((*scope.id)) != nil,
+		"%s",
+		"generator lookup entered canonical inventory",
+	)
 	if (*scope.testCaseInput).want == "" {
 		assert.FatalIf(t, obj != nil, "failed generator materialized: %+v", obj)
 	} else {
@@ -243,14 +239,12 @@ func testFinalizeIndexGeneratorDataCaseCompletion(
 		assert.FatalIf(t, !slices.Equal(got, owners), "Production owners = %v, want %v", got, owners)
 	}
 	scope.id.Name = "sibling"
-	{
-		assert.FatalIf(
-			t,
-			values.NewStoreProvider((*scope.st), true).Data((*scope.id)) == nil,
-			"%s",
-			"failed generator stopped its sibling",
-		)
-	}
+	assert.FatalIf(
+		t,
+		values.NewStoreProvider((*scope.st), true).Data((*scope.id)) == nil,
+		"%s",
+		"failed generator stopped its sibling",
+	)
 }
 
 func assertGeneratorPayload(t *testing.T, scope *testFinalizeIndexGeneratorDataCaseCompletionState, obj manifest.Data) {

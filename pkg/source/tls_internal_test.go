@@ -21,14 +21,16 @@ import (
 
 func TestBuildTLSConfig(t *testing.T) {
 	t.Parallel()
-	crt, key := testutil.SelfSignedClientCert(t)
-	_, otherKey := testutil.SelfSignedClientCert(t)
+	certificate := testutil.SelfSignedClientCert(t)
+
+	certificate2 := testutil.SelfSignedClientCert(t)
+
 	ca := testutil.SelfSignedCA(t)
 	encode := func(kind string, der []byte) string {
 		return string(pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}))
 	}
-	crtBlock, _ := pem.Decode([]byte(crt))
-	keyBlock, _ := pem.Decode([]byte(key))
+	crtBlock, _ := pem.Decode([]byte(certificate.Cert))
+	keyBlock, _ := pem.Decode([]byte(certificate.Key))
 	ecKey, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
 	assert.NoError(t, err)
 	ecDER, err := x509.MarshalECPrivateKey(ecKey.(*ecdsa.PrivateKey))
@@ -63,29 +65,29 @@ func TestBuildTLSConfig(t *testing.T) {
 		{name: "cert without key", crt: "-cert-", wantError: "must provide both"},
 		{name: "key without cert", key: "-key-", wantError: "must provide both"},
 		{name: "CA only", ca: ca},
-		{name: "full material", crt: crt, key: key, ca: ca, certificates: 1},
-		{name: "pair without CA", crt: crt, key: key, certificates: 1},
+		{name: "full material", crt: certificate.Cert, key: certificate.Key, ca: ca, certificates: 1},
+		{name: "pair without CA", crt: certificate.Cert, key: certificate.Key, certificates: 1},
 		{name: "invalid CA wiped client", crt: wiped, ca: "invalid-tls-marker", wantError: "ca.crt"},
-		{name: "PEM label sanitized", crt: encode("credential-tls-marker", []byte("fixture")), key: key, ca: wiped, wantError: "tls.crt/tls.key"},
-		{name: "mismatched pair wiped CA", crt: crt, key: otherKey, ca: wiped, wantError: "tls.crt/tls.key"},
+		{name: "PEM label sanitized", crt: encode("credential-tls-marker", []byte("fixture")), key: certificate.Key, ca: wiped, wantError: "tls.crt/tls.key"},
+		{name: "mismatched pair wiped CA", crt: certificate.Cert, key: certificate2.Key, ca: wiped, wantError: "tls.crt/tls.key"},
 		{name: "invalid cert wiped key", crt: "invalid-tls-marker", key: wiped, wantError: "PEM"},
 		{name: "invalid key wiped cert", crt: wiped, key: "invalid-tls-marker", wantError: "PEM"},
 		{name: "invalid cert DER wiped key", crt: encode("CERTIFICATE", []byte("invalid-tls-marker")), key: wiped, wantError: "tls.crt"},
 		{name: "invalid key DER wiped cert", crt: wiped, key: encode("PRIVATE KEY", []byte("invalid-tls-marker")), wantError: "tls.key"},
-		{name: "valid cert wiped key", crt: crt, key: wiped, missing: true},
-		{name: "valid key wiped cert", crt: wiped, key: key, missing: true},
+		{name: "valid cert wiped key", crt: certificate.Cert, key: wiped, missing: true},
+		{name: "valid key wiped cert", crt: wiped, key: certificate.Key, missing: true},
 		{name: "valid CA wiped client", key: wiped, ca: ca, missing: true},
 		{name: "wiped CA", ca: wiped, missing: true},
 		{name: "wiped cert absent key", crt: wiped, missing: true},
-		{name: "cert absent key wiped CA", crt: crt, ca: wiped, wantError: "must provide both"},
-		{name: "key absent cert wiped CA", key: key, ca: wiped, wantError: "must provide both"},
-		{name: "cert selection", crt: encode("OTHER", []byte("ignored")) + crt, key: wiped, missing: true},
-		{name: "key selection", crt: wiped, key: crt + key, missing: true},
-		{name: "cert leaf only", crt: crt + encode("CERTIFICATE", []byte("invalid-tls-marker")), key: wiped, missing: true},
-		{name: "first selected cert invalid", crt: encode("CERTIFICATE", []byte("invalid-tls-marker")) + crt, key: wiped, wantError: "tls.crt"},
-		{name: "first selected key invalid", crt: wiped, key: encode("PRIVATE KEY", []byte("invalid-tls-marker")) + key, wantError: "tls.key"},
-		{name: "cert requires certificate block", crt: key, key: wiped, wantError: "PEM"},
-		{name: "key requires private key block", crt: wiped, key: crt, wantError: "PEM"},
+		{name: "cert absent key wiped CA", crt: certificate.Cert, ca: wiped, wantError: "must provide both"},
+		{name: "key absent cert wiped CA", key: certificate.Key, ca: wiped, wantError: "must provide both"},
+		{name: "cert selection", crt: encode("OTHER", []byte("ignored")) + certificate.Cert, key: wiped, missing: true},
+		{name: "key selection", crt: wiped, key: certificate.Cert + certificate.Key, missing: true},
+		{name: "cert leaf only", crt: certificate.Cert + encode("CERTIFICATE", []byte("invalid-tls-marker")), key: wiped, missing: true},
+		{name: "first selected cert invalid", crt: encode("CERTIFICATE", []byte("invalid-tls-marker")) + certificate.Cert, key: wiped, wantError: "tls.crt"},
+		{name: "first selected key invalid", crt: wiped, key: encode("PRIVATE KEY", []byte("invalid-tls-marker")) + certificate.Key, wantError: "tls.key"},
+		{name: "cert requires certificate block", crt: certificate.Key, key: wiped, wantError: "PEM"},
+		{name: "key requires private key block", crt: wiped, key: certificate.Cert, wantError: "PEM"},
 		{name: "unsupported public algorithm", crt: encode("CERTIFICATE", unsupportedCert), key: wiped, wantError: "unsupported public"},
 		{name: "unsupported private algorithm", crt: wiped, key: encode("PRIVATE KEY", unsupportedKey), wantError: "unsupported private"},
 		{name: "PKCS1 key wiped cert", crt: wiped, key: encode("RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(rsaKey)), missing: true},

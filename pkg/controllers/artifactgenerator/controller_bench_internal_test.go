@@ -64,7 +64,8 @@ func generatedWorkload(tb testing.TB, count int) (*manifest.RawObject, map[strin
 			"artifacts": artifacts,
 		},
 	}
-	obj, doc, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj, doc := parsed.Object, parsed.Document
 	if err != nil {
 		tb.Fatal(err)
 	}

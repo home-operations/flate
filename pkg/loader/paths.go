@@ -34,12 +34,10 @@ func (l *Loader) ReferenceFacts(id manifest.NamedResource,
 func (l *Loader) resolvePaths(ctx context.Context) error {
 	p := pathResolution{loader: l}
 
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, record := range l.Index.Records {
-			if err := p.resolveRecord(ctx, id, new(record)); err != nil {
-				return err
-			}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for id, record := range l.Index.Records {
+		if err := p.resolveRecord(ctx, id, new(record)); err != nil {
+			return err
 		}
 	}
 	l.InputContent = p.projections
@@ -208,32 +206,42 @@ func (l *Loader) packageProjectionKnown(location string, known bool) bool {
 	return known
 }
 
+type projectionRead struct {
+	documents   []manifest.DocOccurrence
+	known, stop bool
+}
+
 func (l *Loader) projectionFile(
 	ctx context.Context,
 	input *store.SourceArtifact,
 	file string,
 	known bool,
-) ([]manifest.DocOccurrence, bool, bool, error) {
+) (projectionRead, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, false, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		return projectionRead{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
 	location := filepath.Join(input.LocalPath, filepath.FromSlash(file))
 	known = l.packageProjectionKnown(location, known)
 	raw, err := fs.ReadFile(input.FS, file)
 	if err != nil {
-		known = false
-		return nil, known, true, nil //nolint:nilerr // Read failures invalidate projection proof and stop only the current source.
+		//nolint:nilerr // Read failures invalidate projection proof and stop only the current source.
+		return projectionRead{stop: true}, nil
 	}
 	docs, decoded := projectionDocuments(raw)
 	known = known && decoded
-	return docs, known, false, nil
+	return projectionRead{documents: docs, known: known, stop: false}, nil
+}
+
+type projectionNames struct {
+	names         map[string]struct{}
+	active, known bool
 }
 
 func (l *Loader) projectionNames(
 	ctx context.Context,
 	child, prepared *manifest.Kustomization,
 	roots map[manifest.NamedResource][]string,
-) (map[string]struct{}, bool, bool, error) {
+) (projectionNames, error) {
 	known := true
 	var documents []manifest.DocOccurrence
 	declared, err := child.RenderDocument()
@@ -251,19 +259,15 @@ func (l *Loader) projectionNames(
 			break
 		}
 		for _, file := range files {
-			var docs []manifest.DocOccurrence
-			{
-				var stop bool
-				var readErr error
-				docs, known, stop, readErr = l.projectionFile(ctx, input, file, known)
-				if readErr != nil {
-					return nil, false, false, readErr
-				}
-				if stop {
-					break
-				}
+			projection, err := l.projectionFile(ctx, input, file, known)
+			if err != nil {
+				return projectionNames{}, err
 			}
-			documents = append(documents, docs...)
+			known = projection.known
+			if projection.stop {
+				break
+			}
+			documents = append(documents, projection.documents...)
 		}
 	}
 	known = known && len(roots) != 0
@@ -273,9 +277,10 @@ func (l *Loader) projectionNames(
 	active := len(prepared.PostBuild.Substitute) != 0 ||
 		prepared.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 	names := values.SubstitutionNames(documents, active)
-	return names, active, known, nil
+	return projectionNames{names: names, active: active, known: known}, nil
 }
 
+//nolint:gocritic // Lazy map initialization MUST remain visible to the caller across path resolutions.
 func (l *Loader) hydratePathReferences(
 	ctx context.Context,
 	owner *manifest.Kustomization,
@@ -299,10 +304,15 @@ func (l *Loader) hydratePathReferences(
 	return ctx.Err() == nil
 }
 
+type pathBindings struct {
+	known  bool
+	inputs map[manifest.NamedResource]manifest.Data
+}
+
 func (l *Loader) pathBindings(
 	child *manifest.Kustomization,
 	provider *values.StoreProvider,
-) (bool, map[manifest.NamedResource]manifest.Data) {
+) pathBindings {
 	known := true
 	bindings := map[manifest.NamedResource]manifest.Data{}
 	for _, ref := range child.PostBuild.SubstituteFrom {
@@ -314,9 +324,10 @@ func (l *Loader) pathBindings(
 			bindings[inputID] = input.Data
 		}
 	}
-	return known, bindings
+	return pathBindings{known: known, inputs: bindings}
 }
 
+//nolint:gocritic // Lazy map initialization MUST remain visible to the caller across catalog lookups.
 func (l *Loader) pathCatalog(
 	owner manifest.NamedResource,
 	catalogs *map[manifest.NamedResource]*manifest.Kustomization,
@@ -371,6 +382,14 @@ func (l *Loader) projectPathRoots(
 	return true
 }
 
+type pathResolution struct {
+	loader      *Loader
+	projections map[manifest.NamedResource]inputprojection.Projection
+	provider    *values.StoreProvider
+	hydrated    map[manifest.NamedResource]bool
+	catalogs    map[manifest.NamedResource]*manifest.Kustomization
+}
+
 func (p *pathResolution) projectSubstitutions(
 	ctx context.Context,
 	id manifest.NamedResource,
@@ -386,10 +405,10 @@ func (p *pathResolution) projectSubstitutions(
 	if p.provider == nil {
 		p.provider = values.NewStoreProvider(l, l.Options.WipeSecrets)
 	}
-	known, bindings := l.pathBindings(child, p.provider)
+	bindings := l.pathBindings(child, p.provider)
 	prepared := child.Clone()
 	if err := values.ExpandPostBuildSubstituteReference(prepared, p.provider); err != nil {
-		known = false
+		bindings.known = false
 	}
 	roots := record.ContentRoots
 	if occurrence, ok := l.occurrence(id); roots == nil && ok {
@@ -399,24 +418,17 @@ func (p *pathResolution) projectSubstitutions(
 		}
 		roots = map[manifest.NamedResource][]string{source: occurrence.facts.roots}
 	}
-	var names map[string]struct{}
-	var active bool
-	{
-		var projectionKnown bool
-		var projectionErr error
-		names, active, projectionKnown, projectionErr = l.projectionNames(ctx, child, prepared, roots)
-		if projectionErr != nil {
-			return projectionErr
-		}
-		known = known && projectionKnown
+	projection, err := l.projectionNames(ctx, child, prepared, roots)
+	if err != nil {
+		return err
 	}
-	if known && names != nil {
+	if bindings.known && projection.known && projection.names != nil {
 		if p.projections == nil {
 			p.projections = map[manifest.NamedResource]inputprojection.Projection{}
 		}
 		p.projections[id] = inputprojection.Projection{
-			Content: prepared.Content(nil, names, active),
-			Inputs:  bindings,
+			Content: prepared.Content(nil, projection.names, projection.active),
+			Inputs:  bindings.inputs,
 		}
 	}
 	return nil
@@ -488,12 +500,4 @@ func (p *pathResolution) resolveRecord(
 		return err
 	}
 	return nil
-}
-
-type pathResolution struct {
-	loader      *Loader
-	projections map[manifest.NamedResource]inputprojection.Projection
-	provider    *values.StoreProvider
-	hydrated    map[manifest.NamedResource]bool
-	catalogs    map[manifest.NamedResource]*manifest.Kustomization
 }

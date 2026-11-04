@@ -59,15 +59,13 @@ resources: &resources [selected.yaml]
 components: [component]
 `)
 	r := readerForTest(root)
-	body, _ := r.read(root)
-	{
-		assert.FatalIf(t, body == nil, "%v", "document was not decoded")
-	}
+	body := r.read(root).body
+	assert.FatalIf(t, body == nil, "%v", "document was not decoded")
 	assert.Equal(t, body.Namespace, "apps")
 	assert.Diff(t, body.Resources, []string{"selected.yaml", "../base"})
 	assert.Diff(t, body.ConfigMapGenerator[0].EnvSources, []string{"../settings.env"})
 	var paths []string
-	spec, _ := r.read(root)
+	spec := r.read(root).body
 	for ref := range kustomizeinput.Kustomization(spec) {
 		paths = append(paths, ref.Path)
 	}
@@ -78,21 +76,17 @@ components: [component]
 		testutil.WriteFile(t, dir, "kustomization.yaml", input)
 		invalid := readerForTest(dir)
 		{
-			invalidBody, _ := invalid.read(dir)
+			invalidBody := invalid.read(dir).body
 			assert.FatalIf(t, invalidBody != nil, "invalid typed document was decoded: %s", input)
 		}
 	}
 	componentDir := t.TempDir()
 	testutil.WriteFile(t, componentDir, "kustomization.yaml", "kind: Component\n")
 	componentReader := readerForTest(componentDir)
-	component, _ := componentReader.read(componentDir)
-	{
-		assert.FatalIf(t, !isKustomizeComponent(component), "%v", "component lost its default API version")
-	}
-	again, _ := r.read(root)
-	{
-		assert.FatalIf(t, again != body, "%v", "input classification replaced the cached document")
-	}
+	component := componentReader.read(componentDir).body
+	assert.FatalIf(t, !isKustomizeComponent(component), "%v", "component lost its default API version")
+	again := r.read(root).body
+	assert.FatalIf(t, again != body, "%v", "input classification replaced the cached document")
 }
 
 func TestDocumentReader_UnreadableBuilder(t *testing.T) {
@@ -107,19 +101,18 @@ func TestDocumentReader_UnreadableBuilder(t *testing.T) {
 	}})
 	l := New(st)
 	l.mountSources()
-	dir := filepath.Join(root, "plain/unreadable")
-	body, file := l.documents.read(dir)
+	dir := filepath.Join(root, "plain", "unreadable")
+	builder6 := l.documents.read(dir)
+	body, file := builder6.body, builder6.file
+	assert.FatalIf(
+		t,
+		body != nil || file != filepath.Join(dir, "kustomization.yaml"),
+		"unreadable builder classified as absent: %v, %q",
+		body,
+		file,
+	)
 	{
-		assert.FatalIf(
-			t,
-			body != nil || file != filepath.Join(dir, "kustomization.yaml"),
-			"unreadable builder classified as absent: %v, %q",
-			body,
-			file,
-		)
-	}
-	{
-		_, absent := l.documents.read(filepath.Join(root, "absent"))
+		absent := l.documents.read(filepath.Join(root, "absent")).file
 		assert.FatalIf(t, absent != "", "absent builder classified as present: %q", absent)
 	}
 	_, err := l.Load(t.Context(), filepath.Join(root, "plain"))
@@ -150,15 +143,13 @@ func TestDocumentReader_IndexedSource(t *testing.T) {
 	}}
 	reader := documentReader{cache: map[string]document{}}
 	reader.mountSources(st, index)
-	body, _ := reader.read(root)
-	{
-		assert.FatalIf(
-			t,
-			body == nil || body.Namespace != "authoritative" || st.GetObject(id) != nil,
-			"indexed-only source mount = %v",
-			body,
-		)
-	}
+	body := reader.read(root).body
+	assert.FatalIf(
+		t,
+		body == nil || body.Namespace != "authoritative" || st.GetObject(id) != nil,
+		"indexed-only source mount = %v",
+		body,
+	)
 }
 
 func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
@@ -188,13 +179,11 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			l.Admit(root)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			id := testutil.KustomizationID("apps", "owner")
-			{
-				assert.FatalIf(t, l.AdmitsRoot(
-					l.IndexedObject(id, l.Index.Records[id]).Obj,
-					filepath.Join(root, "app/owner.yaml"),
-				) != included ||
-					(l.Store.GetObject(id) != nil) != included, "replacement membership retained another view: included=%t", included)
-			}
+			assert.FatalIf(t, l.AdmitsRoot(
+				l.IndexedObject(id, l.Index.Records[id]).Obj,
+				filepath.Join(root, "app", "owner.yaml"),
+			) != included ||
+				(l.Store.GetObject(id) != nil) != included, "replacement membership retained another view: included=%t", included)
 		}
 	})
 
@@ -220,22 +209,18 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 		assert.NoError(t, err)
 		l.Admit(root)
 		owners := l.Kustomizations()
-		{
-			assert.FatalIf(t, len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" ||
-				owners[0].Obj.(*manifest.Kustomization).Path != "./"+version, "replacement kept stale owner: %+v", owners)
-		}
+		assert.FatalIf(t, len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).Namespace != "apps" ||
+			owners[0].Obj.(*manifest.Kustomization).Path != "./"+version, "replacement kept stale owner: %+v", owners)
 		sources := 0
 		for source := range l.Sources(t.Context()) {
 			sources++
 			repo := source.Obj.(*manifest.GitRepository)
-			{
-				assert.FatalIf(
-					t,
-					repo.Namespace != "apps" || repo.URL != "https://fixture.invalid/"+version,
-					"replacement kept stale source: %+v",
-					repo,
-				)
-			}
+			assert.FatalIf(
+				t,
+				repo.Namespace != "apps" || repo.URL != "https://fixture.invalid/"+version,
+				"replacement kept stale source: %+v",
+				repo,
+			)
 		}
 		assert.Equal(t, sources, 1)
 		for _, id := range []manifest.NamedResource{
@@ -243,10 +228,8 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"},
 		} {
 			candidate, published := l.candidates[id].Obj, l.Store.GetObject(id)
-			{
-				assert.FatalIf(t, candidate == nil || published != candidate || candidate == previousCandidates[id] ||
-					published == previousPublished[id], "source replacement did not refresh %s: candidate=%p, published=%p", id, candidate, published)
-			}
+			assert.FatalIf(t, candidate == nil || published != candidate || candidate == previousCandidates[id] ||
+				published == previousPublished[id], "source replacement did not refresh %s: candidate=%p, published=%p", id, candidate, published)
 			previousCandidates[id], previousPublished[id] = candidate, published
 		}
 		{
@@ -263,15 +246,14 @@ func TestDocumentReader_CopiedSourceViews(t *testing.T) {
 	reader := l.documents
 	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"probe": {Data: []byte("shared")}}}
 	reader.setSources(map[string]*store.SourceArtifact{root: input})
-	view, name := new(l.documents).input(filepath.Join(root, "probe"))
+	inputFile := new(l.documents).input(filepath.Join(root, "probe"))
+	view, name := inputFile.fs, inputFile.name
 	data, err := fs.ReadFile(view, name)
-	{
-		assert.FatalIf(
-			t,
-			err != nil || string(data) != "shared",
-			"copied reader lost its mounted source view: %q, %v",
-			data,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || string(data) != "shared",
+		"copied reader lost its mounted source view: %q, %v",
+		data,
+		err,
+	)
 }

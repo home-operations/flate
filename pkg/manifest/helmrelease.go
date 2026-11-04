@@ -60,15 +60,20 @@ func (h HelmChart) UsesSourceValuesFiles() bool {
 	return h.Source.Kind == KindGitRepository || h.Source.Kind == KindBucket
 }
 
-func (h *HelmChart) sourceInputs(files []string) (string, []string) {
+type chartSourceInputs struct {
+	path  string
+	files []string
+}
+
+func (h *HelmChart) sourceInputs(files []string) chartSourceInputs {
 	if h.Source.Group != SourceDomain {
-		return "", nil
+		return chartSourceInputs{}
 	}
 	if !h.UsesSourceValuesFiles() {
 		files = nil
 	}
 	if !h.hasSourceChartPath() || h.Name == "" || strings.HasPrefix(h.Name, "/") || strings.IndexByte(h.Name, 0) >= 0 {
-		return "", files
+		return chartSourceInputs{files: files}
 	}
 	// Reference iteration MUST validate without allocating a normalized path.
 	depth := 0
@@ -81,10 +86,10 @@ func (h *HelmChart) sourceInputs(files []string) (string, []string) {
 			depth++
 		}
 		if depth < 0 {
-			return "", files
+			return chartSourceInputs{files: files}
 		}
 	}
-	return h.Name, files
+	return chartSourceInputs{path: h.Name, files: files}
 }
 
 // RepoFullName returns the source name prefixed by its namespace when present.
@@ -471,7 +476,8 @@ func (h *HelmRelease) chartReferences(yield func(Reference) bool) bool {
 		return false
 	}
 	if backing := projection.backing; backing.Source.Name != "" {
-		path, files := backing.sourceInputs(h.ChartValuesFiles)
+		inputs := backing.sourceInputs(h.ChartValuesFiles)
+		chartPath, files := inputs.path, inputs.files
 		artifact := source == backing.Source
 		stage := GateStage(0)
 		if artifact {
@@ -484,7 +490,7 @@ func (h *HelmRelease) chartReferences(yield func(Reference) bool) bool {
 				Use:              sourceKey,
 				Content:          true,
 				Files:            files,
-				ChartPath:        path,
+				ChartPath:        chartPath,
 				Gate:             stage,
 				Artifact:         artifact,
 				ChartSource:      artifact,

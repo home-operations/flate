@@ -405,7 +405,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		l.documents.bootstrap = inputRoot
 	}
 	l.ensureScopes()
-	_, builder := l.documents.read(abs)
+	builder := l.documents.read(abs).file
 	l.setEntry(abs, builder)
 	if _, scanned := l.scopes.scanned[abs]; scanned {
 		return 0, nil
@@ -801,8 +801,8 @@ func (l *Loader) loadRootIgnore(ctx context.Context, abs string) (*ignoreSet, bo
 	var ignore *ignoreSet
 	var err error
 	if l.IgnoreFile != "" {
-		input, name := new(l.documents).input(abs)
-		info, statErr := fs.Stat(input, name)
+		inputFile := new(l.documents).input(abs)
+		info, statErr := fs.Stat(inputFile.fs, inputFile.name)
 		new(l.documents).rememberStat(abs, info, statErr)
 		if errors.Is(statErr, fs.ErrNotExist) || statErr == nil && !info.IsDir() {
 			return nil, true, nil
@@ -821,9 +821,9 @@ func (l *Loader) loadRootIgnore(ctx context.Context, abs string) (*ignoreSet, bo
 }
 
 func (l *Loader) loadCompact(ctx context.Context, abs string, w *traversal) {
-	source := l.sourceFacts(abs)
+	sourceState := l.sourceFacts(abs)
 	key := loadContext{path: abs, ignore: l.IgnoreFile}
-	facts, replay := source.loads[key]
+	facts, replay := sourceState.loads[key]
 	if replay && facts.complete {
 		for file, directory := range facts.directories {
 			l.documents.restore(file)
@@ -858,7 +858,7 @@ func (l *Loader) loadCompact(ctx context.Context, abs string, w *traversal) {
 		}
 	}
 	facts.observed = true
-	source.loads[key] = facts
+	sourceState.loads[key] = facts
 }
 
 func (l *Loader) setEntry(abs, builder string) {

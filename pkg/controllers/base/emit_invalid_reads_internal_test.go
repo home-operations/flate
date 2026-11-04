@@ -2,6 +2,7 @@ package base
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -41,27 +42,19 @@ func TestEmit_InvalidReads(t *testing.T) {
 	replacement := parent.Clone()
 	replacement.Path = "B"
 	s.AddObject(replacement)
-	{
-		assert.FatalIf(t, run.Reads.Valid(), "%v", "changed parent left captured reads valid")
-	}
-	{
-		assert.FatalIf(t, !filter.ShouldReconcile(parent.Named()) || filter.ShouldReconcile(child.Named()) ||
-			s.GetObject(child.Named()) != nil ||
-			s.HasInventory(parent.Named()), "%v", "invalid emission fixture already selected or published the child")
-	}
+	assert.FatalIf(t, run.Reads.Valid(), "%v", "changed parent left captured reads valid")
+	assert.FatalIf(t, !filter.ShouldReconcile(parent.Named()) || filter.ShouldReconcile(child.Named()) ||
+		s.GetObject(child.Named()) != nil ||
+		s.HasInventory(parent.Named()), "%v", "invalid emission fixture already selected or published the child")
 	c.emit(t.Context(), parent.Named(), &next, nil)
-	{
-		assert.ErrorIf(t, filter.ShouldReconcile(child.Named()), "%v", "invalid reads extended changed-only selection")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(child.Named()) != nil || s.GetDeclaration(child.Named()) != nil ||
-				s.HasInventory(parent.Named()),
-			"%v",
-			"invalid reads published a child or parent inventory",
-		)
-	}
+	assert.ErrorIf(t, filter.ShouldReconcile(child.Named()), "%v", "invalid reads extended changed-only selection")
+	assert.ErrorIf(
+		t,
+		s.GetObject(child.Named()) != nil || s.GetDeclaration(child.Named()) != nil ||
+			s.HasInventory(parent.Named()),
+		"%v",
+		"invalid reads published a child or parent inventory",
+	)
 }
 
 func TestEmit_InputReplacementSelection(t *testing.T) {
@@ -89,17 +82,13 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	replacement.Path = "B"
 	s.AddObject(replacement)
 	run.Emit(t.Context(), parent.Named(), next, nil)
-	{
-		assert.FatalIf(t, run.Reads.Valid(), "%v", "stale input succeeded")
-	}
-	{
-		assert.FatalIf(
-			t,
-			filter.ShouldReconcile(child.Named()) || s.GetObject(child.Named()) != nil,
-			"%v",
-			"stale input extended selection",
-		)
-	}
+	assert.FatalIf(t, run.Reads.Valid(), "%v", "stale input succeeded")
+	assert.FatalIf(
+		t,
+		filter.ShouldReconcile(child.Named()) || s.GetObject(child.Named()) != nil,
+		"%v",
+		"stale input extended selection",
+	)
 	accepted := child.Clone()
 	accepted.Path = "B"
 	fresh := captureEmission(
@@ -108,14 +97,12 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 		&store.Emission{Children: []store.Child{{Obj: accepted}}, Complete: true},
 	)
 	newExecution(c, parent.Named()).Emit(t.Context(), parent.Named(), fresh, nil)
-	{
-		assert.FatalIf(
-			t,
-			!filter.ShouldReconcile(accepted.Named()) || s.GetDeclaration(accepted.Named()) != accepted,
-			"%v",
-			"ordinary replacement did not publish and extend selection",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!filter.ShouldReconcile(accepted.Named()) || s.GetDeclaration(accepted.Named()) != accepted,
+		"%v",
+		"ordinary replacement did not publish and extend selection",
+	)
 }
 
 func TestFingerprintDedup_AcceptedReceipt(t *testing.T) {
@@ -152,9 +139,7 @@ func TestEmit_RejectedAttemptClearsFootprint(t *testing.T) {
 				Render:   manifest.NewRenderReceipt("accepted", func(a, b any) bool { return a == b }),
 			}
 			run.Emit(t.Context(), owner.Named(), &next, nil)
-			{
-				assert.FatalIf(t, next.Footprint() == nil, "%v", "fixture did not accept complete-empty output")
-			}
+			assert.FatalIf(t, next.Footprint() == nil, "%v", "fixture did not accept complete-empty output")
 			before := st.GetArtifact(owner.Named(), store.ArtifactContent)
 			st.AddObject(
 				&manifest.ConfigMap{
@@ -168,14 +153,12 @@ func TestEmit_RejectedAttemptClearsFootprint(t *testing.T) {
 			} else {
 				controller.emit(t.Context(), owner.Named(), &next, nil)
 			}
-			{
-				assert.FatalIf(
-					t,
-					next.Footprint() != nil || st.GetArtifact(owner.Named(), store.ArtifactContent) != before,
-					"%v",
-					"early rejection retained caller acceptance or replaced inventory",
-				)
-			}
+			assert.FatalIf(
+				t,
+				next.Footprint() != nil || st.GetArtifact(owner.Named(), store.ArtifactContent) != before,
+				"%v",
+				"early rejection retained caller acceptance or replaced inventory",
+			)
 		})
 	}
 }
@@ -215,7 +198,7 @@ func TestParseChildren_RetainsRendererFailure(t *testing.T) {
 			}
 			failure := manifest.NewError(manifest.ErrInput, nil, "normalize helm list")
 			c := Controller{SkipKinds: tc.skipKinds}
-			children, docs, failures := c.ParseChildren(
+			parseChildrenResult1 := c.ParseChildren(
 				owner,
 				[]manifest.DocOccurrence{
 					{Document: invalid, Ordinal: 2, Err: failure},
@@ -223,20 +206,19 @@ func TestParseChildren_RetainsRendererFailure(t *testing.T) {
 				},
 				manifest.ParseDocOptions{},
 			)
-			{
-				assert.FatalIf(
-					t,
-					len(children) != 1 || len(docs) != tc.wantDocs || len(failures) != 1 || failures[0].Ordinal != 2 ||
-						!errors.Is(
-							failures[0].Err,
-							failure,
-						),
-					"renderer failure was dropped: children=%v docs=%v failures=%v",
-					children,
-					docs,
-					failures,
-				)
-			}
+			children, docs, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
+			assert.FatalIf(
+				t,
+				len(children) != 1 || len(docs) != tc.wantDocs || len(failures) != 1 || failures[0].Ordinal != 2 ||
+					!errors.Is(
+						failures[0].Err,
+						failure,
+					),
+				"renderer failure was dropped: children=%v docs=%v failures=%v",
+				children,
+				docs,
+				failures,
+			)
 			assert.Equal(t, children[0].Obj.Named().Name, "healthy")
 			assert.Diff(t, docs[len(docs)-1].Document, sibling)
 			if tc.wantDocs == 2 {
@@ -274,12 +256,15 @@ func testFingerprintDedupAcceptedReceiptCase(
 		"kind":       "ConfigMap",
 		"metadata":   map[string]any{"name": "output", "namespace": "apps"},
 	}
-	children, docs := testutil.ParseChildren(
-		controller,
+	parsed := controller.ParseChildren(
 		owner,
-		[]map[string]any{doc},
+		testutil.DocumentOccurrences([]map[string]any{doc}),
 		manifest.ParseDocOptions{},
 	)
+	if failure := manifest.DocumentFailure(parsed.Failures); failure != nil {
+		panic(failure)
+	}
+	children, docs := parsed.Children, testutil.DocumentMaps(parsed.Visible)
 	next := store.Emission{
 		Children:    children,
 		Manifests:   testutil.DocumentOccurrences(docs),
@@ -296,25 +281,24 @@ func testFingerprintDedupAcceptedReceiptCase(
 			"kind":       "ConfigMap",
 			"metadata":   map[string]any{"name": "progress", "namespace": "apps"},
 		}
-		partialChildren, partialDocs, partialFailures := controller.ParseChildren(
+		parseChildrenResult2 := controller.ParseChildren(
 			owner,
 			testutil.DocumentOccurrences([]map[string]any{partialDoc}),
 			manifest.ParseDocOptions{},
 		)
+		partialChildren, partialDocs, partialFailures := parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 		partial := store.Emission{
 			Children:  partialChildren,
 			Manifests: partialDocs,
 			Failures:  partialFailures,
 		}
 		progress.Emit(t.Context(), owner.Named(), &partial, nil)
-		{
-			assert.FatalIf(
-				t,
-				st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission).Complete,
-				"%v",
-				"fixture did not preserve a borrowed complete predecessor",
-			)
-		}
+		assert.FatalIf(
+			t,
+			st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission).Complete,
+			"%v",
+			"fixture did not preserve a borrowed complete predecessor",
+		)
 	}
 	if (*testCaseInput.receipt) == "retired_input" {
 		first.Reads.Retire()
@@ -334,13 +318,11 @@ func testFingerprintDedupAcceptedReceiptCase(
 	if (*testCaseInput.receipt) == "aba_input" {
 		st.AddObject(dependency)
 	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput.receipt) ==
-				"retired_input" && !first.Reads.Valid(), "%v",
-			"fixture did not retain an immutable projection without active subscriptions",
-		)
-	}
+	assert.FatalIf(
+		t, (*testCaseInput.receipt) ==
+			"retired_input" && !first.Reads.Valid(), "%v",
+		"fixture did not retain an immutable projection without active subscriptions",
+	)
 	second := newExecution(controller, owner.Named())
 	defer second.Retire()
 	attempt := store.Emission{}
@@ -352,7 +334,13 @@ func testFingerprintDedupAcceptedReceiptCase(
 	case "invalid_input", "aba_input", "retired_input":
 		want = ""
 	}
-	_, handled, err := second.FingerprintDedup(t.Context(), owner.Named(), "content", &attempt)
+	fingerprintDedupResult3, fingerprintDedupResult3Err := second.FingerprintDedup(
+		t.Context(),
+		owner.Named(),
+		"content",
+		&attempt,
+	)
+	_, handled, err := fingerprintDedupResult3.Fingerprint, fingerprintDedupResult3.Reused, fingerprintDedupResult3Err
 	assert.NoError(t, err)
 	assert.Equal(t, handled, true)
 	var expected *manifest.RenderReceipt
@@ -362,14 +350,12 @@ func testFingerprintDedupAcceptedReceiptCase(
 	assert.Diff(t, attempt.Render, expected)
 	assert.Equal(t, attempt.Reads, &second.Reads)
 	assert.Diff(t, st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission).Render, expected)
-	{
-		assert.FatalIf(
-			t,
-			attempt.Footprint() == nil || !attempt.Complete,
-			"%v",
-			"replay did not hand back exact complete acceptance",
-		)
-	}
+	assert.FatalIf(
+		t,
+		attempt.Footprint() == nil || !attempt.Complete,
+		"%v",
+		"replay did not hand back exact complete acceptance",
+	)
 	ids := []manifest.NamedResource{}
 	for id := range attempt.Footprint() {
 		ids = append(ids, id)
@@ -403,11 +389,12 @@ func testEmitFailedAuthorityReplacesSuccessCase(
 	}
 	first := newExecution(c, owner.Named())
 	defer first.Close()
-	children, docs, failures := c.ParseChildren(
+	parseChildrenResult4 := c.ParseChildren(
 		owner,
 		testutil.DocumentOccurrences([]map[string]any{valid}),
 		manifest.ParseDocOptions{},
 	)
+	children, docs, failures := parseChildrenResult4.Children, parseChildrenResult4.Visible, parseChildrenResult4.Failures
 	attempt := store.Emission{
 		Children:    children,
 		Manifests:   docs,
@@ -416,24 +403,18 @@ func testEmitFailedAuthorityReplacesSuccessCase(
 		Fingerprint: manifest.Fingerprint("content"),
 	}
 	{
-		{
-			err := first.Emit(t.Context(), owner.Named(), &attempt, nil)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := first.Emit(t.Context(), owner.Named(), &attempt, nil)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	first.finish(t.Context(), nil)
 	childID := manifest.DocIdentity(valid)
-	{
-		assert.FatalIf(t, s.GetObject(childID) == nil, "%v", "valid predecessor missing")
-	}
+	assert.FatalIf(t, s.GetObject(childID) == nil, "%v", "valid predecessor missing")
 	if (*testCaseInput) == "borrowed" {
 		progress := newExecution(c, owner.Named())
 		defer progress.Close()
 		{
-			{
-				err := progress.Emit(t.Context(), owner.Named(), &store.Emission{}, nil)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := progress.Emit(t.Context(), owner.Named(), &store.Emission{}, nil)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
 	invalid := manifest.DeepCopyMap(valid)
@@ -444,21 +425,24 @@ func testEmitFailedAuthorityReplacesSuccessCase(
 		"metadata":   map[string]any{"name": "healthy", "namespace": "apps"},
 	}
 	var diagnostic string
+	closeRuns := make([]func(), 0, 2)
+	defer func() {
+		for _, closeRun := range slices.Backward(closeRuns) {
+			closeRun()
+		}
+	}()
 	for _, phase := range []string{"failure", "repeat"} {
 		run := newExecution(c, owner.Named())
-		defer run.Close()
+		closeRuns = append(closeRuns, run.Close)
 		outcomes := []manifest.DocOccurrence{{Document: invalid, Ordinal: 3}, {Document: sibling, Ordinal: 4}}
 		if phase == "repeat" {
 			data, err := manifest.EncodeRender(outcomes)
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			outcomes, err = manifest.DecodeRender(data)
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
-		children, docs, failures = c.ParseChildren(owner, outcomes, manifest.ParseDocOptions{})
+		parseChildrenResult5 := c.ParseChildren(owner, outcomes, manifest.ParseDocOptions{})
+		children, docs, failures = parseChildrenResult5.Children, parseChildrenResult5.Visible, parseChildrenResult5.Failures
 		attempt = store.Emission{
 			Children:    children,
 			Manifests:   docs,
@@ -467,63 +451,56 @@ func testEmitFailedAuthorityReplacesSuccessCase(
 			Fingerprint: manifest.Fingerprint("content"),
 		}
 		err := run.Emit(t.Context(), owner.Named(), &attempt, nil)
-		{
-			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "%s accepted invalid output: %v", phase, err)
-		}
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "%s accepted invalid output: %v", phase, err)
 		run.finish(t.Context(), err)
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}
 		assert.Equal(t, err.Error(), diagnostic)
 		current := s.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
+		assert.FatalIf(t, current.Complete || attempt.Footprint() != nil || len(current.Failures) != 1 ||
+			len(current.Manifests) != 2, "failed inventory: %+v", current)
 		{
-			assert.FatalIf(t, current.Complete || attempt.Footprint() != nil || len(current.Failures) != 1 ||
-				len(current.Manifests) != 2, "failed inventory: %+v", current)
+			_, hit := current.Replay(manifest.Fingerprint("content"))
+			assert.FatalIf(t, hit, "%v", "failure replayed predecessor success")
 		}
-		{
-			{
-				_, hit := current.Replay(manifest.Fingerprint("content"))
-				assert.FatalIf(t, hit, "%v", "failure replayed predecessor success")
-			}
-		}
-		{
-			assert.FatalIf(
-				t,
-				s.GetObject(childID) != nil || s.GetObject(manifest.DocIdentity(sibling)) == nil,
-				"%v",
-				"failed authority restored old child or lost valid sibling",
-			)
-		}
+		assert.FatalIf(
+			t,
+			s.GetObject(childID) != nil || s.GetObject(manifest.DocIdentity(sibling)) == nil,
+			"%v",
+			"failed authority restored old child or lost valid sibling",
+		)
 		info, _ := s.GetStatus(owner.Named())
 		assert.Equal(t, info.Status, store.StatusFailed)
 	}
 	corrected := newExecution(c, owner.Named())
 	defer corrected.Close()
 	var next store.Emission
-	_, hit, err := corrected.FingerprintDedup(t.Context(), owner.Named(), "content", &next)
-	{
-		assert.FatalIf(t, hit || err != nil, "failed fingerprint bypassed admission: %t %v", hit, err)
-	}
-	next.Children, next.Manifests, next.Failures = c.ParseChildren(
+	fingerprintDedupResult6, fingerprintDedupResult6Err := corrected.FingerprintDedup(
+		t.Context(),
+		owner.Named(),
+		"content",
+		&next,
+	)
+	_, hit, err := fingerprintDedupResult6.Fingerprint, fingerprintDedupResult6.Reused, fingerprintDedupResult6Err
+	assert.FatalIf(t, hit || err != nil, "failed fingerprint bypassed admission: %t %v", hit, err)
+	parseChildrenResult7 := c.ParseChildren(
 		owner,
 		testutil.DocumentOccurrences([]map[string]any{valid}),
 		manifest.ParseDocOptions{},
 	)
+	next.Children, next.Manifests, next.Failures = parseChildrenResult7.Children, parseChildrenResult7.Visible, parseChildrenResult7.Failures
 	next.Complete, next.Fingerprint = true, manifest.Fingerprint("content")
 	{
-		{
-			err := corrected.Emit(t.Context(), owner.Named(), &next, nil)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := corrected.Emit(t.Context(), owner.Named(), &next, nil)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	corrected.finish(t.Context(), nil)
 	info, _ := s.GetStatus(owner.Named())
-	{
-		assert.FatalIf(
-			t,
-			info.Status != store.StatusReady || s.GetObject(childID) == nil || next.Footprint() == nil,
-			"correction did not recover: %+v",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t,
+		info.Status != store.StatusReady || s.GetObject(childID) == nil || next.Footprint() == nil,
+		"correction did not recover: %+v",
+		info,
+	)
 }

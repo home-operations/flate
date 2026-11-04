@@ -96,14 +96,10 @@ func TestTreeFS_MethodMatrix(t *testing.T) {
 		assert.FatalIf(t, !errors.Is(readDirErr, fs.ErrInvalid), "file listing = %v", readDirErr)
 	}
 	entries, err := adapter.ReadDir("/virtual/root/dir")
-	{
-		assert.FatalIf(t, err != nil || !slices.Equal(entries, []string{"file"}), "ReadDir = %v, %v", entries, err)
-	}
+	assert.FatalIf(t, err != nil || !slices.Equal(entries, []string{"file"}), "ReadDir = %v, %v", entries, err)
 	entries[0] = "mutated"
 	entries, err = adapter.ReadDir("/virtual/root/dir")
-	{
-		assert.FatalIf(t, err != nil || entries[0] != "file", "%s", "ReadDir exposed shared names")
-	}
+	assert.FatalIf(t, err != nil || entries[0] != "file", "%s", "ReadDir exposed shared names")
 }
 
 func TestTreeFS_PrivateWritesAndMergedWalk(t *testing.T) {
@@ -128,15 +124,13 @@ func TestTreeFS_PrivateWritesAndMergedWalk(t *testing.T) {
 		})
 		assert.NoError(t, err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			slices.Contains(walked, "/virtual/app/old") || slices.Contains(walked, "/virtual/app/generated") ||
-				!slices.Contains(walked, "/virtual/keep/file"),
-			"walk = %v",
-			walked,
-		)
-	}
+	assert.FatalIf(
+		t,
+		slices.Contains(walked, "/virtual/app/old") || slices.Contains(walked, "/virtual/app/generated") ||
+			!slices.Contains(walked, "/virtual/keep/file"),
+		"walk = %v",
+		walked,
+	)
 	{
 		err := a.WriteFile("/virtual/app", nil)
 		assert.FatalIf(t, !errors.Is(err, tree.ErrConflict), "write directory = %v", err)
@@ -166,9 +160,7 @@ func TestTreeFS_MountConversion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			fromKyamlGot, err := fromKyaml(tc.root, tc.name, tc.separator)
-			{
-				assert.FatalIf(t, err != nil || fromKyamlGot != tc.want, "fromKyaml = %q, %v", fromKyamlGot, err)
-			}
+			assert.FatalIf(t, err != nil || fromKyamlGot != tc.want, "fromKyaml = %q, %v", fromKyamlGot, err)
 			{
 				got := toKyaml(tc.root, fromKyamlGot, tc.separator)
 				assert.FatalIf(t, got != tc.name, "round trip = %q", got)
@@ -199,9 +191,7 @@ func TestRender_NoConsumerDiskReads(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err != nil || !hasRenderField(out, "name", "tree"), "virtual render = %s, %v", out, err)
-	}
+	assert.FatalIf(t, err != nil || !hasRenderField(out, "name", "tree"), "virtual render = %s, %v", out, err)
 }
 
 func TestRender_AutoGenerateEscape(t *testing.T) {
@@ -224,15 +214,13 @@ func TestRender_AutoGenerateEscape(t *testing.T) {
 				}
 				return err
 			})
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, tree.ErrEscape) || called,
-					"secure Walk = %v, escape callback = %v",
-					err,
-					called,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, tree.ErrEscape) || called,
+				"secure Walk = %v, escape callback = %v",
+				err,
+				called,
+			)
 			_, _, err = testutil.RenderMaps(
 				Render(
 					t.Context(),
@@ -241,9 +229,7 @@ func TestRender_AutoGenerateEscape(t *testing.T) {
 					sourcecache.RetryConfig{},
 				),
 			)
-			{
-				assert.FatalIf(t, !errors.Is(err, tree.ErrEscape), "auto-generation = %v", err)
-			}
+			assert.FatalIf(t, !errors.Is(err, tree.ErrEscape), "auto-generation = %v", err)
 		})
 	}
 }
@@ -270,9 +256,7 @@ func TestRender_ExoticNames(t *testing.T) {
 		if want == nil {
 			want = out
 		}
-		{
-			assert.FatalIf(t, !reflect.DeepEqual(out, want), "%s changed output:\n%s", name, out)
-		}
+		assert.FatalIf(t, !reflect.DeepEqual(out, want), "%s changed output:\n%s", name, out)
 	}
 }
 
@@ -317,9 +301,7 @@ func TestRender_SubPathResolvesLinksBeforeParents(t *testing.T) {
 				),
 			)
 			assert.FatalIf(t, !errors.Is(err, tc.want), "subpath = %v, want %v", err, tc.want)
-			{
-				assert.FatalIf(t, err == nil && !hasRenderField(out, "name", "correct"), "resolved output = %s", out)
-			}
+			assert.FatalIf(t, err == nil && !hasRenderField(out, "name", "correct"), "resolved output = %s", out)
 		})
 	}
 }
@@ -406,15 +388,13 @@ func TestRender_ArtifactIdentity(t *testing.T) {
 				sourcecache.RetryConfig{},
 			),
 		)
-		{
-			assert.FatalIf(
-				t,
-				err != nil || !hasRenderField(out, "name", pin.name),
-				"artifact identity reused stale render: %s %v",
-				out,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || !hasRenderField(out, "name", pin.name),
+			"artifact identity reused stale render: %s %v",
+			out,
+			err,
+		)
 	}
 }
 
@@ -430,9 +410,7 @@ func TestRender_SubPathLeadingSlash(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	for _, subPath := range []string{"/app", "//app", "/./app"} {
 		t.Run(subPath, func(t *testing.T) {
 			t.Parallel()
@@ -444,9 +422,7 @@ func TestRender_SubPathLeadingSlash(t *testing.T) {
 					sourcecache.RetryConfig{},
 				),
 			)
-			{
-				assert.FatalIf(t, err != nil || !reflect.DeepEqual(got, want), "disk render = %q, %v", got, err)
-			}
+			assert.FatalIf(t, err != nil || !reflect.DeepEqual(got, want), "disk render = %q, %v", got, err)
 			source := treeRef(memoryTree(t, files), "pin")
 			got, _, err = testutil.RenderMaps(
 				Render(
@@ -456,9 +432,7 @@ func TestRender_SubPathLeadingSlash(t *testing.T) {
 					sourcecache.RetryConfig{},
 				),
 			)
-			{
-				assert.FatalIf(t, err != nil || !reflect.DeepEqual(got, want), "memory render = %q, %v", got, err)
-			}
+			assert.FatalIf(t, err != nil || !reflect.DeepEqual(got, want), "memory render = %q, %v", got, err)
 		})
 	}
 }
@@ -498,15 +472,13 @@ func TestRender_ReleasedPinRejectsHostContent(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, manifest.ErrInput) || hasRenderField(out, "name", "host"),
-			"released content used host resource: %q, %v",
-			out,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(err, manifest.ErrInput) || hasRenderField(out, "name", "host"),
+		"released content used host resource: %q, %v",
+		out,
+		err,
+	)
 }
 
 type testTreeFSMethodMatrixCaseInputs struct {
@@ -523,55 +495,43 @@ func testTreeFSMethodMatrixCase(t *testing.T, testCaseInput *testTreeFSMethodMat
 
 	name := "/virtual/root/" + testCaseInput.tc.name
 	data, readFileErr := (*testCaseInput.adapter).ReadFile(name)
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(readFileErr, testCaseInput.tc.want) || string(data) != testCaseInput.tc.content,
-			"ReadFile = %q, %v",
-			data,
-			readFileErr,
-		)
-	}
-	{
-		assert.FatalIf(t, (*testCaseInput.adapter).Exists(name) != (testCaseInput.tc.want == nil) ||
-			(*testCaseInput.adapter).IsDir(name), "%s", "probe mismatch")
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(readFileErr, testCaseInput.tc.want) || string(data) != testCaseInput.tc.content,
+		"ReadFile = %q, %v",
+		data,
+		readFileErr,
+	)
+	assert.FatalIf(t, (*testCaseInput.adapter).Exists(name) != (testCaseInput.tc.want == nil) ||
+		(*testCaseInput.adapter).IsDir(name), "%s", "probe mismatch")
 	file, readFileErr := (*testCaseInput.adapter).Open(name)
-	{
-		assert.FatalIf(t, !errors.Is(readFileErr, testCaseInput.tc.want), "Open = %v", readFileErr)
-	}
+	assert.FatalIf(t, !errors.Is(readFileErr, testCaseInput.tc.want), "Open = %v", readFileErr)
 	if readFileErr == nil {
 		defer file.Close()
 		data, readAllErr := io.ReadAll(file)
-		{
-			assert.FatalIf(
-				t,
-				readAllErr != nil || string(data) != testCaseInput.tc.content,
-				"Open read = %q, %v",
-				data,
-				readAllErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			readAllErr != nil || string(data) != testCaseInput.tc.content,
+			"Open read = %q, %v",
+			data,
+			readAllErr,
+		)
 		{
 			_, writeErr := file.Write([]byte("mutate"))
 			assert.FatalIf(t, !errors.Is(writeErr, fs.ErrPermission), "read-only Write = %v", writeErr)
 		}
 		info, readAllErr := file.Stat()
-		{
-			assert.FatalIf(
-				t,
-				readAllErr != nil || info.Size() != int64(len(testCaseInput.tc.content)) ||
-					info.Name() != filepath.Base(name),
-				"Stat = %v, %v",
-				info,
-				readAllErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			readAllErr != nil || info.Size() != int64(len(testCaseInput.tc.content)) ||
+				info.Name() != filepath.Base(name),
+			"Stat = %v, %v",
+			info,
+			readAllErr,
+		)
 	}
 	_, _, readFileErr = (*testCaseInput.adapter).CleanedAbs(name)
-	{
-		assert.FatalIf(t, !errors.Is(readFileErr, testCaseInput.tc.want), "CleanedAbs = %v", readFileErr)
-	}
+	assert.FatalIf(t, !errors.Is(readFileErr, testCaseInput.tc.want), "CleanedAbs = %v", readFileErr)
 	if errors.Is(testCaseInput.tc.want, tree.ErrEscape) {
 		{
 			_, ok := errors.AsType[*fluxfilesys.ConstraintError](readFileErr)

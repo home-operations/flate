@@ -144,17 +144,13 @@ func TestSubstitutionNames_EvaluatorReads(t *testing.T) {
 			t.Parallel()
 			doc := map[string]any{"${KEY}": expression}
 			raw, err := yamlv3.Marshal(doc)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			want := make(map[string]struct{})
 			_, err = envsubst.Eval(string(raw), func(name string) (string, bool) {
 				want[name] = struct{}{}
 				return "1", true
 			})
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			{
 				diff := cmp.Diff(
 					want,
@@ -242,9 +238,7 @@ func testSubstituteDocPrecheckEquivalenceCase(
 
 	got, gotErr := substituteDoc(testCaseInput.doc, testCaseInput.vars, testCaseInput.strict)
 	if testCaseInput.want != nil {
-		{
-			assert.FatalIf(t, gotErr != nil, "substituteDoc: %v", gotErr)
-		}
+		assert.FatalIf(t, gotErr != nil, "substituteDoc: %v", gotErr)
 		{
 			diff := cmp.Diff(testCaseInput.want, got)
 			assert.ErrorIf(t, diff != "", "substitution (-want +got):\n%s", diff)
@@ -252,15 +246,11 @@ func testSubstituteDocPrecheckEquivalenceCase(
 	}
 	raw, err := yaml.Marshal(testCaseInput.doc)
 	if err != nil {
-		{
-			assert.FatalIf(t, gotErr == nil, "precheck error = nil, round-trip error = %v", err)
-		}
+		assert.FatalIf(t, gotErr == nil, "precheck error = nil, round-trip error = %v", err)
 		return
 	}
 	node, err := kyaml.Parse(string(raw))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	vars := make(map[string]any, len(testCaseInput.vars))
 	for key, value := range testCaseInput.vars {
 		vars[key] = value
@@ -278,20 +268,14 @@ func testSubstituteDocPrecheckEquivalenceCase(
 		fluxkustomize.SubstituteWithAlways(true),
 		fluxkustomize.SubstituteWithStrict(testCaseInput.strict),
 	)
-	{
-		assert.FatalIf(t, (gotErr != nil) != (err != nil), "precheck error = %v, Flux error = %v", gotErr, err)
-	}
+	assert.FatalIf(t, (gotErr != nil) != (err != nil), "precheck error = %v, Flux error = %v", gotErr, err)
 	if err != nil {
 		return
 	}
 	raw, err = res.MarshalJSON()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	encoded, err := json.Marshal(got)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	{
 		diff := cmp.Diff(string(raw), string(encoded))
 		assert.ErrorIf(t, diff != "", "precheck equivalence (-want +got):\n%s", diff)
@@ -326,14 +310,12 @@ func testRenderRequestContentUnprovedAlwaysCase(
 		next := ks.Clone()
 		next.PostBuild.Substitute["OTHER"] = "second"
 		req.Spec = next
-		{
-			assert.FatalIf(
-				t,
-				manifest.Fingerprint(req.Content(docs)) == before,
-				"%s",
-				"unproved syntax omitted the conservative whole bag",
-			)
-		}
+		assert.FatalIf(
+			t,
+			manifest.Fingerprint(req.Content(docs)) == before,
+			"%s",
+			"unproved syntax omitted the conservative whole bag",
+		)
 	}
 	err := Shape(ks, docs, false)
 	assert.FatalIf(
@@ -343,7 +325,5 @@ func testRenderRequestContentUnprovedAlwaysCase(
 		err,
 		testCaseInput.invalid,
 	)
-	{
-		assert.FatalIf(t, manifest.Fingerprint(content) != before, "%s", "Shape mutated the captured content")
-	}
+	assert.FatalIf(t, manifest.Fingerprint(content) != before, "%s", "Shape mutated the captured content")
 }

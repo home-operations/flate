@@ -466,7 +466,12 @@ func cloneModelWorld(w modelWorld) modelWorld {
 	return clone
 }
 
-func applyModelOperations(before modelWorld, operations []modelOperation) (modelWorld, map[string]int) {
+type appliedModel struct {
+	world       modelWorld
+	unsupported map[string]int
+}
+
+func applyModelOperations(before modelWorld, operations []modelOperation) appliedModel {
 	after := cloneModelWorld(before)
 	unsupported := make(map[string]int)
 	{
@@ -510,7 +515,7 @@ func applyModelOperations(before modelWorld, operations []modelOperation) (model
 		}
 	}
 	after.static = renderModelStaticRoots(after, before)
-	return after, unsupported
+	return appliedModel{world: after, unsupported: unsupported}
 }
 
 type modelBytes struct {
@@ -626,29 +631,24 @@ func TestIndependentModel_RenderGrammar(t *testing.T) {
 				}
 				fixture := decodeRenderModelCase(encoded)
 				{
-					{
-						err := checkModelBounds(&fixture.modelCase)
-						assert.FatalIf(t, err != nil, "input=%x: %v", encoded, err)
-					}
+					err := checkModelBounds(&fixture.modelCase)
+					assert.FatalIf(t, err != nil, "input=%x: %v", encoded, err)
 				}
-				replayed, unsupported := applyModelOperations(fixture.before, fixture.operations)
-				{
-					assert.FatalIf(
-						t,
-						!reflect.DeepEqual(replayed, fixture.after) || len(unsupported) != 0,
-						"operation replay differs: input=%x unsupported=%v",
-						encoded,
-						unsupported,
-					)
-				}
-				{
-					assert.FatalIf(
-						t,
-						!reflect.DeepEqual(fixture, decodeRenderModelCase(encoded)),
-						"%v",
-						"composed decoder is nondeterministic",
-					)
-				}
+				applyModelOperationsResult1 := applyModelOperations(fixture.before, fixture.operations)
+				replayed, unsupported := applyModelOperationsResult1.world, applyModelOperationsResult1.unsupported
+				assert.FatalIf(
+					t,
+					!reflect.DeepEqual(replayed, fixture.after) || len(unsupported) != 0,
+					"operation replay differs: input=%x unsupported=%v",
+					encoded,
+					unsupported,
+				)
+				assert.FatalIf(
+					t,
+					!reflect.DeepEqual(fixture, decodeRenderModelCase(encoded)),
+					"%v",
+					"composed decoder is nondeterministic",
+				)
 			}
 		})
 	}

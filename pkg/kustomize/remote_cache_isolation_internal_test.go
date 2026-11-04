@@ -117,28 +117,22 @@ func assertRemoteIsolationResults(t *testing.T, c *TreeCache, results <-chan rem
 		if persisted, _, hit := readTestRenderFrame(t, c, renderKey(&got.request, got.request.Label, nil)); hit {
 			snap = persisted
 		}
-		{
-			assert.FatalIf(
-				t,
-				len(snap.Remotes) != 2 || snap.Remotes[0].Input.URL >= snap.Remotes[1].Input.URL,
-				"remote descriptors not private/deduplicated/sorted: %+v",
-				snap,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(snap.Remotes) != 2 || snap.Remotes[0].Input.URL >= snap.Remotes[1].Input.URL,
+			"remote descriptors not private/deduplicated/sorted: %+v",
+			snap,
+		)
 		control, err := fs.ReadFile(got.request.Source.FS, "kustomization.yaml")
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		for index := range snap.Remotes {
 			entry := &snap.Remotes[index]
-			{
-				assert.FatalIf(
-					t,
-					!bytes.Contains(control, []byte(entry.Input.URL)),
-					"another render's dependency leaked: %+v",
-					*entry,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!bytes.Contains(control, []byte(entry.Input.URL)),
+				"another render's dependency leaked: %+v",
+				*entry,
+			)
 		}
 		for _, file := range snap.Files {
 			{

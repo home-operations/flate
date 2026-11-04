@@ -316,7 +316,13 @@ func testDispatchNodeSelfStatusSettlementCase(
 				)
 				return nil
 			}
-			fp, reused, err := e.FingerprintDedup(t.Context(), id, "unchanged output", &store.Emission{})
+			fingerprintDedupResult1, fingerprintDedupResult1Err := e.FingerprintDedup(
+				t.Context(),
+				id,
+				"unchanged output",
+				&store.Emission{},
+			)
+			fp, reused, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 			if reused || err != nil {
 				return err
 			}
@@ -332,14 +338,12 @@ func testDispatchNodeSelfStatusSettlementCase(
 	s.Seed([]schedule.NodeID{consumer.Named()})
 	err := s.Run(t.Context())
 	if testCaseInput.feedback {
-		{
-			assert.FatalIf(
-				t,
-				err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches"),
-				"feedback did not reach its bound: %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches"),
+			"feedback did not reach its bound: %v",
+			err,
+		)
 		return
 	}
 	assert.NoError(t, err)

@@ -268,8 +268,8 @@ func crdReader(crd chart.CRD) io.Reader {
 }
 
 // Placeholder values cannot satisfy constraints intended for resolved secrets.
-func schemaValidationSkipped(hr *manifest.HelmRelease, values map[string]any) bool {
-	return hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(values)
+func schemaValidationSkipped(hr *manifest.HelmRelease, renderValues map[string]any) bool {
+	return hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(renderValues)
 }
 
 func newInstallAction(
@@ -390,7 +390,8 @@ func (c *Client) observeValuesFiles(
 	if len(names) == 0 {
 		return chartValuesEntry{}, nil
 	}
-	cleaned, normalized, normalizeErr := normalizeValuesFiles(names)
+	normalizeValuesFilesResult1, normalizeValuesFilesResult1Err := normalizeValuesFiles(names)
+	cleaned, normalized, normalizeErr := normalizeValuesFilesResult1.names, normalizeValuesFilesResult1.normalized, normalizeValuesFilesResult1Err
 	if normalizeErr != nil {
 		return chartValuesEntry{}, normalizeErr
 	}
@@ -768,13 +769,18 @@ func (r *templateRequest) cachedRecord(_ context.Context, generation fs.FS, iden
 	return record, nil
 }
 
-func normalizeValuesFiles(names []string) ([]string, bool, error) {
+type valuesFiles struct {
+	names      []string
+	normalized bool
+}
+
+func normalizeValuesFiles(names []string) (valuesFiles, error) {
 	cleaned := names
 	normalized := false
 	for i, name := range names {
 		clean := path.Clean(name)
 		if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
-			return nil, false, manifest.NewError(
+			return valuesFiles{names: nil, normalized: false}, manifest.NewError(
 				manifest.ErrInput,
 				fmt.Errorf("read values file %q: %w", name, fs.ErrInvalid),
 				"",
@@ -788,7 +794,7 @@ func normalizeValuesFiles(names []string) ([]string, bool, error) {
 			cleaned[i] = clean
 		}
 	}
-	return cleaned, normalized, nil
+	return valuesFiles{names: cleaned, normalized: normalized}, nil
 }
 
 func (e *chartValuesEntry) observe(

@@ -51,9 +51,7 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 		},
 	)
 	out, _, _, err := Compare(left, right, nil, Options{Format: FormatJSON})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	var result struct {
 		Changes    []Change      `json:"changes"`
 		Suppressed []Suppression `json:"suppressed"`
@@ -62,48 +60,38 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 		unmarshalErr := json.Unmarshal(out, &result)
 		assert.FatalIf(t, unmarshalErr != nil, "%v", unmarshalErr)
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(result.Changes) != 3 || len(result.Suppressed) != 0,
-			"ownerless changes suppressed: %s",
-			out,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(result.Changes) != 3 || len(result.Suppressed) != 0,
+		"ownerless changes suppressed: %s",
+		out,
+	)
 	statuses := map[string]ChangeStatus{}
 	for _, changed := range result.Changes {
-		{
-			assert.FatalIf(
-				t,
-				changed.Parent != (Parent{}) || changed.Kind != "Deployment" || changed.Namespace != "apps",
-				"ownerless identity changed: %+v",
-				changed,
-			)
-		}
+		assert.FatalIf(
+			t,
+			changed.Parent != (Parent{}) || changed.Kind != "Deployment" || changed.Namespace != "apps",
+			"ownerless identity changed: %+v",
+			changed,
+		)
 		statuses[changed.Name] = changed.Status
 	}
-	{
-		assert.FatalIf(t, statuses["changed"] != StatusChanged || statuses["removed"] != StatusRemoved ||
-			statuses["added"] != StatusAdded, "changes = %v", statuses)
-	}
+	assert.FatalIf(t, statuses["changed"] != StatusChanged || statuses["removed"] != StatusRemoved ||
+		statuses["added"] != StatusAdded, "changes = %v", statuses)
 	images, notes, err := CompareImages(left, right, nil, true)
-	{
-		assert.FatalIf(t, err != nil || len(notes) != 0 ||
-			!slices.Equal(
-				images,
-				[]string{
-					"example.test/added:v1",
-					"example.test/app:v1",
-					"example.test/app:v2",
-					"example.test/removed:v1",
-				},
-			), "images = %v, notes = %v, err = %v", images, notes, err)
-	}
+	assert.FatalIf(t, err != nil || len(notes) != 0 ||
+		!slices.Equal(
+			images,
+			[]string{
+				"example.test/added:v1",
+				"example.test/app:v1",
+				"example.test/app:v2",
+				"example.test/removed:v1",
+			},
+		), "images = %v, notes = %v, err = %v", images, notes, err)
 	out, _, _, err = Compare(left, right, nil, Options{Format: FormatDiff})
-	{
-		assert.FatalIf(t, err != nil || bytes.Contains(out, []byte("Kustomization")) ||
-			!bytes.Contains(out, []byte("Deployment apps/changed")), "ownerless heading = %q, err = %v", out, err)
-	}
+	assert.FatalIf(t, err != nil || bytes.Contains(out, []byte("Kustomization")) ||
+		!bytes.Contains(out, []byte("Deployment apps/changed")), "ownerless heading = %q, err = %v", out, err)
 }
 
 func TestCompare_EntryParentDisplay(t *testing.T) {
@@ -134,9 +122,7 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 			originalRight := manifest.DeepCopyMap(after.Manifest)
 			originalSubjects := maps.Clone(left.Subjects)
 			out, warnings, _, err := Compare(left, right, nil, Options{Format: FormatJSON})
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			var result struct {
 				Changes []Change `json:"Changes"`
 			}
@@ -144,29 +130,21 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 				err := json.Unmarshal(out, &result)
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
-			{
-				assert.FatalIf(t, len(result.Changes) != 1 ||
-					result.Changes[0].Parent != (Parent{NamedResource: subject.Resource, Path: subject.Path}) ||
-					bytes.Contains(out, []byte(`\u0000`)), "JSON leaked execution attribution: %s", out)
-			}
-			{
-				assert.FatalIf(t, len(warnings) != 2, "duplicate warnings lost: %+v", warnings)
-			}
+			assert.FatalIf(t, len(result.Changes) != 1 ||
+				result.Changes[0].Parent != (Parent{NamedResource: subject.Resource, Path: subject.Path}) ||
+				bytes.Contains(out, []byte(`\u0000`)), "JSON leaked execution attribution: %s", out)
+			assert.FatalIf(t, len(warnings) != 2, "duplicate warnings lost: %+v", warnings)
 			for _, warning := range warnings {
-				{
-					assert.FatalIf(
-						t,
-						!slices.Contains(warning.Detail, "parent: "+subject.String()),
-						"warning lost captured parent: %+v",
-						warning,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!slices.Contains(warning.Detail, "parent: "+subject.String()),
+					"warning lost captured parent: %+v",
+					warning,
+				)
 			}
 			for _, format := range []Format{FormatHTML, FormatDiff} {
 				out, _, _, err := Compare(left, right, nil, Options{Format: format})
-				{
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				assert.FatalIf(t, err != nil, "%v", err)
 				want := "--- ConfigMap changed (cluster)\n+++ ConfigMap changed (cluster)\n"
 				if format == FormatHTML {
 					label := `entry path "cluster"`
@@ -175,34 +153,26 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 					}
 					want = `<div class="rparent">` + html.EscapeString(label+" (cluster)") + `</div>`
 				}
-				{
-					assert.ErrorIf(t, !bytes.Contains(out, []byte(want)), "%s missing heading %q", format, want)
-				}
+				assert.ErrorIf(t, !bytes.Contains(out, []byte(want)), "%s missing heading %q", format, want)
 			}
-			{
-				assert.ErrorIf(t, !reflect.DeepEqual(left.Manifests[0].Documents[0], originalLeft) ||
-					!reflect.DeepEqual(
-						right.Manifests[0].Documents[0],
-						originalRight,
-					), "%v", "display projection changed snapshot documents")
-			}
-			{
-				assert.ErrorIf(
-					t,
-					!maps.Equal(left.Subjects, originalSubjects) || !maps.Equal(right.Subjects, originalSubjects),
-					"%v",
-					"display projection changed snapshot subjects",
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					left.Manifests[0].Parent.Named() != root.Named() ||
-						right.Manifests[0].Parent.Named() != root.Named(),
-					"%v",
-					"display projection changed raw snapshot parents",
-				)
-			}
+			assert.ErrorIf(t, !reflect.DeepEqual(left.Manifests[0].Documents[0], originalLeft) ||
+				!reflect.DeepEqual(
+					right.Manifests[0].Documents[0],
+					originalRight,
+				), "%v", "display projection changed snapshot documents")
+			assert.ErrorIf(
+				t,
+				!maps.Equal(left.Subjects, originalSubjects) || !maps.Equal(right.Subjects, originalSubjects),
+				"%v",
+				"display projection changed snapshot subjects",
+			)
+			assert.FatalIf(
+				t,
+				left.Manifests[0].Parent.Named() != root.Named() ||
+					right.Manifests[0].Parent.Named() != root.Named(),
+				"%v",
+				"display projection changed raw snapshot parents",
+			)
 		})
 	}
 }

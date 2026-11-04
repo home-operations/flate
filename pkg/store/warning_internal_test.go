@@ -156,9 +156,7 @@ func TestAddWarning_DefensiveCopy(t *testing.T) {
 	detail[0] = "MUTATED"
 
 	got := s.Warnings()
-	{
-		assert.FatalIf(t, len(got) != 1 || got[0].Detail[0] != "x", "stored detail aliased caller slice: %+v", got)
-	}
+	assert.FatalIf(t, len(got) != 1 || got[0].Detail[0] != "x", "stored detail aliased caller slice: %+v", got)
 	got[0].Detail[0] = "ALSO_MUTATED"
 	got[0].Count = 100
 	{
@@ -396,11 +394,9 @@ func TestWarnings_RelatedIdentity(t *testing.T) {
 	a.Accept()
 	b.Accept()
 	warnings := s.Warnings()
-	{
-		assert.FatalIf(t, len(warnings) != 2 || warnings[0].Count != 3 || warnings[1].Count != 3 ||
-			warnings[0].Related[0] != first.Named() ||
-			warnings[1].Related[0] != second.Named(), "origins collapsed: %+v", warnings)
-	}
+	assert.FatalIf(t, len(warnings) != 2 || warnings[0].Count != 3 || warnings[1].Count != 3 ||
+		warnings[0].Related[0] != first.Named() ||
+		warnings[1].Related[0] != second.Named(), "origins collapsed: %+v", warnings)
 	warnings[0].Related[0] = manifest.NamedResource{}
 	{
 		again := s.Warnings()

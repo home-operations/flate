@@ -106,13 +106,13 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 		}
 		for _, file := range evidence.paths {
 			if evidence.paired {
-				_, file = c.coordinates(
+				file = c.coordinates(
 					new(manifest.Production{
 						Source: source,
 						File:   file,
 						Path:   filepath.Join(evidence.input.LocalPath, filepath.FromSlash(file)),
 					}),
-				)
+				).indexed
 			}
 			if !yield(file) {
 				return
@@ -138,7 +138,11 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 		if reader.Declaration == (manifest.NamedResource{}) {
 			return true
 		}
-		if changed, known := c.declarationChanged(reader.Declaration, c.object(reader.Declaration)); known && !changed {
+		if comparison := c.declarationChanged(
+			reader.Declaration,
+			c.object(reader.Declaration),
+		); comparison.Known &&
+			!comparison.Changed {
 			return false
 		}
 		object := c.object(reader.Reader)
@@ -148,7 +152,7 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 				continue
 			}
 			matched = true
-			if changed, known := c.outputChanged(reader.Reader, new(ref), object); !known || changed {
+			if comparison := c.outputChanged(reader.Reader, new(ref), object); !comparison.Known || comparison.Changed {
 				return true
 			}
 		}
@@ -177,14 +181,15 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 	return false
 }
 
-func (c *admissionClosure) coordinates(pValue *manifest.Production) (string, string) {
+type productionCoordinates struct{ relative, indexed string }
+
+func (c *admissionClosure) coordinates(pValue *manifest.Production) productionCoordinates {
 	p := *pValue
 
-	relative, indexed := p.File, p.File
 	if filepath.IsAbs(p.Path) {
-		return c.absoluteCoordinates(&p, &relative, &indexed)
+		return c.absoluteCoordinates(&p)
 	}
-	return relative, indexed
+	return productionCoordinates{relative: p.File, indexed: p.File}
 }
 
 //nolint:gocritic // slices.ContainsFunc requires the value-parameter method type.
@@ -201,11 +206,11 @@ func (c *admissionClosure) changedProduction(p manifest.Production) bool {
 	if delta == nil {
 		return false
 	}
-	relative, indexed := c.coordinates(new(p))
+	coordinates3 := c.coordinates(new(p))
 	if paired {
-		return delta.Contains(relative)
+		return delta.Contains(coordinates3.relative)
 	}
-	return delta.Contains(indexed)
+	return delta.Contains(coordinates3.indexed)
 }
 
 func (c *admissionClosure) reverse(
@@ -346,7 +351,7 @@ func (c *admissionClosure) comparisonInputChanged(
 }
 
 func (c *admissionClosure) fileOwnersUnchanged(indexed string, source manifest.NamedResource) bool {
-	owners, _ := c.loader.Index.OwnersOfFile(indexed)
+	owners := c.loader.Index.OwnersOfFile(indexed).Owners
 	return len(owners) != 0 && !slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool {
 		return c.changedClaim(new(manifest.FileReader{Reader: owner, Source: source}), indexed)
 	})
@@ -360,13 +365,13 @@ func (c *admissionClosure) comparisonIndexedFile(
 ) string {
 	indexed := file
 	if paired && input != nil {
-		_, indexed = c.coordinates(
+		indexed = c.coordinates(
 			new(manifest.Production{
 				Source: source,
 				File:   file,
 				Path:   filepath.Join(input.LocalPath, filepath.FromSlash(file)),
 			}),
-		)
+		).indexed
 	}
 	return indexed
 }
@@ -406,7 +411,7 @@ func (c *admissionClosure) inputSourceMatches(id, consumer, source manifest.Name
 	return false
 }
 
-func (c *admissionClosure) absoluteCoordinates(p *manifest.Production, relative, indexed *string) (string, string) {
+func (c *admissionClosure) absoluteCoordinates(p *manifest.Production) productionCoordinates {
 	evidence := c.boundSource(p.Source)
 	art := evidence.input
 	root := c.loader.SourceRoot
@@ -415,10 +420,10 @@ func (c *admissionClosure) absoluteCoordinates(p *manifest.Production, relative,
 	}
 	rel, err := filepath.Rel(root, p.Path)
 	if err != nil {
-		return "", ""
+		return productionCoordinates{}
 	}
-	(*relative) = filepath.ToSlash(rel)
-	(*indexed) = (*relative)
+	relative := filepath.ToSlash(rel)
+	indexed := relative
 	if evidence.toIndex != "." {
 		physical := p.Path
 		if art != nil && evidence.origin != art.LocalPath {
@@ -426,11 +431,11 @@ func (c *admissionClosure) absoluteCoordinates(p *manifest.Production, relative,
 		}
 		rel, err = filepath.Rel(c.loader.SourceRoot, physical)
 		if err != nil {
-			return "", ""
+			return productionCoordinates{}
 		}
-		(*indexed) = filepath.ToSlash(rel)
+		indexed = filepath.ToSlash(rel)
 	}
-	return (*relative), (*indexed)
+	return productionCoordinates{relative: relative, indexed: indexed}
 }
 
 type comparisonInput struct {

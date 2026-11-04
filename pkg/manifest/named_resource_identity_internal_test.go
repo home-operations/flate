@@ -94,36 +94,28 @@ func testNamedResourceBindLocalCase(t *testing.T, testCaseInput *string,
 	assert.Equal(t, KindOf(obj).APIVersion(), sourcev1.GroupVersion.String())
 	switch *testCaseInput {
 	case KindGitRepository:
-		{
-			g, ok := obj.(*GitRepository)
-			assert.FatalIf(t, !ok || g.URL != "file:///chosen/root" ||
-				g.Provider != sourcev1.GitProviderGeneric, "decoded Git identity: %#v", obj)
-		}
+		g, ok := obj.(*GitRepository)
+		assert.FatalIf(t, !ok || g.URL != "file:///chosen/root" ||
+			g.Provider != sourcev1.GitProviderGeneric, "decoded Git identity: %#v", obj)
 	case KindOCIRepository:
-		{
-			o, ok := obj.(*OCIRepository)
-			assert.FatalIf(t, !ok || o.URL != "file:///chosen/root" ||
-				o.Provider != sourcev1.GenericOCIProvider, "decoded OCI identity: %#v", obj)
-		}
+		o, ok := obj.(*OCIRepository)
+		assert.FatalIf(t, !ok || o.URL != "file:///chosen/root" ||
+			o.Provider != sourcev1.GenericOCIProvider, "decoded OCI identity: %#v", obj)
 	case KindBucket:
-		{
-			b, ok := obj.(*Bucket)
-			assert.FatalIf(t, !ok || b.Endpoint != "file:///chosen/root" || b.BucketName != id.Name ||
-				b.Provider != sourcev1.BucketProviderGeneric, "decoded bucket identity: %#v", obj)
-		}
+		b, ok := obj.(*Bucket)
+		assert.FatalIf(t, !ok || b.Endpoint != "file:///chosen/root" || b.BucketName != id.Name ||
+			b.Provider != sourcev1.BucketProviderGeneric, "decoded bucket identity: %#v", obj)
 	}
 	doc := map[string]any{
 		"apiVersion": sourcev1.GroupVersion.String(),
 		"kind":       (*testCaseInput),
 		"metadata":   map[string]any{"name": id.Name, "namespace": id.Namespace},
 	}
-	_, _, _, err = ParseDoc(doc, defaultParseDocOptions())
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
-			"authored missing spec: %v",
-			err,
-		)
-	}
+	_, err = ParseDoc(doc, defaultParseDocOptions())
+	assert.FatalIf(
+		t,
+		!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
+		"authored missing spec: %v",
+		err,
+	)
 }

@@ -17,9 +17,7 @@ import (
 //nolint:paralleltest // This test changes process-global state.
 func TestReleaseDoc_WithoutAllocations(t *testing.T) {
 	docs, err := decodeDocMaps(strings.NewReader(strings.Repeat("kind: ConfigMap\n---\n", 101)))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	next := 0
 	{
 		got := testing.AllocsPerRun(100, func() {
@@ -66,19 +64,15 @@ func TestDecodeDocs_ScalarValues(t *testing.T) {
 			t.Parallel()
 			docs, err := decodeDocMaps(strings.NewReader(tc.in))
 			if tc.wantErr {
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
-						"want input/Flux error, got %v",
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux),
+					"want input/Flux error, got %v",
+					err,
+				)
 				return
 			}
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			assert.Diff(t, docs, []map[string]any{tc.want})
 		})
 	}
@@ -106,17 +100,11 @@ func TestDecodeDocs_SkipsNonMappingDocs(t *testing.T) {
 			t.Parallel()
 			docs, err := splitDocMaps([]byte(tc.in))
 			if tc.wantErr {
-				{
-					assert.FatalIf(t, err == nil, "expected error, got docs=%v", docs)
-				}
+				assert.FatalIf(t, err == nil, "expected error, got docs=%v", docs)
 				return
 			}
-			{
-				assert.FatalIf(t, err != nil, "unexpected error: %v", err)
-			}
-			{
-				assert.FatalIf(t, len(docs) != tc.want, "got %d docs, want %d: %v", len(docs), tc.want, docs)
-			}
+			assert.FatalIf(t, err != nil, "unexpected error: %v", err)
+			assert.FatalIf(t, len(docs) != tc.want, "got %d docs, want %d: %v", len(docs), tc.want, docs)
 		})
 	}
 }
@@ -125,15 +113,9 @@ func TestDecodeDocs_AdvancesPastSkippedSeq(t *testing.T) {
 	t.Parallel()
 	in := "kind: First\n---\n- not\n- a\n- manifest\n---\nkind: Second\n"
 	docs, err := splitDocMaps([]byte(in))
-	{
-		assert.FatalIf(t, err != nil, "unexpected error: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 2, "got %d docs, want 2: %v", len(docs), docs)
-	}
-	{
-		assert.ErrorIf(t, docs[0]["kind"] != "First" || docs[1]["kind"] != "Second", "wrong docs survived: %v", docs)
-	}
+	assert.FatalIf(t, err != nil, "unexpected error: %v", err)
+	assert.FatalIf(t, len(docs) != 2, "got %d docs, want 2: %v", len(docs), docs)
+	assert.ErrorIf(t, docs[0]["kind"] != "First" || docs[1]["kind"] != "Second", "wrong docs survived: %v", docs)
 }
 
 func TestDecodeDocs_CumulativeSkippedAliasBudget(t *testing.T) {
@@ -168,15 +150,13 @@ func TestDecodeDocs_CumulativeSkippedAliasBudget(t *testing.T) {
 		t.Fatalf("skipped documents reset stream budget: %d documents, %v", len(docs), DocumentFailure(docs))
 	}
 	failure := docs[len(docs)-1].Err
-	{
-		assert.FatalIf(
-			t,
-			!errors.Is(failure, ErrInput) || !errors.Is(failure, ErrFlux) ||
-				!strings.Contains(failure.Error(), "alias"),
-			"invalid stream budget failure: %v",
-			failure,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!errors.Is(failure, ErrInput) || !errors.Is(failure, ErrFlux) ||
+			!strings.Contains(failure.Error(), "alias"),
+		"invalid stream budget failure: %v",
+		failure,
+	)
 }
 
 func TestDecodeDocs_RetainedOutcomes(t *testing.T) {
@@ -227,9 +207,7 @@ func TestRenderCodec_OutcomeOrdinals(t *testing.T) {
 	failure := NewError(ErrInput, nil, "invalid document")
 	docs = append(docs, DocOccurrence{Ordinal: 9, Err: failure})
 	data, err = EncodeRender(docs)
-	{
-		assert.FatalIf(t, data != nil || !errors.Is(err, failure), "failed subset cached: %v %v", data, err)
-	}
+	assert.FatalIf(t, data != nil || !errors.Is(err, failure), "failed subset cached: %v %v", data, err)
 }
 
 func TestDecodeDocs_ReadFailures(t *testing.T) {
@@ -258,31 +236,27 @@ func TestDecodeDocs_ReadFailures(t *testing.T) {
 				assert.Equal(t, docs[0].Ordinal, 0)
 			}
 			failure := docs[len(docs)-1]
-			{
-				assert.FatalIf(
-					t,
-					failure.Ordinal != tc.ordinal || failure.Document != nil || !errors.Is(failure.Err, cause) ||
-						!errors.Is(failure.Err, ErrInput) ||
-						!errors.Is(failure.Err, ErrFlux),
-					"retained read failure = %+v",
-					failure,
-				)
-			}
+			assert.FatalIf(
+				t,
+				failure.Ordinal != tc.ordinal || failure.Document != nil || !errors.Is(failure.Err, cause) ||
+					!errors.Is(failure.Err, ErrInput) ||
+					!errors.Is(failure.Err, ErrFlux),
+				"retained read failure = %+v",
+				failure,
+			)
 		})
 	}
 	for _, cause := range []error{context.Canceled, context.DeadlineExceeded, fmt.Errorf("wrapped: %w", context.Canceled), fmt.Errorf("wrapped: %w", context.DeadlineExceeded)} {
 		t.Run(cause.Error(), func(t *testing.T) {
 			t.Parallel()
 			docs, err := DecodeDocs(&failingDocReader{err: cause}, IncidentalDocuments)
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, cause) || !errors.Is(err, ErrInput) || DocumentFailure(docs) != nil,
-					"cancellation retained: docs=%v err=%v",
-					docs,
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, cause) || !errors.Is(err, ErrInput) || DocumentFailure(docs) != nil,
+				"cancellation retained: docs=%v err=%v",
+				docs,
+				err,
+			)
 		})
 	}
 }
@@ -320,14 +294,12 @@ func testDecodeDocsRetainedOutcomesCase(t *testing.T, testCaseInput *DocumentRol
 			assert.Equal(t, doc.Document["kind"], any("Sibling"))
 			continue
 		}
-		{
-			assert.FatalIf(
-				t,
-				doc.Document != nil || !errors.Is(doc.Err, ErrInput) || !errors.Is(doc.Err, ErrFlux),
-				"invalid outcome: %+v",
-				doc,
-			)
-		}
+		assert.FatalIf(
+			t,
+			doc.Document != nil || !errors.Is(doc.Err, ErrInput) || !errors.Is(doc.Err, ErrFlux),
+			"invalid outcome: %+v",
+			doc,
+		)
 		if doc.Ordinal == 2 {
 			{
 				_, ok := errors.AsType[*yaml.LoadErrors](doc.Err)
@@ -369,15 +341,13 @@ func testDecodeDocsRetainedOutcomesCase2(t *testing.T, testCaseInput *struct {
 					assert.NoError(t, doc.Err)
 					continue
 				}
-				{
-					assert.FatalIf(
-						t,
-						doc.Ordinal != 1 || doc.Document != nil || !errors.Is(doc.Err, ErrInput) ||
-							!errors.Is(doc.Err, ErrFlux),
-						"invalid outcome: %+v",
-						doc,
-					)
-				}
+				assert.FatalIf(
+					t,
+					doc.Ordinal != 1 || doc.Document != nil || !errors.Is(doc.Err, ErrInput) ||
+						!errors.Is(doc.Err, ErrFlux),
+					"invalid outcome: %+v",
+					doc,
+				)
 				_, constructor := errors.AsType[*yaml.LoadErrors](doc.Err)
 				assert.Equal(t, constructor, testCaseInput.constructor)
 			}

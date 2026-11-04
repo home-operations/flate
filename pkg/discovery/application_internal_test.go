@@ -203,7 +203,8 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			)
 			documents, err := manifest.DecodeDocs(strings.NewReader(applier), manifest.RequiredDocuments)
 			assert.NoError(t, err)
-			object, _, _, err := manifest.ParseDoc(documents[0].Document, manifest.ParseDocOptions{})
+			parsed, err := manifest.ParseDoc(documents[0].Document, manifest.ParseDocOptions{})
+			object := parsed.Object
 			assert.NoError(t, err)
 			st.AddObject(object)
 			a.AddApplication(st, object)

@@ -28,8 +28,8 @@ type ignoreSet struct {
 func (r *documentReader) loadIgnore(root string) (*ignoreSet, error) {
 	dr := *r
 	file := filepath.Join(root, ".krmignore")
-	input, name := new(dr).input(file)
-	f, err := input.Open(name)
+	inputFile := new(dr).input(file)
+	f, err := inputFile.fs.Open(inputFile.name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return &ignoreSet{}, nil
@@ -47,11 +47,11 @@ func (r *documentReader) loadIgnoreFile(ctx context.Context, path, root string) 
 	if err != nil {
 		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
 	}
-	input, name := new(dr).input(abs)
+	inputFile2 := new(dr).input(abs)
 	mounted := new(dr).mountedRoot(abs)
 	if mounted == "" {
 		// Only the explicitly named option may admit a file outside source mounts.
-		input, _, err = gittree.New(
+		inputFile2.fs, _, err = gittree.New(
 			ctx,
 			nil,
 			plumbing.ZeroHash,
@@ -60,9 +60,9 @@ func (r *documentReader) loadIgnoreFile(ctx context.Context, path, root string) 
 		if err != nil {
 			return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
 		}
-		name = filepath.Base(abs)
+		inputFile2.name = filepath.Base(abs)
 	}
-	f, err := input.Open(name)
+	f, err := inputFile2.fs.Open(inputFile2.name)
 	if err != nil {
 		return &ignoreSet{}, fmt.Errorf("loader: read krmignore %q: %w", path, err)
 	}

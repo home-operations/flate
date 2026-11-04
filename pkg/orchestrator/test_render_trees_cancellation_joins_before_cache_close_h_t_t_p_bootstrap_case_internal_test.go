@@ -94,15 +94,13 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseHTTPBootstrapCase(
 	}
 	cancel()
 	{
-		{
-			err := <-done
-			assert.FatalIf(t, !errors.Is(err, context.Canceled) || errors.Is(err, fs.ErrClosed) ||
-				strings.Count(err.Error(), "orig snapshot:") != wantOrigErrors ||
-				strings.Count(
-					err.Error(),
-					"current snapshot:",
-				) != 1, "HTTP bootstrap teardown lost a side or closed backing early: %v", err)
-		}
+		err := <-done
+		assert.FatalIf(t, !errors.Is(err, context.Canceled) || errors.Is(err, fs.ErrClosed) ||
+			strings.Count(err.Error(), "orig snapshot:") != wantOrigErrors ||
+			strings.Count(
+				err.Error(),
+				"current snapshot:",
+			) != 1, "HTTP bootstrap teardown lost a side or closed backing early: %v", err)
 	}
 	for range active {
 		<-completed
@@ -122,13 +120,11 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseHTTPBootstrapCase(
 		assert.NoError(t, cfg.Cache.Close())
 	}
 	res, err := sourcecache.Sweep(t.Context(), cfg.CacheDir, sourcecache.SweepOpts{})
-	{
-		assert.FatalIf(
-			t,
-			err != nil || len(res.Errors) != 0,
-			"HTTP bootstrap retained backing after both sides joined: %+v %v",
-			res,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || len(res.Errors) != 0,
+		"HTTP bootstrap retained backing after both sides joined: %+v %v",
+		res,
+		err,
+	)
 }

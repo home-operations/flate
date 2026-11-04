@@ -62,25 +62,21 @@ func testFeasibilityPointerOnlyExistingSectionCase(
 		s.RecordEmitted(p.Named(), &Emission{Children: []Child{changed}, Complete: true}, nil)
 	})
 	tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication task panicked")
-	}
+	assert.FatalIf(t, tasks.Failures() != 0, "%s", "publication task panicked")
 	_, _, retained := s.GetEmission(p.Named())
 	defer retained.Finish()
-	{
-		assert.FatalIf(
-			t,
-			!slices.EqualFunc(retained.Children, []Child{changed}, Child.equal),
-			"%s",
-			"retry changed the accepted replacement children",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(emissionChild("new", "b").Obj.Named()) != nil,
-			"%s",
-			"retry installed a proposed target",
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		!slices.EqualFunc(retained.Children, []Child{changed}, Child.equal),
+		"%s",
+		"retry changed the accepted replacement children",
+	)
+
+	assert.FatalIf(
+		t,
+		s.GetObject(emissionChild("new", "b").Obj.Named()) != nil,
+		"%s",
+		"retry installed a proposed target",
+	)
 }

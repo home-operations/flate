@@ -20,7 +20,7 @@ func TestIntegration_KeepCascadeIsBlockedByAncestorOnlyEmitter(t *testing.T) {
 	testutil.WriteFile(t, dir, "kubernetes/apps/media/kustomization.yaml", "resources: [plex/ks.yaml]\n")
 	testutil.WriteFile(t, dir, "kubernetes/apps/db/kustomization.yaml", "resources: [postgres/ks.yaml]\n")
 
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/flux/cluster.yaml"), "---\n"+
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes", "flux", "cluster.yaml"), "---\n"+
 		`apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
@@ -40,7 +40,7 @@ spec:
 
 	testutil.WriteFileAt(
 		t,
-		filepath.Join(dir, "kubernetes/apps/media/ks.yaml"),
+		filepath.Join(dir, "kubernetes", "apps", "media", "ks.yaml"),
 		testutil.KustomizationYAML("media-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps/media
   prune: true
@@ -52,7 +52,7 @@ spec:
 	)
 	testutil.WriteFileAt(
 		t,
-		filepath.Join(dir, "kubernetes/apps/db/ks.yaml"),
+		filepath.Join(dir, "kubernetes", "apps", "db", "ks.yaml"),
 		testutil.KustomizationYAML("db-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps/db
   prune: true
@@ -65,7 +65,7 @@ spec:
 
 	testutil.WriteFileAt(
 		t,
-		filepath.Join(dir, "kubernetes/apps/media/plex/ks.yaml"),
+		filepath.Join(dir, "kubernetes", "apps", "media", "plex", "ks.yaml"),
 		testutil.KustomizationYAML("plex", "media", `  interval: 10m
   path: ./kubernetes/apps/media/plex/app
   prune: true
@@ -77,7 +77,7 @@ spec:
 	)
 	testutil.WriteFileAt(
 		t,
-		filepath.Join(dir, "kubernetes/apps/db/postgres/ks.yaml"),
+		filepath.Join(dir, "kubernetes", "apps", "db", "postgres", "ks.yaml"),
 		testutil.KustomizationYAML("postgres", "db", `  interval: 10m
   path: ./kubernetes/apps/db/postgres/app
   prune: true
@@ -88,12 +88,12 @@ spec:
 `),
 	)
 
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes", "apps", "media", "plex", "app", "kustomization.yaml"),
 		"resources: [./cm.yaml]\n")
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/postgres/app/kustomization.yaml"),
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes", "apps", "db", "postgres", "app", "kustomization.yaml"),
 		"resources: [./cm.yaml]\n")
 
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/media/plex/app/cm.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes", "apps", "media", "plex", "app", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -102,7 +102,7 @@ metadata:
 data:
   changed: "yes"
 `)
-	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/db/postgres/app/cm.yaml"), `---
+	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes", "apps", "db", "postgres", "app", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -118,17 +118,13 @@ data:
 				Cluster: ".",
 				Side:    manifest.TreeHead,
 			},
-			Path:            filepath.Join(dir, "kubernetes/flux"),
+			Path:            filepath.Join(dir, "kubernetes", "flux"),
 			RepoRoot:        dir,
 			ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
 		},
 	}, orchestrator.Config{WipeSecrets: true, Concurrency: 2})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	{
-		assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed tree")
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
+	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed tree")
 	o := runs[0].Orchestrator
 
 	plex := testutil.KustomizationID("media", "plex")
@@ -142,14 +138,12 @@ data:
 			t.Errorf("%s: no status reported (expected reconciled)", id)
 			return
 		}
-		{
-			assert.ErrorIf(
-				t,
-				info.Outcome() == store.OutcomeUnchanged,
-				"%s: expected reconciled, got OutcomeUnchanged — keep-cascade fix did not pull this into keep",
-				id,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			info.Outcome() == store.OutcomeUnchanged,
+			"%s: expected reconciled, got OutcomeUnchanged — keep-cascade fix did not pull this into keep",
+			id,
+		)
 	}
 	requireUnadmitted := func(id manifest.NamedResource) {
 		t.Helper()

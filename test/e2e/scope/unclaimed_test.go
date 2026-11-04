@@ -28,7 +28,7 @@ func TestE2E_UnclaimedPathWithoutHistory(t *testing.T) {
 		},
 	)
 	testutil.WriteFile(t, root, "unclaimed/notes.txt", "after\n")
-	first, _ := harness.RequireCLIOK(
+	requireCLIOKResult1 := harness.RequireCLIOK(
 		t,
 		"diff",
 		"all",
@@ -44,7 +44,8 @@ func TestE2E_UnclaimedPathWithoutHistory(t *testing.T) {
 		"--cache-dir",
 		t.TempDir(),
 	)
-	second, _ := harness.RequireCLIOK(
+	first, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+	requireCLIOKResult2 := harness.RequireCLIOK(
 		t,
 		"diff",
 		"all",
@@ -60,6 +61,7 @@ func TestE2E_UnclaimedPathWithoutHistory(t *testing.T) {
 		"--cache-dir",
 		t.TempDir(),
 	)
+	second, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	assert.Equal(t, first, "")
 	assert.Equal(t, second, first)
 }

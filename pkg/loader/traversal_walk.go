@@ -26,10 +26,11 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 	if w.policy != traversalAdmission {
 		abs = filepath.Join(v.root, v.dir)
 	}
-	if done, more := w.prepareVisit(&v, abs, yield); done {
-		return more
+	if decision := w.prepareVisit(&v, abs, yield); decision.done {
+		return decision.more
 	}
-	d, file := w.documents.read(abs)
+	builder := w.documents.read(abs)
+	d, file := builder.body, builder.file
 	cached := w.documents.cache[abs]
 	if !w.proceed(ctx) {
 		return false
@@ -143,7 +144,7 @@ type directoryEntry struct {
 	entry fs.DirEntry
 }
 
-func (w *traversal) prepareVisit(visit *graphVisit, abs string, yield func(graphVisit) bool) (bool, bool) {
+func (w *traversal) prepareVisit(visit *graphVisit, abs string, yield func(graphVisit) bool) traversalDecision {
 	switch w.policy {
 	case traversalScope:
 		if _, ok := kustpath.Resolve(
@@ -152,36 +153,36 @@ func (w *traversal) prepareVisit(visit *graphVisit, abs string, yield func(graph
 			kustpath.Root,
 		); !ok || !safepath.Contains(visit.root, abs) ||
 			new(w.documents).mountedRoot(abs) != new(w.documents).mountedRoot(visit.root) {
-			return true, true
+			return traversalDecision{done: true, more: true}
 		}
 		visit.file, visit.coordinate, visit.document = abs, path.Join(visit.prefix, visit.dir), nil
 		if visit.role == kustomizeinput.File {
-			return true, yield(*visit)
+			return traversalDecision{done: true, more: yield(*visit)}
 		}
 	case traversalAdmission:
 		if visit.deferMaterialization {
 			if w.shouldSkipDir(visit.root, filepath.Base(abs), abs) {
-				return true, true
+				return traversalDecision{done: true, more: true}
 			}
 			cached := w.documents.cache[abs]
 			cached.adHoc = true
 			w.documents.cache[abs] = cached
 		} else {
 			if _, seen := w.directories[abs]; seen {
-				return true, true
+				return traversalDecision{done: true, more: true}
 			}
 			w.directories[abs] = struct{}{}
 		}
 	case traversalProof:
 		if w.depth > transformerScanMaxDepth {
-			return true, true
+			return traversalDecision{done: true, more: true}
 		}
 		if _, seen := w.directories[visit.dir]; seen {
-			return true, true
+			return traversalDecision{done: true, more: true}
 		}
 		w.directories[visit.dir] = struct{}{}
 	}
-	return false, false
+	return traversalDecision{}
 }
 
 func (w *traversal) acceptDocument(ctx context.Context, visit *graphVisit, cached *document, input walkDocument) bool {
@@ -213,8 +214,8 @@ func (w *traversal) walkDirectory(
 	if !w.proceed(ctx) {
 		return false
 	}
-	input, name := new(w.documents).input(abs)
-	entries, err := fs.ReadDir(input, name)
+	inputFile := new(w.documents).input(abs)
+	entries, err := fs.ReadDir(inputFile.fs, inputFile.name)
 	if err != nil && w.policy == traversalAdmission {
 		w.err = err
 		return false
@@ -271,8 +272,8 @@ func (w *traversal) opaqueConfiguration(
 	}
 	if cached.plugins == nil {
 		var plugins []pluginInputs
-		input, name := new(w.documents).input(visit.file)
-		body, readErr := fs.ReadFile(input, name)
+		inputFile2 := new(w.documents).input(visit.file)
+		body, readErr := fs.ReadFile(inputFile2.fs, inputFile2.name)
 		resources, parseErr := kustomizeinput.Resources(body)
 		if readErr == nil && parseErr == nil {
 			for _, resource := range resources {

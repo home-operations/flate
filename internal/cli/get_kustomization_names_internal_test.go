@@ -75,7 +75,8 @@ func runGetKSNameCommand(t *testing.T, command *string, root *string, capturedIn
 				"-o",
 				format,
 			)
-			stdout, stderr, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(t, code != 0, "exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			if format == "table" {
 				name, width := "apps", 8

@@ -61,16 +61,14 @@ stringData:
 `
 	doc := mustYAML(t, yamlDoc)
 
-	s1obj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+	parsed, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+	s1obj := parsed.Object
 	s1 := s1obj.(*Secret)
-	{
-		assert.FatalIf(t, err != nil, "first parse: %v", err)
-	}
-	s2obj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+	assert.FatalIf(t, err != nil, "first parse: %v", err)
+	parsed2, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+	s2obj := parsed2.Object
 	s2 := s2obj.(*Secret)
-	{
-		assert.FatalIf(t, err != nil, "second parse: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "second parse: %v", err)
 
 	if s1.Data["enc"] != s2.Data["enc"] || s1.Data["token"] != s2.Data["token"] {
 		t.Errorf("data not idempotent: first=%v second=%v", s1.Data, s2.Data)
@@ -80,14 +78,12 @@ stringData:
 	}
 
 	gotData := doc["data"].(map[string]any)
-	{
-		assert.ErrorIf(
-			t,
-			gotData["token"] != "c2VjcmV0" || gotData["enc"] != sops,
-			"parseSecret mutated doc[\"data\"]: %v",
-			gotData,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		gotData["token"] != "c2VjcmV0" || gotData["enc"] != sops,
+		"parseSecret mutated doc[\"data\"]: %v",
+		gotData,
+	)
 	{
 		got := doc["stringData"].(map[string]any)["apiKey"]
 		assert.ErrorIf(
@@ -106,14 +102,13 @@ func testParseSecretSopsWipedPlaintextPreserved(
 ) {
 	t.Helper()
 
-	sobj, _, _, err := ParseDoc(
+	parsed3, err := ParseDoc(
 		mustYAML(t, (*testCaseInput)),
 		ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""},
 	)
+	sobj := parsed3.Object
 	s := sobj.(*Secret)
-	{
-		assert.FatalIf(t, err != nil, "parseSecret: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseSecret: %v", err)
 	if s.Data["password"] != "dGVzdA==" {
 		t.Errorf("plaintext .data wiped: %v", s.Data["password"])
 	}
@@ -139,14 +134,13 @@ func testParseSecretPreservedWithWipeSecretsFalse(
 	t.Helper()
 	const sops = "ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]"
 
-	sobj, _, _, err := ParseDoc(
+	parsed4, err := ParseDoc(
 		mustYAML(t, (*testCaseInput)),
 		ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""},
 	)
+	sobj := parsed4.Object
 	s := sobj.(*Secret)
-	{
-		assert.FatalIf(t, err != nil, "parseSecret: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseSecret: %v", err)
 	if s.Data["password"] != "dGVzdA==" || s.Data["enc-blob"] != sops {
 		t.Errorf("value changed despite wipeSecrets=false: %v", s.Data)
 	}
@@ -164,11 +158,10 @@ metadata: {name: wordpress-values, namespace: default}
 data:
   values.yaml: `+base64.StdEncoding.EncodeToString([]byte(valuesYAML))+`
 `)
-	sobj, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+	parsed5, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
+	sobj := parsed5.Object
 	s := sobj.(*Secret)
-	{
-		assert.FatalIf(t, err != nil, "parseSecret: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "parseSecret: %v", err)
 	wantB64 := base64.StdEncoding.EncodeToString([]byte(valuesYAML))
 	if s.Data["values.yaml"] != wantB64 {
 		t.Errorf("embedded YAML changed: %v", s.Data["values.yaml"])

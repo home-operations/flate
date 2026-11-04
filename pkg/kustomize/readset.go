@@ -178,16 +178,14 @@ func (rs *readSet) snapshot() readSetSnapshot {
 	if len(rs.remotes) == 0 {
 		remotes = nil
 	}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for input, observation := range rs.remotes {
-			entry := remoteEntry{Input: input, Identity: observation.identity}
-			for parent := range observation.parents {
-				entry.Parents = append(entry.Parents, parent)
-			}
-			slices.SortFunc(entry.Parents, compareRemoteInputs)
-			remotes = append(remotes, entry)
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for input, observation := range rs.remotes {
+		entry := remoteEntry{Input: input, Identity: observation.identity}
+		for parent := range observation.parents {
+			entry.Parents = append(entry.Parents, parent)
 		}
+		slices.SortFunc(entry.Parents, compareRemoteInputs)
+		remotes = append(remotes, entry)
 	}
 	slices.SortFunc(remotes, func(a, b remoteEntry) int { return compareRemoteInputs(a.Input, b.Input) })
 	rs.mu.Lock()

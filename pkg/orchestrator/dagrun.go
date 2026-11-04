@@ -175,7 +175,7 @@ func (o *Orchestrator) includeNode(id manifest.NamedResource) bool {
 func (d dagDispatcher) admitRawRoots(ctx context.Context) bool {
 	var reads *store.ReadSet
 	for id, record := range d.o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		_, selected, _, _ := d.o.filter.Membership(id)
+		selected := d.o.filter.Membership(id).Selected
 		if selected && record.Path != "" && record.Parent == (manifest.NamedResource{}) &&
 			record.BuilderOwner == (manifest.NamedResource{}) &&
 			d.o.loader.AdmitsRoot(d.o.loader.CatalogObject(id), record.Path) &&

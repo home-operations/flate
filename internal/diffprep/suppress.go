@@ -142,7 +142,7 @@ func unavailableReason(info store.StatusInfo, side Side) string {
 
 // Suppress withholds unavailable producer batches on both comparison sides.
 // Producer identity excludes paths; counts measure withheld document entries.
-func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.DocumentBatch, []Suppression) {
+func Suppress(orig, current Snapshot) SuppressionResult {
 	plans := selectedSuppressionPlans(orig, current)
 	l, r := orig.keep(plans, SideOrig), current.keep(plans, SideCurrent)
 	suppressed := slices.Grow([]Suppression(nil), len(plans))
@@ -165,7 +165,7 @@ func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.Docu
 	slices.SortFunc(suppressed, func(a, b Suppression) int {
 		return a.Parent.Compare(b.Parent.NamedResource)
 	})
-	return l, r, suppressed
+	return SuppressionResult{Orig: l, Current: r, Suppressed: suppressed}
 }
 
 func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Side) []manifest.DocumentBatch {
@@ -192,4 +192,10 @@ func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Si
 		plans[key] = plan
 	}
 	return out
+}
+
+// SuppressionResult keeps both retained sides with their shared withholding reasons.
+type SuppressionResult struct {
+	Orig, Current []manifest.DocumentBatch
+	Suppressed    []Suppression
 }

@@ -53,15 +53,13 @@ func TestExecution_Dispatch(t *testing.T) {
 	s.AddObject(susHR)
 	dispatch(susHR.Named())
 	{
-		{
-			info, _ := s.GetStatus(susHR.Named())
-			assert.ErrorIf(
-				t,
-				info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
-				"suspended HR status = %+v; want Ready/suspended via preGate",
-				info,
-			)
-		}
+		info, _ := s.GetStatus(susHR.Named())
+		assert.ErrorIf(
+			t,
+			info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
+			"suspended HR status = %+v; want Ready/suspended via preGate",
+			info,
+		)
 	}
 
 	pfHR := &manifest.HelmRelease{
@@ -72,10 +70,8 @@ func TestExecution_Dispatch(t *testing.T) {
 	s.AddObject(pfHR)
 	dispatch(pfHR.Named())
 	{
-		{
-			info, _ := s.GetStatus(pfHR.Named())
-			assert.ErrorIf(t, info.Status != store.StatusFailed, "preflight-failed HR status = %+v; want Failed", info)
-		}
+		info, _ := s.GetStatus(pfHR.Named())
+		assert.ErrorIf(t, info.Status != store.StatusFailed, "preflight-failed HR status = %+v; want Failed", info)
 	}
 
 	hr := &manifest.HelmRelease{
@@ -86,17 +82,13 @@ func TestExecution_Dispatch(t *testing.T) {
 	s.AddObject(hr)
 	dispatch(hr.Named())
 	{
-		{
-			info, _ := s.GetStatus(hr.Named())
-			assert.ErrorIf(t, info.Status != store.StatusReady, "clean HR status = %+v; want Ready", info)
-		}
+		info, _ := s.GetStatus(hr.Named())
+		assert.ErrorIf(t, info.Status != store.StatusReady, "clean HR status = %+v; want Ready", info)
 	}
 
 	{
-		{
-			got := ran.Load()
-			assert.ErrorIf(t, got != 1, "reconcile ran %d times; want 1 (only the clean, preflight-clean HR)", got)
-		}
+		got := ran.Load()
+		assert.ErrorIf(t, got != 1, "reconcile ran %d times; want 1 (only the clean, preflight-clean HR)", got)
 	}
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	chart.Suspend = true
@@ -162,49 +154,44 @@ func TestFingerprintDedup(t *testing.T) {
 	s.AddObject(ks)
 	id := ks.Named()
 	docs := []map[string]any{{"kind": "ConfigMap"}}
-	fp, handled, err := controllertest.NewExecution(c, id).
+	fingerprintDedupResult1, fingerprintDedupResult1Err := controllertest.NewExecution(c, id).
 		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
-	{
-		assert.FatalIf(t, fp == "" || handled || err != nil, "first key = %q, handled=%v, err=%v", fp, handled, err)
-	}
+	fp, handled, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+	assert.FatalIf(t, fp == "" || handled || err != nil, "first key = %q, handled=%v, err=%v", fp, handled, err)
 	s.RecordEmitted(
 		id,
 		&store.Emission{Manifests: testutil.DocumentOccurrences(docs), Fingerprint: fp, Complete: true},
 		nil,
 	)
 	{
-		{
-			_, handled, err := controllertest.NewExecution(c, id).
-				FingerprintDedup(t.Context(), id, "other", &store.Emission{})
-			assert.ErrorIf(t, handled ||
-				err != nil, "mismatch: handled=%v err=%v; want false,nil", handled, err)
-		}
+		fingerprintDedupResult2, fingerprintDedupResult2Err := controllertest.NewExecution(c, id).
+			FingerprintDedup(t.Context(), id, "other", &store.Emission{})
+		_, handled, err := fingerprintDedupResult2.Fingerprint, fingerprintDedupResult2.Reused, fingerprintDedupResult2Err
+		assert.ErrorIf(t, handled ||
+			err != nil, "mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
 	foreign := id
 	foreign.Group = "other.example"
 	{
-		{
-			_, handled, err := controllertest.NewExecution(c, foreign).
-				FingerprintDedup(t.Context(), foreign, []string{"one"}, &store.Emission{})
-			assert.FatalIf(t, handled ||
-				err != nil, "foreign group: handled=%v err=%v; want false,nil", handled, err)
-		}
+		fingerprintDedupResult3, fingerprintDedupResult3Err := controllertest.NewExecution(c, foreign).
+			FingerprintDedup(t.Context(), foreign, []string{"one"}, &store.Emission{})
+		_, handled, err := fingerprintDedupResult3.Fingerprint, fingerprintDedupResult3.Reused, fingerprintDedupResult3Err
+		assert.FatalIf(t, handled ||
+			err != nil, "foreign group: handled=%v err=%v; want false,nil", handled, err)
 	}
 	{
-		{
-			got, handled, err := controllertest.NewExecution(c, id).
-				FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
-			assert.ErrorIf(t, !handled || err != nil ||
-				got != fp, "match: key=%q handled=%v err=%v; want %q,true,nil", got, handled, err, fp)
-		}
+		fingerprintDedupResult4, fingerprintDedupResult4Err := controllertest.NewExecution(c, id).
+			FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
+		got, handled, err := fingerprintDedupResult4.Fingerprint, fingerprintDedupResult4.Reused, fingerprintDedupResult4Err
+		assert.ErrorIf(t, !handled || err != nil ||
+			got != fp, "match: key=%q handled=%v err=%v; want %q,true,nil", got, handled, err, fp)
 	}
 	none := testutil.KustomizationID("ns", "none")
 	{
-		{
-			_, handled, _ := controllertest.NewExecution(c, none).
-				FingerprintDedup(t.Context(), none, []string{"one"}, &store.Emission{})
-			assert.ErrorIf(t, handled, "%v", "no-artifact id: handled=true; want false")
-		}
+		fingerprintDedupResult5, fingerprintDedupResult5Err := controllertest.NewExecution(c, none).
+			FingerprintDedup(t.Context(), none, []string{"one"}, &store.Emission{})
+		_, handled, _ := fingerprintDedupResult5.Fingerprint, fingerprintDedupResult5.Reused, fingerprintDedupResult5Err
+		assert.ErrorIf(t, handled, "%v", "no-artifact id: handled=true; want false")
 	}
 	for _, tc := range []struct {
 		name    string
@@ -215,37 +202,34 @@ func TestFingerprintDedup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, handled, err := controllertest.NewExecution(c, id).
+			fingerprintDedupResult6, fingerprintDedupResult6Err := controllertest.NewExecution(c, id).
 				FingerprintDedup(t.Context(), id, tc.content, &store.Emission{})
-			{
-				assert.FatalIf(
-					t,
-					got != "" || handled || err != nil,
-					"invalid content key=%q, handled=%v, err=%v",
-					got,
-					handled,
-					err,
-				)
-			}
+			got, handled, err := fingerprintDedupResult6.Fingerprint, fingerprintDedupResult6.Reused, fingerprintDedupResult6Err
+			assert.FatalIf(
+				t,
+				got != "" || handled || err != nil,
+				"invalid content key=%q, handled=%v, err=%v",
+				got,
+				handled,
+				err,
+			)
 		})
 	}
 	emptyStore := store.New()
 	emptyStore.AddObject(ks)
 	emptyStore.RecordEmitted(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs)}, nil)
 	{
-		{
-			_, handled, _ := controllertest.NewExecution(base.New(emptyStore, nil), id).
-				FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
-			assert.ErrorIf(t, handled, "%v", "empty stored fingerprint replayed")
-		}
+		fingerprintDedupResult7, fingerprintDedupResult7Err := controllertest.NewExecution(base.New(emptyStore, nil), id).
+			FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
+		_, handled, _ := fingerprintDedupResult7.Fingerprint, fingerprintDedupResult7.Reused, fingerprintDedupResult7Err
+		assert.ErrorIf(t, handled, "%v", "empty stored fingerprint replayed")
 	}
 	{
-		{
-			fp, handled, err := controllertest.NewExecution(c, id).
-				FingerprintDedup(t.Context(), id, []any{make(chan int)}, &store.Emission{})
-			assert.FatalIf(t, fp != "" || handled ||
-				err != nil, "invalid content replayed an empty stored key: key=%q, handled=%v, err=%v", fp, handled, err)
-		}
+		fingerprintDedupResult8, fingerprintDedupResult8Err := controllertest.NewExecution(c, id).
+			FingerprintDedup(t.Context(), id, []any{make(chan int)}, &store.Emission{})
+		fp, handled, err := fingerprintDedupResult8.Fingerprint, fingerprintDedupResult8.Reused, fingerprintDedupResult8Err
+		assert.FatalIf(t, fp != "" || handled ||
+			err != nil, "invalid content replayed an empty stored key: key=%q, handled=%v, err=%v", fp, handled, err)
 	}
 }
 
@@ -256,22 +240,23 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
-	fp, _, _ := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
+	fingerprintDedupResult9, fingerprintDedupResult9Err := controllertest.NewExecution(c, id).
+		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
+	fp, _, _ := fingerprintDedupResult9.Fingerprint, fingerprintDedupResult9.Reused, fingerprintDedupResult9Err
 	s.RecordEmitted(id, &store.Emission{Fingerprint: fp, Complete: true}, nil)
 	c.Configure(
 		base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle detected", true }},
 	)
-	_, handled, err := controllertest.NewExecution(c, id).
+	fingerprintDedupResult10, fingerprintDedupResult10Err := controllertest.NewExecution(c, id).
 		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
-	{
-		assert.ErrorIf(
-			t,
-			!handled || err == nil,
-			"preflight error: handled=%v err=%v; want true, non-nil",
-			handled,
-			err,
-		)
-	}
+	_, handled, err := fingerprintDedupResult10.Fingerprint, fingerprintDedupResult10.Reused, fingerprintDedupResult10Err
+	assert.ErrorIf(
+		t,
+		!handled || err == nil,
+		"preflight error: handled=%v err=%v; want true, non-nil",
+		handled,
+		err,
+	)
 }
 
 func TestExecution_ExcludedOutputValidity(t *testing.T) {
@@ -286,18 +271,12 @@ func TestExecution_ExcludedOutputValidity(t *testing.T) {
 	st.SetIncluded(obj.Named(), false)
 	e := &base.Execution{Controller: base.New(st, nil)}
 	e.Reads.Init(st, obj.Named(), nil)
-	{
-		assert.FatalIf(t, !e.Valid(), "%v", "excluded assessment validated unconsumed output provenance")
-	}
+	assert.FatalIf(t, !e.Valid(), "%v", "excluded assessment validated unconsumed output provenance")
 	st.SetIncluded(obj.Named(), true)
-	{
-		assert.FatalIf(t, e.Valid(), "%v", "readmission retained the excluded assessment")
-	}
+	assert.FatalIf(t, e.Valid(), "%v", "readmission retained the excluded assessment")
 	next := &base.Execution{Controller: e.Controller}
 	next.Reads.Init(st, obj.Named(), nil)
-	{
-		assert.FatalIf(t, next.Valid(), "%v", "admitted assessment ignored stale output provenance")
-	}
+	assert.FatalIf(t, next.Valid(), "%v", "admitted assessment ignored stale output provenance")
 }
 
 func TestExecution_PendingProgressKeepsConditionStamp(t *testing.T) {
@@ -315,21 +294,15 @@ func TestExecution_PendingProgressKeepsConditionStamp(t *testing.T) {
 	reads.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
 	reads.GetStatus(obj.Named())
 	c.SetPendingUnlessReady(obj.Named(), "later progress")
-	{
-		assert.FatalIf(
-			t,
-			len(messages) != 2 || messages[0] != "initial progress" || messages[1] != "later progress",
-			"progress notifications=%v",
-			messages,
-		)
-	}
-	{
-		assert.FatalIf(t, !reads.Valid(), "%v", "progress text invalidated pending readiness")
-	}
+	assert.FatalIf(
+		t,
+		len(messages) != 2 || messages[0] != "initial progress" || messages[1] != "later progress",
+		"progress notifications=%v",
+		messages,
+	)
+	assert.FatalIf(t, !reads.Valid(), "%v", "progress text invalidated pending readiness")
 	st.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	{
-		assert.FatalIf(t, reads.Valid(), "%v", "readiness transition failed to invalidate the observer")
-	}
+	assert.FatalIf(t, reads.Valid(), "%v", "readiness transition failed to invalidate the observer")
 }
 
 func TestExecution_GateReplacement(t *testing.T) {
@@ -358,22 +331,18 @@ func TestExecution_GateReplacement(t *testing.T) {
 		manifest.DrainNone,
 		first,
 		func(first *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
-			{
-				assert.FatalIf(t, obj.Chart.Name != "before", "predecessor changed: %+v", obj)
-			}
+			assert.FatalIf(t, obj.Chart.Name != "before", "predecessor changed: %+v", obj)
 			c.SetPendingUnlessReady(obj.Named(), "gate replacement")
 			_, err := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
 			return err
 		},
 	)
-	{
-		assert.FatalIf(
-			t,
-			first.Valid() || st.GetArtifact(hr.Named(), store.ArtifactContent) != nil,
-			"%v",
-			"stale gate replacement admitted output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		first.Valid() || st.GetArtifact(hr.Named(), store.ArtifactContent) != nil,
+		"%v",
+		"stale gate replacement admitted output",
+	)
 	second := controllertest.NewExecution(c, hr.Named())
 	defer second.Close()
 	called := false
@@ -383,15 +352,11 @@ func TestExecution_GateReplacement(t *testing.T) {
 		second,
 		func(_ *base.Execution, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
 			called = true
-			{
-				assert.FatalIf(t, obj.Chart.Name != "after", "successor retained stale declaration: %+v", obj)
-			}
+			assert.FatalIf(t, obj.Chart.Name != "after", "successor retained stale declaration: %+v", obj)
 			return nil
 		},
 	)
-	{
-		assert.FatalIf(t, !called || !second.Valid(), "%v", "replacement declaration did not reconcile")
-	}
+	assert.FatalIf(t, !called || !second.Valid(), "%v", "replacement declaration did not reconcile")
 }
 
 func TestExecution_RetainsReadinessOutcome(t *testing.T) {
@@ -491,15 +456,13 @@ func testExecutionDispatchCase(t *testing.T, testCaseInput *struct {
 			return nil
 		})
 	info, _ := st.GetStatus(id)
-	{
-		assert.FatalIf(t, ran != testCaseInput.run || info.Outcome() != testCaseInput.outcome ||
-			info.Message != testCaseInput.message, "ran=%t status=%+v, want ran=%t Ready/%s",
-			ran,
-			info, testCaseInput.
-				run, testCaseInput.
-				message,
-		)
-	}
+	assert.FatalIf(t, ran != testCaseInput.run || info.Outcome() != testCaseInput.outcome ||
+		info.Message != testCaseInput.message, "ran=%t status=%+v, want ran=%t Ready/%s",
+		ran,
+		info, testCaseInput.
+			run, testCaseInput.
+			message,
+	)
 }
 
 type testExecutionDispatchCase2Inputs struct {
@@ -528,9 +491,7 @@ func testExecutionDispatchCase2(t *testing.T, testCaseInput testExecutionDispatc
 	}
 	var calls, reconciles atomic.Int64
 	finish := func(s *state, got *manifest.HelmRelease) error {
-		{
-			assert.FatalIf(t, got != s.obj, "%v", "resumed with a different captured declaration")
-		}
+		assert.FatalIf(t, got != s.obj, "%v", "resumed with a different captured declaration")
 		calls.Add(1)
 		_, _, output := s.run.Reads.GetEmission(got.Named())
 		defer output.Finish()
@@ -569,15 +530,13 @@ func testExecutionDispatchCase2(t *testing.T, testCaseInput testExecutionDispatc
 		return ref
 	}()
 	runtime.GC()
-	{
-		assert.FatalIf(
-			t,
-			retained.Value() == nil || run.Outcome() != schedule.Blocked || !run.Valid() ||
-				calls.Load() != 0,
-			"%v",
-			"blocked execution lost its retained state or assessment",
-		)
-	}
+	assert.FatalIf(
+		t,
+		retained.Value() == nil || run.Outcome() != schedule.Blocked || !run.Valid() ||
+			calls.Load() != 0,
+		"%v",
+		"blocked execution lost its retained state or assessment",
+	)
 	run.Settle(t.Context(), manifest.DrainForce)
 	wantReconciles := int64(2)
 	if *testCaseInput.pendingDataError {
@@ -592,16 +551,12 @@ func testExecutionDispatchCase2(t *testing.T, testCaseInput testExecutionDispatc
 		t.Fatalf("settled execution calls=%d outcome=%v status=%+v", calls.Load(), run.Outcome(), info)
 	}
 	runtime.GC()
+	assert.FatalIf(t, retained.Value() != nil, "%v", "terminal execution retained reconcile state")
 	{
-		assert.FatalIf(t, retained.Value() != nil, "%v", "terminal execution retained reconcile state")
-	}
-	{
-		{
-			output, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
-			assert.FatalIf(t, !ok ||
-				output.OutputReads != &run.Reads ||
-				!output.OutputReads.Valid(), "%v", "terminal cleanup released accepted output reads")
-		}
+		output, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
+		assert.FatalIf(t, !ok ||
+			output.OutputReads != &run.Reads ||
+			!output.OutputReads.Valid(), "%v", "terminal cleanup released accepted output reads")
 	}
 	runtime.KeepAlive(st)
 	runtime.KeepAlive(run)
@@ -742,7 +697,13 @@ func testFingerprintDedupInputReplacementCase(
 		entered, replaced := make(chan struct{}), make(chan struct{})
 		content = blockedFingerprintContent{tasks: tasks, entered: entered, replaced: replaced}
 		tasks.Go(t.Context(), "dedup", func(context.Context) {
-			fp, handled, err = run.FingerprintDedup(t.Context(), input.Named(), content, &store.Emission{})
+			fingerprintDedupResult11, fingerprintDedupResult11Err := run.FingerprintDedup(
+				t.Context(),
+				input.Named(),
+				content,
+				&store.Emission{},
+			)
+			fp, handled, err = fingerprintDedupResult11.Fingerprint, fingerprintDedupResult11.Reused, fingerprintDedupResult11Err
 		})
 		tasks.Go(t.Context(), "replace", func(context.Context) {
 			tasks.YieldSlot(func() { <-entered })
@@ -750,36 +711,37 @@ func testFingerprintDedupInputReplacementCase(
 			close(replaced)
 		})
 		tasks.BlockTillDone()
-		{
-			assert.FatalIf(t, tasks.Failures() != 0, "%v", "fingerprint task panicked")
-		}
+		assert.FatalIf(t, tasks.Failures() != 0, "%v", "fingerprint task panicked")
 	} else {
-		fp, handled, err = run.FingerprintDedup(t.Context(), input.Named(), content, &store.Emission{})
+		fingerprintDedupResult12, fingerprintDedupResult12Err := run.FingerprintDedup(
+			t.Context(),
+			input.Named(),
+			content,
+			&store.Emission{},
+		)
+		fp, handled, err = fingerprintDedupResult12.Fingerprint, fingerprintDedupResult12.Reused, fingerprintDedupResult12Err
 	}
 	_, _, after := st.GetEmission(input.Named())
 	defer after.Finish()
-	{
+	assert.FatalIf(
+		t,
+		fp != "" || !handled || err == nil || len(after.Manifests) != len(before.Manifests),
+		"stale A accepted: key=%q handled=%t err=%v",
+		fp,
+		handled,
+		err,
+	)
+	if (*testCaseInput) != "absent" && (*testCaseInput) != "suspended" {
+		fingerprintDedupResult13, fingerprintDedupResult13Err := controllertest.NewExecution(c, replacement.Named()).
+			FingerprintDedup(t.Context(), replacement.Named(), "B", &store.Emission{})
+		fp, handled, err = fingerprintDedupResult13.Fingerprint, fingerprintDedupResult13.Reused, fingerprintDedupResult13Err
 		assert.FatalIf(
 			t,
-			fp != "" || !handled || err == nil || len(after.Manifests) != len(before.Manifests),
-			"stale A accepted: key=%q handled=%t err=%v",
+			fp != manifest.Fingerprint("B") || handled || err != nil,
+			"replacement B cannot prepare: %q %t %v",
 			fp,
 			handled,
 			err,
 		)
-	}
-	if (*testCaseInput) != "absent" && (*testCaseInput) != "suspended" {
-		fp, handled, err = controllertest.NewExecution(c, replacement.Named()).
-			FingerprintDedup(t.Context(), replacement.Named(), "B", &store.Emission{})
-		{
-			assert.FatalIf(
-				t,
-				fp != manifest.Fingerprint("B") || handled || err != nil,
-				"replacement B cannot prepare: %q %t %v",
-				fp,
-				handled,
-				err,
-			)
-		}
 	}
 }

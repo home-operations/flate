@@ -61,26 +61,22 @@ spec:
 	}
 
 	ksID := testutil.KustomizationID("flux-system", "flux-entry-repos")
-	{
-		assert.ErrorIf(t, s.GetObject(ksID) != nil ||
-			l.AdmitsRoot(
-				l.IndexedObject(ksID, l.Index.Records[ksID]).Obj,
-				filepath.Join(dir, "repositories/# flux-entry.yaml"),
-			), "%s", "unlisted declaration became runnable")
-	}
+	assert.ErrorIf(t, s.GetObject(ksID) != nil ||
+		l.AdmitsRoot(
+			l.IndexedObject(ksID, l.Index.Records[ksID]).Obj,
+			filepath.Join(dir, "repositories", "# flux-entry.yaml"),
+		), "%s", "unlisted declaration became runnable")
 	{
 		got, want := filesForTest(l.Index)[ksID], "repositories/# flux-entry.yaml"
 		assert.ErrorIf(t, got != want, "SourceFiles[KS] = %q; want %q", got, want)
 	}
 
 	hrID := testutil.HelmReleaseID("flux-system", "stray")
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(hrID) != nil,
-			"sibling HR must NOT be picked up by the bootstrap scan (scope is Flux KS only)",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		s.GetObject(hrID) != nil,
+		"sibling HR must NOT be picked up by the bootstrap scan (scope is Flux KS only)",
+	)
 	{
 		_, ok := l.Index.Lookup(hrID)
 		assert.ErrorIf(t, ok, "sibling HR must NOT be recorded in Existence either — it's not in the kustomize graph")

@@ -23,7 +23,8 @@ import (
 func e2ENamespaceOrphansScenario(t *testing.T, scenario *string) {
 	t.Helper()
 
-	root, cache, namespaces := namespaceOrphanFixture(t, (*scenario))
+	namespaceOrphanFixtureResult1 := namespaceOrphanFixture(t, (*scenario))
+	root, cache, namespaces := namespaceOrphanFixtureResult1.root, namespaceOrphanFixtureResult1.cache, namespaceOrphanFixtureResult1.namespaces
 	flags := []string{
 		"--path",
 		filepath.Join(root, "flux"),
@@ -34,7 +35,8 @@ func e2ENamespaceOrphansScenario(t *testing.T, scenario *string) {
 		"--no-progress",
 	}
 	getArgs := append([]string{"get", "hr", "-o", "json"}, flags...)
-	hr, _ := harness.RequireCLIOK(t, getArgs...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, getArgs...)
+	hr, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 	var releases []struct {
 		Name      string `json:"Name"`
 		Namespace string `json:"Namespace"`
@@ -65,7 +67,8 @@ func e2ENamespaceOrphansScenario(t *testing.T, scenario *string) {
 		hr,
 	)
 	buildArgs := append([]string{"build", "all", "-o", "yaml"}, flags...)
-	build, _ := harness.RequireCLIOK(t, buildArgs...)
+	requireCLIOKResult2 := harness.RequireCLIOK(t, buildArgs...)
+	build, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	docs, err := testutil.SplitDocs([]byte(build))
 	assert.NoError(t, err)
 	var repos []string
@@ -83,7 +86,8 @@ func e2ENamespaceOrphansScenario(t *testing.T, scenario *string) {
 	if (*scenario) == "standalone" {
 		counts := make(map[string]int)
 		for _, doc := range docs {
-			name, namespace := manifest.DocMetadata(doc)
+			metadata2 := manifest.DocMetadata(doc)
+			name, namespace := metadata2.Name, metadata2.Namespace
 			kind := manifest.DocKind(doc)
 			assert.FatalIf(
 				t,
@@ -105,7 +109,8 @@ func e2ENamespaceOrphansScenario(t *testing.T, scenario *string) {
 		wantRepos,
 		build,
 	)
-	out, _ := harness.RequireCLIOK(t, append([]string{"test", "all"}, flags...)...)
+	requireCLIOKResult3 := harness.RequireCLIOK(t, append([]string{"test", "all"}, flags...)...)
+	out, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 	assert.ErrorIf(
 		t,
 		strings.Contains(out, "failed") || strings.Contains(out, "blocked"),
@@ -139,7 +144,8 @@ func e2ENamespaceOrphansScenario(t *testing.T, scenario *string) {
 func e2ENamespaceOrphansTerminalReplay(t *testing.T) {
 	t.Helper()
 
-	root, cache, _ := namespaceOrphanFixture(t, "explicit")
+	namespaceOrphanFixtureResult2 := namespaceOrphanFixture(t, "explicit")
+	root, cache, _ := namespaceOrphanFixtureResult2.root, namespaceOrphanFixtureResult2.cache, namespaceOrphanFixtureResult2.namespaces
 	flags := []string{
 		"--path",
 		filepath.Join(root, "flux"),
@@ -149,7 +155,8 @@ func e2ENamespaceOrphansTerminalReplay(t *testing.T) {
 		"2",
 		"--no-progress",
 	}
-	out, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	requireCLIOKResult4 := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	out, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 	assert.FatalIf(t, !strings.Contains(out, "name: demo-chart"), "last-good chart did not render: %s", out)
 	repository := &manifest.HelmRepository{URL: "https://charts.example.invalid"}
 	chart := &manifest.HelmChartSource{Chart: "demo", Version: "0.1.0"}
@@ -194,7 +201,8 @@ func e2ENamespaceOrphansTerminalReplay(t *testing.T) {
 		assert.NoError(t, c.Close())
 	})
 	for _, command := range [][]string{{"build", "all"}, {"test", "all"}} {
-		out, stderr, code := harness.RunCLIBuffers(append(command, flags...)...)
+		runCLIBuffersResult5 := harness.RunCLIBuffers(append(command, flags...)...)
+		out, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 		assert.FatalIf(t, code != 1 || !strings.Contains(out+stderr, syscall.ECONNRESET.Error()) ||
 			strings.Contains(out, "name: demo-chart") ||
 			strings.Contains(
@@ -236,8 +244,10 @@ func e2ENamespaceOrphansScenarioLoop(t *testing.T, loopInputs struct {
 		}
 		args := append(slices.Clone(selection), "--namespace", (*loopInputs.namespace))
 		args = append(args, (*loopInputs.flags)...)
-		first, _ := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
-		second, _ := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
+		requireCLIOKResult6 := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
+		first, _ := requireCLIOKResult6.Stdout, requireCLIOKResult6.Stderr
+		requireCLIOKResult7 := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
+		second, _ := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 		assert.Equal(t, first, second)
 		objects, err := testutil.SplitDocs([]byte(first))
 		assert.NoError(t, err)
@@ -245,10 +255,12 @@ func e2ENamespaceOrphansScenarioLoop(t *testing.T, loopInputs struct {
 			assert.Equal(t, len(objects) > 0, true)
 		}
 		for _, object := range objects {
-			_, ns := manifest.DocMetadata(object)
+			metadata3 := manifest.DocMetadata(object)
+			ns := metadata3.Namespace
 			assert.Equal(t, ns == "" || ns == (*loopInputs.namespace), true)
 		}
-		result, _ := harness.RequireCLIOK(t, append([]string{"test"}, args...)...)
+		requireCLIOKResult8 := harness.RequireCLIOK(t, append([]string{"test"}, args...)...)
+		result, _ := requireCLIOKResult8.Stdout, requireCLIOKResult8.Stderr
 		assert.Equal(
 			t,
 			strings.Contains(result, "failed") || strings.Contains(result, "blocked"),

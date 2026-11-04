@@ -115,19 +115,15 @@ func testRenderSubstitutionProducerOrderingCase(
 		cfg.ExternalChanges = change.NewSet([]string{"app/cm.yaml"})
 	}
 	o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		o.stop()
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	{
-		{
-			err := o.bootstrap(ctx)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := o.bootstrap(ctx)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	reconcileEntryForTest(t, o)
 	o.configureControllers()
@@ -183,14 +179,12 @@ func testRenderSubstitutionProducerOrderingCase(
 			Name:      "output",
 		},
 	)
-	{
-		assert.FatalIf(
-			t,
-			output == nil || output.Data["version"] != "4.6.2",
-			"consumer output = %+v, want rendered version 4.6.2",
-			output,
-		)
-	}
+	assert.FatalIf(
+		t,
+		output == nil || output.Data["version"] != "4.6.2",
+		"consumer output = %+v, want rendered version 4.6.2",
+		output,
+	)
 }
 
 type testRenderResourceSetConflictingDataConsumersCaseInputs struct {
@@ -337,38 +331,31 @@ func (i testRenderResourceSetConflictingDataConsumersCaseInputs) finishConflicti
 	)
 	o.tasks.BlockTillDone()
 	{
-		{
-			failures := o.store.FailedResources()
-			assert.FatalIf(t, len(failures) != 0, "render failed: %v", failures)
-		}
+		failures := o.store.FailedResources()
+		assert.FatalIf(t, len(failures) != 0, "render failed: %v", failures)
 	}
 	for _, id := range append(owners, parent, consumer) {
 		info, ok := o.store.GetStatus(id)
-		{
-			assert.FatalIf(
-				t,
-				!ok || info.Status != store.StatusReady,
-				"%s did not render successfully: %+v",
-				id,
-				info,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || info.Status != store.StatusReady,
+			"%s did not render successfully: %+v",
+			id,
+			info,
+		)
 	}
 	shared := manifest.NamedResource{Kind: (*i.kind), Namespace: "apps", Name: "shared"}
 	var stored string
 	if (*i.kind) == manifest.KindConfigMap {
 		cm, ok := o.store.Get[*manifest.ConfigMap](shared)
-		{
-			assert.FatalIf(t, !ok, "%v", "missing generated ConfigMap")
-		}
+		assert.FatalIf(t, !ok, "%v", "missing generated ConfigMap")
 		stored = cm.Data["VALUE"].(string)
 	} else {
 		secret, ok := o.store.Get[*manifest.Secret](shared)
-		{
-			assert.FatalIf(t, !ok, "%v", "missing generated Secret")
-		}
+		assert.FatalIf(t, !ok, "%v", "missing generated Secret")
 		var found bool
-		stored, found, err = secret.Value("VALUE")
+		valueResult, valueResultErr := secret.Value("VALUE")
+		stored, found, err = valueResult.Value, valueResult.Found, valueResultErr
 		assert.NoError(t, err)
 		assert.Equal(t, found, true)
 	}
@@ -379,9 +366,7 @@ func (i testRenderResourceSetConflictingDataConsumersCaseInputs) finishConflicti
 			Name:      "consumer-output",
 		},
 	)
-	{
-		assert.FatalIf(t, !ok, "%v", "missing rendered consumer")
-	}
+	assert.FatalIf(t, !ok, "%v", "missing rendered consumer")
 	consumed := output.Data["value"]
 	assert.Equal(t, stored, "zulu")
 	assert.Diff(t, consumed, "zulu")
@@ -389,7 +374,8 @@ func (i testRenderResourceSetConflictingDataConsumersCaseInputs) finishConflicti
 	count := 0
 	for owner, docs := range outputByParent(res.Manifests) {
 		for _, doc := range docs {
-			name, ns := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name, ns := metadata.Name, metadata.Namespace
 			if manifest.DocKind(doc) != (*i.kind) || name != "shared" || ns != "apps" {
 				continue
 			}
@@ -418,8 +404,6 @@ func (i testRenderResourceSetConflictingDataConsumersCaseInputs) finishConflicti
 	assert.Equal(t, w.Category, manifest.WarnConflictingProducers)
 	assert.Equal(t, w.Count, 1)
 	assert.Diff(t, w.Detail, []string{owners[0].String(), owners[1].String()})
-	{
-		assert.ErrorIf(t, !strings.Contains(w.Message, "using "+owners[1].String()), "wrong winner: %s", w.Message)
-	}
+	assert.ErrorIf(t, !strings.Contains(w.Message, "using "+owners[1].String()), "wrong winner: %s", w.Message)
 	return res
 }

@@ -256,7 +256,8 @@ func (p *ResourceSetInputProvider) InputPlan() (ProviderInputPlan, error) {
 
 // SelectTags applies flux-operator's filters, stable ordering and limit to registry tags.
 func (p *ResourceSetInputProvider) SelectTags(tags []string) ([]string, error) {
-	include, exclude, constraint, err := p.tagFilters()
+	filters, err := p.tagFilters()
+	include, exclude, constraint := filters.include, filters.exclude, filters.constraint
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +347,8 @@ func (r *ResourceSet) references(yield func(Reference) bool) {
 	for i := range r.DependsOn {
 		dep := &r.DependsOn[i]
 		id := NamedResource{Group: apiGroup(dep.APIVersion), Kind: dep.Kind, Name: dep.Name}
-		namespaced, prepared := scopes.LookupScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
+		scope := scopes.LookupScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
+		namespaced, prepared := scope.Namespaced, scope.Found
 		if !prepared {
 			panic("manifest: ResourceSet dependency scope was not prepared")
 		}
@@ -397,12 +399,18 @@ const (
 	semverSeparatorCount = 2
 )
 
-func (p *ResourceSetInputProvider) tagFilters() (*regexp.Regexp, *regexp.Regexp, *semver.Constraints, error) {
+type tagSelectionFilters struct {
+	include    *regexp.Regexp
+	exclude    *regexp.Regexp
+	constraint *semver.Constraints
+}
+
+func (p *ResourceSetInputProvider) tagFilters() (tagSelectionFilters, error) {
 	var include, exclude *regexp.Regexp
 	var constraint *semver.Constraints
 	filter := p.Filter
 	if filter == nil {
-		return nil, nil, nil, nil
+		return tagSelectionFilters{}, nil
 	}
 	for _, field := range []struct {
 		name, pattern string
@@ -420,7 +428,7 @@ func (p *ResourceSetInputProvider) tagFilters() (*regexp.Regexp, *regexp.Regexp,
 		}
 		compiled, err := regexp.Compile(field.pattern)
 		if err != nil {
-			return nil, nil, nil, NewError(ErrInput, fmt.Errorf("invalid %s regex: %w", field.name, err), "")
+			return tagSelectionFilters{}, NewError(ErrInput, fmt.Errorf("invalid %s regex: %w", field.name, err), "")
 		}
 		*field.target = compiled
 	}
@@ -428,8 +436,8 @@ func (p *ResourceSetInputProvider) tagFilters() (*regexp.Regexp, *regexp.Regexp,
 		var err error
 		constraint, err = semver.NewConstraint(filter.Semver)
 		if err != nil {
-			return nil, nil, nil, NewError(ErrInput, fmt.Errorf("invalid semver expression: %w", err), "")
+			return tagSelectionFilters{}, NewError(ErrInput, fmt.Errorf("invalid semver expression: %w", err), "")
 		}
 	}
-	return include, exclude, constraint, nil
+	return tagSelectionFilters{include: include, exclude: exclude, constraint: constraint}, nil
 }

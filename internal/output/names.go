@@ -24,9 +24,10 @@ func PrepareNames(
 	inventory [][]manifest.NamedResource,
 	subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity,
 ) []Names {
-	collisions, update := nameOccurrenceUpdater()
-	collectNameOccurrences(inventory, subjects, update)
-	return prepareNames(clusters, inventory, subjects, collisions)
+	occurrences := nameOccurrenceUpdater()
+
+	collectNameOccurrences(inventory, subjects, occurrences.update)
+	return prepareNames(clusters, inventory, subjects, occurrences.collisions)
 }
 
 func prepareNames(
@@ -50,7 +51,7 @@ func prepareNames(
 	return out
 }
 
-func nameOccurrenceUpdater() (map[string]bool, func(string, string, int)) {
+func nameOccurrenceUpdater() nameUpdater {
 	indices := make(map[string]int)
 	counts := make([]nameCount, 0, initialKindCapacity)
 	collisions := make(map[string]bool)
@@ -71,7 +72,7 @@ func nameOccurrenceUpdater() (map[string]bool, func(string, string, int)) {
 			}
 		}
 	}
-	return collisions, update
+	return nameUpdater{collisions: collisions, update: update}
 }
 
 func collectNameOccurrences(
@@ -127,13 +128,14 @@ func prepareGroupNames(
 		if !ok {
 			subject = manifest.DiagnosticFor(id, nil)
 		}
-		kind, name := subjectLabels(&subject.Resource, subject.Path, prefix, collisions)
-		names.Subjects[id] = Subject{ID: id, Kind: kind, Name: name}
+		labels := subjectLabels(&subject.Resource, subject.Path, prefix, collisions)
+
+		names.Subjects[id] = Subject{ID: id, Kind: labels.kind, Name: labels.name}
 	}
 	return names
 }
 
-func subjectLabels(resource *manifest.NamedResource, path, prefix string, collisions map[string]bool) (string, string) {
+func subjectLabels(resource *manifest.NamedResource, path, prefix string, collisions map[string]bool) subjectName {
 	kind, name := resource.Kind, resource.NamespacedName()
 	if *resource == (manifest.NamedResource{}) {
 		kind, name = "entry", fmt.Sprintf("path %q", path)
@@ -143,7 +145,7 @@ func subjectLabels(resource *manifest.NamedResource, path, prefix string, collis
 	if collisions[kind] {
 		kind = resource.KindLabel()
 	}
-	return kind, prefix + name
+	return subjectName{kind: kind, name: prefix + name}
 }
 
 const initialKindCapacity = 8
@@ -176,3 +178,10 @@ func (e *nameCount) adjust(group string, delta int) bool {
 	}
 	return e.distinct > 1 != (distinct > 1)
 }
+
+type nameUpdater struct {
+	collisions map[string]bool
+	update     func(string, string, int)
+}
+
+type subjectName struct{ kind, name string }

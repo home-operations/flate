@@ -321,24 +321,20 @@ func testCompareUnavailableProducerPolicyCase(
 			Count:  testCaseInput.tc.count,
 			Reason: testCaseInput.tc.reason,
 		}
-		{
-			assert.FatalIf(
-				t,
-				len(document.Changes) != 0 || len(document.Suppressed) != 1 || document.Suppressed[0] != want,
-				"withheld output = %+v; want note %+v and no changes",
-				document,
-				want,
-			)
-		}
-		{
-			assert.ErrorIf(
-				t,
-				!slices.Equal(suppressed, []Suppression{want}) || len(warnings) != 0,
-				"structured suppressions = %+v; warnings = %+v",
-				suppressed,
-				warnings,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(document.Changes) != 0 || len(document.Suppressed) != 1 || document.Suppressed[0] != want,
+			"withheld output = %+v; want note %+v and no changes",
+			document,
+			want,
+		)
+		assert.ErrorIf(
+			t,
+			!slices.Equal(suppressed, []Suppression{want}) || len(warnings) != 0,
+			"structured suppressions = %+v; warnings = %+v",
+			suppressed,
+			warnings,
+		)
 	} else {
 		assert.FatalIf(
 			t,
@@ -349,16 +345,14 @@ func testCompareUnavailableProducerPolicyCase(
 		)
 	}
 	images, notes, err := CompareImages(selected[0], selected[1], runErr, true)
-	{
-		assert.ErrorIf(
-			t,
-			errors.Is(err, (*testCaseInput.selectedErr)) != testCaseInput.tc.keepError ||
-				!slices.Equal(notes, suppressed),
-			"image disclosure/error differs: %+v / %v",
-			notes,
-			err,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		errors.Is(err, (*testCaseInput.selectedErr)) != testCaseInput.tc.keepError ||
+			!slices.Equal(notes, suppressed),
+		"image disclosure/error differs: %+v / %v",
+		notes,
+		err,
+	)
 	if testCaseInput.tc.withheld != (len(images) == 0) {
 		t.Errorf("image withholding=%t; images=%v", testCaseInput.tc.withheld, images)
 	}

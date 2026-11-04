@@ -85,9 +85,7 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if id == hr.Named() && payload.(store.StatusInfo).Message == "resolving dependencies" {
 			attempts++
-			{
-				assert.FatalIf(t, attempts > 1, "%v", "retried a failed chartRef with no removable valuesFrom refs")
-			}
+			assert.FatalIf(t, attempts > 1, "%v", "retried a failed chartRef with no removable valuesFrom refs")
 			// Identical status writes suppress events, so reset the progress message.
 			s.UpdateStatus(
 				id,
@@ -98,9 +96,7 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	t.Cleanup(unsub)
 	err := c.newExecution(hr.Named()).reconcile(t.Context(), hr, manifest.DrainForce)
 	failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
-	{
-		assert.FatalIf(t, !ok, "error = %v, want DependencyFailedError", err)
-	}
+	assert.FatalIf(t, !ok, "error = %v, want DependencyFailedError", err)
 	assert.Diff(t, failed.Failed, []manifest.NamedResource{chart.Named()})
 	assert.Equal(t, attempts, 1)
 }
@@ -232,9 +228,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	producer := testutil.KustomizationID("apps", "producer-root")
 	st.UpdateStatus(producer, store.StatusInfo{Status: store.StatusPending, Message: "waiting for input"})
 	status, _ := st.GetStatus(producer)
-	{
-		assert.FatalIf(t, probe(), "%v", "optional expected input supplied complete history")
-	}
+	assert.FatalIf(t, probe(), "%v", "optional expected input supplied complete history")
 	after, _ := st.GetStatus(producer)
 	assert.Equal(t, after, status)
 	assert.Equal(t, len(st.Warnings()), 0)
@@ -295,9 +289,7 @@ func TestController_AllowMissingKindsAdmission(t *testing.T) {
 				t,
 				controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode},
 			)
-			{
-				assert.FatalIf(t, (info.Status == store.StatusReady) != tc.want, "kind selection: %+v", info)
-			}
+			assert.FatalIf(t, (info.Status == store.StatusReady) != tc.want, "kind selection: %+v", info)
 			if tc.want && len(st.Warnings()) != 1 {
 				t.Fatalf("omitted input lost warning: %+v", st.Warnings())
 			}
@@ -385,15 +377,13 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				reads.Init(st, hr.Named(), nil)
 				records, _ := c.PreviousRender(t.Context(), hr, reads)
 				reads.Retire()
-				{
-					assert.FatalIf(
-						t,
-						(records != nil) != selected,
-						"history admitted=%t selected=%t",
-						records != nil,
-						selected,
-					)
-				}
+				assert.FatalIf(
+					t,
+					(records != nil) != selected,
+					"history admitted=%t selected=%t",
+					records != nil,
+					selected,
+				)
 			}
 		})
 	}
@@ -480,10 +470,8 @@ data:
 	}
 	st.AddObject(hr)
 	{
-		{
-			blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone).Blocked
-			assert.FatalIf(t, len(blocked) == 0, "%v", "expected reconciliation to wait for a dependency")
-		}
+		blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone).Blocked
+		assert.FatalIf(t, len(blocked) == 0, "%v", "expected reconciliation to wait for a dependency")
 	}
 	assert.Equal(t, len(st.Warnings()), 0)
 	st.AddObject(&manifest.ConfigMap{
@@ -519,9 +507,7 @@ data:
 		return
 	}
 	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
-	}
+	assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
 	assert.Equal(
 		t,
 		renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "greeting"), testCaseInput.
@@ -609,15 +595,13 @@ func testControllerValuesFromMixedProductionPrecedenceCase(
 		manifest.DrainNone,
 	)
 	hasProducer, omit := input.Generated, result.Omit
-	{
-		assert.FatalIf(
-			t,
-			omit != ((*testCaseInput.materializer) == "none") || omit && !hasProducer,
-			"mixed evidence omitted=%t producer=%t",
-			omit,
-			hasProducer,
-		)
-	}
+	assert.FatalIf(
+		t,
+		omit != ((*testCaseInput.materializer) == "none") || omit && !hasProducer,
+		"mixed evidence omitted=%t producer=%t",
+		omit,
+		hasProducer,
+	)
 }
 
 func testControllerPrepareRequiresDeclarationCase(
@@ -695,18 +679,14 @@ func testControllerPrepareRequiresDeclarationCase(
 		!slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) {
 		t.Fatalf("withdrawn declaration did not park: %+v", run.Blocked)
 	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput) ==
-				"failed" && !info.IsDependencyFailure(), "materializer failure lost provenance: %+v",
-			info,
-		)
-	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput) ==
-				"suspended" && info.Outcome() != store.OutcomeSuspended, "effective suspension lost: %+v",
-			info,
-		)
-	}
+	assert.FatalIf(
+		t, (*testCaseInput) ==
+			"failed" && !info.IsDependencyFailure(), "materializer failure lost provenance: %+v",
+		info,
+	)
+	assert.FatalIf(
+		t, (*testCaseInput) ==
+			"suspended" && info.Outcome() != store.OutcomeSuspended, "effective suspension lost: %+v",
+		info,
+	)
 }

@@ -34,10 +34,8 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 		if id == rs {
 			sawRS = true
 			{
-				{
-					owners := testutil.Owners(s.Productions(rs, nil))
-					assert.FatalIf(t, !slices.Contains(owners, parent), "missing independent contributor: %v", owners)
-				}
+				owners := testutil.Owners(s.Productions(rs, nil))
+				assert.FatalIf(t, !slices.Contains(owners, parent), "missing independent contributor: %v", owners)
 			}
 		}
 		if id == idA {
@@ -55,12 +53,8 @@ func TestEmitRenderedChildrenBatchesLeafDispatch(t *testing.T) {
 		fluxKustomizationDoc("a", "b"),
 		fluxKustomizationDoc("b", "a"),
 	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace})
-	{
-		assert.FatalIf(t, !sawRS, "%v", "render-only ResourceSet was not published")
-	}
-	{
-		assert.FatalIf(t, !sawBOnA, "%v", "first leaf dispatch did not see later emitted sibling")
-	}
+	assert.FatalIf(t, !sawRS, "%v", "render-only ResourceSet was not published")
+	assert.FatalIf(t, !sawBOnA, "%v", "first leaf dispatch did not see later emitted sibling")
 }
 
 // TestEmitRenderedChildren_DropsKustomizeBuildDirective regresses the phantom
@@ -87,22 +81,18 @@ func TestEmitRenderedChildren_DropsKustomizeBuildDirective(t *testing.T) {
 		fluxKustomizationDoc("real", "real"), // real child — must be stored
 	}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: parent.Namespace})
 
-	{
-		assert.ErrorIf(
-			t,
-			leaked,
-			"%v",
-			"kustomize.config build directive was emitted to the store (phantom Kustomization//)",
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(testutil.KustomizationID("ns", "real")) == nil,
-			"%v",
-			"real Flux Kustomization child was not stored",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		leaked,
+		"%v",
+		"kustomize.config build directive was emitted to the store (phantom Kustomization//)",
+	)
+	assert.ErrorIf(
+		t,
+		s.GetObject(testutil.KustomizationID("ns", "real")) == nil,
+		"%v",
+		"real Flux Kustomization child was not stored",
+	)
 }
 
 func TestEmitRenderedChildren_EqualReplay(t *testing.T) {
@@ -120,18 +110,15 @@ func TestEmitRenderedChildren_EqualReplay(t *testing.T) {
 			"spec":       map[string]any{"path": "./child"},
 		},
 	}
-	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
+	parseChildrenForTestResult1 := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
+	children, retained := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
 	next := &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(retained), Complete: true}
 	controllertest.Emit(t.Context(), c.Controller, parent.Named(), next)
 	arrivals := 0
 	s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
 	controllertest.Emit(t.Context(), c.Controller, parent.Named(), next)
-	{
-		assert.FatalIf(t, arrivals != 0, "equal accepted replay fired %d arrivals", arrivals)
-	}
-	{
-		assert.FatalIf(t, s.GetObject(children[0].Obj.Named()) == nil, "%v", "equal replay lost accepted child")
-	}
+	assert.FatalIf(t, arrivals != 0, "equal accepted replay fired %d arrivals", arrivals)
+	assert.FatalIf(t, s.GetObject(children[0].Obj.Named()) == nil, "%v", "equal replay lost accepted child")
 }
 
 func kustomizeConfigDoc() map[string]any {

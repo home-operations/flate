@@ -40,9 +40,7 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	}
 	s.SetArtifact(id, mk("pin"))
 	s.SetArtifact(id, mk("pin"))
-	{
-		assert.FatalIf(t, events != 1, "equal Key re-fired the artifact event: %d", events)
-	}
+	assert.FatalIf(t, events != 1, "equal Key re-fired the artifact event: %d", events)
 	foreign := id
 	foreign.Group = "example.test"
 	s.SetArtifact(foreign, mk("pin"))
@@ -50,9 +48,7 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	assert.Equal(t, s.GetArtifact(foreign, ArtifactContent).(*SourceArtifact).Key, "pin")
 	assert.Diff(t, ids, []manifest.NamedResource{id, foreign})
 	s.SetArtifact(id, mk("other"))
-	{
-		assert.FatalIf(t, events != 3, "changed Key did not fire: %d", events)
-	}
+	assert.FatalIf(t, events != 3, "changed Key did not fire: %d", events)
 	for _, tc := range []struct{ revision, digest string }{
 		{revision: "one", digest: "aaa"},
 		{revision: "two", digest: "aaa"},
@@ -62,30 +58,24 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 		artifact.Revision, artifact.Digest = tc.revision, tc.digest
 		before := events
 		s.SetArtifact(id, artifact)
-		{
-			assert.FatalIf(t, events != before+1, "generation %s/%s did not fire: %d", tc.revision, tc.digest, events)
-		}
+		assert.FatalIf(t, events != before+1, "generation %s/%s did not fire: %d", tc.revision, tc.digest, events)
 		equal := *artifact
 		equal.FS = mk("other").FS
 		s.SetArtifact(id, &equal)
-		{
-			assert.FatalIf(t, events != before+1, "%s", "equal family and generation re-fired the artifact event")
-		}
+		assert.FatalIf(t, events != before+1, "%s", "equal family and generation re-fired the artifact event")
 	}
 
 	for _, text := range []string{"old", "new"} {
 		s.SetArtifact(id, &SourceArtifact{LocalPath: "label", FS: fstest.MapFS{"file": {Data: []byte(text)}}})
 		got, err := fs.ReadFile(s.GetArtifact(id, ArtifactContent).(*SourceArtifact).FS, "file")
-		{
-			assert.FatalIf(
-				t,
-				err != nil || string(got) != text,
-				"mutable source bytes = %q, %v; want %q",
-				got,
-				err,
-				text,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || string(got) != text,
+			"mutable source bytes = %q, %v; want %q",
+			got,
+			err,
+			text,
+		)
 	}
 	assert.Equal(t, s.GetArtifact(foreign, ArtifactContent).(*SourceArtifact).Key, "pin")
 	assert.Diff(t, ids, []manifest.NamedResource{id, foreign, id, id, id, id, id, id})
@@ -121,9 +111,7 @@ func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
 		got := s.GetArtifact(id, ArtifactContent).(*SourceArtifact)
 		assert.FatalIf(t, got.FS != nil, "%s", "republish without a payload kept the previous payload")
 	}
-	{
-		assert.FatalIf(t, events != 2, "dropped payload did not fire the artifact event: %d", events)
-	}
+	assert.FatalIf(t, events != 2, "dropped payload did not fire the artifact event: %d", events)
 }
 
 func TestSourceArtifact_HistoryIdentity(t *testing.T) {
@@ -165,9 +153,7 @@ func testSetArtifactPayloadComparedByKeyCase(
 	}
 	st.SetArtifact((*testCaseInput.id), &next)
 	st.SetArtifact((*testCaseInput.id), first)
-	{
-		assert.FatalIf(t, events != 1, "diagnostic metadata fired %d artifact events", events)
-	}
+	assert.FatalIf(t, events != 1, "diagnostic metadata fired %d artifact events", events)
 }
 
 type testSourceArtifactHistoryIdentityCaseInputs struct {

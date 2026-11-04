@@ -157,7 +157,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -213,7 +213,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -244,7 +244,7 @@ spec:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -269,7 +269,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -296,7 +296,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, _, _, err := ParseDoc(doc, opts); err != nil {
+		if _, err := ParseDoc(doc, opts); err != nil {
 			b.Fatalf("ParseDoc: %v", err)
 		}
 	}
@@ -324,7 +324,7 @@ func BenchmarkParseDoc_ConfigMapAndStringData(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, _, _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}); err != nil {
+				if _, err := ParseDoc(doc, ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""}); err != nil {
 					b.Fatal(err)
 				}
 			}

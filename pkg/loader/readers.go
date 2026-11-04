@@ -72,31 +72,27 @@ func (l *Loader) finalizeRecords(
 	rf.templateWalks = map[[2]string]bool{}
 	rf.visited = map[manifest.NamedResource]struct{}{}
 
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, r := range rf.loader.Index.Records {
-			occurrence, located := rf.loader.locations[id]
-			if rf.repoRoot == "" || len(r.Refs) == 0 && (!located || len(occurrence.facts.templateInputs) == 0) {
-				continue
-			}
-			clear(rf.visited)
-			clear(rf.templateWalks)
-			if err := rf.collect(ctx, id, id, false); err != nil {
-				return err
-			}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for id, r := range rf.loader.Index.Records {
+		occurrence, located := rf.loader.locations[id]
+		if rf.repoRoot == "" || len(r.Refs) == 0 && (!located || len(occurrence.facts.templateInputs) == 0) {
+			continue
+		}
+		clear(rf.visited)
+		clear(rf.templateWalks)
+		if err := rf.collect(ctx, id, id, false); err != nil {
+			return err
 		}
 	}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, r := range rf.loader.Index.Records {
-			rf.admitRecord(id, &r)
-			rf.setRecordOrigin(id, &r)
-			rf.compactOrigins(id, &r)
-			rf.setRecordOutput(id, &r)
-			rf.setRecordParent(id, &r)
-			rf.setRecordInputs(id, &r)
-			rf.loader.Index.Records[id] = r
-		}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for id, r := range rf.loader.Index.Records {
+		rf.admitRecord(id, &r)
+		rf.setRecordOrigin(id, &r)
+		rf.compactOrigins(id, &r)
+		rf.setRecordOutput(id, &r)
+		rf.setRecordParent(id, &r)
+		rf.setRecordInputs(id, &r)
+		rf.loader.Index.Records[id] = r
 	}
 	return nil
 }
@@ -439,14 +435,14 @@ func (rf *readerFinalizer) sourceVisit(id manifest.NamedResource) graphVisit {
 	if seen {
 		return v
 	}
-	root, pinned, external := SourceView(rf.loader.Store, id, rf.repoRoot)
-	if !external {
-		v.root = root
-		prefix, _ := filepath.Rel(rf.repoRoot, root)
+	location2 := SourceView(rf.loader.Store, id, rf.repoRoot)
+	if !location2.External {
+		v.root = location2.Path
+		prefix, _ := filepath.Rel(rf.repoRoot, location2.Path)
 		if prefix != "." {
 			v.prefix = filepath.ToSlash(prefix)
-			if !pinned {
-				v.localBase = new(rf.loader.documents).localBase(root, rf.repoRoot)
+			if !location2.Pinned {
+				v.localBase = new(rf.loader.documents).localBase(location2.Path, rf.repoRoot)
 			}
 		}
 	}
@@ -491,12 +487,12 @@ func (rf *readerFinalizer) chartNames(ctx context.Context, location, chartPath s
 	if seen {
 		return names, nil
 	}
-	input, name := new(rf.loader.documents).input(location)
-	info, err := fs.Stat(input, name)
+	inputFile := new(rf.loader.documents).input(location)
+	info, err := fs.Stat(inputFile.fs, inputFile.name)
 	if err == nil {
 		if info.IsDir() {
 			names = append(names, path.Join(chartPath, ".helmignore"))
-			if sub, subErr := fs.Sub(input, name); subErr == nil {
+			if sub, subErr := fs.Sub(inputFile.fs, inputFile.name); subErr == nil {
 				names = append(names, rf.readChartFiles(ctx, sub, chartPath, location)...)
 			}
 		} else if info.Mode().IsRegular() {

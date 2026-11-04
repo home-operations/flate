@@ -51,30 +51,24 @@ func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 
 	a, _ := o.store.GetObject(idA).(*manifest.Kustomization)
 	b, _ := o.store.GetObject(idB).(*manifest.Kustomization)
-	{
-		assert.FatalIf(t, a == nil || b == nil, "%v", "post-Bootstrap objects went missing")
-	}
+	assert.FatalIf(t, a == nil || b == nil, "%v", "post-Bootstrap objects went missing")
 	if len(a.DependsOn) != 2 || len(b.DependsOn) != 1 {
 		t.Fatalf("cycle detection must not rewrite dependsOn: a=%+v b=%+v", a.DependsOn, b.DependsOn)
 	}
 	for _, id := range []manifest.NamedResource{idA, idB} {
 		msg, ok := o.preflightFailure(id)
-		{
-			assert.FatalIf(
-				t,
-				!ok || !strings.Contains(msg, "dependency cycle detected"),
-				"%s preflight failure = %q, %v",
-				id,
-				msg,
-				ok,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!ok || !strings.Contains(msg, "dependency cycle detected"),
+			"%s preflight failure = %q, %v",
+			id,
+			msg,
+			ok,
+		)
 	}
 	{
-		{
-			msg, ok := o.preflightFailure(idExtra)
-			assert.FatalIf(t, ok, "acyclic dependency was marked failed: %q", msg)
-		}
+		msg, ok := o.preflightFailure(idExtra)
+		assert.FatalIf(t, ok, "acyclic dependency was marked failed: %q", msg)
 	}
 }
 
@@ -88,26 +82,22 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 	o.store.AddObject(makeKS("b", "ns", idA))
 	o.failDependsOnCycles()
 	{
-		{
-			msg, ok := o.preflightFailure(idA)
-			assert.FatalIf(
-				t,
-				!ok || !strings.Contains(msg, "dependency cycle detected"),
-				"initial cycle was not recorded: %q, %v",
-				msg,
-				ok,
-			)
-		}
+		msg, ok := o.preflightFailure(idA)
+		assert.FatalIf(
+			t,
+			!ok || !strings.Contains(msg, "dependency cycle detected"),
+			"initial cycle was not recorded: %q, %v",
+			msg,
+			ok,
+		)
 	}
 
 	o.store.AddObject(makeKS("a", "ns"))
 	o.failDependsOnCycles()
 	for _, id := range []manifest.NamedResource{idA, idB} {
 		{
-			{
-				msg, ok := o.preflightFailure(id)
-				assert.FatalIf(t, ok, "resolved cycle member still has preflight failure %s: %q", id, msg)
-			}
+			msg, ok := o.preflightFailure(id)
+			assert.FatalIf(t, ok, "resolved cycle member still has preflight failure %s: %q", id, msg)
 		}
 	}
 }
@@ -135,14 +125,12 @@ func TestFailDependsOnCycles_InvalidatesResolvedMembers(t *testing.T) {
 	o.failDependsOnCycles()
 
 	changed := slices.Collect(o.store.Sweep())
-	{
-		assert.FatalIf(
-			t,
-			reads.Valid() || !slices.Contains(changed, idB) || seen[idB] != 0,
-			"%v",
-			"cleared preflight did not invalidate its retained assessment without an arrival",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reads.Valid() || !slices.Contains(changed, idB) || seen[idB] != 0,
+		"%v",
+		"cleared preflight did not invalidate its retained assessment without an arrival",
+	)
 }
 
 // TestFailDependsOnCycles_RenderEmittedCycle verifies the runtime
@@ -191,17 +179,15 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 		o.store.AddObject(makeKS("b", "ns", idA))
 		for _, id := range []manifest.NamedResource{idA, idB} {
 			{
-				{
-					msg, ok := o.preflightFailure(id)
-					assert.ErrorIf(
-						t,
-						!ok || !strings.Contains(msg, "dependency cycle detected"),
-						"%s preflight failure = %q, %v",
-						id,
-						msg,
-						ok,
-					)
-				}
+				msg, ok := o.preflightFailure(id)
+				assert.ErrorIf(
+					t,
+					!ok || !strings.Contains(msg, "dependency cycle detected"),
+					"%s preflight failure = %q, %v",
+					id,
+					msg,
+					ok,
+				)
 			}
 		}
 		for _, pair := range [][2]string{{"rs-a", "rs-b"}, {"rs-b", "rs-a"}} {
@@ -228,10 +214,8 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 				Name:      name,
 			}
 			{
-				{
-					msg, ok := o.preflightFailure(id)
-					assert.ErrorIf(t, ok, "non-render %s admitted to cycle graph: %s", id, msg)
-				}
+				msg, ok := o.preflightFailure(id)
+				assert.ErrorIf(t, ok, "non-render %s admitted to cycle graph: %s", id, msg)
 			}
 		}
 	}, false)
@@ -258,17 +242,13 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 		o.updateDependencyGraphFor(ids[i])
 	}
 	{
-		{
-			got := o.depGraph.Failures()
-			assert.FatalIf(t, len(got) != 0, "acyclic chain reported cycles: %v", got)
-		}
+		got := o.depGraph.Failures()
+		assert.FatalIf(t, len(got) != 0, "acyclic chain reported cycles: %v", got)
 	}
 	for _, id := range ids {
 		{
-			{
-				msg, ok := o.preflightFailure(id)
-				assert.FatalIf(t, ok, "acyclic %s flagged: %q", id, msg)
-			}
+			msg, ok := o.preflightFailure(id)
+			assert.FatalIf(t, ok, "acyclic %s flagged: %q", id, msg)
 		}
 	}
 
@@ -276,28 +256,24 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 	o.updateDependencyGraphFor(ids[nodeCount-1])
 
 	failures := o.depGraph.Failures()
-	{
-		assert.FatalIf(
-			t,
-			len(failures) != nodeCount,
-			"cycle-closing edge should flag every chain member; got %d / %d",
-			len(failures),
-			nodeCount,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(failures) != nodeCount,
+		"cycle-closing edge should flag every chain member; got %d / %d",
+		len(failures),
+		nodeCount,
+	)
 	for _, id := range ids {
 		{
-			{
-				msg, ok := o.preflightFailure(id)
-				assert.FatalIf(
-					t,
-					!ok || !strings.Contains(msg, "dependency cycle detected"),
-					"%s preflight after cycle close = %q, %v",
-					id,
-					msg,
-					ok,
-				)
-			}
+			msg, ok := o.preflightFailure(id)
+			assert.FatalIf(
+				t,
+				!ok || !strings.Contains(msg, "dependency cycle detected"),
+				"%s preflight after cycle close = %q, %v",
+				id,
+				msg,
+				ok,
+			)
 		}
 	}
 }
@@ -321,17 +297,15 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 
 	for _, id := range []manifest.NamedResource{idA, idB, idC} {
 		{
-			{
-				msg, ok := o.preflightFailure(id)
-				assert.FatalIf(
-					t,
-					!ok || !strings.Contains(msg, "dependency cycle detected"),
-					"%s pre-break = %q, %v",
-					id,
-					msg,
-					ok,
-				)
-			}
+			msg, ok := o.preflightFailure(id)
+			assert.FatalIf(
+				t,
+				!ok || !strings.Contains(msg, "dependency cycle detected"),
+				"%s pre-break = %q, %v",
+				id,
+				msg,
+				ok,
+			)
 		}
 	}
 
@@ -341,10 +315,8 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 
 	for _, id := range []manifest.NamedResource{idA, idB, idC} {
 		{
-			{
-				msg, ok := o.preflightFailure(id)
-				assert.FatalIf(t, ok, "%s post-break still failed: %q", id, msg)
-			}
+			msg, ok := o.preflightFailure(id)
+			assert.FatalIf(t, ok, "%s post-break still failed: %q", id, msg)
 		}
 	}
 }
@@ -371,17 +343,15 @@ func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
 
 	for _, id := range []manifest.NamedResource{idX, idY} {
 		{
-			{
-				msg, ok := o.preflightFailure(id)
-				assert.FatalIf(
-					t,
-					!ok || !strings.Contains(msg, "dependency cycle detected"),
-					"HR %s preflight = %q, %v",
-					id,
-					msg,
-					ok,
-				)
-			}
+			msg, ok := o.preflightFailure(id)
+			assert.FatalIf(
+				t,
+				!ok || !strings.Contains(msg, "dependency cycle detected"),
+				"HR %s preflight = %q, %v",
+				id,
+				msg,
+				ok,
+			)
 		}
 	}
 }
@@ -432,15 +402,13 @@ func TestDependencyCycles_WarningsDeduplicate(t *testing.T) {
 		}
 	}
 	{
-		{
-			got := testing.AllocsPerRun(10, o.syncPreflightFailures)
-			assert.FatalIf(
-				t,
-				got > members,
-				"cycle warning publication allocates %g times for %d members",
-				got,
-				members,
-			)
-		}
+		got := testing.AllocsPerRun(10, o.syncPreflightFailures)
+		assert.FatalIf(
+			t,
+			got > members,
+			"cycle warning publication allocates %g times for %d members",
+			got,
+			members,
+		)
 	}
 }

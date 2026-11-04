@@ -37,7 +37,7 @@ func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSC
 			obj = o.unchangedDeclaration(claim.ID, &record)
 		}
 		source, _, _ := obj.SourcePath()
-		if _, _, external := loader.SourceView(o.store, source, o.repoRoot); !external {
+		if !loader.SourceView(o.store, source, o.repoRoot).External {
 			local = append(local, claim)
 		}
 	}

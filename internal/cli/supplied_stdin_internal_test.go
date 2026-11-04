@@ -87,7 +87,8 @@ func TestLoadInputs_AnyKind(t *testing.T) {
 	if c.suppliedObjects[3].Doc["spec"].(map[string]any)["payload"] != "retained" {
 		t.Fatal("raw payload lost")
 	}
-	got, _, err := c.suppliedObjects[4].Obj.(manifest.Data).Value("VALUE")
+	value, err := c.suppliedObjects[4].Obj.(manifest.Data).Value("VALUE")
+	got := value.Value
 	if err != nil || got != cipher {
 		t.Fatalf("supplied ciphertext changed: %q, %v", got, err)
 	}

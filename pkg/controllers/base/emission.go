@@ -16,8 +16,9 @@ func (c *Controller) ParseChildren(
 	parent manifest.BaseManifest,
 	docs []manifest.DocOccurrence,
 	opts manifest.ParseDocOptions,
-) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
-	children, visible, failures := loader.ParseChildren(parent, docs, opts, c.SkipKinds)
+) store.ChildDocuments {
+	parseChildrenResult1 := loader.ParseChildren(parent, docs, opts, c.SkipKinds)
+	children, visible, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	if c.Store != nil {
 		for i, child := range children {
 			if existing := c.Store.GetObject(
@@ -28,7 +29,7 @@ func (c *Controller) ParseChildren(
 			}
 		}
 	}
-	return children, visible, failures
+	return store.ChildDocuments{Children: children, Visible: visible, Failures: failures}
 }
 
 func (c *Controller) admitChildren(

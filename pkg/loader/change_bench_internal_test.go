@@ -20,7 +20,8 @@ import (
 
 // BenchmarkFilterResolve_LargeRepo measures construction for 1000 Kustomizations.
 func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
-	s, sourceFiles := seedKSStore(1000)
+	fixture := seedKSStore(1000)
+	s, sourceFiles := fixture.store, fixture.files
 	// Small change set: 3 files spread across distinct app subpaths.
 	changeSet := change.NewSet([]string{
 		"apps/app-7/ks.yaml",
@@ -83,7 +84,7 @@ func BenchmarkFilterResolve_ProducerChain(b *testing.B) {
 // BenchmarkBuildOwnership measures canonical claim grouping for 1000 Kustomizations.
 // Discovery prepares this immutable state before admissionFixture construction.
 func BenchmarkBuildOwnership(b *testing.B) {
-	s, _ := seedKSStore(1000)
+	s := seedKSStore(1000).store
 	l := New(s)
 
 	b.ReportAllocs()
@@ -130,7 +131,8 @@ func BenchmarkAddEmitted_PrimaryFanOut(b *testing.B) {
 	const fanOut = 64
 	for _, unrelated := range []int{1000, 4000} {
 		b.Run(fmt.Sprintf("unrelated=%d/children=%d", unrelated, fanOut), func(b *testing.B) {
-			s, files := seedKSStore(unrelated + 1)
+			fixture3 := seedKSStore(unrelated + 1)
+			s, files := fixture3.store, fixture3.files
 			index := new(filterFixture{files: files, root: "/repo", objects: s}).index()
 			changes := change.NewSet([]string{"apps/app-0/ks.yaml"})
 			parent := testutil.KustomizationID("flux-system", "app-0")
@@ -231,7 +233,12 @@ func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *man
 	return changes, stores[1], index, roots[1]
 }
 
-func seedKSStore(n int) (*store.Store, map[manifest.NamedResource]string) {
+type ksStoreFixture struct {
+	store *store.Store
+	files map[manifest.NamedResource]string
+}
+
+func seedKSStore(n int) ksStoreFixture {
 	s := store.New()
 	sourceFiles := make(map[manifest.NamedResource]string, n)
 	for i := range n {
@@ -250,7 +257,7 @@ func seedKSStore(n int) (*store.Store, map[manifest.NamedResource]string) {
 		s.AddObject(ks)
 		sourceFiles[ks.Named()] = fmt.Sprintf("apps/app-%d/ks.yaml", i)
 	}
-	return s, sourceFiles
+	return ksStoreFixture{store: s, files: sourceFiles}
 }
 
 func BenchmarkDetect(b *testing.B) {

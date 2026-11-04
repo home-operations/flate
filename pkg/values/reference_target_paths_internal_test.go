@@ -34,18 +34,12 @@ func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
 				},
 			}
 			_, err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
-			{
-				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
-					!errors.Is(err, strconv.ErrSyntax), "target parser identities lost: %v", err)
-			}
+			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+				!errors.Is(err, strconv.ErrSyntax), "target parser identities lost: %v", err)
 			cause, ok := errors.AsType[*strconv.NumError](err)
-			{
-				assert.FatalIf(t, !ok || cause.Num != "bad", "original index parser cause lost: %v", err)
-			}
+			assert.FatalIf(t, !ok || cause.Num != "bad", "original index parser cause lost: %v", err)
 			for _, detail := range []string{`targetPath "` + path + `"`} {
-				{
-					assert.ErrorIf(t, !strings.Contains(err.Error(), detail), "error lacks %q: %v", detail, err)
-				}
+				assert.ErrorIf(t, !strings.Contains(err.Error(), detail), "error lacks %q: %v", detail, err)
 			}
 			assert.Diff(t, hr.Values, map[string]any{"retained": "yes"})
 		})

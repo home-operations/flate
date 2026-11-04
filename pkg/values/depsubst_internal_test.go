@@ -16,13 +16,10 @@ import (
 func parsedDependency(t *testing.T, name, spec string) *manifest.Kustomization {
 	t.Helper()
 	docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML(name, "apps", spec)))
-	{
-		assert.NoError(t, err)
-	}
-	obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
+	parsed, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+	obj := parsed.Object
+	assert.NoError(t, err)
 	return obj.(*manifest.Kustomization)
 }
 
@@ -145,14 +142,12 @@ func testDependencySubstitutionsParsedDependsOnCase(
 		target := parsedDependency(t, testCaseInput.want, "  path: ./target\n")
 		st.AddObject(target.WithNamespace(ns))
 		for ref := range manifest.References(resolved, manifest.ReferenceRelations) {
-			{
-				assert.FatalIf(
-					t,
-					ref.Use == "dependsOn" && st.GetObject(ref.NamedResource) == nil,
-					"resolved dependency does not match target: %s",
-					ref.NamedResource,
-				)
-			}
+			assert.FatalIf(
+				t,
+				ref.Use == "dependsOn" && st.GetObject(ref.NamedResource) == nil,
+				"resolved dependency does not match target: %s",
+				ref.NamedResource,
+			)
 		}
 	}
 }

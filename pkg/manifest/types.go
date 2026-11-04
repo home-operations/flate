@@ -107,7 +107,7 @@ type BaseManifest interface {
 	// ChartDisplaySource returns the source for chart version inference, or zero values when inapplicable.
 	ChartDisplaySource() (NamedResource, bool)
 	Suspended() bool
-	ReferenceCapacity() (int, int)
+	ReferenceCapacity() ReferenceLimits
 	kind() KindInfo
 	catalog(NamedResource) BaseManifest
 	producerTargets([]NamedResource) []ProducerTarget
@@ -311,16 +311,23 @@ func (r *RawObject) Named() NamedResource {
 // Suspended reports whether reconciliation is paused on this resource.
 func (r *RawObject) Suspended() bool { return false }
 
-// ReconcileInput returns the declaration metadata consumed by reconciliation.
-func (r *RawObject) ReconcileInput(doc map[string]any) (string, bool, bool) {
+// ReconcileMetadata retains document inputs that affect artifact generation.
+type ReconcileMetadata struct {
+	UID      string
+	Disabled bool
+	Consumes bool
+}
+
+// ReconcileInput preserves consumed metadata separately from unrelated document fields.
+func (r *RawObject) ReconcileInput(doc map[string]any) ReconcileMetadata {
 	if !r.isArtifactGenerator() {
-		return "", false, false
+		return ReconcileMetadata{}
 	}
 	metadata, _ := doc[metadataKey].(map[string]any)
 	uid, _ := metadata["uid"].(string)
 	annotations, _ := metadata[annotationsKey].(map[string]any)
 	disabled, _ := annotations["source.extensions.fluxcd.io/reconcile"].(string)
-	return uid, strings.EqualFold(disabled, "disabled"), true
+	return ReconcileMetadata{UID: uid, Disabled: strings.EqualFold(disabled, "disabled"), Consumes: true}
 }
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
@@ -351,17 +358,17 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 	if kind == "" {
 		return nil, inputf("missing kind")
 	}
-	name, ns, missing := requireMetadata(doc)
-	if missing != "" {
-		return nil, inputf("missing %s for %s", missing, kind)
+	metadata := requireMetadata(doc)
+	if metadata.missing != "" {
+		return nil, inputf("missing %s for %s", metadata.missing, kind)
 	}
 	spec, _ := doc[specKey].(map[string]any)
 	spec = DeepCopyMap(spec)
 	return &RawObject{
 		Kind:       kind,
 		APIVersion: apiVersion,
-		Name:       name,
-		Namespace:  ns,
+		Name:       metadata.Name,
+		Namespace:  metadata.Namespace,
 		Spec:       spec,
 	}, nil
 }

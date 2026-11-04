@@ -46,12 +46,10 @@ func testDocumentReaderSourceViewsAndReuseReplacedSource(
 				_, err := loadForTest(t.Context(), t, l, (*testCaseInput))
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "nil replacement read host content: %v", err)
 			}
-			{
-				assert.FatalIf(t, len(l.Index.Records) != 0 ||
-					len(
-						st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization),
-					) != 0, "%s", "nil replacement retained old objects or index records")
-			}
+			assert.FatalIf(t, len(l.Index.Records) != 0 ||
+				len(
+					st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization),
+				) != 0, "%s", "nil replacement retained old objects or index records")
 			st.SetArtifact(manifest.BootstrapSourceID, replacement)
 			{
 				n, err := loadForTest(t.Context(), t, l, (*testCaseInput))
@@ -61,14 +59,12 @@ func testDocumentReaderSourceViewsAndReuseReplacedSource(
 
 			st.SetArtifact(manifest.BootstrapSourceID, nil)
 			l.mountSources()
-			{
-				assert.FatalIf(t, new(l.documents).mountedRoot((*testCaseInput)) != "" || len(l.documents.cache) != 0 ||
-					len(retainedErrorsForTest(l)) != 0 ||
-					len(l.Index.Records) != 0 ||
-					len(
-						st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization),
-					) != 0, "%s", "removed artifact retained a stale binding, document or index error")
-			}
+			assert.FatalIf(t, new(l.documents).mountedRoot((*testCaseInput)) != "" || len(l.documents.cache) != 0 ||
+				len(retainedErrorsForTest(l)) != 0 ||
+				len(l.Index.Records) != 0 ||
+				len(
+					st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization),
+				) != 0, "%s", "removed artifact retained a stale binding, document or index error")
 		})
 	}
 }
@@ -86,13 +82,9 @@ func testDocumentReaderSourceViewsAndReuseLateNestedSource(t *testing.T) {
 	st := store.New()
 	admitForTest(st, root)
 	location, err := gitrepo.Locate(t.Context(), unrelated, unrelated)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	artifact, err := gittree.AdmitDirectory(t.Context(), location)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	repo := &manifest.GitRepository{Name: "unrelated"}
 	st.AddObject(repo)
 	st.SetArtifact(repo.Named(), artifact)
@@ -105,20 +97,14 @@ func testDocumentReaderSourceViewsAndReuseLateNestedSource(t *testing.T) {
 	}
 	view := l.documents.views[unrelated]
 	observed, err := fs.Stat(view, ".")
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	backing := t.TempDir()
 	testutil.WriteFile(t, backing, "kustomization.yaml", "resources: [ks.yaml]\n")
 	testutil.WriteFile(t, backing, "ks.yaml", testutil.KustomizationYAML("nested", "apps", "  {path: ./apps}\n"))
 	location, err = gitrepo.Locate(t.Context(), backing, backing)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	artifact, err = gittree.AdmitDirectory(t.Context(), location)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	artifact.LocalPath = filepath.Join(root, "child")
 	nested := &manifest.GitRepository{Name: "nested"}
 	st.AddObject(nested)
@@ -133,36 +119,30 @@ func testDocumentReaderSourceViewsAndReuseLateNestedSource(t *testing.T) {
 			loadForTestErr2,
 		)
 	}
-	{
-		assert.FatalIf(t, l.documents.views[artifact.LocalPath] == artifact.FS ||
-			new(l.documents).mountedRoot(
-				filepath.Join(root, "child/ks.yaml"),
-			) != artifact.LocalPath, "%s", "late native mount did not bind its own private operation view")
-	}
+	assert.FatalIf(t, l.documents.views[artifact.LocalPath] == artifact.FS ||
+		new(l.documents).mountedRoot(
+			filepath.Join(root, "child", "ks.yaml"),
+		) != artifact.LocalPath, "%s", "late native mount did not bind its own private operation view")
 	id := testutil.KustomizationID("apps", "nested")
 	record, indexed := l.Index.Lookup(id)
-	{
-		assert.FatalIf(
-			t,
-			!indexed || record.Path != filepath.Join(root, "child/ks.yaml") || st.GetObject(id) == nil,
-			"nested mount did not supply its object and index: %+v",
-			record,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!indexed || record.Path != filepath.Join(root, "child", "ks.yaml") || st.GetObject(id) == nil,
+		"nested mount did not supply its object and index: %+v",
+		record,
+	)
 	id.Name = "stale"
 	{
 		_, indexed := l.Index.Lookup(id)
 		assert.FatalIf(t, indexed || st.GetObject(id) != nil, "%s", "late nested mount retained parent-backed content")
 	}
 	retained, err := fs.Stat(l.documents.views[unrelated], ".")
-	{
-		assert.FatalIf(
-			t,
-			err != nil || l.documents.views[unrelated] != view || retained != observed,
-			"%s",
-			"late nested mount replaced unrelated view observations",
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || l.documents.views[unrelated] != view || retained != observed,
+		"%s",
+		"late nested mount replaced unrelated view observations",
+	)
 }
 
 type replacementViewInput struct {
@@ -173,6 +153,7 @@ type replacementViewInput struct {
 	name   string
 }
 
+//nolint:gocritic // The pointer retains the current filesystem for the next replacement comparison.
 func replaceSourceView(
 	t *testing.T,
 	fixture replacementViewInput,
@@ -196,13 +177,9 @@ func replaceSourceView(
 			testutil.WriteFile(t, backing, file, string(contents.Data))
 		}
 		location, err := gitrepo.Locate(t.Context(), backing, backing)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		artifact, err = gittree.AdmitDirectory(t.Context(), location)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		artifact.LocalPath = (*fixture.root)
 	}
 	fixture.store.SetArtifact(manifest.BootstrapSourceID, artifact)
@@ -212,14 +189,12 @@ func replaceSourceView(
 	}
 	view := fixture.loader.documents.views[(*fixture.root)]
 	if fixture.native {
-		{
-			assert.FatalIf(
-				t,
-				view == artifact.FS || view == *previous,
-				"%s",
-				"native replacement did not create a new private operation view",
-			)
-		}
+		assert.FatalIf(
+			t,
+			view == artifact.FS || view == *previous,
+			"%s",
+			"native replacement did not create a new private operation view",
+		)
 	} else {
 		_, ok := view.(fstest.MapFS)
 		assert.FatalIf(t, !ok, "%s", "non-native replacement wrapped the supplied filesystem")
@@ -227,7 +202,7 @@ func replaceSourceView(
 	*previous = view
 	*replacement = artifact
 	{
-		k, _ := fixture.loader.documents.read((*fixture.root))
+		k := fixture.loader.documents.read((*fixture.root)).body
 		assert.FatalIf(
 			t,
 			k == nil || k.Namespace != fixture.name,
@@ -236,12 +211,10 @@ func replaceSourceView(
 			k,
 		)
 	}
-	child, _ := fixture.loader.documents.read(filepath.Join((*fixture.root), "child"))
-	{
-		assert.FatalIf(t, fixture.name == "first" && child != nil ||
-			fixture.name == "second" &&
-				(child == nil || child.Namespace != "replacement"), "%s source retained a stale miss: %v", fixture.name, child)
-	}
+	child := fixture.loader.documents.read(filepath.Join((*fixture.root), "child")).body
+	assert.FatalIf(t, fixture.name == "first" && child != nil ||
+		fixture.name == "second" &&
+			(child == nil || child.Namespace != "replacement"), "%s source retained a stale miss: %v", fixture.name, child)
 	id := testutil.KustomizationID(fixture.name, fixture.name)
 	{
 		_, ok := fixture.loader.Index.Lookup(id)

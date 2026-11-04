@@ -60,9 +60,7 @@ func testPreflightRemoteResourcesRemoteObservationsRootAfterNested(t *testing.T)
 	c.SetGitBaseFetcher(
 		func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 			gitCalls++
-			{
-				assert.FatalIf(t, request.URL != gitURL || request.Ref != "main", "Git request=%+v", request)
-			}
+			assert.FatalIf(t, request.URL != gitURL || request.Ref != "main", "Git request=%+v", request)
 			return &store.SourceArtifact{
 				FS:       remote,
 				Key:      "family",
@@ -83,9 +81,7 @@ func testPreflightRemoteResourcesRemoteObservationsRootAfterNested(t *testing.T)
 		rec,
 	)
 	err := preflightRemoteResources(t.Context(), c, input, "/src")
-	{
-		assert.FatalIf(t, err != nil, "preflight error=%v", err)
-	}
+	assert.FatalIf(t, err != nil, "preflight error=%v", err)
 	snap := rec.snapshot()
 	assert.FatalIf(
 		t,
@@ -105,32 +101,24 @@ func testPreflightRemoteResourcesRemoteObservationsRootAfterNested(t *testing.T)
 		)
 	}
 	frame, err := encodeFrame(&renderHeader{Reads: snap}, nil)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	decodedFrame, err := decodeFrame(frame)
 	decoded := decodedFrame.header.Reads
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	for entryIndex := range decoded.Remotes {
 		entry := decoded.Remotes[entryIndex]
 		acquired, identity, err := entry.Input.acquire(t.Context(), c, input)
-		{
-			assert.FatalIf(
-				t,
-				err != nil || identity != entry.Identity,
-				"replayed identity=%+v observation=%+v error=%v",
-				identity,
-				entry,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || identity != entry.Identity,
+			"replayed identity=%+v observation=%+v error=%v",
+			identity,
+			entry,
+			err,
+		)
 		if entry.Input.Operation == remoteHTTP {
 			body, err := fs.ReadFile(acquired, "content")
-			{
-				assert.FatalIf(t, err != nil || string(body) != "remote data", "HTTP body=%q error=%v", body, err)
-			}
+			assert.FatalIf(t, err != nil || string(body) != "remote data", "HTTP body=%q error=%v", body, err)
 		}
 	}
 	if hits.Load() != 1 || gitCalls != 2 {
@@ -242,9 +230,7 @@ func testPreflightRemoteResourcesRemoteObservationsCase(
 			func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 				record(request.URL)
 				files, ok := repositories[request.URL]
-				{
-					assert.FatalIf(t, !ok || request.Ref != "main", "Git request=%+v", request)
-				}
+				assert.FatalIf(t, !ok || request.Ref != "main", "Git request=%+v", request)
 				revision := "1"
 				if changed.Load() == 1 && request.URL == b.URL {
 					revision = "2"
@@ -267,7 +253,7 @@ func testPreflightRemoteResourcesRemoteObservationsCase(
 		assert.NoError(t, err)
 	}
 	snap := rec.snapshot()
-	assertRemoteObservationParents(t, &snap, &probe, &want)
+	assertRemoteObservationParents(t, &snap, &probe, want)
 	mu.Lock()
 	for descriptor := range want {
 		assert.ErrorIf(t, calls[descriptor.URL] != 1,
@@ -275,14 +261,10 @@ func testPreflightRemoteResourcesRemoteObservationsCase(
 	}
 	mu.Unlock()
 	frame, err := encodeFrame(&renderHeader{Reads: snap}, nil)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	snapFrame, decodeErr := decodeFrame(frame)
 	snap, err = snapFrame.header.Reads, decodeErr
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	closeTestTreeCache(t, c)
 	mu.Lock()
 	clear(calls)
@@ -317,11 +299,9 @@ func testPreflightRemoteResourcesRemoteObservationsCase(
 			assert.FatalIf(t, err != nil || valid, "changed parent %d: valid=%t error=%v", change, valid, err)
 		}
 		mu.Lock()
-		{
-			assert.ErrorIf(t, calls[child.URL] != 0 || (*testCaseInput) ==
-				"shared-mount" &&
-				(calls[shared.URL] != 0 || calls[probe.URL] != 0 || calls[selected.URL] != 0), "changed parent %d acquired descendants: %v", change, calls)
-		}
+		assert.ErrorIf(t, calls[child.URL] != 0 || (*testCaseInput) ==
+			"shared-mount" &&
+			(calls[shared.URL] != 0 || calls[probe.URL] != 0 || calls[selected.URL] != 0), "changed parent %d acquired descendants: %v", change, calls)
 		mu.Unlock()
 		closeTestTreeCache(t, c)
 	}
@@ -368,11 +348,11 @@ func assertRemoteObservationParents(
 	t *testing.T,
 	snap *readSetSnapshot,
 	probe *remoteInput,
-	want *map[remoteInput][]remoteInput,
+	want map[remoteInput][]remoteInput,
 ) {
 	t.Helper()
 
-	assert.FatalIf(t, len(snap.Remotes) != len(*want), "observations=%+v; want=%+v", snap.Remotes, *want)
+	assert.FatalIf(t, len(snap.Remotes) != len(want), "observations=%+v; want=%+v", snap.Remotes, want)
 	for entryIndex := range snap.Remotes {
 		entry := snap.Remotes[entryIndex]
 		assert.FatalIf(
@@ -381,7 +361,7 @@ func assertRemoteObservationParents(
 			"nested probe identity=%+v",
 			entry.Identity,
 		)
-		parents, ok := (*want)[entry.Input]
+		parents, ok := want[entry.Input]
 		slices.SortFunc(parents, compareRemoteInputs)
 		assert.FatalIf(
 			t,

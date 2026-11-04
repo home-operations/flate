@@ -71,33 +71,21 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	}
 
 	body, err := fsys.ReadFile("kustomization.yaml")
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.ErrorIf(t, strings.Contains(string(body), srv.URL), "URL still present after preflight:\n%s", body)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(string(body), remoteResourcePrefix),
-			"expected rewritten path with %s prefix:\n%s",
-			remoteResourcePrefix,
-			body,
-		)
-	}
+	assert.NoError(t, err)
+	assert.ErrorIf(t, strings.Contains(string(body), srv.URL), "URL still present after preflight:\n%s", body)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(string(body), remoteResourcePrefix),
+		"expected rewritten path with %s prefix:\n%s",
+		remoteResourcePrefix,
+		body,
+	)
 
 	fetched := remoteFiles(t, fsys, ".")
-	{
-		assert.FatalIf(t, len(fetched) != 1, "expected one fetched file, got %v", fetched)
-	}
+	assert.FatalIf(t, len(fetched) != 1, "expected one fetched file, got %v", fetched)
 	cached, err := fsys.ReadFile(fetched[0])
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.ErrorIf(t, !strings.Contains(string(cached), "kind: ConfigMap"), "fetched body lost: %q", cached)
-	}
+	assert.NoError(t, err)
+	assert.ErrorIf(t, !strings.Contains(string(cached), "kind: ConfigMap"), "fetched body lost: %q", cached)
 }
 
 func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
@@ -117,24 +105,20 @@ func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
 			fsys := memFSWith(t, map[string]string{"kustomization.yaml": body})
 			fsys.rec = newReadSet("/")
 			err := preflightRemoteResources(t.Context(), newTestTreeCache(t, ""), fsys, ".")
-			{
-				assert.FatalIf(
-					t,
-					err == nil || !strings.Contains(err.Error(), url) || !strings.Contains(err.Error(), "HTTP 404"),
-					"404 diagnostics=%v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				err == nil || !strings.Contains(err.Error(), url) || !strings.Contains(err.Error(), "HTTP 404"),
+				"404 diagnostics=%v",
+				err,
+			)
 			if requiredFile {
 				response, ok := errors.AsType[*fetcherr.ResponseError](err)
-				{
-					assert.FatalIf(
-						t,
-						!ok || response.StatusCode != http.StatusNotFound,
-						"required file lost acquisition error: %v",
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!ok || response.StatusCode != http.StatusNotFound,
+					"required file lost acquisition error: %v",
+					err,
+				)
 			}
 			observation := fsys.rec.remotes[remoteInput{Operation: remoteHTTP, URL: url}]
 			assert.FatalIf(
@@ -158,9 +142,7 @@ func TestPreflightRemoteResources_IgnoresLocalEntries(t *testing.T) {
 		assert.FatalIf(t, err != nil, "preflight: %v", err)
 	}
 	got, _ := fsys.ReadFile("kustomization.yaml")
-	{
-		assert.ErrorIf(t, string(got) != body, "local-only kustomization was modified:\nwant %q\ngot  %q", body, got)
-	}
+	assert.ErrorIf(t, string(got) != body, "local-only kustomization was modified:\nwant %q\ngot  %q", body, got)
 }
 
 func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
@@ -176,17 +158,13 @@ func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 		"components/x/kustomization.yaml": "resources:\n  - " + srv.URL + "/nested.yaml\n",
 	})
 	err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
-	{
-		assert.FatalIf(t, err != nil, "preflight: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "preflight: %v", err)
 	{
 		body, _ := fsys.ReadFile("kustomization.yaml")
 		assert.FatalIf(t, string(body) != parent, "unchanged parent operand was rewritten: %q", body)
 	}
 	body, _ := fsys.ReadFile("components/x/kustomization.yaml")
-	{
-		assert.ErrorIf(t, strings.Contains(string(body), srv.URL), "nested URL not rewritten:\n%s", body)
-	}
+	assert.ErrorIf(t, strings.Contains(string(body), srv.URL), "nested URL not rewritten:\n%s", body)
 }
 
 // TestRender_RemotePreflightDoesNotMutateSource proves the in-memory render
@@ -225,27 +203,19 @@ func TestRender_RemotePreflightDoesNotMutateSource(t *testing.T) {
 			sourcecache.RetryConfig{},
 		),
 	)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 
 	got, err := os.ReadFile(filepath.Join(src, "child", "kustomization.yaml"))
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			string(got) != child,
-			"source nested kustomization was mutated:\nwant %q\ngot  %q",
-			child,
-			got,
-		)
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(
+		t,
+		string(got) != child,
+		"source nested kustomization was mutated:\nwant %q\ngot  %q",
+		child,
+		got,
+	)
 	matches, _ := filepath.Glob(filepath.Join(src, "child", remoteResourcePrefix+"*.yaml"))
-	{
-		assert.FatalIf(t, len(matches) != 0, "remote preflight wrote fetched files into source tree: %v", matches)
-	}
+	assert.FatalIf(t, len(matches) != 0, "remote preflight wrote fetched files into source tree: %v", matches)
 }
 
 // TestPreflightRemoteResources_HonorsAlternateFilenames sanity-checks the
@@ -267,9 +237,7 @@ func TestPreflightRemoteResources_HonorsAlternateFilenames(t *testing.T) {
 				assert.FatalIf(t, err != nil, "preflight: %v", err)
 			}
 			body, _ := fsys.ReadFile(name)
-			{
-				assert.ErrorIf(t, strings.Contains(string(body), srv.URL), "%s URL not rewritten:\n%s", name, body)
-			}
+			assert.ErrorIf(t, strings.Contains(string(body), srv.URL), "%s URL not rewritten:\n%s", name, body)
 		})
 	}
 }
@@ -303,9 +271,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 		err := preflightRemoteResources(context.Background(), cache, fsys, ".")
 		assert.FatalIf(t, err != nil, "preflight: %v", err)
 	}
-	{
-		assert.ErrorIf(t, hits != 1, "expected 1 network call, got %d", hits)
-	}
+	assert.ErrorIf(t, hits != 1, "expected 1 network call, got %d", hits)
 	{
 		got := remoteFiles(t, fsys, ".")
 		assert.ErrorIf(t, len(got) != 1, "expected one immutable shared overlay file, got %v", got)
@@ -318,9 +284,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 		err := preflightRemoteResources(context.Background(), cache, fsys2, ".")
 		assert.FatalIf(t, err != nil, "second preflight: %v", err)
 	}
-	{
-		assert.ErrorIf(t, hits != 1, "expected 1 network call across both runs, got %d", hits)
-	}
+	assert.ErrorIf(t, hits != 1, "expected 1 network call across both runs, got %d", hits)
 }
 
 func TestPreflightRemoteResources_PreservesCommentsAndOrder(t *testing.T) {
@@ -347,9 +311,7 @@ namespace: my-app
 	}
 
 	got, err := fsys.ReadFile("kustomization.yaml")
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	out := string(got)
 
 	for _, expect := range []string{
@@ -358,30 +320,22 @@ namespace: my-app
 		"# remote shared fragment",
 		"# keep this comment",
 	} {
-		{
-			assert.ErrorIf(
-				t,
-				!strings.Contains(out, expect),
-				"comment dropped on rewrite: %q\nfile is:\n%s",
-				expect,
-				out,
-			)
-		}
-	}
-	{
-		assert.ErrorIf(t, !strings.Contains(out, "- ./local.yaml"), "local resource path mangled:\n%s", out)
-	}
-	{
 		assert.ErrorIf(
 			t,
-			!strings.Contains(out, remoteResourcePrefix),
-			"URL entry not rewritten to local file:\n%s",
+			!strings.Contains(out, expect),
+			"comment dropped on rewrite: %q\nfile is:\n%s",
+			expect,
 			out,
 		)
 	}
-	{
-		assert.ErrorIf(t, strings.Contains(out, srv.URL), "URL still present after rewrite:\n%s", out)
-	}
+	assert.ErrorIf(t, !strings.Contains(out, "- ./local.yaml"), "local resource path mangled:\n%s", out)
+	assert.ErrorIf(
+		t,
+		!strings.Contains(out, remoteResourcePrefix),
+		"URL entry not rewritten to local file:\n%s",
+		out,
+	)
+	assert.ErrorIf(t, strings.Contains(out, srv.URL), "URL still present after rewrite:\n%s", out)
 	{
 		idxRes, idxNs := strings.Index(
 			out,
@@ -432,9 +386,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 					sourcecache.RetryConfig{},
 				),
 			)
-			{
-				assert.FatalIf(t, err != nil || !hasRenderField(out, "name", "remote"), "render: %s, %v", out, err)
-			}
+			assert.FatalIf(t, err != nil || !hasRenderField(out, "name", "remote"), "render: %s, %v", out, err)
 			{
 				_, err := cache.remoteInputs.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil)
 				assert.NoError(t, err)

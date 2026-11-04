@@ -19,21 +19,22 @@ import (
 func resolveTLS(
 	secrets SecretGetter, ownerValue *manifest.DiagnosticIdentity,
 	input TransportInput,
-) (*tls.Config, [3]string, any, error) {
+) (tlsMaterial, error) {
 	owner := *ownerValue
 	ref := input.Reference
 	sec, err := resolveSecretRef(secrets, new(owner), input.Use.label(), ref)
 	if err != nil {
 		if input.OptionalTLS && errors.Is(err, manifest.ErrMissingSecret) {
-			return nil, [3]string{}, nil, nil
+			return tlsMaterial{}, nil
 		}
-		return nil, [3]string{}, nil, err
+		return tlsMaterial{}, err
 	}
 	var material [3]string
 	for i, key := range []string{"tls.crt", "tls.key", "ca.crt"} {
-		value, _, valueErr := sec.Value(key)
+		valueResult, valueErr := sec.Value(key)
+		value := valueResult.Value
 		if valueErr != nil {
-			return nil, [3]string{}, nil, fmt.Errorf(
+			return tlsMaterial{}, fmt.Errorf(
 				"secret %s/%s (%s): %w",
 				owner.ID.Namespace,
 				ref.Name,
@@ -44,9 +45,10 @@ func resolveTLS(
 		material[i] = value
 	}
 	if input.CAFallback {
-		caFile, _, valueErr2 := sec.Value("caFile")
+		caFile, valueErr2 := sec.Value("caFile")
+
 		if valueErr2 != nil {
-			return nil, [3]string{}, nil, fmt.Errorf(
+			return tlsMaterial{}, fmt.Errorf(
 				"secret %s/%s (%s): %w",
 				owner.ID.Namespace,
 				ref.Name,
@@ -54,20 +56,36 @@ func resolveTLS(
 				valueErr2,
 			)
 		}
-		material[2] = cmp.Or(material[2], caFile)
+		material[2] = cmp.Or(material[2], caFile.Value)
 	}
 	if material == [3]string{} {
 		if input.OptionalTLS {
-			return nil, material, nil, nil
+			return tlsMaterial{material: material}, nil
 		}
-		return nil, material, nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
+		return tlsMaterial{
+			configuration: nil,
+			material:      material,
+			identity:      nil,
+		}, MissingSecretErr(
+			owner,
+			ref.Name,
+			"TLS material unavailable",
+		)
 	}
 	cfg, err := buildTLSConfig(material[0], material[1], material[2])
 	if errors.Is(err, manifest.ErrMissingSecret) {
-		return nil, [3]string{}, nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
+		return tlsMaterial{
+			configuration: nil,
+			material:      [3]string{},
+			identity:      nil,
+		}, MissingSecretErr(
+			owner,
+			ref.Name,
+			"TLS material unavailable",
+		)
 	}
 	if err != nil {
-		return nil, [3]string{}, nil, fmt.Errorf(
+		return tlsMaterial{}, fmt.Errorf(
 			"secret %s/%s (%s): %w",
 			owner.ID.Namespace,
 			ref.Name,
@@ -75,7 +93,7 @@ func resolveTLS(
 			err,
 		)
 	}
-	return cfg, material, [2]any{sec.Data, sec.StringData}, nil
+	return tlsMaterial{configuration: cfg, material: material, identity: [2]any{sec.Data, sec.StringData}}, nil
 }
 
 // buildTLSConfig builds TLS from a client pair, a CA bundle, or both.
@@ -179,4 +197,10 @@ func configureTLSClient(cfg *tls.Config, crt, key string) error {
 		}
 	}
 	return nil
+}
+
+type tlsMaterial struct {
+	configuration *tls.Config
+	material      [3]string
+	identity      any
 }

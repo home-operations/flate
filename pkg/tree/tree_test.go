@@ -167,9 +167,7 @@ func TestTree_MethodErrors(t *testing.T) {
 					err := method.call(p)
 					assert.Equal(t, errors.Is(err, fs.ErrInvalid), true)
 					pe, ok := errors.AsType[*fs.PathError](err)
-					{
-						assert.FatalIf(t, !ok, "expected PathError, got %v", err)
-					}
+					assert.FatalIf(t, !ok, "expected PathError, got %v", err)
 					assert.Equal(t, pe.Path, p)
 				})
 			}

@@ -250,7 +250,8 @@ spec:
 		if err != nil {
 			b.Fatal(err)
 		}
-		obj, _, _, err := manifest.ParseDoc(docs[0].Document, manifest.ParseDocOptions{DefaultNamespace: ""})
+		parsed, err := manifest.ParseDoc(docs[0].Document, manifest.ParseDocOptions{DefaultNamespace: ""})
+		obj := parsed.Object
 		if err != nil {
 			b.Fatal(err)
 		}

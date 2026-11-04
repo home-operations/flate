@@ -60,15 +60,13 @@ func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 				done := make(chan error, 1)
 				go func() {
 					acquired, identity, err := descriptor.acquire(ctx, c, &treeFS{})
-					{
-						assert.ErrorIf(
-							t,
-							acquired != nil || identity != (remoteIdentity{}),
-							"canceled acquisition filesystem=%v identity=%+v",
-							acquired,
-							identity,
-						)
-					}
+					assert.ErrorIf(
+						t,
+						acquired != nil || identity != (remoteIdentity{}),
+						"canceled acquisition filesystem=%v identity=%+v",
+						acquired,
+						identity,
+					)
 					done <- err
 				}()
 				synctest.Wait()
@@ -89,17 +87,13 @@ func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 					assert.ErrorIf(t, !errors.Is(err, context.Canceled), "canceled reacquisition=%v", err)
 				}
 				c.tasks.BlockTillDone()
-				{
-					assert.FatalIf(t, calls != 0, "canceled git fetches=%d, want 0", calls)
-				}
+				assert.FatalIf(t, calls != 0, "canceled git fetches=%d, want 0", calls)
 				{
 					_, _, err := descriptor.acquire(t.Context(), c, &treeFS{})
 					assert.NoError(t, err)
 				}
 				c.tasks.BlockTillDone()
-				{
-					assert.FatalIf(t, calls != 1, "surviving acquisition calls=%d, want 1", calls)
-				}
+				assert.FatalIf(t, calls != 1, "surviving acquisition calls=%d, want 1", calls)
 			})
 		})
 	}
@@ -126,17 +120,15 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 				c := newTestTreeCache(t, "")
 				c.SetGitBaseFetcher(
 					func(_ context.Context, request GitBaseRequest, gotRetry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-						{
-							assert.FatalIf(
-								t,
-								operation != remoteGit || request.URL != descriptor.URL || request.Ref != descriptor.Ref ||
-									request.MaxAge != time.Minute ||
-									gotRetry != retry,
-								"acquisition request=%+v retry=%+v",
-								request,
-								gotRetry,
-							)
-						}
+						assert.FatalIf(
+							t,
+							operation != remoteGit || request.URL != descriptor.URL || request.Ref != descriptor.Ref ||
+								request.MaxAge != time.Minute ||
+								gotRetry != retry,
+							"acquisition request=%+v retry=%+v",
+							request,
+							gotRetry,
+						)
 						return &store.SourceArtifact{
 							Key:      "family",
 							Content:  strconv.Itoa(int(v)),
@@ -148,45 +140,35 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 				input := newTreeFS(fstest.MapFS{}, "/src", nil)
 				input.retry, input.maxAge = retry, time.Minute
 				acquired, identity, err := descriptor.acquire(t.Context(), c, input)
-				{
-					assert.NoError(t, err)
-				}
+				assert.NoError(t, err)
 				body, err := fs.ReadFile(acquired, "content")
-				{
-					assert.FatalIf(
-						t,
-						err != nil || string(body) != strconv.Itoa(int(v)),
-						"acquired body=%q error=%v",
-						body,
-						err,
-					)
-				}
-				{
-					assert.FatalIf(t, operation == remoteHTTP &&
-						(identity.Content == "" || identity.Content != sourcecache.AcquisitionIdentity(acquired)), "HTTP identity=%+v", identity)
-				}
-				{
-					assert.FatalIf(
-						t,
-						operation == remoteGit &&
-							(identity.Key != "family" || identity.Content != strconv.Itoa(int(v))),
-						"Git identity=%+v",
-						identity,
-					)
-				}
+				assert.FatalIf(
+					t,
+					err != nil || string(body) != strconv.Itoa(int(v)),
+					"acquired body=%q error=%v",
+					body,
+					err,
+				)
+				assert.FatalIf(t, operation == remoteHTTP &&
+					(identity.Content == "" || identity.Content != sourcecache.AcquisitionIdentity(acquired)), "HTTP identity=%+v", identity)
+				assert.FatalIf(
+					t,
+					operation == remoteGit &&
+						(identity.Key != "family" || identity.Content != strconv.Itoa(int(v))),
+					"Git identity=%+v",
+					identity,
+				)
 				if first == (remoteIdentity{}) {
 					first = identity
 				}
-				{
-					assert.FatalIf(
-						t,
-						(identity == first) != (v == 1),
-						"generation %d identity=%+v first=%+v",
-						v,
-						identity,
-						first,
-					)
-				}
+				assert.FatalIf(
+					t,
+					(identity == first) != (v == 1),
+					"generation %d identity=%+v first=%+v",
+					v,
+					identity,
+					first,
+				)
 				c.Close()
 			}
 		})
@@ -219,29 +201,25 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 			descriptor := remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo.git", Ref: "main"}
 			_, identity, err := descriptor.acquire(t.Context(), c, newTreeFS(fstest.MapFS{}, "/src", nil))
 			if tc.name == "content generation" {
-				{
-					assert.FatalIf(
-						t,
-						err != nil || identity.Key != "family" || identity.Digest != "digest",
-						"digest generation=%+v error=%v",
-						identity,
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					err != nil || identity.Key != "family" || identity.Digest != "digest",
+					"digest generation=%+v error=%v",
+					identity,
+					err,
+				)
 			} else {
 				wantErr := tc.err
 				if wantErr == nil {
 					wantErr = manifest.ErrInput
 				}
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(err, wantErr) || identity != (remoteIdentity{}),
-						"unavailable Git identity=%+v error=%v",
-						identity,
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!errors.Is(err, wantErr) || identity != (remoteIdentity{}),
+					"unavailable Git identity=%+v error=%v",
+					identity,
+					err,
+				)
 			}
 		})
 	}
@@ -266,13 +244,11 @@ func TestRemoteInput_HTTPFailureObservation(t *testing.T) {
 			if status == http.StatusNotFound {
 				want.HTTPStatus = status
 			}
-			{
-				assert.FatalIf(t, acquired != nil || !ok || response.StatusCode != status || identity != want ||
-					!errors.Is(
-						err,
-						manifest.ErrFlux,
-					), "HTTP %d: filesystem=%v identity=%+v error=%v", status, acquired, identity, err)
-			}
+			assert.FatalIf(t, acquired != nil || !ok || response.StatusCode != status || identity != want ||
+				!errors.Is(
+					err,
+					manifest.ErrFlux,
+				), "HTTP %d: filesystem=%v identity=%+v error=%v", status, acquired, identity, err)
 			if status == http.StatusNotFound {
 				_, original := c.remoteInputs.Acquire(t.Context(), descriptor.URL, sourcecache.RetryConfig{}, nil)
 				if !errors.Is(original, err) ||

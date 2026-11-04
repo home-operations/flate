@@ -50,7 +50,8 @@ func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
 			if supplied {
 				args = append(args, "--supply", input)
 			}
-			out, diagnostic, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(t, code != 1 || supplied && !strings.Contains(out+diagnostic, "greeting needed") ||
 				!supplied &&
 					!strings.Contains(out+diagnostic, "cluster-secrets"), "exit %d: %s %s", code, out, diagnostic)
@@ -63,16 +64,19 @@ func TestRun_StrictSubstitutionCachedRender(t *testing.T) {
 	root := substitutionFixture(t, "  postBuild: {substituteStrategy: Always}\n", "${VALUE}")
 	cache := t.TempDir()
 	args := []string{"build", "all", "--path", root, "--cache-dir", cache, "--concurrency", "2"}
-	first, diagnostic, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	first, diagnostic, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "%v", diagnostic)
-	_, diagnostic, code = runCLI(t, append(slices.Clone(args), "--strict-substitutions")...)
+	cli2 := runCLI(t, append(slices.Clone(args), "--strict-substitutions")...)
+	diagnostic, code = cli2.stderr, cli2.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(diagnostic, "variable not set (strict mode)"),
 		"cached raw output bypassed strictness: %s",
 		diagnostic,
 	)
-	last, diagnostic, code := runCLI(t, args...)
+	cli3 := runCLI(t, args...)
+	last, diagnostic, code := cli3.stdout, cli3.stderr, cli3.code
 	assert.FatalIf(t, code != 0 || first != last, "strict run changed cached default output: %s", diagnostic)
 }
 
@@ -105,7 +109,8 @@ func TestRun_SubstitutionCachedInputChanges(t *testing.T) {
 				)
 				testutil.WriteFile(t, inputs, "values.yaml", strings.Replace(tc.input, "supplied", value, 1))
 				args = append(args, "--supply", filepath.Join(inputs, "values.yaml"))
-				out, diagnostic, code := runCLI(t, args...)
+				cli := runCLI(t, args...)
+				out, diagnostic, code := cli.stdout, cli.stderr, cli.code
 				assert.FatalIf(t, code != 0, "%v", diagnostic)
 				{
 					got := substitutionOutput(t, out)

@@ -110,13 +110,14 @@ func (l *Loader) RegisterBuilt(
 	rel, _ := filepath.Rel(sourceRoot, root)
 	var inputs, shared []string
 	selected := map[string]bool{}
-	inputs, shared = l.selectBuiltInputs(sourceRoot, rel, new(input), selected)
+	built2 := l.selectBuiltInputs(sourceRoot, rel, new(input), selected)
+	inputs, shared = built2.inputs, built2.shared
 
 	slices.Sort(inputs)
 	inputs = slices.Compact(inputs)
 	slices.Sort(shared)
 	shared = slices.Compact(shared)
-	_, builder := l.documents.read(root)
+	builder := l.documents.read(root).file
 	builder = l.fileCoordinate(cmp.Or(builder, root))
 	records := make([]manifest.DiscoveryRecord, len(docs))
 	authored := map[manifest.NamedResource]store.Child{}
@@ -184,12 +185,10 @@ func (l *Loader) PromotionDocuments(id manifest.NamedResource) []store.Child {
 		}
 		return nil
 	}
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for root, doc := range l.documents.cache {
-			if doc.built != nil && (l.fileCoordinate(root) == r.Builder || l.fileCoordinate(doc.file) == r.Builder) {
-				return doc.built
-			}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for root, doc := range l.documents.cache {
+		if doc.built != nil && (l.fileCoordinate(root) == r.Builder || l.fileCoordinate(doc.file) == r.Builder) {
+			return doc.built
 		}
 	}
 	return nil
@@ -249,11 +248,13 @@ func (o *PromoteOptions) admitDocuments(
 	return nil
 }
 
+type builtInputs struct{ inputs, shared []string }
+
 func (l *Loader) selectBuiltInputs(
 	sourceRoot, rel string,
 	inputValue *BuiltInput,
 	selected map[string]bool,
-) ([]string, []string) {
+) builtInputs {
 	input := *inputValue
 	var inputs, shared []string
 	{
@@ -288,7 +289,7 @@ func (l *Loader) selectBuiltInputs(
 			}
 		}
 	}
-	return inputs, shared
+	return builtInputs{inputs: inputs, shared: shared}
 }
 
 func (l *Loader) removeReplacedRecords(
@@ -345,11 +346,11 @@ func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, originalValue *sto
 	}); ok {
 		doc := manifest.DeepCopyMap(original.Doc)
 		producer.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
-		projected, _, _, err := manifest.ParseDoc(
+		parsed, err := manifest.ParseDoc(
 			doc,
 			manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets},
 		)
-		same = err == nil && manifest.Equal(obj, projected)
+		same = err == nil && manifest.Equal(obj, parsed.Object)
 	}
 	return same
 }
@@ -412,7 +413,7 @@ func (l *Loader) admitBuiltRoot(root string) (string, bool) {
 	l.ensureScopes()
 	sourceRoot := cmp.Or(new(l.documents).mountedRoot(root), l.SourceRoot, root)
 	l.Admit(sourceRoot)
-	_, packageFile := l.documents.read(root)
+	packageFile := l.documents.read(root).file
 	if packageFile != "" && l.documents.cache[packageFile].eligible == fileInactive {
 		return "", false
 	}

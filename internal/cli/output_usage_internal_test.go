@@ -118,7 +118,8 @@ func TestOutputFlags_TestRejectsBeforeRender(t *testing.T) {
 	for _, command := range []string{"test", "test all", "test ks", "test hr"} {
 		t.Run(command, func(t *testing.T) {
 			args := append(strings.Fields(command), "--path", t.TempDir()+"/missing", "-o", "yaml")
-			out, diagnostic, code := runCLI(t, args...)
+			cli := runCLI(t, args...)
+			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
 			assert.FatalIf(t, code != 1 || out != "" || !strings.Contains(diagnostic, "unknown shorthand flag: 'o'") ||
 				strings.Contains(
 					diagnostic,

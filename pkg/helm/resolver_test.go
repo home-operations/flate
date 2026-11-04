@@ -79,13 +79,11 @@ data:
 	foreign.Group = "example.test"
 	foreignArtifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "foreign"}
 	st.SetArtifact(foreign, foreignArtifact)
-	{
-		assert.FatalIf(t, resolver.LocalSourceArtifact(foreign, store.ArtifactContent) != foreignArtifact ||
-			resolver.LocalSourceArtifact(
-				gr.Named(),
-				store.ArtifactContent,
-			).URL != gr.URL, "%s", "source resolver lost canonical artifact identity")
-	}
+	assert.FatalIf(t, resolver.LocalSourceArtifact(foreign, store.ArtifactContent) != foreignArtifact ||
+		resolver.LocalSourceArtifact(
+			gr.Named(),
+			store.ArtifactContent,
+		).URL != gr.URL, "%s", "source resolver lost canonical artifact identity")
 	cliSources := resolver
 
 	hr := &manifest.HelmRelease{
@@ -110,25 +108,19 @@ data:
 			helm.RenderOptions{Options: helm.Options{}, Sources: cliSources},
 		),
 	)
-	{
-		assert.FatalIf(t, err != nil, "Template via resolver: %v", err)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			len(out) != 1 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm",
-			"expected rendered ConfigMap; got: %s",
-			out,
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			len(out) != 1 || out[0]["data"].(map[string]any)["greeting"] != "hello",
-			"expected values applied; got: %s",
-			out,
-		)
-	}
+	assert.FatalIf(t, err != nil, "Template via resolver: %v", err)
+	assert.ErrorIf(
+		t,
+		len(out) != 1 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm",
+		"expected rendered ConfigMap; got: %s",
+		out,
+	)
+	assert.ErrorIf(
+		t,
+		len(out) != 1 || out[0]["data"].(map[string]any)["greeting"] != "hello",
+		"expected values applied; got: %s",
+		out,
+	)
 }
 
 func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
@@ -207,31 +199,27 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 			t.Fatalf("operation %s: err=%v output=%s", name, failures[i], outputs[i])
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			reads[0].Valid() || !reads[1].Valid(),
-			"%s",
-			"source replacement did not invalidate exactly its captured operation",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reads[0].Valid() || !reads[1].Valid(),
+		"%s",
+		"source replacement did not invalidate exactly its captured operation",
+	)
 	var successor store.ReadSet
 	successor.Init(st, releases[0].Named(), nil)
 	defer successor.Retire()
 	output, _, err := testutil.RenderMaps(
 		client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor)}),
 	)
-	{
-		assert.FatalIf(
-			t,
-			err != nil || len(output) != 1 || output[0]["metadata"].(map[string]any)["name"] != "replacement" ||
-				output[0]["data"].(map[string]any)["greeting"] != "replacement" ||
-				!successor.Valid(),
-			"successor: err=%v output=%s",
-			err,
-			output,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || len(output) != 1 || output[0]["metadata"].(map[string]any)["name"] != "replacement" ||
+			output[0]["data"].(map[string]any)["greeting"] != "replacement" ||
+			!successor.Valid(),
+		"successor: err=%v output=%s",
+		err,
+		output,
+	)
 }
 
 type capturedChartFS struct {

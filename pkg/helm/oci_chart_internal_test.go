@@ -51,14 +51,12 @@ func TestOCIChartVersion_RevisionSemantics(t *testing.T) {
 			t.Parallel()
 			got, err := ociChartVersion(tc.version, tc.revision)
 			if tc.want == "" {
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-						"validation error = %v, want ErrInput and ErrFlux",
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
+					"validation error = %v, want ErrInput and ErrFlux",
+					err,
+				)
 				return
 			}
 			assert.FatalIf(t, err != nil || got != tc.want, "version = %q, err = %v, want %q", got, err, tc.want)
@@ -213,9 +211,7 @@ func testTemplateOCIConcurrentIdentitiesCase(
 		<-entered
 		close(start)
 		ts.BlockTillDone()
-		{
-			assert.FatalIf(t, ts.Failures() != 0, "%s", "render task panicked")
-		}
+		assert.FatalIf(t, ts.Failures() != 0, "%s", "render task panicked")
 		testTemplateOCIConcurrentIdentitiesCaseLoop(t, struct {
 			output        *[2][]map[string]any
 			testCaseInput **struct {
@@ -243,14 +239,12 @@ func testTemplateOCIConcurrentIdentitiesCase(
 		entry := cli.chartCache[entryIndex]
 		canonical = entry.chart
 	}
-	{
-		assert.FatalIf(
-			t,
-			canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child",
-			"%s",
-			"parallel renders mutated canonical metadata",
-		)
-	}
+	assert.FatalIf(
+		t,
+		canonical.Metadata.Version != "6.15.0" || canonical.Dependencies()[0].Metadata.Version != "1.2.3+child",
+		"%s",
+		"parallel renders mutated canonical metadata",
+	)
 }
 
 func testTemplateOCIConcurrentIdentitiesCaseLoop(t *testing.T, loopInputs struct {
@@ -274,13 +268,11 @@ func testTemplateOCIConcurrentIdentitiesCaseLoop(t *testing.T, loopInputs struct
 		if loopInputs.errs[i] != nil || !hasRenderField(loopInputs.output[i], "version", version) {
 			t.Fatalf("parallel render %d = %q, err = %v", i, loopInputs.output[i], loopInputs.errs[i])
 		}
-		{
-			assert.FatalIf(
-				t,
-				(*loopInputs.round) > 0 && !reflect.DeepEqual(loopInputs.output[i], loopInputs.expected[i]),
-				"parallel render %d changed bytes",
-				i,
-			)
-		}
+		assert.FatalIf(
+			t,
+			(*loopInputs.round) > 0 && !reflect.DeepEqual(loopInputs.output[i], loopInputs.expected[i]),
+			"parallel render %d changed bytes",
+			i,
+		)
 	}
 }

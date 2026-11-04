@@ -31,7 +31,7 @@ func TestDocuments_PreservesProducerAndEmissionOrder(t *testing.T) {
 	if docs[0].Parent.NamedResource != a.Named() || docs[0].Parent.Path != "./apps/a" {
 		t.Errorf("doc[0] parent = %+v; want a / ./apps/a", docs[0].Parent)
 	}
-	if name, _ := manifest.DocMetadata(docs[1].Manifest); name != "a2" {
+	if metadata := manifest.DocMetadata(docs[1].Manifest); metadata.Name != "a2" {
 		t.Errorf("within-parent order not preserved; doc[1] = %v", docs[1].Manifest)
 	}
 	if docs[2].Parent.NamedResource != b.Named() || docs[2].Parent.Path != "" {

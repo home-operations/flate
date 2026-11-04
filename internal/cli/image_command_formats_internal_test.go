@@ -131,10 +131,12 @@ func runImagesGetAndDiffFormatsMatchFormat(t *testing.T, current *string, cache 
 	flags := make([]string, 0, 8)
 	flags = append(flags, "--path", (*current), "--cache-dir", (*cache), "--concurrency", "2")
 	flags = append(flags, "-o", (*capturedInputs.format))
-	get, stderr, code := runCLI(t, append([]string{"get", "images"}, flags...)...)
+	cli := runCLI(t, append([]string{"get", "images"}, flags...)...)
+	get, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "get images exited %d: %s", code, stderr)
 	diffArgs := append([]string{"diff", "images", "--path-orig", (*capturedInputs.orig)}, flags...)
-	delta, stderr, code := runCLI(t, diffArgs...)
+	cli2 := runCLI(t, diffArgs...)
+	delta, stderr, code := cli2.stdout, cli2.stderr, cli2.code
 	assert.FatalIf(t, code != 0, "diff images exited %d: %s", code, stderr)
 	assert.Diff(t, delta, get)
 	var images []string
@@ -162,10 +164,10 @@ func runImagesGetAndDiffFormatsMatchFormat(t *testing.T, current *string, cache 
 	assert.Diff(t, images, (*capturedInputs.want))
 }
 
-func runImagesGetAndDiffFormatsMatchNoiseGet(t *testing.T, noise *string, cache *string, want *[]string) {
+func runImagesGetAndDiffFormatsMatchNoiseGet(t *testing.T, noise, cache *string, want *[]string) {
 	t.Helper()
 
-	stdout, stderr, code := runCLI(
+	cli := runCLI(
 		t,
 		"get",
 		"images",
@@ -176,6 +178,7 @@ func runImagesGetAndDiffFormatsMatchNoiseGet(t *testing.T, noise *string, cache 
 		"--concurrency",
 		"2",
 	)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "noise get images: exit=%d stderr=%s", code, stderr)
 	assert.Equal(t, stdout, "IMAGE\n"+strings.Join((*want), "\n")+"\n")
 }
@@ -205,12 +208,13 @@ func runImagesGetAndDiffFormatsMatchName(t *testing.T, tc *struct {
 	if tc.includeRemoved {
 		args = append(args, "--include-removed")
 	}
-	stdout, stderr, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "diff images: exit=%d stderr=%s", code, stderr)
 	assert.Equal(t, stdout, tc.want)
 }
 
-func runImagesGetAndDiffFormatsMatchEmptyDefault(t *testing.T, orig *string, cache *string) {
+func runImagesGetAndDiffFormatsMatchEmptyDefault(t *testing.T, orig, cache *string) {
 	t.Helper()
 
 	for _, verb := range []string{"get", "diff"} {
@@ -218,11 +222,12 @@ func runImagesGetAndDiffFormatsMatchEmptyDefault(t *testing.T, orig *string, cac
 	}
 }
 
-func runImagesGetAndDiffFormatsMatchUnchangedJSON(t *testing.T, current *string, cache *string) {
+func runImagesGetAndDiffFormatsMatchUnchangedJSON(t *testing.T, current, cache *string) {
 	t.Helper()
 
-	stdout, stderr, code := runCLI(t, "diff", "images", "--path", (*current), "--path-orig", (*current),
+	cli := runCLI(t, "diff", "images", "--path", (*current), "--path-orig", (*current),
 		"--cache-dir", (*cache), "--concurrency", "2", "-o", "json")
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "unchanged diff images: exit=%d stderr=%s", code, stderr)
 	{
 		got := strings.TrimSpace(stdout)
@@ -230,14 +235,15 @@ func runImagesGetAndDiffFormatsMatchUnchangedJSON(t *testing.T, current *string,
 	}
 }
 
-func runImagesGetAndDiffFormatsMatchEmptyDefaultVerb(t *testing.T, verb *string, orig **string, cache **string) {
+func runImagesGetAndDiffFormatsMatchEmptyDefaultVerb(t *testing.T, verb *string, orig, cache **string) {
 	t.Helper()
 
 	args := []string{(*verb), "images", "--path", (*(*orig)), "--cache-dir", (*(*cache)), "--concurrency", "2"}
 	if (*verb) == "diff" {
 		args = append(args, "--path-orig", writeFixture(t))
 	}
-	stdout, stderr, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	want := ""
 	if (*verb) == "get" {
 		want = "IMAGE\n"
@@ -252,7 +258,8 @@ func runImagesGetAndDiffFormatsMatchEmptyDefaultVerb(t *testing.T, verb *string,
 		stderr,
 	)
 	for _, format := range []string{"name", "yaml", "json"} {
-		out, diagnostics, status := runCLI(t, append(args, "-o", format)...)
+		cli2 := runCLI(t, append(args, "-o", format)...)
+		out, diagnostics, status := cli2.stdout, cli2.stderr, cli2.code
 		expected := ""
 		if format != "name" {
 			expected = "[]\n"

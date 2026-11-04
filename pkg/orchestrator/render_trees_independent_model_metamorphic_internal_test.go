@@ -20,9 +20,7 @@ func TestRenderTrees_IndependentModel_Metamorphic(t *testing.T) {
 	if err != nil {
 		failRenderModel(t, []byte{1, 0}, &fixture, err)
 	}
-	{
-		assert.FatalIf(t, !bytes.Equal(first, second), "two successful runs differ:\n%s\n%s", first, second)
-	}
+	assert.FatalIf(t, !bytes.Equal(first, second), "two successful runs differ:\n%s\n%s", first, second)
 	for index, name := range []string{"disjoint-growth", "source-bijection", "reverse-edit", "equivalent-placement"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -73,36 +71,30 @@ func testRenderTreesIndependentModelMetamorphicCase(
 			control.before,
 			control.after,
 		)
-		{
-			assert.FatalIf(
-				t,
-				!reflect.DeepEqual(want, got),
-				"disjoint growth changed expected membership: want=%+v got=%+v",
-				want,
-				got,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!reflect.DeepEqual(want, got),
+			"disjoint growth changed expected membership: want=%+v got=%+v",
+			want,
+			got,
+		)
 	case "reverse-edit":
 		want, got := compareModelWorlds(testCaseInput.fixture.before, testCaseInput.fixture.after), compareModelWorlds(
 			control.before,
 			control.after,
 		)
-		{
-			assert.FatalIf(t, !maps.Equal(want.before.affected, got.after.affected) ||
-				!maps.Equal(
-					want.after.affected,
-					got.before.affected,
-				), "%v", "reversing an edit changed its symmetric affected membership")
-		}
+		assert.FatalIf(t, !maps.Equal(want.before.affected, got.after.affected) ||
+			!maps.Equal(
+				want.after.affected,
+				got.before.affected,
+			), "%v", "reversing an edit changed its symmetric affected membership")
 	}
 	output, err := checkRenderModel(t, &control)
 	if err != nil {
 		failRenderModel(t, encoded, &control, err)
 	}
-	{
-		assert.FatalIf(
-			t, (*testCaseInput.name) !=
-				"reverse-edit" && !bytes.Equal((*testCaseInput.first), output), "%s changed equivalent selected output:\n%s\n%s", (*testCaseInput.name), (*testCaseInput.first), output,
-		)
-	}
+	assert.FatalIf(
+		t, (*testCaseInput.name) !=
+			"reverse-edit" && !bytes.Equal((*testCaseInput.first), output), "%s changed equivalent selected output:\n%s\n%s", (*testCaseInput.name), (*testCaseInput.first), output,
+	)
 }

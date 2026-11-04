@@ -133,9 +133,7 @@ func TestDescription_SourceObservation(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, reads, 1)
-	{
-		assert.FatalIf(t, !hasRenderField(out, "marker", "first"), "key and merge observed different input: %s", out)
-	}
+	assert.FatalIf(t, !hasRenderField(out, "marker", "first"), "key and merge observed different input: %s", out)
 }
 
 func TestDescription_HitHydration(t *testing.T) {
@@ -250,12 +248,8 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		assert.Diff(t, out, want)
 		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, d.chart == nil, "%s", "ineligible input hydrated without a real decode")
-		}
-		{
-			assert.FatalIf(t, validOutput && validChartTemplates(d.chart), "%s", "invalid template bytes were changed")
-		}
+		assert.FatalIf(t, d.chart == nil, "%s", "ineligible input hydrated without a real decode")
+		assert.FatalIf(t, validOutput && validChartTemplates(d.chart), "%s", "invalid template bytes were changed")
 		d.values, d.valuesErr = cli.observeValuesFiles(
 			t.Context(),
 			&d,
@@ -272,9 +266,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 			cache.Policy{MaxAge: cache.Forever},
 			nil,
 		)
-		{
-			assert.FatalIf(t, err == nil, "%s", "invalid UTF-8 was published")
-		}
+		assert.FatalIf(t, err == nil, "%s", "invalid UTF-8 was published")
 		assert.FatalIf(t, !errors.Is(err, errdef.ErrNotFound), "%v", err)
 	}
 }
@@ -309,14 +301,12 @@ func testDescriptionProjectionCase(t *testing.T, testCaseInput *testDescriptionP
 	changed[(*testCaseInput.name)].Data = append(bytes.Clone(changed[(*testCaseInput.name)].Data), '\n')
 	next, _, captureChartErr := captureChart(t.Context(), changed, ".", false)
 	assert.NoError(t, captureChartErr)
-	{
-		assert.FatalIf(
-			t,
-			testCaseInput.initial.fingerprint() == next.fingerprint(),
-			"%s",
-			"changed captured bytes shared an identity",
-		)
-	}
+	assert.FatalIf(
+		t,
+		testCaseInput.initial.fingerprint() == next.fingerprint(),
+		"%s",
+		"changed captured bytes shared an identity",
+	)
 }
 
 type testDescriptionProjectionCase2Inputs struct {
@@ -340,15 +330,11 @@ func testDescriptionProjectionCase2(t *testing.T, testCaseInput *testDescription
 	}
 	target.Templates = append(target.Templates, &chartcommon.File{Data: []byte("{{ toYaml .Values }}")})
 	analysis := (&chartDescription{chart: ch}).analyze()
-	{
-		assert.FatalIf(t, analysis.Templates != "", "%s", "opaque chart retained unused template analysis")
-	}
+	assert.FatalIf(t, analysis.Templates != "", "%s", "opaque chart retained unused template analysis")
 	assert.Diff(t, analysis.unreferencedValuePaths((*testCaseInput.values)), []string(nil))
 	data, err := json.Marshal(renderRecord{Output: []byte("rendered"), Analysis: analysis})
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, len(data) > 1024, "opaque analysis payload is %d bytes", len(data))
-	}
+	assert.FatalIf(t, len(data) > 1024, "opaque analysis payload is %d bytes", len(data))
 }
 
 func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
@@ -389,14 +375,12 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 		assert.NoError(t, err)
 		assert.Equal(t, d.chart == nil, (*testCaseInput) && i == 1)
 		if !(*testCaseInput) || i == 0 {
-			{
-				assert.FatalIf(
-					t,
-					d.analysis == nil || d.captured.files != nil || d.captured.archive != nil,
-					"%s",
-					"decoded generation lost analysis or retained captured input",
-				)
-			}
+			assert.FatalIf(
+				t,
+				d.analysis == nil || d.captured.files != nil || d.captured.archive != nil,
+				"%s",
+				"decoded generation lost analysis or retained captured input",
+			)
 		}
 		assert.Diff(
 			t,
@@ -438,16 +422,10 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 			assert.NoError(t, describeChartErr)
 			repeated, describeChartErr := cli.describeChart(t.Context(), hr, cliSources)
 			assert.NoError(t, describeChartErr)
-			{
-				assert.FatalIf(t, hit.record == nil || hit.record != repeated.record ||
-					hit.record.Analysis != repeated.record.Analysis, "%s", "same record did not share its immutable typed projection")
-			}
-			{
-				assert.FatalIf(t, hit.analysis != hit.record.Analysis, "%s", "record did not share canonical analysis")
-			}
-			{
-				assert.FatalIf(t, (*testCaseInput) && i == 1 && hit.chart != nil, "%s", "fresh hit decoded the chart")
-			}
+			assert.FatalIf(t, hit.record == nil || hit.record != repeated.record ||
+				hit.record.Analysis != repeated.record.Analysis, "%s", "same record did not share its immutable typed projection")
+			assert.FatalIf(t, hit.analysis != hit.record.Analysis, "%s", "record did not share canonical analysis")
+			assert.FatalIf(t, (*testCaseInput) && i == 1 && hit.chart != nil, "%s", "fresh hit decoded the chart")
 		}
 		after, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
@@ -495,14 +473,12 @@ func testDescriptionHydrationKeepsDecodedCase(
 	close(start)
 	wg.Wait()
 	assert.NoError(t, decodeErr)
-	{
-		assert.FatalIf(
-			t,
-			decoded.captured.files != nil || decoded.captured.archive != nil,
-			"%s",
-			"decode retained captured input",
-		)
-	}
+	assert.FatalIf(
+		t,
+		decoded.captured.files != nil || decoded.captured.archive != nil,
+		"%s",
+		"decode retained captured input",
+	)
 	late := &renderRecord{
 		Output: []byte("late"),
 		Analysis: &chartAnalysis{
@@ -517,33 +493,27 @@ func testDescriptionHydrationKeepsDecodedCase(
 	assert.NoError(t, err)
 	assert.Equal(t, current.chart != nil && current.chart == decoded.chart, true)
 	assert.Equal(t, current.record == late, true)
-	{
-		assert.FatalIf(
-			t,
-			fresh.Analysis != current.analysis || late.Analysis != current.analysis,
-			"%s",
-			"publication did not share canonical analysis",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			current.captured.files != nil || current.captured.archive != nil,
-			"%s",
-			"stale publication restored captured input after decode",
-		)
-	}
+	assert.FatalIf(
+		t,
+		fresh.Analysis != current.analysis || late.Analysis != current.analysis,
+		"%s",
+		"publication did not share canonical analysis",
+	)
+	assert.FatalIf(
+		t,
+		current.captured.files != nil || current.captured.archive != nil,
+		"%s",
+		"stale publication restored captured input after decode",
+	)
 	reused := d
 	err = cli.decodeChart(t.Context(), &reused)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			reused.chart != current.chart || reused.captured.files != nil || reused.captured.archive != nil,
-			"%s",
-			"decode reuse retained stale captured input",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reused.chart != current.chart || reused.captured.files != nil || reused.captured.archive != nil,
+		"%s",
+		"decode reuse retained stale captured input",
+	)
 }
 
 func testReviewNestedWarningsCase(t *testing.T, testCaseInput *string,
@@ -582,24 +552,20 @@ func testReviewNestedWarningsCase(t *testing.T, testCaseInput *string,
 		}
 
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(
-				t,
-				!strings.Contains(diagnostics.String(), "Warning:"),
-				"%s",
-				"real nested loader diagnostics were suppressed",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!strings.Contains(diagnostics.String(), "Warning:"),
+			"%s",
+			"real nested loader diagnostics were suppressed",
+		)
 		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(
-				t,
-				d.chart == nil || !requiresChartLoader(d.chart),
-				"%s",
-				"nested warning did not require the real loader",
-			)
-		}
+		assert.FatalIf(
+			t,
+			d.chart == nil || !requiresChartLoader(d.chart),
+			"%s",
+			"nested warning did not require the real loader",
+		)
 		diagnostics.Reset()
 		var receipt7 *manifest.RenderReceipt
 		_, receipt7, err = testutil.RenderMaps(

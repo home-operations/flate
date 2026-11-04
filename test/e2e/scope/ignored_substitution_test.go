@@ -42,7 +42,7 @@ func TestE2E_Diff_IgnoredRequiredSubstitution(t *testing.T) {
 		testutil.GitInit(t, root)
 	}
 	for side, root := range roots {
-		stdout, stderr, code := harness.RunCLIBuffers(
+		runCLIBuffersResult1 := harness.RunCLIBuffers(
 			"build",
 			"all",
 			"--path",
@@ -53,6 +53,7 @@ func TestE2E_Diff_IgnoredRequiredSubstitution(t *testing.T) {
 			"2",
 			"--no-progress",
 		)
+		stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 		assert.Equal(t, code, side)
 		switch {
 		case side == 0:
@@ -81,7 +82,7 @@ func TestE2E_Diff_IgnoredRequiredSubstitution(t *testing.T) {
 	}
 }
 
-func e2EDiffIgnoredRequiredSubstitutionCase(t *testing.T, roots *[2]string, reverse *bool, named *bool) {
+func e2EDiffIgnoredRequiredSubstitutionCase(t *testing.T, roots *[2]string, reverse, named *bool) {
 	t.Helper()
 
 	current, original := roots[1], roots[0]
@@ -107,7 +108,8 @@ func e2EDiffIgnoredRequiredSubstitutionCase(t *testing.T, roots *[2]string, reve
 		args[1] = "ks"
 		args = append(args, "consumer")
 	}
-	stdout, stderr, code := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+	stdout, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "vars") || !strings.Contains(stderr, "consumer"),
@@ -122,7 +124,8 @@ func e2EDiffIgnoredRequiredSubstitutionCase(t *testing.T, roots *[2]string, reve
 	}
 	assert.Equal(t, strings.Contains(stderr, failingSide), true)
 	t.Logf("exit=%d diagnostics=%s", code, stderr)
-	repeatedOutput, repeatedDiagnostic, repeatedExit := harness.RunCLIBuffers(args...)
+	runCLIBuffersResult3 := harness.RunCLIBuffers(args...)
+	repeatedOutput, repeatedDiagnostic, repeatedExit := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 	assert.Equal(t, repeatedOutput, stdout)
 	assert.Equal(t, repeatedDiagnostic, stderr)
 	assert.Equal(t, repeatedExit, code)

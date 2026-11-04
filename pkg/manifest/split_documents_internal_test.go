@@ -18,12 +18,8 @@ kind: ConfigMap
 metadata: {name: b, namespace: ns}
 `)
 	docs, err := splitDocMaps(data)
-	{
-		assert.FatalIf(t, err != nil, "SplitDocs: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 2, "expected 2 docs, got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "SplitDocs: %v", err)
+	assert.FatalIf(t, len(docs) != 2, "expected 2 docs, got %d", len(docs))
 	names := []string{
 		docs[0]["metadata"].(map[string]any)["name"].(string),
 		docs[1]["metadata"].(map[string]any)["name"].(string),
@@ -52,12 +48,8 @@ spec:
         replicas: 2
 `)
 	docs, err := splitDocMaps(data)
-	{
-		assert.FatalIf(t, err != nil, "SplitDocs: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 1, "expected 1 doc, got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "SplitDocs: %v", err)
+	assert.FatalIf(t, len(docs) != 1, "expected 1 doc, got %d", len(docs))
 	controllers, _ := docs[0]["spec"].(map[string]any)["values"].(map[string]any)["controllers"].(map[string]any)
 	{
 		_, ok := controllers["sonarr"]

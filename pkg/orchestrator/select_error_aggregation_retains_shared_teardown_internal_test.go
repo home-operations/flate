@@ -229,7 +229,8 @@ func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
 		assert.Equal(t, retry, false)
 		roots := []manifest.NamedResource{testutil.KustomizationID("apps", "")}
 		assert.Equal(t, (manifest.Selection{Roots: roots}).Matches(child.Named()), false)
-		_, selectedChild, _, _ := run.filter.Membership(child.Named())
+		membershipResult1 := run.filter.Membership(child.Named())
+		_, selectedChild, _, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
 		assert.Equal(t, selectedChild, true)
 		run.Err = &FailuresError{Message: failure.Message}
 		result, err, remainder := Select([]Rendered{run}, run.Err, roots, nil)
@@ -260,38 +261,30 @@ func testSelectErrorAggregationRetainsSharedTeardownHeadOnly(
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
-	{
-		assert.FatalIf(
-			t,
-			len(selected) != 1 || len(selected[0].Failed) != 1,
-			"head-only selection lost partial failures: %+v %v",
-			selected,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(selected) != 1 || len(selected[0].Failed) != 1,
+		"head-only selection lost partial failures: %+v %v",
+		selected,
+		err,
+	)
 	for _, got := range []error{err, remainder} {
 		for _, cause := range []error{(*testCaseInput.inputErr), manifest.ErrInput, context.Canceled, (*testCaseInput.closeErr)} {
-			{
-				assert.FatalIf(t, !errors.Is(got, cause) ||
-					!errors.Is(cause, manifest.ErrInput) &&
-						strings.Count(
-							got.Error(),
-							cause.Error(),
-						) != 1, "head-only projection lost or duplicated %v: %v", cause, got)
-			}
+			assert.FatalIf(t, !errors.Is(got, cause) ||
+				!errors.Is(cause, manifest.ErrInput) &&
+					strings.Count(
+						got.Error(),
+						cause.Error(),
+					) != 1, "head-only projection lost or duplicated %v: %v", cause, got)
 		}
 	}
 	{
-		{
-			_, ok := errors.AsType[*FailuresError](err)
-			assert.FatalIf(t, !ok, "%v", "selected failure identity lost")
-		}
+		_, ok := errors.AsType[*FailuresError](err)
+		assert.FatalIf(t, !ok, "%v", "selected failure identity lost")
 	}
 	{
-		{
-			_, ok := errors.AsType[*FailuresError](remainder)
-			assert.FatalIf(t, ok, "resource failure entered remainder: %v", remainder)
-		}
+		_, ok := errors.AsType[*FailuresError](remainder)
+		assert.FatalIf(t, ok, "resource failure entered remainder: %v", remainder)
 	}
 }
 
@@ -329,44 +322,36 @@ func testSelectErrorAggregationRetainsSharedTeardownCase(
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
-	{
-		assert.FatalIf(
-			t,
-			(err != nil) != (testCaseInput.tc.orig != nil || testCaseInput.tc.current != nil || testCaseInput.tc.shared != nil) ||
-				(testCaseInput.tc.want != "" && !strings.Contains(err.Error(), testCaseInput.tc.want)),
-			"snapshot attribution changed: %v",
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(err != nil) != (testCaseInput.tc.orig != nil || testCaseInput.tc.current != nil || testCaseInput.tc.shared != nil) ||
+			(testCaseInput.tc.want != "" && !strings.Contains(err.Error(), testCaseInput.tc.want)),
+		"snapshot attribution changed: %v",
+		err,
+	)
 	for _, cause := range []error{context.Canceled, (*testCaseInput.closeErr), (*testCaseInput.inputErr), (*testCaseInput.domainErr), manifest.ErrInput} {
 		want := errors.Is(testCaseInput.tc.orig, cause) || errors.Is(testCaseInput.tc.current, cause) ||
 			errors.Is(testCaseInput.tc.shared, cause)
-		{
-			assert.FatalIf(
-				t,
-				errors.Is(err, cause) != want || errors.Is(remainder, cause) != want,
-				"error identity lost: selected=%v remainder=%v",
-				err,
-				remainder,
-			)
-		}
+		assert.FatalIf(
+			t,
+			errors.Is(err, cause) != want || errors.Is(remainder, cause) != want,
+			"error identity lost: selected=%v remainder=%v",
+			err,
+			remainder,
+		)
 	}
 	wantDomainRemainder := errors.Is(testCaseInput.tc.orig, (*testCaseInput.inputErr)) ||
 		errors.Is(testCaseInput.tc.current, (*testCaseInput.domainErr)) ||
 		errors.Is(testCaseInput.tc.shared, manifest.ErrFlux)
+	assert.FatalIf(
+		t,
+		errors.Is(remainder, manifest.ErrFlux) != wantDomainRemainder,
+		"incidental domain identity changed: %v",
+		remainder,
+	)
 	{
-		assert.FatalIf(
-			t,
-			errors.Is(remainder, manifest.ErrFlux) != wantDomainRemainder,
-			"incidental domain identity changed: %v",
-			remainder,
-		)
-	}
-	{
-		{
-			_, ok := errors.AsType[*FailuresError](remainder)
-			assert.FatalIf(t, ok, "resource failures entered remainder: %v", remainder)
-		}
+		_, ok := errors.AsType[*FailuresError](remainder)
+		assert.FatalIf(t, ok, "resource failures entered remainder: %v", remainder)
 	}
 }
 
@@ -407,39 +392,29 @@ func testSelectErrorAggregationRetainsSharedTeardownCase2(
 		want = "teardown A\n" + want + "\nteardown B"
 		wantRemainder = "teardown A\n" + wantRemainder + "\nteardown B"
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(selected) != 2 || err == nil || remainder == nil,
-			"lost nested projection: selected=%v err=%v remainder=%v",
-			selected,
-			err,
-			remainder,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(selected) != 2 || err == nil || remainder == nil,
+		"lost nested projection: selected=%v err=%v remainder=%v",
+		selected,
+		err,
+		remainder,
+	)
 	assert.Equal(t, err.Error(), want)
 	assert.Equal(t, remainder.Error(), wantRemainder)
 	for _, got := range []error{err, remainder} {
 		for _, cause := range []error{teardownA, teardownB, context.Canceled} {
-			{
-				assert.FatalIf(t, !errors.Is(got, cause), "lost nested cause %v: %v", cause, got)
-			}
+			assert.FatalIf(t, !errors.Is(got, cause), "lost nested cause %v: %v", cause, got)
 		}
-		{
-			assert.FatalIf(t, errors.Is(got, baseFailure), "raw base failure entered projection: %v", got)
-		}
+		assert.FatalIf(t, errors.Is(got, baseFailure), "raw base failure entered projection: %v", got)
 	}
 	{
-		{
-			_, ok := errors.AsType[*FailuresError](err)
-			assert.FatalIf(t, !ok, "%v", "selected failure identity lost")
-		}
+		_, ok := errors.AsType[*FailuresError](err)
+		assert.FatalIf(t, !ok, "%v", "selected failure identity lost")
 	}
 	{
-		{
-			_, ok := errors.AsType[*FailuresError](remainder)
-			assert.FatalIf(t, ok, "%v", "resource failure entered remainder")
-		}
+		_, ok := errors.AsType[*FailuresError](remainder)
+		assert.FatalIf(t, ok, "%v", "resource failure entered remainder")
 	}
 }
 
@@ -468,10 +443,8 @@ func testSelectErrorAggregationRetainsSharedTeardownCase3(
 	for _, i := range *testCaseInput.order {
 		close(gates[i])
 		{
-			{
-				got := <-finished
-				assert.FatalIf(t, got != i, "completion = %d, want %d", got, i)
-			}
+			got := <-finished
+			assert.FatalIf(t, got != i, "completion = %d, want %d", got, i)
 		}
 	}
 	raw := errors.Join(errors.Join(runs[0].Err, runs[1].Err), (*testCaseInput.closeErr))
@@ -481,18 +454,14 @@ func testSelectErrorAggregationRetainsSharedTeardownCase3(
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
-	{
-		assert.FatalIf(t, len(selected) != 2, "lost partial sides: %v", selected)
-	}
+	assert.FatalIf(t, len(selected) != 2, "lost partial sides: %v", selected)
 	for _, got := range []error{raw, err, remainder} {
 		previous := -1
 		for _, cause := range []error{causes[0], causes[1], (*testCaseInput.closeErr)} {
 			position := strings.Index(got.Error(), cause.Error())
-			{
-				assert.FatalIf(t, !errors.Is(got, cause) ||
-					!errors.Is(cause, manifest.ErrInput) && strings.Count(got.Error(), cause.Error()) != 1 ||
-					position <= previous, "base/head/backing ordering or identity lost: %v", got)
-			}
+			assert.FatalIf(t, !errors.Is(got, cause) ||
+				!errors.Is(cause, manifest.ErrInput) && strings.Count(got.Error(), cause.Error()) != 1 ||
+				position <= previous, "base/head/backing ordering or identity lost: %v", got)
 			previous = position
 		}
 	}
@@ -574,14 +543,12 @@ func testSelectUnavailabilityUsesLocalCanonicalEvidenceCase(
 		}
 		assert.Equal(t, results[index].Unavailable[(*testCaseInput.child)].String(), message)
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(results[1-index].Unavailable) != 0,
-			"%v",
-			"counterpart failure treated as local evidence",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(results[1-index].Unavailable) != 0,
+		"%v",
+		"counterpart failure treated as local evidence",
+	)
 }
 
 func testSelectRequiredFailureOutsideOutputNamespaceCase(
@@ -690,7 +657,8 @@ func testSelectRequiredFailureOutsideOutputNamespaceUnscopedRequiredDescendant(t
 		0,
 	)
 	assert.Equal(t, retry, false)
-	_, selectedChild, _, _ := run.filter.Membership(child.Named())
+	membershipResult2 := run.filter.Membership(child.Named())
+	_, selectedChild, _, _ := membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
 	assert.Equal(t, selectedChild, false)
 	run.Err = &FailuresError{Message: "required descendant failed"}
 	selected, err, remainder := Select(

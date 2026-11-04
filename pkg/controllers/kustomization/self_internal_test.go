@@ -55,9 +55,7 @@ func testReconcileSelfMetadataConvergesCase(t *testing.T, testCaseInput *bool,
 			t,
 			controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
 		)
-		{
-			assert.FatalIf(t, info.Status != store.StatusReady, "setup: %+v", info)
-		}
+		assert.FatalIf(t, info.Status != store.StatusReady, "setup: %+v", info)
 		firstFingerprint = s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
 		ks = ks.Clone()
 		ks.TargetNamespace = "elsewhere"
@@ -94,20 +92,16 @@ func testReconcileSelfMetadataConvergesCase(t *testing.T, testCaseInput *bool,
 		t.Fatalf("self-label render did not converge: status=%+v attempts=%d", info, attempts.Load())
 	}
 	emission, ok := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(
-			t,
-			!ok || len(emission.Children) != 1 || emission.Children[0].Obj.Named().Name != "hello",
-			"missing rendered ConfigMap: %+v",
-			emission,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || len(emission.Children) != 1 || emission.Children[0].Obj.Named().Name != "hello",
+		"missing rendered ConfigMap: %+v",
+		emission,
+	)
 	if !rendering.Load() || !applying.Load() {
 		t.Fatalf("missing transient statuses: rendering=%v applying=%v", rendering.Load(), applying.Load())
 	}
-	{
-		assert.FatalIf(t, (*testCaseInput) &&
-			(emission.Fingerprint == firstFingerprint || emission.Children[0].Obj.Named().Namespace != "elsewhere"), "genuine rerender did not replace output: %+v", emission)
-	}
+	assert.FatalIf(t, (*testCaseInput) &&
+		(emission.Fingerprint == firstFingerprint || emission.Children[0].Obj.Named().Namespace != "elsewhere"), "genuine rerender did not replace output: %+v", emission)
 	t.Logf("ready with ConfigMap output in %d dispatches; rendering and applying observed", attempts.Load())
 }

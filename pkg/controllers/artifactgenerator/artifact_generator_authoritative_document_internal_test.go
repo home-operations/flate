@@ -39,7 +39,8 @@ func TestArtifactGenerator_AuthoritativeDocument(t *testing.T) {
 			st := store.New()
 			c := New(st, task.NewBounded(2), nil)
 
-			obj, doc := generatorForTest(t, nil)
+			generatorForTestResult1 := generatorForTest(t, nil)
+			obj, doc := generatorForTestResult1.object, generatorForTestResult1.document
 			if tc.name == "spec_marshal" {
 				obj.Spec["invalid"] = make(chan int)
 			}
@@ -55,30 +56,24 @@ func TestArtifactGenerator_AuthoritativeDocument(t *testing.T) {
 				got = run.reconcile(ctx, any(obj).(*manifest.RawObject), manifest.DrainNone)
 			})
 			c.Tasks.BlockTillDone()
-			{
-				assert.FatalIf(t, !errors.Is(got, manifest.ErrInput) || !errors.Is(got, manifest.ErrFlux) ||
-					st.GetArtifact(obj.Named(), store.ArtifactContent) != nil, "document rejection = %v", got)
-			}
-			{
-				assert.FatalIf(
-					t,
-					strings.Contains(got.Error(), obj.Named().String()) || strings.Contains(got.Error(), "flux error") ||
-						strings.Contains(
-							got.Error(),
-							"input error",
-						),
-					"document diagnostic repeated classification or owner: %v",
-					got,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					tc.name == "missing" && got.Error() != "missing authoritative document",
-					"missing document diagnostic = %v",
-					got,
-				)
-			}
+			assert.FatalIf(t, !errors.Is(got, manifest.ErrInput) || !errors.Is(got, manifest.ErrFlux) ||
+				st.GetArtifact(obj.Named(), store.ArtifactContent) != nil, "document rejection = %v", got)
+			assert.FatalIf(
+				t,
+				strings.Contains(got.Error(), obj.Named().String()) || strings.Contains(got.Error(), "flux error") ||
+					strings.Contains(
+						got.Error(),
+						"input error",
+					),
+				"document diagnostic repeated classification or owner: %v",
+				got,
+			)
+			assert.FatalIf(
+				t,
+				tc.name == "missing" && got.Error() != "missing authoritative document",
+				"missing document diagnostic = %v",
+				got,
+			)
 		})
 	}
 }
@@ -103,20 +98,16 @@ func TestArtifactGenerator_InputIdentity(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			owner, err := cache.New(t.Context(), "")
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			t.Cleanup(func() {
 				{
-					{
-						err := owner.Close()
-						assert.ErrorIf(t, err != nil, "%v", err)
-					}
+					err := owner.Close()
+					assert.ErrorIf(t, err != nil, "%v", err)
 				}
 			})
 			c := New(st, task.NewBounded(2), owner)
 
-			obj, doc := generatorForTest(
+			generatorForTestResult2 := generatorForTest(
 				t,
 				[]any{
 					map[string]any{
@@ -127,6 +118,7 @@ func TestArtifactGenerator_InputIdentity(t *testing.T) {
 					},
 				},
 			)
+			obj, doc := generatorForTestResult2.object, generatorForTestResult2.document
 			st.AddObject(obj, doc)
 			repo := manifest.NamedResource{
 				Group:     manifest.SourceDomain,
@@ -157,16 +149,14 @@ func TestArtifactGenerator_InputIdentity(t *testing.T) {
 			st.SetArtifact(repo, &next)
 			runForTest(t, c, obj.Named())
 			after := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
-			{
-				assert.FatalIf(
-					t,
-					before.Key == after.Key || before.Digest != after.Digest,
-					"input %s identity before=%+v after=%+v",
-					tc.name,
-					before,
-					after,
-				)
-			}
+			assert.FatalIf(
+				t,
+				before.Key == after.Key || before.Digest != after.Digest,
+				"input %s identity before=%+v after=%+v",
+				tc.name,
+				before,
+				after,
+			)
 		})
 	}
 }
@@ -175,20 +165,16 @@ func TestArtifactGenerator_EmptyAndCanceledInventory(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	owner, err := cache.New(t.Context(), "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		{
-			{
-				localErr := owner.Close()
-				assert.ErrorIf(t, localErr != nil, "%v", localErr)
-			}
+			localErr := owner.Close()
+			assert.ErrorIf(t, localErr != nil, "%v", localErr)
 		}
 	})
 	c := New(st, task.NewBounded(2), owner)
 
-	_, doc := generatorForTest(
+	generatorForTestResult3 := generatorForTest(
 		t,
 		[]any{
 			map[string]any{
@@ -197,11 +183,11 @@ func TestArtifactGenerator_EmptyAndCanceledInventory(t *testing.T) {
 			},
 		},
 	)
+	_, doc := generatorForTestResult3.object, generatorForTestResult3.document
 	doc["spec"].(map[string]any)["pathPattern"] = "@repo/apps/{App}"
-	obj, doc, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj, doc := parsed.Object, parsed.Document
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -226,9 +212,7 @@ func TestArtifactGenerator_EmptyAndCanceledInventory(t *testing.T) {
 		Name:      "prod",
 	}
 	accepted := st.GetArtifact(target, store.ArtifactContent)
-	{
-		assert.FatalIf(t, accepted == nil, "%v", "initial output missing")
-	}
+	assert.FatalIf(t, accepted == nil, "%v", "initial output missing")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	st.SetArtifact(
@@ -262,10 +246,8 @@ func TestArtifactGenerator_EmptyAndCanceledInventory(t *testing.T) {
 	)
 	runForTest(t, c, obj.Named())
 	emission := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !emission.Complete || len(emission.Children) != 0 || emission.Fingerprint == "" ||
-			st.GetArtifact(target, store.ArtifactContent) != nil, "zero expansion inventory = %+v", emission)
-	}
+	assert.FatalIf(t, !emission.Complete || len(emission.Children) != 0 || emission.Fingerprint == "" ||
+		st.GetArtifact(target, store.ArtifactContent) != nil, "zero expansion inventory = %+v", emission)
 }
 
 type cancelOnReadDirFS struct {
@@ -284,20 +266,16 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	owner, err := cache.New(t.Context(), "")
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	t.Cleanup(func() {
 		{
-			{
-				err := owner.Close()
-				assert.ErrorIf(t, err != nil, "%v", err)
-			}
+			err := owner.Close()
+			assert.ErrorIf(t, err != nil, "%v", err)
 		}
 	})
 	c := New(st, task.NewBounded(2), owner)
 
-	obj, doc := generatorForTest(
+	generatorForTestResult4 := generatorForTest(
 		t,
 		[]any{
 			map[string]any{
@@ -308,6 +286,7 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 			},
 		},
 	)
+	obj, doc := generatorForTestResult4.object, generatorForTestResult4.document
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -324,14 +303,10 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	check := func(want string) {
 		t.Helper()
 		artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
-		{
-			assert.FatalIf(t, !ok, "missing %s output", want)
-		}
+		assert.FatalIf(t, !ok, "missing %s output", want)
 		data, err := fs.ReadFile(artifact.FS, "file")
-		{
-			assert.FatalIf(t, err != nil || string(data) != want || artifact.Revision != want+"-revision" ||
-				artifact.Metadata["org.opencontainers.image.revision"] != want+"-origin", "captured %s = %q, %+v, %v", want, data, artifact, err)
-		}
+		assert.FatalIf(t, err != nil || string(data) != want || artifact.Revision != want+"-revision" ||
+			artifact.Metadata["org.opencontainers.image.revision"] != want+"-origin", "captured %s = %q, %+v, %v", want, data, artifact, err)
 	}
 	stable := &store.SourceArtifact{
 		Key:      "stable",
@@ -379,15 +354,13 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	defer st.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, value any) {
 		if id == target {
 			{
-				{
-					artifact, ok := value.(*store.SourceArtifact)
-					assert.ErrorIf(
-						t,
-						ok && artifact.Revision == "first-revision",
-						"%v",
-						"stale evaluation replaced the accepted bundle",
-					)
-				}
+				artifact, ok := value.(*store.SourceArtifact)
+				assert.ErrorIf(
+					t,
+					ok && artifact.Revision == "first-revision",
+					"%v",
+					"stale evaluation replaced the accepted bundle",
+				)
 			}
 		}
 		scheduler.OnPublication()
@@ -399,10 +372,8 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	)()
 	scheduler.Seed([]schedule.NodeID{obj.Named()})
 	{
-		{
-			err := scheduler.Run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := scheduler.Run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	c.Tasks.BlockTillDone()
 	if !replaced.Load() || work.dispatched.Load() != 2 || c.Tasks.Failures() != 0 {
@@ -419,20 +390,16 @@ func TestArtifactGenerator_MutableInput(t *testing.T) {
 			st := store.New()
 			tasks := task.NewBounded(2)
 			owner, err := cache.New(t.Context(), "")
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			assert.FatalIf(t, err != nil, "%v", err)
 			t.Cleanup(func() {
 				{
-					{
-						err := owner.Close()
-						assert.ErrorIf(t, err != nil, "%v", err)
-					}
+					err := owner.Close()
+					assert.ErrorIf(t, err != nil, "%v", err)
 				}
 			})
 			c := New(st, tasks, owner)
 
-			obj, doc := generatorForTest(
+			generatorForTestResult5 := generatorForTest(
 				t,
 				[]any{
 					map[string]any{
@@ -441,6 +408,7 @@ func TestArtifactGenerator_MutableInput(t *testing.T) {
 					},
 				},
 			)
+			obj, doc := generatorForTestResult5.object, generatorForTestResult5.document
 			st.AddObject(obj, doc)
 			repo := manifest.NamedResource{
 				Group:     manifest.SourceDomain,
@@ -467,20 +435,16 @@ func TestArtifactGenerator_MutableInput(t *testing.T) {
 				)
 				runForTest(t, c, obj.Named())
 				artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
-				{
-					assert.FatalIf(t, !ok, "missing %s output", value)
-				}
+				assert.FatalIf(t, !ok, "missing %s output", value)
 				data, err := fs.ReadFile(artifact.FS, "file")
-				{
-					assert.FatalIf(
-						t,
-						err != nil || string(data) != value,
-						"mutable source = %q, %v; want %s",
-						data,
-						err,
-						value,
-					)
-				}
+				assert.FatalIf(
+					t,
+					err != nil || string(data) != value,
+					"mutable source = %q, %v; want %s",
+					data,
+					err,
+					value,
+				)
 			}
 		})
 	}

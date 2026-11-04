@@ -91,9 +91,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 		}
 		var err error
 		linked, err = links.Build()
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 	}
 	remote := memoryTree(
 		t,
@@ -129,9 +127,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 		assert.NoError(t, err)
 	}
 	_, err := buildTestTreeFS(view)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	snap := rec.snapshot()
 	{
 		valid, stillValidErr := snap.stillValid(
@@ -147,37 +143,31 @@ func testRenderRemoteCacheLocalAttributionCase(
 	if (*testCaseInput) == "source-link" {
 		observed = "link.yaml"
 	}
-	{
+	assert.FatalIf(
+		t,
+		!slices.ContainsFunc(snap.Files, func(f localEntry) bool { return f.Path == observed }),
+		"source input %q absent: %+v",
+		observed,
+		snap,
+	)
+	for _, f := range snap.Files {
 		assert.FatalIf(
 			t,
-			!slices.ContainsFunc(snap.Files, func(f localEntry) bool { return f.Path == observed }),
-			"source input %q absent: %+v",
-			observed,
-			snap,
+			strings.Contains(f.Path, remoteResourcePrefix),
+			"overlay coordinate recorded as source: %+v",
+			f,
 		)
-	}
-	for _, f := range snap.Files {
-		{
-			assert.FatalIf(
-				t,
-				strings.Contains(f.Path, remoteResourcePrefix),
-				"overlay coordinate recorded as source: %+v",
-				f,
-			)
-		}
 	}
 	for name, body := range files {
 		got, readFileErr := os.ReadFile(filepath.Join(root, name))
-		{
-			assert.FatalIf(
-				t,
-				readFileErr != nil || string(got) != body,
-				"source %q mutated: %q, %v",
-				name,
-				got,
-				readFileErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			readFileErr != nil || string(got) != body,
+			"source %q mutated: %q, %v",
+			name,
+			got,
+			readFileErr,
+		)
 	}
 	out, receipt30, err := testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 	if err == nil {
@@ -190,9 +180,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 		}
 	}
 
-	{
-		assert.FatalIf(t, err != nil, "first render: %s, %v", out, err)
-	}
+	assert.FatalIf(t, err != nil, "first render: %s, %v", out, err)
 	renderRequestSnapshot := request()
 	key := renderKey(&renderRequestSnapshot, root, nil)
 	if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
@@ -211,9 +199,7 @@ func testRenderRemoteCacheLocalAttributionCase(
 			assert.NoError(t, addSymlinkErr)
 		}
 		linked, err = links.Build()
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 	} else {
 		testutil.WriteFile(t, root, changed, value)
 	}
@@ -240,17 +226,15 @@ func testRenderRemoteCacheLocalAttributionCase(
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			err != nil ||
-				!hasRenderField(out, strings.SplitN(want, ": ", 2)[0], strings.SplitN(want, ": ", 2)[1]),
-			"source edit: %s, %v; want %q",
-			out,
-			err,
-			want,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil ||
+			!hasRenderField(out, strings.SplitN(want, ": ", 2)[0], strings.SplitN(want, ": ", 2)[1]),
+		"source edit: %s, %v; want %q",
+		out,
+		err,
+		want,
+	)
 	closeTestTreeCache(t, c)
 }
 
@@ -277,18 +261,14 @@ func testRenderRemoteCacheLocalAttributionSourceLinkToInjectedFile(t *testing.T)
 				assert.NoError(t, err)
 			}
 			generated, err := walk.mount([]byte(body))
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			links := tree.NewBuilder(nil)
 			{
 				addSymlinkErr2 := links.AddSymlink("link", filepath.Base(generated))
 				assert.NoError(t, addSymlinkErr2)
 			}
 			lower, err := links.Build()
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			view.lower = lower
 			view.upper = tree.NewBuilder(lower)
 			{
@@ -297,35 +277,27 @@ func testRenderRemoteCacheLocalAttributionSourceLinkToInjectedFile(t *testing.T)
 			}
 			if open {
 				f, openErr := view.Open(root + "/link")
-				{
-					assert.NoError(t, openErr)
-				}
+				assert.NoError(t, openErr)
 				data, openErr := io.ReadAll(f)
-				{
-					openErr = errors.Join(openErr, f.Close())
-					assert.FatalIf(t, openErr != nil || string(data) != body, "read: %q, %v", data, openErr)
-				}
+				openErr = errors.Join(openErr, f.Close())
+				assert.FatalIf(t, openErr != nil || string(data) != body, "read: %q, %v", data, openErr)
 			} else {
 				data, readFileErr2 := view.ReadFile(root + "/link")
 				assert.FatalIf(t, readFileErr2 != nil || string(data) != body, "read: %q, %v", data, readFileErr2)
 			}
 			snap := rec.snapshot()
-			{
-				assert.FatalIf(
-					t,
-					len(snap.Files) != 1 || snap.Files[0].Path != "link" || snap.Files[0].Hash == "",
-					"authored source link lost: %+v",
-					snap,
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					validReadSet(t, &readSetSnapshot{Files: snap.Files}, lower),
-					"%s",
-					"lower source cannot certify bytes obtained through an injected target",
-				)
-			}
+			assert.FatalIf(
+				t,
+				len(snap.Files) != 1 || snap.Files[0].Path != "link" || snap.Files[0].Hash == "",
+				"authored source link lost: %+v",
+				snap,
+			)
+			assert.FatalIf(
+				t,
+				validReadSet(t, &readSetSnapshot{Files: snap.Files}, lower),
+				"%s",
+				"lower source cannot certify bytes obtained through an injected target",
+			)
 			changed := tree.NewBuilder(lower)
 			{
 				addFileErr := changed.AddFile("local", []byte("new bytes"), 0o644)
@@ -336,17 +308,13 @@ func testRenderRemoteCacheLocalAttributionSourceLinkToInjectedFile(t *testing.T)
 				assert.NoError(t, addSymlinkErr3)
 			}
 			current, err := changed.Build()
-			{
-				assert.NoError(t, err)
-			}
-			{
-				assert.FatalIf(
-					t,
-					validReadSet(t, &readSetSnapshot{Files: snap.Files}, current),
-					"%s",
-					"retargeted source link replayed injected bytes",
-				)
-			}
+			assert.NoError(t, err)
+			assert.FatalIf(
+				t,
+				validReadSet(t, &readSetSnapshot{Files: snap.Files}, current),
+				"%s",
+				"retargeted source link replayed injected bytes",
+			)
 		})
 	}
 }
@@ -367,9 +335,7 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 	rec := newReadSet(root)
 	view := newTreeFS(lower, root, rec)
 	snapshot, err := view.upper.Build()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	view.upper = tree.NewBuilder(snapshot)
 	{
 		mountErr2 := view.upper.Mount("view", snapshot)
@@ -393,13 +359,9 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 		kustomizeinput.GitBase{RepoURL: "file:///example.invalid/o/repo.git"},
 		&walkScope{root: filepath.Join(root, "view")},
 	)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	snapshot, err = view.upper.Build()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	view.upper = tree.NewBuilder(snapshot)
 	{
 		mountErr3 := view.upper.Mount("view-more", snapshot)
@@ -419,29 +381,25 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 	nested := walk.location(
 		&controlLocation{file: filepath.Join(nestedDir, "foreign"), root: nestedDir, pluginRoot: alias},
 	)
-	{
-		assert.FatalIf(
-			t,
-			original != nested || original.file == "",
-			"nested remote location lost canonical coordinates: %+v, %+v",
-			original,
-			nested,
-		)
-	}
+	assert.FatalIf(
+		t,
+		original != nested || original.file == "",
+		"nested remote location lost canonical coordinates: %+v, %+v",
+		original,
+		nested,
+	)
 	{
 		_, readFileErr3 := view.ReadFile(filepath.Join(alias, "local.txt"))
 		assert.NoError(t, readFileErr3)
 	}
 	f, err := view.Open(filepath.Join(alias, "local.txt"))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	{
 		err := f.Close()
 		assert.NoError(t, err)
 	}
 	{
-		_, err := view.ReadFile(filepath.Join(root, "view-more-data/file"))
+		_, err := view.ReadFile(filepath.Join(root, "view-more-data", "file"))
 		assert.NoError(t, err)
 	}
 	{
@@ -456,14 +414,12 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 		_, err := view.ReadFile(filepath.Join(alias, "generated"))
 		assert.NoError(t, err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			!view.Exists(filepath.Join(alias, "node")) || view.IsDir(filepath.Join(alias, "node")),
-			"%s",
-			"aliased source node was not a file",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!view.Exists(filepath.Join(alias, "node")) || view.IsDir(filepath.Join(alias, "node")),
+		"%s",
+		"aliased source node was not a file",
+	)
 	{
 		_, err := view.ReadDir(alias)
 		assert.NoError(t, err)
@@ -480,10 +436,8 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 		assert.NoError(t, err)
 	}
 	snap := rec.snapshot()
-	{
-		assert.FatalIf(t, len(snap.Remotes) != 1 || len(snap.Files) != 2 || snap.Files[0].Path != "local.txt" ||
-			snap.Files[1].Path != "view-more-data/file", "nested snapshot attribution: %+v", snap)
-	}
+	assert.FatalIf(t, len(snap.Remotes) != 1 || len(snap.Files) != 2 || snap.Files[0].Path != "local.txt" ||
+		snap.Files[1].Path != "view-more-data/file", "nested snapshot attribution: %+v", snap)
 	{
 		valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: lower}, false)
 		assert.FatalIf(
@@ -498,18 +452,14 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 	for _, dir := range []string{"listed", "walked"} {
 		t.Run(dir+"-membership", func(t *testing.T) {
 			index := slices.IndexFunc(snap.Dirs, func(f localEntry) bool { return f.Path == dir })
-			{
-				assert.FatalIf(t, index < 0, "directory %q was not observed: %+v", dir, snap)
-			}
+			assert.FatalIf(t, index < 0, "directory %q was not observed: %+v", dir, snap)
 			testutil.WriteFile(t, root, dir+"/two", "two")
-			{
-				assert.FatalIf(
-					t,
-					validReadSet(t, &readSetSnapshot{Dirs: snap.Dirs[index : index+1]}, lower),
-					"%s",
-					"aliased directory membership change was missed",
-				)
-			}
+			assert.FatalIf(
+				t,
+				validReadSet(t, &readSetSnapshot{Dirs: snap.Dirs[index : index+1]}, lower),
+				"%s",
+				"aliased directory membership change was missed",
+			)
 		})
 	}
 	{
@@ -517,12 +467,10 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 		assert.NoError(t, err)
 	}
 	testutil.WriteFile(t, root, "node/child", "child")
-	{
-		assert.FatalIf(
-			t,
-			validReadSet(t, &readSetSnapshot{Nodes: snap.Nodes}, lower),
-			"%s",
-			"aliased node transition was missed",
-		)
-	}
+	assert.FatalIf(
+		t,
+		validReadSet(t, &readSetSnapshot{Nodes: snap.Nodes}, lower),
+		"%s",
+		"aliased node transition was missed",
+	)
 }

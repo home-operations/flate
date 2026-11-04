@@ -31,11 +31,12 @@ func testFetcherFreshnessCase(t *testing.T, tt *struct {
 
 	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 	v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
-	srv, setArtifact := newMutableFakeRegistry(t, v1, v2)
+	registry := newMutableFakeRegistry(t, v1, v2)
+
 	var resolves, pulls atomic.Int32
 	var blockBlobs atomic.Bool
-	handler := srv.Config.Handler
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := registry.server.Config.Handler
+	registry.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		testFetcherFreshnessCaseCallback(
 			w,
 			r,
@@ -48,11 +49,11 @@ func testFetcherFreshnessCase(t *testing.T, tt *struct {
 		)
 	},
 	)
-	srv.StartTLS()
+	registry.server.StartTLS()
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 	repo := &manifest.OCIRepository{
 		Name: "freshness", Namespace: "test",
-		URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
+		URL: "oci://" + mustURL(t, registry.server.URL).Host + "/app", Insecure: true,
 		Interval:  &metav1.Duration{Duration: time.Hour},
 		Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 	}
@@ -84,11 +85,11 @@ func testFetcherFreshnessCase(t *testing.T, tt *struct {
 		beforePull,
 	)
 	if tt.advance {
-		setArtifact(1)
+		registry.setArtifact(1)
 	}
 	blockBlobs.Store(tt.blockBlobs)
 	if tt.offline {
-		srv.Close()
+		registry.server.Close()
 	}
 	shared := &Fetcher{Network: newTestNetwork(t), Cache: f.Cache}
 	second, err := shared.Fetch(

@@ -24,7 +24,7 @@ kind: ConfigMap
 metadata: {name: '{{ .Release.Name }}-values'}
 data: {greeting: {{ required "missing required value" .Values.greeting | quote }}}
 `)
-	parentPath := filepath.Join(dir, "apps/demo/ks.yaml")
+	parentPath := filepath.Join(dir, "apps", "demo", "ks.yaml")
 	parent, err := os.ReadFile(parentPath)
 	assert.NoError(t, err)
 	testutil.WriteFileAt(
@@ -39,7 +39,7 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 		"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: unreadable, namespace: apps}\nspec: {target: {name: unreadable}}\n",
 	)
 	testutil.WriteFile(t, dir, "apps/demo/app/kustomization.yaml", "resources: [release.yaml, producer.yaml]\n")
-	releasePath := filepath.Join(dir, "apps/demo/app/release.yaml")
+	releasePath := filepath.Join(dir, "apps", "demo", "app", "release.yaml")
 	release, err := os.ReadFile(releasePath)
 	assert.NoError(t, err)
 	testutil.WriteFileAt(t, releasePath, string(release)+"  values: {greeting: valid}\n")
@@ -68,7 +68,8 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 			if mode == "changed-only" {
 				args = append(args, "--base", "HEAD")
 			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "missing required value") ||
 				!strings.Contains(
 					stderr,
@@ -100,7 +101,7 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 		{original, dir, "orig"},
 	} {
 		t.Run("diff/"+tc.side, func(t *testing.T) {
-			stdout, stderr, code := harness.RunCLIBuffers(
+			runCLIBuffersResult2 := harness.RunCLIBuffers(
 				"diff",
 				"all",
 				"--path",
@@ -116,6 +117,7 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 				"--cache-dir",
 				t.TempDir(),
 			)
+			stdout, stderr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 			assert.FatalIf(t, code != 1 || !strings.Contains(stderr, "missing required value") ||
 				!strings.Contains(
 					stderr,
@@ -183,7 +185,8 @@ func TestE2E_MalformedChartFailsProducer(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult3 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 			assert.FatalIf(
 				t,
 				code != 1 || (!strings.Contains(stderr, "HelmRelease") || !strings.Contains(stderr, "apps/demo")) ||
@@ -194,7 +197,8 @@ func TestE2E_MalformedChartFailsProducer(t *testing.T) {
 				stdout,
 				stderr,
 			)
-			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult4 := harness.RunCLIBuffers(args...)
+			nextOut, nextErr, nextCode := runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 			assert.Equal(t, nextCode, code)
 			assert.Equal(t, nextOut, stdout)
 			assert.Equal(t, nextErr, stderr)

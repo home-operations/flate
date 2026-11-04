@@ -138,14 +138,12 @@ func testRenderKeyContentInputsCase(t *testing.T, testCaseInput *testRenderKeyCo
 		doc := renderDoc(t, testCaseInput.req.Spec)
 		maps.Copy(doc["spec"].(map[string]any), testCaseInput.tc.typed)
 		typed.Spec = parsedKS(t, doc)
-		{
-			assert.FatalIf(
-				t,
-				got != renderKey(&typed, root, testCaseInput.tc.ignore),
-				"%s",
-				"null input differs from its typed zero value",
-			)
-		}
+		assert.FatalIf(
+			t,
+			got != renderKey(&typed, root, testCaseInput.tc.ignore),
+			"%s",
+			"null input differs from its typed zero value",
+		)
 	}
 }
 
@@ -172,12 +170,10 @@ func testRenderKeyContentInputsCase2(t *testing.T, testCaseInput *testRenderKeyC
 	case "nameSuffix":
 		changed.Spec.NameSuffix, plain.Spec.NameSuffix = "-post", "-post"
 	}
-	{
-		assert.FatalIf(
-			t,
-			renderKey(&changed, "/source", nil) != renderKey(&plain, "/source", nil),
-			"%s",
-			"authored null changed typed content",
-		)
-	}
+	assert.FatalIf(
+		t,
+		renderKey(&changed, "/source", nil) != renderKey(&plain, "/source", nil),
+		"%s",
+		"authored null changed typed content",
+	)
 }

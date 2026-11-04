@@ -232,7 +232,7 @@ func TestObserveValuesFiles_UnpinnedChanges(t *testing.T) {
 	for _, marker := range []string{"first", "changed", "", "added"} {
 		before := reads
 		if marker == "" {
-			assert.NoError(t, os.Remove(filepath.Join(root, "config/prod.yaml")))
+			assert.NoError(t, os.Remove(filepath.Join(root, "config", "prod.yaml")))
 		} else {
 			testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
 		}
@@ -297,9 +297,7 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 	close(resume)
 	entry := <-late
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, entry.merged == nil, "%s", "observation publisher discarded the merged entry")
-	}
+	assert.FatalIf(t, entry.merged == nil, "%s", "observation publisher discarded the merged entry")
 	assert.Diff(t, entry.merged, merged)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -332,7 +330,7 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 	var previousPin, chartFingerprint string
 	for _, marker := range []string{"first", "changed", ""} {
 		if marker == "" {
-			assert.NoError(t, os.Remove(filepath.Join(root, "config/prod.yaml")))
+			assert.NoError(t, os.Remove(filepath.Join(root, "config", "prod.yaml")))
 		} else {
 			testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
 		}
@@ -340,14 +338,12 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 		st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquired})
 		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(
-				t,
-				d.valuesPin == "" || d.valuesPin == previousPin,
-				"%s",
-				"changed acquisition did not change its pin",
-			)
-		}
+		assert.FatalIf(
+			t,
+			d.valuesPin == "" || d.valuesPin == previousPin,
+			"%s",
+			"changed acquisition did not change its pin",
+		)
 		previousPin = d.valuesPin
 		if chartFingerprint != "" {
 			assert.Equal(t, d.fingerprint, chartFingerprint)
@@ -492,19 +488,15 @@ func testTemplateSourceRootValuesFilesCase(t *testing.T, testCaseInput *testTemp
 				),
 			)
 			if !(*testCaseInput.ignore) && (tc.name == "missing" || tc.name == "no chart fallback") {
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput),
-						"missing source values: %v",
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput),
+					"missing source values: %v",
+					err,
+				)
 				return
 			}
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			assert.FatalIf(
 				t,
 				!hasRenderField(first, "marker", tc.want) || !hasRenderField(first, "kept", "default"),
@@ -594,14 +586,12 @@ func testTemplateValuesFilesFailuresCase(t *testing.T, testCaseInput *testTempla
 					fmt.Sprintf("%q", tc.path),
 				), "values error = %v; want %v and filename %q", err, tc.want, tc.path)
 			for _, entry := range cli.chartValuesCache {
-				{
-					assert.FatalIf(
-						t,
-						entry.merged != nil || tc.name != "malformed",
-						"%s",
-						"failed values result was cached",
-					)
-				}
+				assert.FatalIf(
+					t,
+					entry.merged != nil || tc.name != "malformed",
+					"%s",
+					"failed values result was cached",
+				)
 			}
 		})
 	}
@@ -619,9 +609,7 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	cliSources := NewSources(st)
 	d, err := cli.describeChart(t.Context(), hr, cliSources)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, d.valuesPin == "", "%s", "fixture has no acquired values pin")
-	}
+	assert.FatalIf(t, d.valuesPin == "", "%s", "fixture has no acquired values pin")
 	if !(*testCaseInput) {
 		d.fingerprint = ""
 	}
@@ -667,16 +655,14 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	assert.Equal(t, reversed["marker"], any("other"))
 	for _, invalid := range []string{"", ".", "../config/prod.yaml", "/config/prod.yaml", "config/prod.yaml\x00"} {
 		_, observeValuesFilesErr := cli.observeValuesFiles(t.Context(), &d, []string{invalid}, true)
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(observeValuesFilesErr, fs.ErrInvalid) ||
-					!strings.Contains(observeValuesFilesErr.Error(), fmt.Sprintf("%q", invalid)),
-				"invalid path %q: %v",
-				invalid,
-				observeValuesFilesErr,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(observeValuesFilesErr, fs.ErrInvalid) ||
+				!strings.Contains(observeValuesFilesErr.Error(), fmt.Sprintf("%q", invalid)),
+			"invalid path %q: %v",
+			invalid,
+			observeValuesFilesErr,
+		)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

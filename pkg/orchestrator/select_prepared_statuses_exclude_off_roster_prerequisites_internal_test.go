@@ -63,15 +63,13 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	assert.Equal(t, res.Statuses[victim].IsDependencyFailure(), true)
 	assert.Diff(t, res.Statuses[victim].BlockedBy(), []manifest.NamedResource{chart})
 	{
-		{
-			_, exists := res.Statuses[chart]
-			assert.FatalIf(
-				t,
-				!exists || res.Counts[victim.Kind] != 1,
-				"%v",
-				"authored chart missing from diagnostics or root count changed",
-			)
-		}
+		_, exists := res.Statuses[chart]
+		assert.FatalIf(
+			t,
+			!exists || res.Counts[victim.Kind] != 1,
+			"%v",
+			"authored chart missing from diagnostics or root count changed",
+		)
 	}
 
 	bootstrap := &manifest.GitRepository{
@@ -199,18 +197,14 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 				nil,
 			)
 			assert.Diff(t, selected[0].Causes, tc.want)
+			assert.FatalIf(t, err == nil || strings.Contains(err.Error(), "nested dependencies failed") ||
+				!strings.Contains(
+					err.Error(),
+					fmt.Sprintf("(+%d blocked", len(tc.blocked)),
+				), "cascade error did not count distinct victims: %v", err)
 			{
-				assert.FatalIf(t, err == nil || strings.Contains(err.Error(), "nested dependencies failed") ||
-					!strings.Contains(
-						err.Error(),
-						fmt.Sprintf("(+%d blocked", len(tc.blocked)),
-					), "cascade error did not count distinct victims: %v", err)
-			}
-			{
-				{
-					_, ok := errors.AsType[*FailuresError](err)
-					assert.FatalIf(t, !ok, "aggregate lost failure type: %T", err)
-				}
+				_, ok := errors.AsType[*FailuresError](err)
+				assert.FatalIf(t, !ok, "aggregate lost failure type: %T", err)
 			}
 		})
 	}
@@ -228,36 +222,30 @@ func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 		{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "different"}},
 	} {
 		{
-			{
-				_, err, _ := Select(
-					[]Rendered{run},
-					nil,
-					roots,
-					nil,
-				)
-				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) ||
-					!errors.Is(err, manifest.ErrFlux), "invalid query lacks domain identity: %+v %v", roots, err)
-			}
+			_, err, _ := Select(
+				[]Rendered{run},
+				nil,
+				roots,
+				nil,
+			)
+			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) ||
+				!errors.Is(err, manifest.ErrFlux), "invalid query lacks domain identity: %+v %v", roots, err)
 		}
 	}
 	initErr := errors.New("initialization failed")
 	{
-		{
-			selected, err, _ := Select(
-				[]Rendered{{Err: initErr}},
-				initErr,
-				valid,
-				nil,
-			)
-			assert.FatalIf(t, len(selected) != 1 ||
-				!errors.Is(err, initErr), "initialization error changed: %+v %v", selected, err)
-		}
+		selected, err, _ := Select(
+			[]Rendered{{Err: initErr}},
+			initErr,
+			valid,
+			nil,
+		)
+		assert.FatalIf(t, len(selected) != 1 ||
+			!errors.Is(err, initErr), "initialization error changed: %+v %v", selected, err)
 	}
 	{
-		{
-			_, err, _ := Select([]Rendered{{}}, nil, valid, nil)
-			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "incomplete run accepted: %v", err)
-		}
+		_, err, _ := Select([]Rendered{{}}, nil, valid, nil)
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "incomplete run accepted: %v", err)
 	}
 }
 
@@ -416,14 +404,10 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 		[]manifest.NamedResource{{Group: present.Group, Kind: present.Kind}},
 		nil,
 	)
+	assert.FatalIf(t, err != nil, "%v", err)
 	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	{
-		{
-			_, ok := selected[1].Unavailable[present]
-			assert.FatalIf(t, ok, "%v", "moved producer inherited old ancestry")
-		}
+		_, ok := selected[1].Unavailable[present]
+		assert.FatalIf(t, ok, "%v", "moved producer inherited old ancestry")
 	}
 	assert.Equal(t, selected[1].Unavailable[absent].String(), "old ancestor failed")
 	t.Run("entry correspondence", testEntryCorrespondence)
@@ -497,14 +481,12 @@ func testSelectPreparedStatusesExcludeOffRosterPrerequisitesCase(
 		nil,
 	)
 	res := results[0]
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(res.Objects, testCaseInput.tc.objects),
-			"%v",
-			"selected objects differ from the render roster",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Equal(res.Objects, testCaseInput.tc.objects),
+		"%v",
+		"selected objects differ from the render roster",
+	)
 	assert.Diff(t, res.Counts, map[string]int{testCaseInput.tc.root.Kind: len(testCaseInput.tc.objects)})
 	wantDocs := make(map[manifest.NamedResource][]map[string]any)
 	for _, obj := range testCaseInput.tc.objects {
@@ -553,14 +535,12 @@ func testSelectPreparedStatusesExcludeOffRosterPrerequisitesExtraFailureQueryFil
 		slices.SortedFunc(maps.Keys(selected[0].Statuses), manifest.NamedResource.Compare),
 		[]manifest.NamedResource{obj.Named(), eligible.Named()},
 	)
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(selected[0].Objects, []manifest.BaseManifest{obj}),
-			"%v",
-			"selected objects differ from the render roster",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Equal(selected[0].Objects, []manifest.BaseManifest{obj}),
+		"%v",
+		"selected objects differ from the render roster",
+	)
 	assert.Equal(t, len(run.store.FailedResources()), 3)
 }
 

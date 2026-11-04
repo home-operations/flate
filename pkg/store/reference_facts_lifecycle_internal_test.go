@@ -41,9 +41,9 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: records})
 			s.AddObject(secret)
 			before := s.ReferenceFacts(target, nil, false, manifest.NamedResource{})
-			{
-				assert.FatalIf(t, before.Data != secret || before.Accepted, "file-backed facts=%+v", before)
-			}
+
+			assert.FatalIf(t, before.Data != secret || before.Accepted, "file-backed facts=%+v", before)
+
 			assert.Diff(t, before.Productions, proofs)
 
 			external := &manifest.RawObject{
@@ -86,14 +86,12 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 				},
 			)
 			assert.Diff(t, s.Productions(target, nil), want)
-			{
-				assert.FatalIf(
-					t,
-					s.GetObject(target) != nil || s.GetObject(external.Named()) != external,
-					"%s",
-					"replacement did not leave only the declaration",
-				)
-			}
+			assert.FatalIf(
+				t,
+				s.GetObject(target) != nil || s.GetObject(external.Named()) != external,
+				"%s",
+				"replacement did not leave only the declaration",
+			)
 			parent, ok := s.RenderedParent(target, nil)
 			assert.Equal(t, parent, manifest.NamedResource{})
 			assert.Equal(t, ok, false)
@@ -117,13 +115,12 @@ func TestReferenceFacts_PendingPeerAfterEmptySupplier(t *testing.T) {
 	next.Complete = true
 	s.RecordEmitted(empty.Named(), &next, nil)
 	facts := s.ReferenceFacts(target, nil, false, manifest.NamedResource{})
-	{
-		assert.FatalIf(
-			t,
-			len(facts.Productions) != 1 || facts.Productions[0].Owner != first.Named() || facts.Data != nil ||
-				facts.Accepted,
-			"pending peer lost after empty supplier: facts=%+v",
-			facts,
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		len(facts.Productions) != 1 || facts.Productions[0].Owner != first.Named() || facts.Data != nil ||
+			facts.Accepted,
+		"pending peer lost after empty supplier: facts=%+v",
+		facts,
+	)
 }

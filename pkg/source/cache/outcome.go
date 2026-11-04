@@ -81,20 +81,21 @@ func outcomeDeadline(completed time.Time, count uint32) (time.Time, bool) {
 	if completed.IsZero() || completed.Year() < 1 || completed.Year() > 9999 || offset != 0 || count == 0 {
 		return time.Time{}, false
 	}
-	delay, _ := backoffSchedule(uint64(count-1), 0, 0)
-	deadline := completed.Add(delay)
+	schedule := backoffSchedule(uint64(count-1), 0, 0)
+
+	deadline := completed.Add(schedule.delay)
 	return deadline, deadline.Year() <= 9999 && deadline.After(completed)
 }
 
 // Observation is protected by the acquisition's existing key lock. Rollback invalidation
 // MUST survive subsequent observations, even when the clock remains after completion.
-func (o *outcome) observe(now time.Time) (bool, bool) {
+func (o *outcome) observe(now time.Time) outcomeFreshness {
 	deadline, valid := outcomeDeadline(o.record.Completed, o.record.Count)
 	if !valid || now.Before(o.record.Completed) || !o.observed.IsZero() && now.Before(o.observed) {
 		o.invalid = true
 	}
 	o.observed = now
-	return !o.invalid && now.Before(deadline), !o.invalid
+	return outcomeFreshness{fresh: !o.invalid && now.Before(deadline), valid: !o.invalid}
 }
 
 func newOutcome(err error, completed time.Time, count uint32, lastGoodValue *ocispec.Descriptor) *outcome {
@@ -281,7 +282,7 @@ type outcomeCodecState struct {
 func (c *outcomeCodecState) kind(
 	nValue *outcomeCause,
 	children int,
-	context outcomeContext,
+	scope outcomeContext,
 	depth int,
 ) (outcomeCodec, bool) {
 	n := *nValue
@@ -289,7 +290,7 @@ func (c *outcomeCodecState) kind(
 	k, ok := outcomeCodecs[n.Kind]
 	if !ok || depth > outcomeDepthLimit || children < k.minChildren || children > k.maxChildren ||
 		children > outcomeNodeLimit-c.nodes ||
-		context&k.require != k.require ||
+		scope&k.require != k.require ||
 		k.transient && fetcherr.Classify(n.Status) != fetcherr.Transient ||
 		k.code && !outcomeCode(n.Code) {
 		return k, false
@@ -298,7 +299,7 @@ func (c *outcomeCodecState) kind(
 	return k, true
 }
 
-func (c *outcomeCodecState) encode(err error, context outcomeContext, depth int) (outcomeCause, bool) {
+func (c *outcomeCodecState) encode(err error, scope outcomeContext, depth int) (outcomeCause, bool) {
 	if e, ok := err.(*TerminalError); ok && //nolint:errorlint // The outcome codec preserves concrete node identity and tree positions.
 		(e == nil || !e.Attempted) ||
 		err == manifest.ErrInput || //nolint:errorlint // The outcome codec preserves concrete node identity and tree positions.
@@ -311,12 +312,12 @@ func (c *outcomeCodecState) encode(err error, context outcomeContext, depth int)
 	if !ok {
 		return n, false
 	}
-	k, ok := c.kind(new(n), len(children), context, depth)
+	k, ok := c.kind(new(n), len(children), scope, depth)
 	if !ok {
 		return n, false
 	}
 	for _, child := range children {
-		encoded, ok := c.encode(child, context|k.enter, depth+1)
+		encoded, ok := c.encode(child, scope|k.enter, depth+1)
 		if !ok {
 			return n, false
 		}
@@ -326,15 +327,15 @@ func (c *outcomeCodecState) encode(err error, context outcomeContext, depth int)
 }
 
 //nolint:revive // The returned error is decoded data; the boolean reports validity.
-func (c *outcomeCodecState) decode(nValue *outcomeCause, context outcomeContext, depth int) (error, bool) {
+func (c *outcomeCodecState) decode(nValue *outcomeCause, scope outcomeContext, depth int) (error, bool) {
 	n := *nValue
-	k, ok := c.kind(new(n), len(n.Children), context, depth)
+	k, ok := c.kind(new(n), len(n.Children), scope, depth)
 	if !ok {
 		return nil, false
 	}
 	children := make([]error, 0, len(n.Children))
 	for _, child := range n.Children {
-		err, decodeOk := c.decode(&child, context|k.enter, depth+1)
+		err, decodeOk := c.decode(&child, scope|k.enter, depth+1)
 		if !decodeOk {
 			return nil, false
 		}
@@ -464,21 +465,21 @@ func (o *outcome) replay() error {
 	return err
 }
 
-func (o *outcome) encode() ([]byte, []byte, bool) {
+func (o *outcome) encode() (outcomeBlobs, bool) {
 	codec := outcomeCodecState{}
 	if _, ok := codec.decode(&o.record.Cause, 0, 1); !ok || !codec.terminal || !codec.remote || o.record.Version != 1 {
-		return nil, nil, false
+		return outcomeBlobs{}, false
 	}
 	if _, ok := outcomeDeadline(o.record.Completed, o.record.Count); !ok {
-		return nil, nil, false
+		return outcomeBlobs{}, false
 	}
 	layer, ok := outcomeLayer(&o.lastGood)
 	if !ok {
-		return nil, nil, false
+		return outcomeBlobs{}, false
 	}
 	config, err := json.Marshal(o.record)
 	if err != nil || len(config) > outcomeConfigLimit {
-		return nil, nil, false
+		return outcomeBlobs{}, false
 	}
 	m := ocispec.Manifest{
 		SchemaVersion: manifestSchemaVersion, MediaType: ocispec.MediaTypeImageManifest, ArtifactType: outcomeArtifact,
@@ -489,20 +490,21 @@ func (o *outcome) encode() ([]byte, []byte, bool) {
 	}
 	data, err := json.Marshal(m)
 	if err != nil || len(data) > outcomeManifestLimit {
-		return nil, nil, false
+		return outcomeBlobs{}, false
 	}
-	return config, data, true
+	return outcomeBlobs{config: config, manifest: data}, true
 }
 
 func (c *Cache) publishOutcome(ctx context.Context, id string, o *outcome, remote error) (ocispec.Descriptor, error) {
-	config, data, ok := o.encode()
+	blobs, ok := o.encode()
+
 	if !ok {
 		return ocispec.Descriptor{}, nil
 	}
-	if _, err := c.pushOutcomeBlob(ctx, outcomeConfig, config); err != nil {
+	if _, err := c.pushOutcomeBlob(ctx, outcomeConfig, blobs.config); err != nil {
 		return ocispec.Descriptor{}, &CacheError{errors.Join(remote, err)}
 	}
-	desc, err := c.pushOutcomeBlob(ctx, ocispec.MediaTypeImageManifest, data)
+	desc, err := c.pushOutcomeBlob(ctx, ocispec.MediaTypeImageManifest, blobs.manifest)
 	if err != nil {
 		return ocispec.Descriptor{}, &CacheError{errors.Join(remote, err)}
 	}
@@ -634,3 +636,7 @@ func wrappedOutcomeNode(err error) (outcomeCause, []error, bool) {
 	}
 	return outcomeCause{}, nil, false
 }
+
+type outcomeFreshness struct{ fresh, valid bool }
+
+type outcomeBlobs struct{ config, manifest []byte }

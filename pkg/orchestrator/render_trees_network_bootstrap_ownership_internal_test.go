@@ -55,7 +55,12 @@ func TestRenderTrees_NetworkOwnership(t *testing.T) {
 	}
 }
 
-func privateRegistry(t *testing.T) (string, string) {
+type registryFixture struct {
+	url         string
+	credentials string
+}
+
+func privateRegistry(t *testing.T) registryFixture {
 	t.Helper()
 	server := httptest.NewTLSServer(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }),
@@ -63,7 +68,7 @@ func privateRegistry(t *testing.T) (string, string) {
 	t.Cleanup(server.Close)
 	registry := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, registry, "{}")
-	return "oci://" + strings.TrimPrefix(server.URL, "https://"), registry
+	return registryFixture{url: "oci://" + strings.TrimPrefix(server.URL, "https://"), credentials: registry}
 }
 
 type testRenderTreesNetworkBootstrapOwnershipCaseInputs struct {
@@ -120,12 +125,10 @@ func testRenderTreesNetworkBootstrapOwnershipCase(
 	var probeURL, callerConnection, bootstrapConnection string
 	get := func(url string) string {
 		t.Helper()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		assert.NoError(t, err)
 		response, err := (&http.Client{Transport: cfg.Network}).Do(req)
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		_, err = io.Copy(io.Discard, response.Body)
 		assert.NoError(t, errors.Join(err, response.Body.Close()))
 		address := response.Header.Get("X-Connection")
@@ -171,37 +174,31 @@ func testRenderTreesNetworkBootstrapOwnershipCase(
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}},
 		cfg,
 	)
-	{
-		assert.FatalIf(
-			t,
-			(err != nil) != (*testCaseInput.failure) || len(runs) != 1 || runs[0].Orchestrator == nil ||
-				runs[0].Result == nil,
-			"render result=%+v error=%v",
-			runs,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(err != nil) != (*testCaseInput.failure) || len(runs) != 1 || runs[0].Orchestrator == nil ||
+			runs[0].Result == nil,
+		"render result=%+v error=%v",
+		runs,
+		err,
+	)
 	select {
 	case address := <-bootstrapRequests:
-		{
-			assert.FatalIf(
-				t, (*testCaseInput.injected) &&
-					address != bootstrapConnection, "%v",
-				"bootstrap did not reuse the supplied network",
-			)
-		}
+		assert.FatalIf(
+			t, (*testCaseInput.injected) &&
+				address != bootstrapConnection, "%v",
+			"bootstrap did not reuse the supplied network",
+		)
 	case <-ctx.Done():
 		t.Fatal("bootstrap made no request")
 	}
 	if *testCaseInput.injected {
-		{
-			assert.FatalIf(
-				t,
-				get(probeURL) != callerConnection,
-				"%v",
-				"borrower discarded caller connection",
-			)
-		}
+		assert.FatalIf(
+			t,
+			get(probeURL) != callerConnection,
+			"%v",
+			"borrower discarded caller connection",
+		)
 		cfg.Network.Close()
 	}
 	mu.Lock()
@@ -267,17 +264,13 @@ func testRenderTreesNetworkOwnershipCase(t *testing.T, testCaseInput *bool,
 	)
 	base, head := renderedTrees7[0], renderedTrees7[1]
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			base.cfg.Network != head.cfg.Network,
-			"%v",
-			"diff sides did not borrow the outer Network",
-		)
-	}
-	{
-		assert.FatalIf(t, opened.Load() == 0, "%v", "renders made no request")
-	}
+	assert.FatalIf(
+		t,
+		base.cfg.Network != head.cfg.Network,
+		"%v",
+		"diff sides did not borrow the outer Network",
+	)
+	assert.FatalIf(t, opened.Load() == 0, "%v", "renders made no request")
 	if *testCaseInput {
 		select {
 		case <-closed:

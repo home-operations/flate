@@ -25,9 +25,7 @@ metadata: {name: a, namespace: ns}
 	cancel()
 
 	_, err := New(store.New()).Load(ctx, dir)
-	{
-		assert.ErrorIf(t, !errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
-	}
+	assert.ErrorIf(t, !errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
 	for _, site := range []string{"graph", "siblings"} {
 		t.Run(site, func(t *testing.T) {
 			t.Parallel()

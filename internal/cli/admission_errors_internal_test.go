@@ -45,7 +45,7 @@ spec:
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: should-not-render}\n",
 		)
 	}
-	control, diagnostic, code := runCLI(
+	cli := runCLI(
 		t,
 		"build",
 		"all",
@@ -56,6 +56,7 @@ spec:
 		"--cache-dir",
 		t.TempDir(),
 	)
+	control, diagnostic, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 0 || !strings.Contains(control, "should-not-render"),

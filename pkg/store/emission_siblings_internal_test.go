@@ -60,22 +60,18 @@ func testRecordEmittedDirectWritesPreserveSiblingsCase(
 	unsub := s.AddListener(EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if id == k {
 			observed = true
-			{
-				assert.ErrorIf(
-					t,
-					payload == nil || s.GetObject(k) != replacement || s.GetObject(grandchild.Obj.Named()) == nil,
-					"%s",
-					"direct reanchor did not activate retained outgoing support",
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					(*testCaseInput) && s.GetObject(sibling.Obj.Named()) == nil,
-					"%s",
-					"batch notified before its sibling was live",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				payload == nil || s.GetObject(k) != replacement || s.GetObject(grandchild.Obj.Named()) == nil,
+				"%s",
+				"direct reanchor did not activate retained outgoing support",
+			)
+			assert.ErrorIf(
+				t,
+				(*testCaseInput) && s.GetObject(sibling.Obj.Named()) == nil,
+				"%s",
+				"batch notified before its sibling was live",
+			)
 		}
 	}, false)
 	if *testCaseInput {
@@ -84,40 +80,30 @@ func testRecordEmittedDirectWritesPreserveSiblingsCase(
 		s.AddObject(replacement)
 	}
 	unsub()
-	{
-		assert.FatalIf(t, !observed, "%s", "direct update did not notify")
-	}
-	{
-		assert.FatalIf(t, s.GetObject(k) != replacement, "%s", "direct input update lost to predecessor contribution")
-	}
+	assert.FatalIf(t, !observed, "%s", "direct update did not notify")
+	assert.FatalIf(t, s.GetObject(k) != replacement, "%s", "direct input update lost to predecessor contribution")
 	conflict := replacement.Clone()
 	conflict.Path = "conflicting"
 	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: conflict}}, Complete: true}, nil)
-	{
-		assert.FatalIf(t, s.GetObject(k) != replacement, "%s", "direct input lost its independent authority")
-	}
+	assert.FatalIf(t, s.GetObject(k) != replacement, "%s", "direct input lost its independent authority")
 	s.RecordEmitted(p, &Emission{Complete: true}, nil)
 
 	q := ownerID("q")
 	s.AddObject(&manifest.Kustomization{Name: q.Name, Namespace: q.Namespace})
 	accept(t, s, q, &Emission{Children: []Child{grandchild}, Complete: true})
-	{
-		assert.FatalIf(
-			t,
-			!s.DeleteObject(k) || s.GetObject(k) != nil || s.GetObject(grandchild.Obj.Named()) == nil,
-			"%s",
-			"direct support removal lost independent support or retained its root",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!s.DeleteObject(k) || s.GetObject(k) != nil || s.GetObject(grandchild.Obj.Named()) == nil,
+		"%s",
+		"direct support removal lost independent support or retained its root",
+	)
 	accept(t, s, q, &Emission{Complete: true})
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(grandchild.Obj.Named()) != nil || s.GetArtifact(k, ArtifactContent) != nil,
-			"%s",
-			"deleted root retained outgoing live support",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(grandchild.Obj.Named()) != nil || s.GetArtifact(k, ArtifactContent) != nil,
+		"%s",
+		"deleted root retained outgoing live support",
+	)
 }
 
 func testRecordEmittedDirectWritesPreserveSiblingsCase2(
@@ -153,14 +139,12 @@ func testRecordEmittedDirectWritesPreserveSiblingsCase2(
 		assert.Equal(t, s.GetObject(emissionChild("grandchild", "retained").Obj.Named()) != nil, true)
 	}
 	s.RecordEmitted(p, &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(k) != seed,
-			"%s",
-			"equal direct write did not retain independent static authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(k) != seed,
+		"%s",
+		"equal direct write did not retain independent static authority",
+	)
 	var events int
 	defer s.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if id == k {
@@ -169,12 +153,10 @@ func testRecordEmittedDirectWritesPreserveSiblingsCase2(
 	}, false)()
 	s.RecordEmitted(p, &Emission{Children: []Child{{Obj: contribution}}, Complete: true}, nil)
 	s.AddObject(seed)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(k) != seed || events != 0,
-			"%s",
-			"equal static write changed the rooted representative",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(k) != seed || events != 0,
+		"%s",
+		"equal static write changed the rooted representative",
+	)
 }

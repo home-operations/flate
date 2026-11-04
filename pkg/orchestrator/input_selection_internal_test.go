@@ -281,26 +281,22 @@ func TestRenderTrees_LocalAliasSelfProducer(t *testing.T) {
 		}
 		output, err := json.Marshal(result.Result.Manifests)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(
-				t,
-				!strings.Contains(string(output), "\"value\":\""+value+"\""),
-				"side %d lost selected output: %s",
-				side,
-				output,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!strings.Contains(string(output), "\"value\":\""+value+"\""),
+			"side %d lost selected output: %s",
+			side,
+			output,
+		)
 		source := (&manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}).Named()
 		input, _ := result.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-		{
-			assert.FatalIf(
-				t,
-				input == nil || !input.InputAlias || input.LocalPath == trees[side].Input.LocalPath,
-				"side %d did not exercise a distinct admitted alias: %+v",
-				side,
-				input,
-			)
-		}
+		assert.FatalIf(
+			t,
+			input == nil || !input.InputAlias || input.LocalPath == trees[side].Input.LocalPath,
+			"side %d did not exercise a distinct admitted alias: %+v",
+			side,
+			input,
+		)
 	}
 }
 
@@ -332,15 +328,13 @@ func testRenderTreesUnchangedNamedSelectionCase(
 		assert.Equal(t, (*testCaseInput.runs)[side].store.GetObject((*testCaseInput.id)) == nil, true)
 		assert.Equal(t, result.Counts[testCaseInput.id.Kind], 1)
 		assert.Equal(t, result.Statuses[(*testCaseInput.id)].Outcome(), store.OutcomeUnchanged)
-		{
-			assert.FatalIf(
-				t,
-				len(result.Objects) != 1,
-				"side %d: unchanged named declaration missing: %+v",
-				side,
-				result,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(result.Objects) != 1,
+			"side %d: unchanged named declaration missing: %+v",
+			side,
+			result,
+		)
 		assert.Equal(t, result.Objects[0].Named(), (*testCaseInput.id))
 		assert.Equal(t, manifest.KindOf(result.Objects[0]), testCaseInput.id.KindInfo())
 		switch obj := result.Objects[0].(type) {

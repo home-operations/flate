@@ -39,9 +39,7 @@ func TestDiagnosticFor_StackAllocation(t *testing.T) {
 			t.Fatal("ordinary diagnostic identity changed")
 		}
 	})
-	{
-		assert.FatalIf(t, allocs != 0, "diagnostic allocations = %g, want 0", allocs)
-	}
+	assert.FatalIf(t, allocs != 0, "diagnostic allocations = %g, want 0", allocs)
 }
 
 func testDiagnosticForEntryContextCase(t *testing.T, testCaseInput *NamedResource,
@@ -50,66 +48,48 @@ func testDiagnosticForEntryContextCase(t *testing.T, testCaseInput *NamedResourc
 
 	entry := NewEntryKustomization(BootstrapSourceID, "clusters/test", (*testCaseInput))
 	subject := DiagnosticFor(entry.Named(), entry)
-	{
-		assert.FatalIf(
-			t,
-			subject.ID != entry.Named() || subject.Resource != (*testCaseInput) || subject.Path != "clusters/test" ||
-				strings.Contains(subject.String(), "/entry"),
-			"entry diagnostic = %+v (%s)",
-			subject,
-			subject,
-		)
-	}
+	assert.FatalIf(
+		t,
+		subject.ID != entry.Named() || subject.Resource != (*testCaseInput) || subject.Path != "clusters/test" ||
+			strings.Contains(subject.String(), "/entry"),
+		"entry diagnostic = %+v (%s)",
+		subject,
+		subject,
+	)
 	for _, cloned := range []BaseManifest{entry.Clone(), entry.WithNamespace("projected")} {
 		got := DiagnosticFor(cloned.Named(), cloned)
-		{
-			assert.FatalIf(
-				t,
-				got.Resource != (*testCaseInput) || got.Path != subject.Path,
-				"copy lost frozen context: %+v",
-				got,
-			)
-		}
+		assert.FatalIf(
+			t,
+			got.Resource != (*testCaseInput) || got.Path != subject.Path,
+			"copy lost frozen context: %+v",
+			got,
+		)
 	}
 	plain := entry.Clone()
 	plain.diagnosticOwner, plain.diagnosticPath, plain.hasDiagnostic = NamedResource{}, "", false
-	{
-		assert.FatalIf(
-			t,
-			Equal(entry, plain) || entry.ProjectionCompatible(plain),
-			"%s",
-			"attribution replacement reused stale provenance",
-		)
-	}
+	assert.FatalIf(
+		t,
+		Equal(entry, plain) || entry.ProjectionCompatible(plain),
+		"%s",
+		"attribution replacement reused stale provenance",
+	)
 	before, err := entry.RenderDocument()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	after, err := plain.RenderDocument()
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	{
 		diff := cmp.Diff(before, after)
 		assert.FatalIf(t, diff != "", "%v", diff)
 	}
-	{
-		assert.FatalIf(
-			t,
-			Fingerprint(entry.Content("source", nil, false)) != Fingerprint(plain.Content("source", nil, false)),
-			"%s",
-			"display context entered render identity",
-		)
-	}
+	assert.FatalIf(
+		t,
+		Fingerprint(entry.Content("source", nil, false)) != Fingerprint(plain.Content("source", nil, false)),
+		"%s",
+		"display context entered render identity",
+	)
 	raw, err := json.Marshal(entry)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	ordinary, err := json.Marshal(plain)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(t, string(raw) != string(ordinary), "%s", "display context entered serialized declaration")
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(t, string(raw) != string(ordinary), "%s", "display context entered serialized declaration")
 }

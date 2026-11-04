@@ -98,7 +98,8 @@ metadata: {name: after}
 	out := normalizeLists(docs)
 	names := make([]string, 0, len(out))
 	for _, doc := range out {
-		name, _ := manifest.DocMetadata(doc.Document)
+		metadata := manifest.DocMetadata(doc.Document)
+		name := metadata.Name
 		names = append(names, name)
 	}
 	assert.Diff(t, names, []string{"before", "expanded", "after"})
@@ -155,7 +156,8 @@ items:
 	assert.NoError(t, err)
 	names := make([]string, 0, len(out))
 	for _, doc := range out {
-		name, _ := manifest.DocMetadata(doc.Document)
+		metadata2 := manifest.DocMetadata(doc.Document)
+		name := metadata2.Name
 		names = append(names, name)
 	}
 	assert.Diff(t, names, []string{"nested", "sibling"})
@@ -178,11 +180,9 @@ items:
 	assert.NoError(t, err)
 	out := normalizeLists(docs)
 	failure := manifest.DocumentFailure(out)
-	{
-		assert.FatalIf(t, len(out) != 2 || out[0].Err != nil || out[1].Ordinal != 1 || out[1].Document == nil ||
-			!errors.Is(failure, manifest.ErrInput) ||
-			!errors.Is(failure, manifest.ErrFlux), "invalid stream lost its outcome: %#v, %v", out, failure)
-	}
+	assert.FatalIf(t, len(out) != 2 || out[0].Err != nil || out[1].Ordinal != 1 || out[1].Document == nil ||
+		!errors.Is(failure, manifest.ErrInput) ||
+		!errors.Is(failure, manifest.ErrFlux), "invalid stream lost its outcome: %#v, %v", out, failure)
 	after, err := manifest.EncodeRender(docs)
 	assert.NoError(t, err)
 	assert.Diff(t, after, before)
@@ -204,12 +204,10 @@ func TestTemplate_RetainsFailedStream(t *testing.T) {
 	for _, phase := range []string{"cold", "repeat"} {
 		docs, receipt, err := client.Template(t.Context(), newHR(), nil, input)
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, len(docs) != 2 || docs[0].Ordinal != 0 || docs[0].Err == nil || docs[0].Document != nil ||
-				docs[1].Ordinal != 1 ||
-				manifest.DocIdentity(docs[1].Document).Name != "sibling" ||
-				receipt != nil, "%s lost outcomes or cached subset: %+v, %v", phase, docs, receipt)
-		}
+		assert.FatalIf(t, len(docs) != 2 || docs[0].Ordinal != 0 || docs[0].Err == nil || docs[0].Document != nil ||
+			docs[1].Ordinal != 1 ||
+			manifest.DocIdentity(docs[1].Document).Name != "sibling" ||
+			receipt != nil, "%s lost outcomes or cached subset: %+v, %v", phase, docs, receipt)
 		if diagnostic == "" {
 			diagnostic = manifest.DocumentFailure(docs).Error()
 		}
@@ -261,16 +259,12 @@ func testTemplateEmittedListsCase(t *testing.T, testCaseInput *struct {
 		),
 	)
 	if oracleErr != nil {
-		{
-			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
-				!strings.Contains(
-					err.Error(),
-					oracleErr.Error(),
-				), "Template error = %v, want upstream: %v", err, oracleErr)
-		}
-		{
-			assert.FatalIf(t, docs != nil, "failed producer returned partial output: %#v", docs)
-		}
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
+			!strings.Contains(
+				err.Error(),
+				oracleErr.Error(),
+			), "Template error = %v, want upstream: %v", err, oracleErr)
+		assert.FatalIf(t, docs != nil, "failed producer returned partial output: %#v", docs)
 		return
 	}
 	assert.NoError(t, err)

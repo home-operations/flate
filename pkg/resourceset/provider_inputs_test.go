@@ -54,12 +54,8 @@ data:
 		},
 	)
 	docs, _, err := renderProviders(rs, resourceset.StoreResolver(st), nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 2, "expected 2 ConfigMaps, got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(docs) != 2, "expected 2 ConfigMaps, got %d", len(docs))
 	caps := map[string]string{}
 	for _, doc := range docs {
 		md := doc.Document["metadata"].(map[string]any)
@@ -140,10 +136,8 @@ func TestRender_InputsFrom_DynamicProviderEmptySkip(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, len(docs), 1)
 			assert.Equal(t, docs[0].Document["metadata"].(map[string]any)["name"], any("inline-only"))
-			{
-				assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider ||
-					warnings[0].Resource != rs.Named(), "unsupported provider warning = %+v", warnings)
-			}
+			assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider ||
+				warnings[0].Resource != rs.Named(), "unsupported provider warning = %+v", warnings)
 			assert.Diff(t, warnings[0].Detail, []string{provider.Named().String(), kind})
 		})
 	}

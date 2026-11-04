@@ -49,23 +49,15 @@ func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
 	ch := minimalChart()
 	ch.Files = []*common.File{{Name: "empty.yaml", Data: []byte{}}}
 	archive, err := chartutil.Save(ch, t.TempDir())
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	loaded, err := loader.Load(archive)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	values, err := cli.mergeChartValuesFiles(
 		t.Context(), &chartDescription{chart: loaded}, []string{"empty.yaml"},
 		false,
 	)
-	{
-		assert.FatalIf(t, err != nil, "empty file treated as missing: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(values) != 0, "empty file produced values: %v", values)
-	}
+	assert.FatalIf(t, err != nil, "empty file treated as missing: %v", err)
+	assert.FatalIf(t, len(values) != 0, "empty file produced values: %v", values)
 }
 
 func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
@@ -78,24 +70,18 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	hr := newHR()
 	hr.DisableSchemaValidation = true
 	loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	values := map[string]any{"unused": func() {}}
 	opts := Options{}
 	assert.Equal(t, computeTemplateKey(&loaded, values, opts, hr), "")
 	out, _, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: cliSources}),
 	)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!hasRenderField(out, "kind", "ConfigMap"),
-			"unmarshalable values prevented the render: %s",
-			out,
-		)
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(
+		t,
+		!hasRenderField(out, "kind", "ConfigMap"),
+		"unmarshalable values prevented the render: %s",
+		out,
+	)
 }

@@ -224,7 +224,8 @@ func testWithReadersReusesCompleteDeclarationsCase(
 		for _, input := range inputs {
 			assert.Equal(t, input.opens.Load(), int64(0))
 		}
-		different, known := changes.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
+		comparison := changes.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
+		different, known := comparison.Changed, comparison.Known
 		assert.Equal(t, known, true)
 		assert.Equal(t, different, (*testCaseInput))
 	}
@@ -259,7 +260,7 @@ func testAdmissionUnchangedDeclarationMoveCase(
 					testutil.KustomizationID("apps", "old-owner"),
 				},
 			)
-			changed, known := changes.DeclarationChanged(
+			comparison2 := changes.DeclarationChanged(
 				l.side,
 				manifest.BootstrapSourceID,
 				manifest.NamedResource{
@@ -270,6 +271,7 @@ func testAdmissionUnchangedDeclarationMoveCase(
 				},
 				nil,
 			)
+			changed, known := comparison2.Changed, comparison2.Known
 			assert.Equal(t, known && !changed, true)
 		}
 	}

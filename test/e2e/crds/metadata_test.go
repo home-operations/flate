@@ -87,8 +87,10 @@ spec:
 		"--no-progress",
 		"--skip-kinds=",
 	}
-	first, _ := harness.RequireCLIOK(t, args...)
-	second, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+	first, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+	requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+	second, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	assert.Equal(t, second, first)
 	docs, err := testutil.DecodeDocs(strings.NewReader(first))
 	assert.NoError(t, err)
@@ -97,7 +99,8 @@ spec:
 		if manifest.DocKind(doc) != "ConfigMap" {
 			continue
 		}
-		name, namespace := manifest.DocMetadata(doc)
+		metadata2 := manifest.DocMetadata(doc)
+		name, namespace := metadata2.Name, metadata2.Namespace
 		metadata := doc["metadata"].(map[string]any)
 		labels, _ := metadata["labels"].(map[string]any)
 		annotations, _ := metadata["annotations"].(map[string]any)

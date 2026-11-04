@@ -50,8 +50,10 @@ func TestE2E_RootLayerDeclarations(t *testing.T) {
 		"--cache-dir",
 		t.TempDir(),
 	}
-	first, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
-	second, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	first, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+	requireCLIOKResult2 := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	second, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	assert.Equal(t, first, second)
 	docs, err := testutil.DecodeDocs(strings.NewReader(first))
 	assert.NoError(t, err)
@@ -60,14 +62,16 @@ func TestE2E_RootLayerDeclarations(t *testing.T) {
 		counts[manifest.DocKind(doc)]++
 	}
 	assert.Diff(t, counts, map[string]int{"Kustomization": 2, "ServiceAccount": 2, "ConfigMap": 2})
-	roster, _ := harness.RequireCLIOK(t, append([]string{"get", "ks", "-o", "json"}, flags...)...)
+	requireCLIOKResult3 := harness.RequireCLIOK(t, append([]string{"get", "ks", "-o", "json"}, flags...)...)
+	roster, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 	var objects []map[string]any
 	assert.NoError(t, json.Unmarshal([]byte(roster), &objects))
 	assert.Equal(t, len(objects), 2)
-	harness.MutateFile(t, filepath.Join(roots[1], "apps/first/ks.yaml"), "interval: 1m", "interval: 2m")
-	output, _ := harness.RequireCLIOK(
+	harness.MutateFile(t, filepath.Join(roots[1], "apps", "first", "ks.yaml"), "interval: 1m", "interval: 2m")
+	requireCLIOKResult4 := harness.RequireCLIOK(
 		t,
 		append([]string{"diff", "ks", "-o", "json", "--path-orig", filepath.Join(roots[0], "apps")}, flags...)...)
+	output, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 	var comparison struct {
 		Changes []struct {
 			Kind   string `json:"Kind"`
@@ -79,9 +83,10 @@ func TestE2E_RootLayerDeclarations(t *testing.T) {
 	assert.FatalIf(t, len(comparison.Changes) != 1 || comparison.Changes[0].Kind != manifest.KindKustomization ||
 		comparison.Changes[0].Name != "first" ||
 		comparison.Changes[0].Status != "changed", "interval-only root declaration missing: %s", output)
-	selected, _ := harness.RequireCLIOK(
+	requireCLIOKResult5 := harness.RequireCLIOK(
 		t,
 		append([]string{"build", "ks", "--path-orig", filepath.Join(roots[0], "apps")}, flags...)...)
+	selected, _ := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 	assert.FatalIf(
 		t,
 		!strings.Contains(selected, "interval: 2m"),
@@ -103,7 +108,8 @@ func TestE2E_LiteralRootOverlayCollision(t *testing.T) {
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: collision, namespace: apps}\n",
 		)
 	}
-	out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", "2", "--no-progress")
+	runCLIBuffersResult6 := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", "2", "--no-progress")
+	out, stderr, code := runCLIBuffersResult6.Stdout, runCLIBuffersResult6.Stderr, runCLIBuffersResult6.Code
 	assert.FatalIf(
 		t,
 		code != 1 || out != "" || !strings.Contains(stderr, "production") || !strings.Contains(stderr, "staging") ||
@@ -116,7 +122,7 @@ func TestE2E_LiteralRootOverlayCollision(t *testing.T) {
 		out,
 		stderr,
 	)
-	out, _ = harness.RequireCLIOK(
+	requireCLIOKResult7 := harness.RequireCLIOK(
 		t,
 		"build",
 		"all",
@@ -126,6 +132,7 @@ func TestE2E_LiteralRootOverlayCollision(t *testing.T) {
 		"2",
 		"--no-progress",
 	)
+	out, _ = requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 	docs, err := testutil.DecodeDocs(strings.NewReader(out))
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -160,7 +167,7 @@ func TestE2E_LiteralRootFailureNamespace(t *testing.T) {
 					),
 				)
 				testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
-				out, stderr, code := harness.RunCLIBuffers(
+				runCLIBuffersResult8 := harness.RunCLIBuffers(
 					command,
 					kind,
 					"-n",
@@ -173,6 +180,7 @@ func TestE2E_LiteralRootFailureNamespace(t *testing.T) {
 					"--cache-dir",
 					t.TempDir(),
 				)
+				out, stderr, code := runCLIBuffersResult8.Stdout, runCLIBuffersResult8.Stderr, runCLIBuffersResult8.Code
 				assert.FatalIf(
 					t,
 					code != 1 || !strings.Contains(out+stderr, "missing.yaml"),
@@ -190,7 +198,7 @@ func TestE2E_LiteralRootFailureNamespace(t *testing.T) {
 				if command != "test" || kind != "all" {
 					return
 				}
-				listed, _, _ := harness.RunCLIBuffers(
+				runCLIBuffersResult9 := harness.RunCLIBuffers(
 					"get",
 					"ks",
 					"-o",
@@ -205,6 +213,7 @@ func TestE2E_LiteralRootFailureNamespace(t *testing.T) {
 					"--cache-dir",
 					t.TempDir(),
 				)
+				listed, _, _ := runCLIBuffersResult9.Stdout, runCLIBuffersResult9.Stderr, runCLIBuffersResult9.Code
 				var objects []struct {
 					Name string `json:"Name"`
 				}
@@ -216,7 +225,7 @@ func TestE2E_LiteralRootFailureNamespace(t *testing.T) {
 					assert.FatalIf(t, err != nil || len(objects) != 1 ||
 						objects[0].Name != "child", "get exposed the internal root: %s (decode: %v)", listed, err)
 				}
-				roster, _, _ := harness.RunCLIBuffers(
+				runCLIBuffersResult10 := harness.RunCLIBuffers(
 					"get",
 					"all",
 					"-o",
@@ -231,6 +240,7 @@ func TestE2E_LiteralRootFailureNamespace(t *testing.T) {
 					"--cache-dir",
 					t.TempDir(),
 				)
+				roster, _, _ := runCLIBuffersResult10.Stdout, runCLIBuffersResult10.Stderr, runCLIBuffersResult10.Code
 				var resources []struct {
 					Kind string `json:"Kind"`
 					Name string `json:"Name"`

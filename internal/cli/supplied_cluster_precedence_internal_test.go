@@ -41,7 +41,7 @@ func TestRun_ClusterGroups_SuppliedPrecedence(t *testing.T) {
 		t,
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {CLUSTER: supplied}\n",
 	)
-	stdout, stderr, code := runClusterInputs(
+	cluster2 := runClusterInputs(
 		t,
 		"diff",
 		"all",
@@ -58,6 +58,7 @@ func TestRun_ClusterGroups_SuppliedPrecedence(t *testing.T) {
 		"-o",
 		"diff",
 	)
+	stdout, stderr, code := cluster2.stdout, cluster2.stderr, cluster2.code
 	assert.FatalIf(t, code != 0 || strings.Count(stderr, "[SuppliedPrecedence]") != 2 ||
 		!strings.Contains(stderr, "[SuppliedPrecedence] alpha:") ||
 		!strings.Contains(stderr, "[SuppliedPrecedence] omega:") ||

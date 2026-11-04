@@ -10,23 +10,21 @@ import (
 )
 
 func (l *Loader) projectTemplates() {
-	{
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for owner, occurrence := range l.locations {
-			if occurrence.facts == nil || len(occurrence.facts.templateObjects) == 0 {
-				continue
-			}
-			parent, ok := l.Index.Lookup(owner)
-			if !ok {
-				continue
-			}
-			productions := l.templateProductions(owner, &occurrence, &parent)
-			if len(productions) == 0 {
-				continue
-			}
-			for _, object := range occurrence.facts.templateObjects {
-				l.projectTemplate(owner, parent.File, object, productions)
-			}
+	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
+	for owner, occurrence := range l.locations {
+		if occurrence.facts == nil || len(occurrence.facts.templateObjects) == 0 {
+			continue
+		}
+		parent, ok := l.Index.Lookup(owner)
+		if !ok {
+			continue
+		}
+		productions := l.templateProductions(owner, &occurrence, &parent)
+		if len(productions) == 0 {
+			continue
+		}
+		for _, object := range occurrence.facts.templateObjects {
+			l.projectTemplate(owner, parent.File, object, productions)
 		}
 	}
 }

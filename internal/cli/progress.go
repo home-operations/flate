@@ -67,7 +67,7 @@ func (w *barWriter) Write(p []byte) (int, error) {
 
 func (w *barWriter) progress(
 	ctx context.Context,
-) (func(manifest.TreeID, manifest.DiagnosticIdentity, store.StatusInfo), func()) {
+) progressSession {
 	m := newBarModel(w.color)
 	events := m.events
 	restore := captureStderr(func(line string) {
@@ -78,13 +78,13 @@ func (w *barWriter) progress(
 		defer close(done)
 		w.runProgress(ctx, &m, completed, finish)
 	}()
-	return events.observe, func() {
+	return progressSession{observe: events.observe, stop: func() {
 		close(completed)
 		restore()
 		close(finish)
 		<-done
 		events.head.Store(nil)
-	}
+	}}
 }
 
 //nolint:gocritic // The status listener contract passes diagnostic identities by value.
@@ -242,4 +242,9 @@ func writerIsTTY(w io.Writer) bool {
 // progressBarEnabled requires an interactive stderr terminal.
 func progressBarEnabled(noProgress, stderrTTY bool) bool {
 	return !noProgress && stderrTTY
+}
+
+type progressSession struct {
+	observe func(manifest.TreeID, manifest.DiagnosticIdentity, store.StatusInfo)
+	stop    func()
 }

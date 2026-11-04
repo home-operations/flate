@@ -76,7 +76,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	if !ok || object.Data["value"] != "pinned" || len(s.ListObjects("", manifest.KindConfigMap)) != 0 {
 		t.Fatalf("artifact lookup data=%+v, canonical maps=%v", object, s.ListObjects("", manifest.KindConfigMap))
 	}
-	want, err := filepath.Rel(root, filepath.Join(artifactDir, "apps/kustomization.yaml"))
+	want, err := filepath.Rel(root, filepath.Join(artifactDir, "apps", "kustomization.yaml"))
 	{
 		got := filesForTest(l.Index)[id]
 		assert.FatalIf(
@@ -158,13 +158,11 @@ patches:
 		assert.FatalIf(t, err != nil, "Load: %v", err)
 	}
 
-	{
-		assert.ErrorIf(
-			t,
-			s.GetObject(testutil.KustomizationID("flux-system", "entry")) == nil,
-			"real bootstrap-entry KS (has spec.path) must surface",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		s.GetObject(testutil.KustomizationID("flux-system", "entry")) == nil,
+		"real bootstrap-entry KS (has spec.path) must surface",
+	)
 	{
 		got := s.GetObject(testutil.KustomizationID("", "patch"))
 		assert.ErrorIf(
@@ -202,9 +200,7 @@ data:
 	s := store.New()
 	l := New(s)
 	n, err := loadForTest(t.Context(), t, l, dir)
-	{
-		assert.FatalIf(t, err != nil, "Load: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Load: %v", err)
 	if n != 1 || len(l.Index.Records) != 2 {
 		t.Errorf("admitted %d objects with %d records, want 1 and 2", n, len(l.Index.Records))
 	}
@@ -241,14 +237,12 @@ resources:
 		_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry"))
 		assert.FatalIf(t, err != nil, "Load: %v", err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(testutil.KustomizationID("flux-system", "crds")) == nil,
-			"%s",
-			"escaping dir resource not followed: Kustomization flux-system/crds missing from store",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(testutil.KustomizationID("flux-system", "crds")) == nil,
+		"%s",
+		"escaping dir resource not followed: Kustomization flux-system/crds missing from store",
+	)
 }
 
 // TestLoader_EscapingFileResourceStillRejected guards the asymmetry at
@@ -271,14 +265,12 @@ resources:
 		_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry"))
 		assert.FatalIf(t, err != nil, "Load: %v", err)
 	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(testutil.KustomizationID("flux-system", "escaped")) != nil,
-			"%s",
-			"escaping FILE resource was loaded; the opened-path escape guard regressed",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(testutil.KustomizationID("flux-system", "escaped")) != nil,
+		"%s",
+		"escaping FILE resource was loaded; the opened-path escape guard regressed",
+	)
 }
 
 func TestLoader_SkipsTemplatesDir(t *testing.T) {
@@ -295,9 +287,7 @@ metadata: {name: a, namespace: ns}
 `)
 	l := New(store.New())
 	n, err := loadForTest(t.Context(), t, l, dir)
-	{
-		assert.FatalIf(t, err != nil, "Load: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Load: %v", err)
 	if n != 0 || len(l.Index.Records) != 1 || len(retainedErrorsForTest(l)) != 0 {
 		t.Errorf("templates scan: admitted=%d records=%v errors=%v", n, l.Index.Records, retainedErrorsForTest(l))
 	}
@@ -335,22 +325,18 @@ func TestLoader_SkipsDotDirs(t *testing.T) {
 				_, err := loadForTest(t.Context(), t, l, dir)
 				assert.FatalIf(t, err != nil, "Load: %v", err)
 			}
-			{
-				assert.ErrorIf(
-					t,
-					s.GetObject(testutil.KustomizationID("ns", "hidden")) != nil,
-					"%s",
-					"dot-directory manifest was loaded",
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					s.GetObject(testutil.KustomizationID("ns", "visible")) == nil,
-					"%s",
-					"root manifest was skipped",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				s.GetObject(testutil.KustomizationID("ns", "hidden")) != nil,
+				"%s",
+				"dot-directory manifest was loaded",
+			)
+			assert.ErrorIf(
+				t,
+				s.GetObject(testutil.KustomizationID("ns", "visible")) == nil,
+				"%s",
+				"root manifest was skipped",
+			)
 		})
 	}
 }
@@ -382,9 +368,7 @@ metadata: {name: real, namespace: ns}
 	s := store.New()
 	l := New(s)
 	n, err := loadForTest(t.Context(), t, l, dir)
-	{
-		assert.FatalIf(t, err != nil, "Load: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Load: %v", err)
 	if n != 0 || len(l.Index.Records) != 1 {
 		t.Errorf("admitted %d objects with records %v, want only the real ConfigMap indexed", n, l.Index.Records)
 	}
@@ -416,9 +400,7 @@ func TestLoader_SkipsKustomizeComponent_JSONForm(t *testing.T) {
 		assert.FatalIf(t, err != nil, "Load: %v", err)
 	}
 	got := s.GetObject(testutil.KustomizationID("ns", "${APP}-leak"))
-	{
-		assert.ErrorIf(t, got != nil, "Component subtree leaked a templated KS: %v", got)
-	}
+	assert.ErrorIf(t, got != nil, "Component subtree leaked a templated KS: %v", got)
 }
 
 // TestLoader_ForeignComponentKindIsNotSkipped pins the apiVersion
@@ -456,14 +438,12 @@ resources:
 		assert.FatalIf(t, err != nil, "Load: %v", err)
 	}
 	got := s.GetObject(testutil.KustomizationID("flux-system", "addons"))
-	{
-		assert.ErrorIf(
-			t,
-			got == nil,
-			"%s",
-			"foreign 'kind: Component' (non-kustomize apiVersion) silently skipped sibling KS — Component gate fired without apiVersion check",
-		)
-	}
+	assert.ErrorIf(
+		t,
+		got == nil,
+		"%s",
+		"foreign 'kind: Component' (non-kustomize apiVersion) silently skipped sibling KS — Component gate fired without apiVersion check",
+	)
 }
 
 func TestLoader_GeneratorDataFiles(t *testing.T) {
@@ -581,9 +561,7 @@ metadata: {name: real, namespace: ns}
 			}
 			l := New(store.New())
 			n, err := loadForTest(t.Context(), t, l, dir)
-			{
-				assert.FatalIf(t, err != nil, "Load: %v", err)
-			}
+			assert.FatalIf(t, err != nil, "Load: %v", err)
 			if n != 0 || len(l.Index.Records) != len(tc.want) || len(retainedErrorsForTest(l)) != 0 {
 				t.Fatalf(
 					"generator scan: admitted=%d records=%v errors=%v, want %v",
@@ -663,9 +641,7 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 			),
 		)
 		location, err := gitrepo.Locate(t.Context(), root, root)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 		input, err := gittree.AdmitDirectory(t.Context(), location)
 		assert.NoError(t, err)
 		st.SetArtifact(manifest.BootstrapSourceID, input)
@@ -690,9 +666,7 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 		_, err = loadForTest(t.Context(), t, l, filepath.Join(root, "flux"))
 		assert.NoError(t, err)
 		parent, _ = st.Get[*manifest.Kustomization](parent.Named())
-		{
-			assert.FatalIf(t, parent == nil, "%s", "bootstrap parent was not loaded")
-		}
+		assert.FatalIf(t, parent == nil, "%s", "bootstrap parent was not loaded")
 	} else {
 		if testCaseInput.external {
 			source := &manifest.GitRepository{
@@ -709,7 +683,7 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 		}
 		st.AddObject(parent)
 	}
-	sourceRoot, _, _ := SourceView(st, parent.SourceID(), root)
+	sourceRoot := SourceView(st, parent.SourceID(), root).Path
 	_, err := loadForTest(t.Context(), t, l, filepath.Join(sourceRoot, parent.Path))
 	assert.NoError(t, err)
 	l.Admit(root)

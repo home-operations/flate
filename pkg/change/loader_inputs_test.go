@@ -58,16 +58,12 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 			l.SourceRoot = root
 			admitForFilter(s, root)
 			{
-				{
-					_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 			{
-				{
-					err := l.FinalizeIndex(t.Context(), root, true)
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				err := l.FinalizeIndex(t.Context(), root, true)
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 			if overlay != "entry" {
 				assert.Diff(
@@ -75,14 +71,12 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 					l.Index.Readers["entry/sibling.json"],
 					[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 				)
-				{
-					assert.FatalIf(
-						t,
-						len(l.Index.Readers["entry/README.md"]) != 0,
-						"%v",
-						"non-manifest implicit sibling became a reader",
-					)
-				}
+				assert.FatalIf(
+					t,
+					len(l.Index.Readers["entry/README.md"]) != 0,
+					"%v",
+					"non-manifest implicit sibling became a reader",
+				)
 			}
 			for _, file := range []string{overlay + "/kustomization.yaml", "shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch", "inputs/value", "inputs/env", "inputs/missing"} {
 				assert.Diff(
@@ -90,14 +84,12 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 					l.Index.Readers[file],
 					[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 				)
-				{
-					assert.ErrorIf(
-						t,
-						!slices.Contains(ownersForFilter(l.Index, file), owner.Named()),
-						"owner missing for %s",
-						file,
-					)
-				}
+				assert.ErrorIf(
+					t,
+					!slices.Contains(ownersForFilter(l.Index, file), owner.Named()),
+					"owner missing for %s",
+					file,
+				)
 				filter := admissiontest.Filter(
 					t,
 					admissiontest.Config{
@@ -107,29 +99,23 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 						Root:      "",
 					},
 				)
-				{
-					assert.ErrorIf(t, !filter.ShouldReconcile(owner.Named()), "changed %s did not select owner", file)
-				}
+				assert.ErrorIf(t, !filter.ShouldReconcile(owner.Named()), "changed %s did not select owner", file)
 			}
 			{
-				{
-					id := testutil.KustomizationID(
-						"apps",
-						"terminal",
-					)
-					assert.FatalIf(t, s.GetObject(id) != nil ||
-						len(l.Index.Records[id].Productions) != 0, "%v", "terminal input became an object or producer")
-				}
-			}
-			{
-				assert.FatalIf(
-					t,
-					admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/unrelated"}), Index: l.Index, Inventory: s, Root: ""}).
-						ShouldReconcile(owner.Named()),
-					"%v",
-					"unrelated input selected owner",
+				id := testutil.KustomizationID(
+					"apps",
+					"terminal",
 				)
+				assert.FatalIf(t, s.GetObject(id) != nil ||
+					len(l.Index.Records[id].Productions) != 0, "%v", "terminal input became an object or producer")
 			}
+			assert.FatalIf(
+				t,
+				admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/unrelated"}), Index: l.Index, Inventory: s, Root: ""}).
+					ShouldReconcile(owner.Named()),
+				"%v",
+				"unrelated input selected owner",
+			)
 		})
 	}
 }
@@ -163,10 +149,8 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 	_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
 	assert.NoError(t, err)
 	{
-		{
-			err := l.FinalizeIndex(t.Context(), root, true)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := l.FinalizeIndex(t.Context(), root, true)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	for _, file := range []string{"shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch"} {
 		assert.Diff(
@@ -174,24 +158,20 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 			l.Index.Readers[file],
 			[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
 		)
-		{
-			assert.ErrorIf(
-				t,
-				!slices.Contains(ownersForFilter(l.Index, file), owner.Named()),
-				"owner missing for %s",
-				file,
-			)
-		}
-	}
-	{
 		assert.ErrorIf(
 			t,
-			!admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/patch"}), Index: l.Index, Inventory: s, Root: ""}).
-				ShouldReconcile(owner.Named()),
-			"%v",
-			"changed terminal patch did not select owner",
+			!slices.Contains(ownersForFilter(l.Index, file), owner.Named()),
+			"owner missing for %s",
+			file,
 		)
 	}
+	assert.ErrorIf(
+		t,
+		!admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/patch"}), Index: l.Index, Inventory: s, Root: ""}).
+			ShouldReconcile(owner.Named()),
+		"%v",
+		"changed terminal patch did not select owner",
+	)
 }
 
 func TestFinalizeIndex_InputSourceViews(t *testing.T) {
@@ -278,10 +258,8 @@ func testFinalizeIndexInputSourceViewsCase(t *testing.T, testCaseInput *string,
 	_, err := l.Load(t.Context(), filepath.Join(local, "entry"))
 	assert.NoError(t, err)
 	{
-		{
-			err := l.FinalizeIndex(t.Context(), root, true)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := l.FinalizeIndex(t.Context(), root, true)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	prefix := ".artifacts/" + (*testCaseInput) + "/"
 	assert.Diff(
@@ -289,14 +267,12 @@ func testFinalizeIndexInputSourceViewsCase(t *testing.T, testCaseInput *string,
 		l.Index.Readers[prefix+"inputs/patch"],
 		[]manifest.FileReader{{Reader: owner.Named(), Source: source.Named()}},
 	)
-	{
-		assert.FatalIf(
-			t,
-			len(l.Index.Readers[prefix+"inputs/host-only"]) != 0,
-			"%v",
-			"discovery read host files outside the mounted view",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(l.Index.Readers[prefix+"inputs/host-only"]) != 0,
+		"%v",
+		"discovery read host files outside the mounted view",
+	)
 	file := "inputs/patch"
 	if (*testCaseInput) == "alias" {
 		file = "subtree/inputs/patch"
@@ -425,10 +401,8 @@ spec:
 	}
 	l, input, want := newLoader()
 	{
-		{
-			err := l.FinalizeIndex(t.Context(), root, true)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := l.FinalizeIndex(t.Context(), root, true)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	id := testutil.HelmReleaseID("apps", "demo")
 	record, _ := l.Index.Lookup(id)
@@ -465,19 +439,15 @@ spec:
 	assert.Equal(t, filter.ShouldReconcile(id), (*testCaseInput) == "working")
 	snapshot := snapshotIndexForFilter(l.Index)
 	{
-		{
-			err := l.FinalizeIndex(t.Context(), root, true)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := l.FinalizeIndex(t.Context(), root, true)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	assertFilterIndexForTest(t, *l.Index, snapshot)
 	assert.Equal(t, input.opens, 0)
 	fresh, freshInput, _ := newLoader()
 	{
-		{
-			err := fresh.FinalizeIndex(t.Context(), root, true)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := fresh.FinalizeIndex(t.Context(), root, true)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	assertFilterIndexForTest(t, *fresh.Index, snapshot)
 	assert.Equal(t, freshInput.opens, 0)
@@ -641,10 +611,8 @@ func testFinalizeIndexOwnersOfFileResourcesEscapeCase(
 		"inputs/patch",
 	} {
 		{
-			{
-				got := idx.Readers[file]
-				assert.ErrorIf(t, !slices.Equal(got, want), "Readers[%s] = %v, want %v", file, got, want)
-			}
+			got := idx.Readers[file]
+			assert.ErrorIf(t, !slices.Equal(got, want), "Readers[%s] = %v, want %v", file, got, want)
 		}
 	}
 	filter := admissiontest.Filter(
@@ -661,14 +629,12 @@ func testFinalizeIndexOwnersOfFileResourcesEscapeCase(
 		for idIndex := range idValues {
 			id := idValues[idIndex]
 
-			{
-				assert.ErrorIf(
-					t,
-					!filter.ShouldReconcile(id.Reader),
-					"changed shared base did not select %s",
-					id.Reader,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!filter.ShouldReconcile(id.Reader),
+				"changed shared base did not select %s",
+				id.Reader,
+			)
 		}
 	}
 }

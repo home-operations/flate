@@ -104,7 +104,11 @@ func serveGitSSH(t *testing.T, conn net.Conn, fixture *testGitSSHServer) {
 func serveGitSSHSession(t *testing.T, channel ssh.Channel, requests <-chan *ssh.Request, fixture *testGitSSHServer) {
 	t.Helper()
 	defer channel.Close()
-	for request := range requests {
+	for {
+		request, ok := <-requests
+		if !ok {
+			return
+		}
 		var command struct{ Command string }
 		if request.Type != "exec" || ssh.Unmarshal(request.Payload, &command) != nil ||
 			command.Command != fmt.Sprintf("git-upload-pack '%s'", *fixture.root) {
@@ -112,39 +116,39 @@ func serveGitSSHSession(t *testing.T, channel ssh.Channel, requests <-chan *ssh.
 			continue
 		}
 		_ = request.Reply(true, nil)
-		session, err := server.DefaultServer.NewUploadPackSession(*fixture.endpoint, nil)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer session.Close()
-		refs, err := session.AdvertisedReferencesContext(t.Context())
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if encodeErr := refs.Encode(channel); encodeErr != nil {
-			t.Error(encodeErr)
-			return
-		}
-		input := packp.NewUploadPackRequest()
-		if decodeErr := input.Decode(channel); decodeErr != nil {
-			t.Error(decodeErr)
-			return
-		}
-		response, err := session.UploadPack(t.Context(), input)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer response.Close()
-		if err := response.Encode(channel); err != nil {
-			t.Error(err)
-			return
-		}
-		_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+		break
+	}
+	session, err := server.DefaultServer.NewUploadPackSession(*fixture.endpoint, nil)
+	if err != nil {
+		t.Error(err)
 		return
 	}
+	defer session.Close()
+	refs, err := session.AdvertisedReferencesContext(t.Context())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if encodeErr := refs.Encode(channel); encodeErr != nil {
+		t.Error(encodeErr)
+		return
+	}
+	input := packp.NewUploadPackRequest()
+	if decodeErr := input.Decode(channel); decodeErr != nil {
+		t.Error(decodeErr)
+		return
+	}
+	response, err := session.UploadPack(t.Context(), input)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer response.Close()
+	if err := response.Encode(channel); err != nil {
+		t.Error(err)
+		return
+	}
+	_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 }
 
 //nolint:paralleltest // Credential fixture helpers change the process environment.

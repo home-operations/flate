@@ -45,15 +45,13 @@ func testStoreResolverSelectorInputsCase2(t *testing.T, testCaseInput *testStore
 			assert.FatalIf(t, err == nil, "%s", "invalid selector accepted with an eligible provider")
 		}
 		got, err := resolve(ref, empty)
-		{
-			assert.FatalIf(
-				t,
-				err == nil || len(got) != 0,
-				"empty scope query = %v, %v; want selector error",
-				got,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil || len(got) != 0,
+			"empty scope query = %v, %v; want selector error",
+			got,
+			err,
+		)
 	}
 }
 
@@ -81,9 +79,7 @@ func testStoreResolverSelectorInputsDistinctSelectorsAndLiveProviders(
 	}{{(*testCaseInput.selected), (*testCaseInput.db).Named()}, {webSelector, testCaseInput.web.Named()}, {(*testCaseInput.selected), (*testCaseInput.db).Named()}, {webSelector, testCaseInput.web.Named()}} {
 		got, err := resolve(fluxopv1.InputProviderReference{Selector: tc.selector}, (*testCaseInput.scope))
 		assert.NoError(t, err)
-		{
-			assert.FatalIf(t, len(got) != 1 || got[0].Named() != tc.want, "providers=%v, want %s", got, tc.want)
-		}
+		assert.FatalIf(t, len(got) != 1 || got[0].Named() != tc.want, "providers=%v, want %s", got, tc.want)
 	}
 	fresh := *(*testCaseInput.db)
 	fresh.Labels = map[string]string{"role": "web"}
@@ -94,15 +90,13 @@ func testStoreResolverSelectorInputsDistinctSelectorsAndLiveProviders(
 	assert.Equal(t, len(got), 0)
 	got, err = resolve(fluxopv1.InputProviderReference{Selector: webSelector}, (*testCaseInput.scope))
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			len(got) != 2 || got[0].Named() != (*testCaseInput.db).Named() ||
-				got[1].Named() != testCaseInput.web.Named(),
-			"updated providers=%v, want db and web",
-			got,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(got) != 2 || got[0].Named() != (*testCaseInput.db).Named() ||
+			got[1].Named() != testCaseInput.web.Named(),
+		"updated providers=%v, want db and web",
+		got,
+	)
 	plan, err := got[0].InputPlan()
 	inputs := plan.Inputs
 	assert.NoError(t, err)
@@ -144,9 +138,7 @@ func TestStoreResolver_CollectionAssessmentTotal(t *testing.T) {
 			reads.Init(st, rs.Named(), nil)
 			defer reads.Retire()
 			docs, _, err := renderProviders(rs, resourceset.StoreResolver(&reads), nil)
-			{
-				assert.FatalIf(t, (err != nil) != tc.wantError, "prepare error=%v, want error=%t", err, tc.wantError)
-			}
+			assert.FatalIf(t, (err != nil) != tc.wantError, "prepare error=%v, want error=%t", err, tc.wantError)
 			if tc.wantError {
 				return
 			}

@@ -128,7 +128,7 @@ func testNetworkTransportReuseConcurrentFirstSelection(t *testing.T) {
 		}
 	}
 	for i := range clients {
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodHead, srv.URL, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodHead, srv.URL, http.NoBody)
 		assert.NoError(t, err)
 
 		resp, err := clients[i].Do(req)
@@ -154,8 +154,10 @@ func testNetworkTransportReuseEffectiveMaterial(t *testing.T) {
 	t.Helper()
 
 	ca, otherCA := testutil.SelfSignedCA(t), testutil.SelfSignedCA(t)
-	crt, key := testutil.SelfSignedClientCert(t)
-	otherCrt, otherKey := testutil.SelfSignedClientCert(t)
+	certificate2 := testutil.SelfSignedClientCert(t)
+
+	certificate3 := testutil.SelfSignedClientCert(t)
+
 	resolve := func(crt, key, ca string) TransportMaterial {
 		cfg, err := buildTLSConfig(crt, key, ca)
 		assert.NoError(t, err)
@@ -167,14 +169,16 @@ func testNetworkTransportReuseEffectiveMaterial(t *testing.T) {
 		change func(*HTTPTransportConfig)
 		equal  bool
 	}{
-		{name: "equivalent-certificates", equal: true, change: func(cfg *HTTPTransportConfig) { cfg.Material.config = resolve(crt, key, ca).config }},
+		{name: "equivalent-certificates", equal: true, change: func(cfg *HTTPTransportConfig) {
+			cfg.Material.config = resolve(certificate2.Cert, certificate2.Key, ca).config
+		}},
 		{name: "ca", change: func(cfg *HTTPTransportConfig) {
-			cfg.Material.config = resolve(crt, key, otherCA).config
+			cfg.Material.config = resolve(certificate2.Cert, certificate2.Key, otherCA).config
 			cfg.Material.certificate[2] = otherCA
 		}},
 		{name: "client-certificate", change: func(cfg *HTTPTransportConfig) {
-			cfg.Material.config = resolve(otherCrt, otherKey, ca).config
-			cfg.Material.certificate = [3]string{otherCrt, otherKey, ca}
+			cfg.Material.config = resolve(certificate3.Cert, certificate3.Key, ca).config
+			cfg.Material.certificate = [3]string{certificate3.Cert, certificate3.Key, ca}
 		}},
 		{name: "credentials", change: func(cfg *HTTPTransportConfig) { cfg.Credentials = [2]string{"user", "rotated"} }},
 		{name: "insecure", change: func(cfg *HTTPTransportConfig) { cfg.Insecure = true }},
@@ -194,7 +198,10 @@ func testNetworkTransportReuseEffectiveMaterial(t *testing.T) {
 			t.Parallel()
 			var n Network
 			t.Cleanup(n.Close)
-			cfg := HTTPTransportConfig{Material: resolve(crt, key, ca), Credentials: [2]string{"user", "first"}}
+			cfg := HTTPTransportConfig{
+				Material:    resolve(certificate2.Cert, certificate2.Key, ca),
+				Credentials: [2]string{"user", "first"},
+			}
 			cfg.Material.environment = &httpproxy.Config{HTTPProxy: "http://user:first@proxy.invalid"}
 			first, err := n.HTTPTransport(cfg)
 			assert.NoError(t, err)

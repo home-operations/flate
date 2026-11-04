@@ -74,15 +74,13 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 			assert.Equal(t, valid, true)
 			assert.Equal(t, application.Source, tc.expected.Named())
 			assert.Equal(t, application.Path, "./clusters")
-			{
-				assert.FatalIf(
-					t,
-					!Equal(application.Declaration, tc.expected),
-					"source projection differs: got %+v, want %+v",
-					application.Declaration,
-					tc.expected,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!Equal(application.Declaration, tc.expected),
+				"source projection differs: got %+v, want %+v",
+				application.Declaration,
+				tc.expected,
+			)
 			source, path, present := object.SourcePath()
 			assert.Equal(t, source, application.Source)
 			assert.Equal(t, path, application.Path)

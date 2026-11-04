@@ -56,7 +56,7 @@ func TestKeyMap_DistinctKeysRunParallel(t *testing.T) {
 	a, _ := m.Acquire(context.Background(), "a")
 	defer a()
 	b, _ := m.Acquire(context.Background(), "b")
-	defer b()
+	b()
 }
 
 func TestKeyMap_CancelledCtxReturnsErr(t *testing.T) {

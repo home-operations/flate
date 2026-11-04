@@ -136,18 +136,23 @@ func inlineChartFiles(t *testing.T) map[string]string {
 	return files
 }
 
-func inlineChartRepository(t *testing.T, url string, fields map[string]any) (string, map[string]any) {
+type inlineChartFixture struct {
+	root     string
+	document map[string]any
+}
+
+func inlineChartRepository(t *testing.T, url string, fields map[string]any) inlineChartFixture {
 	t.Helper()
 	root := t.TempDir()
 	testutil.CopyTree(t, "../../testdata/hr-oci-template", root)
-	body, err := os.ReadFile(filepath.Join(root, "apps/release.yaml"))
+	body, err := os.ReadFile(filepath.Join(root, "apps", "release.yaml"))
 	assert.NoError(t, err)
 	var doc map[string]any
 	assert.NoError(t, yaml.Unmarshal(body, &doc))
 	spec := doc["spec"].(map[string]any)["chart"].(map[string]any)["spec"].(map[string]any)
 	spec["url"] = url
 	maps.Copy(spec, fields)
-	return root, doc
+	return inlineChartFixture{root: root, document: doc}
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -249,11 +254,12 @@ func testRenderTreesInlineOCIIndependentGenerationsCase(
 	registry := newInlineChartRegistry(t, []map[string]string{first, second}, false)
 	trees := make([]Tree, 0, 2)
 	for i, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
-		root, doc := inlineChartRepository(
+		inlineChartRepositoryResult1 := inlineChartRepository(
 			t,
 			registry.url,
 			map[string]any{"ref": map[string]any{"tag": "0.1.0"}},
 		)
+		root, doc := inlineChartRepositoryResult1.root, inlineChartRepositoryResult1.document
 		sibling := manifest.DeepCopyMap(doc)
 		sibling["metadata"].(map[string]any)["name"] = "sibling"
 		siblingSpec := sibling["spec"].(map[string]any)
@@ -463,7 +469,8 @@ func testRenderInlineOCIRegistryParityCaseSegment(
 ) {
 	t.Helper()
 	for _, entry := range []string{"template", "chartRef"} {
-		root, doc := inlineChartRepository(t, (*statementInput.url), (*statementInput.fields))
+		inlineChartRepositoryResult2 := inlineChartRepository(t, (*statementInput.url), (*statementInput.fields))
+		root, doc := inlineChartRepositoryResult2.root, inlineChartRepositoryResult2.document
 		spec := doc["spec"].(map[string]any)
 		template := spec["chart"].(map[string]any)["spec"].(map[string]any)
 		resources := "resources: [release.yaml"

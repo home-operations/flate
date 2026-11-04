@@ -27,22 +27,16 @@ func compressedForTest(t *testing.T, files fstest.MapFS) []byte {
 	gz := gzip.NewWriter(&data)
 	w := tar.NewWriter(gz)
 	{
-		{
-			err := w.AddFS(files)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := w.AddFS(files)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			err := w.Close()
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := w.Close()
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			err := gz.Close()
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := gz.Close()
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	return data.Bytes()
 }
@@ -110,17 +104,15 @@ func TestEvaluate_Canceled(t *testing.T) {
 		inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{"file": {Data: []byte("file")}}}},
 	}
 	{
-		{
-			err := e.apply(
-				ctx,
-				tree.NewBuilder(nil),
-				operation{From: "@repo/file", To: "@artifact/file"},
-			)
-			assert.FatalIf(t, !errors.Is(
-				err,
-				context.Canceled,
-			), "evaluate() = %v", err)
-		}
+		err := e.apply(
+			ctx,
+			tree.NewBuilder(nil),
+			operation{From: "@repo/file", To: "@artifact/file"},
+		)
+		assert.FatalIf(t, !errors.Is(
+			err,
+			context.Canceled,
+		), "evaluate() = %v", err)
 	}
 }
 
@@ -131,45 +123,35 @@ func TestCopyFile_Canceled(t *testing.T) {
 	input := &observedFS{FS: fstest.MapFS{"file": {Data: []byte("a: 1\n---\na: 2\n")}}}
 	builder := tree.NewBuilder(nil)
 	{
-		{
-			err := builder.AddFile("existing", []byte("a: 0\n"), 0o600)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := builder.AddFile("existing", []byte("a: 0\n"), 0o600)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			err := copyFile(
-				ctx,
-				input,
-				builder,
-				operation{From: "file", To: "existing", Strategy: "Merge"},
-			)
-			assert.FatalIf(t, !errors.Is(
-				err,
-				context.Canceled,
-			), "copyFile() = %v", err)
-		}
+		err := copyFile(
+			ctx,
+			input,
+			builder,
+			operation{From: "file", To: "existing", Strategy: "Merge"},
+		)
+		assert.FatalIf(t, !errors.Is(
+			err,
+			context.Canceled,
+		), "copyFile() = %v", err)
+	}
+	assert.FatalIf(t, input.opens.Load() != 0, "%v", "canceled copy opened input")
+	{
+		data, err := fs.ReadFile(builder, "existing")
+		assert.FatalIf(
+			t,
+			err != nil || string(data) != "a: 0\n",
+			"canceled merge changed destination: %q, %v",
+			data,
+			err,
+		)
 	}
 	{
-		assert.FatalIf(t, input.opens.Load() != 0, "%v", "canceled copy opened input")
-	}
-	{
-		{
-			data, err := fs.ReadFile(builder, "existing")
-			assert.FatalIf(
-				t,
-				err != nil || string(data) != "a: 0\n",
-				"canceled merge changed destination: %q, %v",
-				data,
-				err,
-			)
-		}
-	}
-	{
-		{
-			_, err := loadYAML(ctx, input, "file")
-			assert.FatalIf(t, !errors.Is(err, context.Canceled), "loadYAML() = %v", err)
-		}
+		_, err := loadYAML(ctx, input, "file")
+		assert.FatalIf(t, !errors.Is(err, context.Canceled), "loadYAML() = %v", err)
 	}
 }
 
@@ -193,10 +175,8 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 	}
 	selection := archiveSelection{Alias: "repo", Path: "archive.tgz", Destination: "out"}
 	{
-		{
-			err := e.extract(t.Context(), tree.NewBuilder(nil), selection)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := e.extract(t.Context(), tree.NewBuilder(nil), selection)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	key := cache.ArchiveKey{Policy: "extract", Content: struct {
 		Namespace string
@@ -213,17 +193,15 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 			return cache.ProducerResult{Descriptor: ocispec.Descriptor{}}, errors.New("unexpected extraction")
 		},
 	)
-	{
-		assert.FatalIf(
-			t,
-			err != nil || input == nil || id == "" || called,
-			"nested extraction identity = %v, %q, %v; produced=%v",
-			input,
-			id,
-			err,
-			called,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || input == nil || id == "" || called,
+		"nested extraction identity = %v, %q, %v; produced=%v",
+		input,
+		id,
+		err,
+		called,
+	)
 }
 
 type testEvaluateCaseInputs struct {
@@ -281,53 +259,45 @@ func testEvaluateCase(t *testing.T, testCaseInput testEvaluateCaseInputs) {
 			break
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			(err != nil) != testCaseInput.tc.invalid,
-			"evaluate() = %v; invalid=%v",
-			err,
-			testCaseInput.tc.invalid,
-		)
-	}
+	assert.FatalIf(
+		t,
+		(err != nil) != testCaseInput.tc.invalid,
+		"evaluate() = %v; invalid=%v",
+		err,
+		testCaseInput.tc.invalid,
+	)
 	if testCaseInput.tc.invalid {
 		return
 	}
 	got := map[string]string{}
 	{
-		{
-			err := fs.WalkDir(builder, ".", func(name string, entry fs.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if entry.IsDir() {
-					return nil
-				}
-				data, err := fs.ReadFile(builder, name)
-				got[name] = string(data)
+		err := fs.WalkDir(builder, ".", func(name string, entry fs.DirEntry, err error) error {
+			if err != nil {
 				return err
-			})
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			data, err := fs.ReadFile(builder, name)
+			got[name] = string(data)
+			return err
+		})
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	{
-		{
-			diff := cmp.Diff(testCaseInput.tc.want, got)
-			assert.FatalIf(t, diff != "", "%v", diff)
-		}
+		diff := cmp.Diff(testCaseInput.tc.want, got)
+		assert.FatalIf(t, diff != "", "%v", diff)
 	}
 	for name, mode := range testCaseInput.tc.modes {
 		info, err := fs.Stat(builder, name)
-		{
-			assert.FatalIf(
-				t,
-				err != nil || info.Mode() != mode,
-				"%s mode = %v, %v; want %v",
-				name,
-				info,
-				err,
-				mode,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || info.Mode() != mode,
+			"%s mode = %v, %v; want %v",
+			name,
+			info,
+			err,
+			mode,
+		)
 	}
 }

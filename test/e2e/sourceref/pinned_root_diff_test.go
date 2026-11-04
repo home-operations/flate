@@ -19,7 +19,8 @@ import (
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_PinnedDiff_RootPin(t *testing.T) {
-	current, repo, older, head := sourceRefFixture(t)
+	sourceRefFixtureResult1 := sourceRefFixture(t)
+	current, repo, older, head := sourceRefFixtureResult1.root, sourceRefFixtureResult1.repository, sourceRefFixtureResult1.before, sourceRefFixtureResult1.after
 	wt, err := repo.Worktree()
 	assert.NoError(t, err)
 	for _, hash := range []plumbing.Hash{older, head} {
@@ -61,9 +62,9 @@ spec:
 	original := t.TempDir()
 	testutil.CopyTree(t, current, original)
 	transport := installSourceRefTransport(t, repo.Storer)
-	harness.MutateFile(t, filepath.Join(current, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
+	harness.MutateFile(t, filepath.Join(current, "apps", "cm.yaml"), "value: v2.0.0", "value: dirty")
 	for _, dir := range []string{original, current} {
-		full, _ := harness.RequireCLIOK(
+		requireCLIOKResult1 := harness.RequireCLIOK(
 			t,
 			"build",
 			"all",
@@ -74,6 +75,7 @@ spec:
 			"--cache-dir",
 			t.TempDir(),
 		)
+		full, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 		docs, err := testutil.DecodeDocs(strings.NewReader(full))
 		assert.NoError(t, err)
 		pinned := 0
@@ -117,7 +119,8 @@ func e2EPinnedDiffRootPinLoop(t *testing.T, loopInputs struct {
 	t.Helper()
 
 	for _, doc := range *loopInputs.docs {
-		name, namespace := manifest.DocMetadata(doc)
+		metadata2 := manifest.DocMetadata(doc)
+		name, namespace := metadata2.Name, metadata2.Namespace
 		(*loopInputs.ids)[manifest.DocKind(doc)+"/"+namespace+"/"+name]++
 		if manifest.DocKind(doc) == manifest.KindKustomization {
 			metadata := doc["metadata"].(map[string]any)
@@ -156,7 +159,7 @@ func e2EPinnedDiffRootPinStage(t *testing.T, stage *string, current *string, cap
 	t.Helper()
 
 	if (*stage) == "tag-change" {
-		harness.MutateFile(t, filepath.Join((*current), "flux/repo.yaml"), "tag: v1.0.0", "tag: v2.0.0")
+		harness.MutateFile(t, filepath.Join((*current), "flux", "repo.yaml"), "tag: v1.0.0", "tag: v2.0.0")
 	}
 	for _, scope := range []string{"flux", "."} {
 		t.Run(scope, func(t *testing.T) {
@@ -237,16 +240,19 @@ func e2EPinnedDiffRootPinStageScopeName(t *testing.T, side *struct {
 		"--cache-dir",
 		t.TempDir(),
 	}
-	out, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
+	requireCLIOKResult2 := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
+	out, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	if (*(*capturedInputs.stage)) == "dirty-only" {
-		again, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
+		requireCLIOKResult3 := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
+		again, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 		assert.Equal(t, again, out)
 		assert.Equal(t, out, "")
 	}
 	switch {
 	case (*(*capturedInputs.stage)) == "dirty-only" && (*capturedInputs.scope) == ".":
 
-		product, _ := harness.RequireCLIOK(t, append(args, "-o", "json")...)
+		requireCLIOKResult4 := harness.RequireCLIOK(t, append(args, "-o", "json")...)
+		product, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 		var result struct {
 			Changes    []any `json:"Changes"`
 			Suppressed []any `json:"Suppressed"`
@@ -264,7 +270,8 @@ func e2EPinnedDiffRootPinStageScopeName(t *testing.T, side *struct {
 		assertSourceValueDiff(t, out, side.before, side.after)
 	}
 	args[0] = "build"
-	out, _ = harness.RequireCLIOK(t, args...)
+	requireCLIOKResult5 := harness.RequireCLIOK(t, args...)
+	out, _ = requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 	switch {
 	case (*(*capturedInputs.stage)) == "dirty-only" && (*capturedInputs.scope) == ".":
 
@@ -272,7 +279,8 @@ func e2EPinnedDiffRootPinStageScopeName(t *testing.T, side *struct {
 		assert.NoError(t, err)
 		ids := map[string]int{}
 		for _, doc := range docs {
-			name, namespace := manifest.DocMetadata(doc)
+			metadata3 := manifest.DocMetadata(doc)
+			name, namespace := metadata3.Name, metadata3.Namespace
 			ids[manifest.DocKind(doc)+"/"+namespace+"/"+name]++
 			if manifest.DocKind(doc) == manifest.KindConfigMap {
 				assert.Diff(t, doc["data"].(map[string]any)["value"], "v1.0.0")

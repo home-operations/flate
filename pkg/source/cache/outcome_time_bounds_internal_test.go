@@ -88,14 +88,15 @@ func testOutcomeTimeCase2(t *testing.T, at *time.Time,
 	o := newOutcome(outcomeFailure(connReset()), (*at), 1, &ocispec.Descriptor{})
 	before := o.record
 	for i, delta := range tc.observations {
-		fresh, valid := o.observe(at.Add(delta))
+		freshness := o.observe(at.Add(delta))
+
 		assert.FatalIf(
 			t,
-			fresh != tc.fresh[i] || valid != tc.valid[i],
+			freshness.fresh != tc.fresh[i] || freshness.valid != tc.valid[i],
 			"observe %s: %t/%t",
 			delta,
-			fresh,
-			valid,
+			freshness.fresh,
+			freshness.valid,
 		)
 	}
 	{

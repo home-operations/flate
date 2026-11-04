@@ -46,8 +46,10 @@ func TestE2E_RuntimeOwnerNamespace(t *testing.T) {
 
 func runtimeOwnerNamespaceOutput(t *testing.T, args ...string) string {
 	t.Helper()
-	out, stderr := harness.RequireCLIOK(t, args...)
-	again, diagnostics := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+	out, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+	requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+	again, diagnostics := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	assert.Equal(t, again, out)
 	assert.Equal(t, stderr, "")
 	assert.Equal(t, diagnostics, "")
@@ -118,7 +120,8 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
 	for _, concurrency := range []int{2, 4} {
 		t.Run(fmt.Sprintf("concurrency%d", concurrency), func(t *testing.T) {
-			root, cache, _ := namespaceOrphanFixture(t, "failing")
+			namespaceOrphanFixtureResult1 := namespaceOrphanFixture(t, "failing")
+			root, cache, _ := namespaceOrphanFixtureResult1.root, namespaceOrphanFixtureResult1.cache, namespaceOrphanFixtureResult1.namespaces
 			st := store.New()
 			{
 				_, err := discovery.Run(
@@ -145,13 +148,15 @@ func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
 				strconv.Itoa(concurrency),
 				"--no-progress",
 			}
-			out, stderr, code := harness.RunCLIBuffers(append([]string{"test", "all"}, flags...)...)
+			runCLIBuffersResult3 := harness.RunCLIBuffers(append([]string{"test", "all"}, flags...)...)
+			out, stderr, code := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
 			assert.ErrorIf(t, code != 1 || !strings.Contains(out+stderr, "flux-system/owner") ||
 				!strings.Contains(
 					out+stderr,
 					"no matches",
 				), "owner build failure must remain visible: exit=%d stdout=%s stderr=%s", code, out, stderr)
-			out, stderr, code = harness.RunCLIBuffers(append([]string{"get", "hr", "-o", "json"}, flags...)...)
+			runCLIBuffersResult4 := harness.RunCLIBuffers(append([]string{"get", "hr", "-o", "json"}, flags...)...)
+			out, stderr, code = runCLIBuffersResult4.Stdout, runCLIBuffersResult4.Stderr, runCLIBuffersResult4.Code
 			assert.ErrorIf(t, code != 1, "failed owner get exit=%d stderr=%s", code, stderr)
 			var releases []any
 			assert.NoError(t, json.Unmarshal([]byte(out), &releases))
@@ -167,7 +172,13 @@ func namespaceOrphanSourceNamespace(scenario, namespace string) string {
 	return namespace
 }
 
-func namespaceOrphanFixture(t *testing.T, scenario string) (string, string, []string) {
+type namespaceFixture struct {
+	root       string
+	cache      string
+	namespaces []string
+}
+
+func namespaceOrphanFixture(t *testing.T, scenario string) namespaceFixture {
 	t.Helper()
 	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
 		t.Setenv(name, "")
@@ -279,7 +290,7 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 	)
 	assert.NoError(t, err)
 	assert.NoError(t, c.Close())
-	return root, cache, namespaces
+	return namespaceFixture{root: root, cache: cache, namespaces: namespaces}
 }
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
@@ -356,7 +367,8 @@ func e2EChildKustomizationIdentityName(t *testing.T, tc *struct {
 	if tc.namespace == "" {
 		wantCode, wantMaps = 1, 0
 	}
-	out, stderr, code := harness.RunCLIBuffers(append([]string{"get", "ks", "-o", "json"}, flags...)...)
+	runCLIBuffersResult5 := harness.RunCLIBuffers(append([]string{"get", "ks", "-o", "json"}, flags...)...)
+	out, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
 	assert.ErrorIf(t, code != wantCode, "get exit=%d want=%d stderr=%s", code, wantCode, stderr)
 	var objects []struct {
 		Name      string `json:"Name"`
@@ -393,7 +405,8 @@ func e2EChildKustomizationIdentityName(t *testing.T, tc *struct {
 		}
 	}
 	assert.ErrorIf(t, children != 1, "child identities=%d want=1; output=%s", children, out)
-	out, stderr, code = harness.RunCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
+	runCLIBuffersResult6 := harness.RunCLIBuffers(append([]string{"build", "all", "-o", "yaml"}, flags...)...)
+	out, stderr, code = runCLIBuffersResult6.Stdout, runCLIBuffersResult6.Stderr, runCLIBuffersResult6.Code
 	assert.ErrorIf(t, code != wantCode, "build exit=%d want=%d stderr=%s", code, wantCode, stderr)
 	docs, err := testutil.SplitDocs([]byte(out))
 	assert.NoError(t, err)
@@ -427,7 +440,8 @@ func e2EChildKustomizationIdentityName(t *testing.T, tc *struct {
 		wantMaps,
 		out,
 	)
-	out, stderr, code = harness.RunCLIBuffers(append([]string{"test", "all"}, flags...)...)
+	runCLIBuffersResult7 := harness.RunCLIBuffers(append([]string{"test", "all"}, flags...)...)
+	out, stderr, code = runCLIBuffersResult7.Stdout, runCLIBuffersResult7.Stderr, runCLIBuffersResult7.Code
 	assert.ErrorIf(
 		t,
 		code != wantCode || strings.Contains(out+stderr, "blocked") != (wantCode == 1),
@@ -503,7 +517,8 @@ func e2ERuntimeOwnerNamespaceName(t *testing.T, namespace *string) {
 		for _, doc := range docs {
 			kind := manifest.DocKind(doc)
 			counts[kind]++
-			name, ns := manifest.DocMetadata(doc)
+			metadata := manifest.DocMetadata(doc)
+			name, ns := metadata.Name, metadata.Namespace
 			if kind == manifest.KindKustomization && name == "demo" {
 				assert.Equal(t, ns, "apps")
 			}
@@ -536,7 +551,8 @@ func e2EChildKustomizationIdentityNameLoop(t *testing.T, loopInputs struct {
 	t.Helper()
 
 	for _, doc := range *loopInputs.docs {
-		name, ns := manifest.DocMetadata(doc)
+		metadata2 := manifest.DocMetadata(doc)
+		name, ns := metadata2.Name, metadata2.Namespace
 		if manifest.DocKind(doc) == manifest.KindKustomization && name == "child" {
 			version := manifest.DocAPIVersion(doc)
 			if version == "kustomize.toolkit.fluxcd.io/v1" {

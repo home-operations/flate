@@ -32,16 +32,10 @@ func TestRandFuncs_SameSeedSameSequence(t *testing.T) {
 		assert.ErrorIf(t, x != y, "uuidv4 differs across same-seed maps: %q vs %q", x, y)
 	}
 	ab, err := a["randBytes"].(func(int) (string, error))(32)
-	{
-		assert.FatalIf(t, err != nil, "randBytes a: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "randBytes a: %v", err)
 	bb, err := b["randBytes"].(func(int) (string, error))(32)
-	{
-		assert.FatalIf(t, err != nil, "randBytes b: %v", err)
-	}
-	{
-		assert.ErrorIf(t, ab != bb, "randBytes differs across same-seed maps: %q vs %q", ab, bb)
-	}
+	assert.FatalIf(t, err != nil, "randBytes b: %v", err)
+	assert.ErrorIf(t, ab != bb, "randBytes differs across same-seed maps: %q vs %q", ab, bb)
 	{
 		x, y := a["randInt"].(func(int, int) int)(0, 1000), b["randInt"].(func(int, int) int)(0, 1000)
 		assert.ErrorIf(t, x != y, "randInt differs across same-seed maps: %d vs %d", x, y)
@@ -54,9 +48,7 @@ func TestRandFuncs_DifferentSeedDiffers(t *testing.T) {
 	t.Parallel()
 	a := Funcs(SeedFor("rel-a", "ns"))["randAlphaNum"].(func(int) string)
 	b := Funcs(SeedFor("rel-b", "ns"))["randAlphaNum"].(func(int) string)
-	{
-		assert.ErrorIf(t, a(24) == b(24), "%s", "different seeds produced identical randAlphaNum output")
-	}
+	assert.ErrorIf(t, a(24) == b(24), "%s", "different seeds produced identical randAlphaNum output")
 }
 
 // TestRandFuncs_CharacterClassesAndShape pins that the deterministic ports
@@ -92,24 +84,16 @@ func TestRandFuncs_CharacterClassesAndShape(t *testing.T) {
 
 	u := fm["uuidv4"].(func() string)()
 	parsed, err := uuid.Parse(u)
-	{
-		assert.FatalIf(t, err != nil, "uuidv4 not a valid UUID: %q: %v", u, err)
-	}
+	assert.FatalIf(t, err != nil, "uuidv4 not a valid UUID: %q: %v", u, err)
 	if parsed.Version() != 4 {
 		t.Errorf("uuidv4 version = %d, want 4 (%q)", parsed.Version(), u)
 	}
 
 	rb, err := fm["randBytes"].(func(int) (string, error))(32)
-	{
-		assert.FatalIf(t, err != nil, "randBytes: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "randBytes: %v", err)
 	decoded, err := base64.StdEncoding.DecodeString(rb)
-	{
-		assert.FatalIf(t, err != nil, "randBytes not valid base64: %v", err)
-	}
-	{
-		assert.ErrorIf(t, len(decoded) != 32, "randBytes decoded to %d bytes, want 32", len(decoded))
-	}
+	assert.FatalIf(t, err != nil, "randBytes not valid base64: %v", err)
+	assert.ErrorIf(t, len(decoded) != 32, "randBytes decoded to %d bytes, want 32", len(decoded))
 
 	{
 		v := fm["randInt"].(func(int, int) int)(10, 20)

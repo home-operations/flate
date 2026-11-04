@@ -150,15 +150,14 @@ func assertEntryApplicationConflicts(t *testing.T, result *Result, id, winner ma
 	t.Helper()
 	for _, docs := range outputByParent(result.Manifests) {
 		for _, doc := range docs {
-			name, _ := manifest.DocMetadata(doc)
-			{
-				assert.ErrorIf(
-					t,
-					manifest.DocKind(doc) == manifest.KindConfigMap && name == "literal",
-					"%v",
-					"retired application admitted the literal root document",
-				)
-			}
+			metadata := manifest.DocMetadata(doc)
+			name := metadata.Name
+			assert.ErrorIf(
+				t,
+				manifest.DocKind(doc) == manifest.KindConfigMap && name == "literal",
+				"%v",
+				"retired application admitted the literal root document",
+			)
 		}
 	}
 	if len(result.Warnings) != 1 {

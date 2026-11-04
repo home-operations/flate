@@ -97,8 +97,20 @@ func TestE2E_MalformedChartCRD(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := simpleFixture(t)
 			testutil.WriteFile(t, dir, "charts/mychart/crds/bad.yaml", "apiVersion: [\n")
-			out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
-				"--skip-kinds="+tc.skip, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			runCLIExpectErrResult1 := harness.RunCLIExpectErr(
+				t,
+				"build",
+				"all",
+				"--path",
+				filepath.Join(dir, "cluster"),
+				"--skip-kinds="+tc.skip,
+				"--concurrency",
+				"2",
+				"--no-progress",
+				"--cache-dir",
+				t.TempDir(),
+			)
+			out, code := runCLIExpectErrResult1.Output, runCLIExpectErrResult1.Code
 			assert.FatalIf(t, code != 1, "got exit %d, want 1:\n%s", code, out)
 			assert.ErrorIf(
 				t,
@@ -112,7 +124,8 @@ func TestE2E_MalformedChartCRD(t *testing.T) {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
-	clusterPath, repoRoot := initGitFixtureFrom(t, harness.TestdataPath(t, "dependson"))
+	initGitFixtureFromResult1 := initGitFixtureFrom(t, harness.TestdataPath(t, "dependson"))
+	clusterPath, repoRoot := initGitFixtureFromResult1.path, initGitFixtureFromResult1.root
 
 	// Edit a value in lidarr's HelmRelease so only lidarr is in changed
 	// scope; qbittorrent (its dependsOn target) stays unchanged, so its
@@ -205,12 +218,13 @@ data: {value: '${VALUE}'}
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
 	})
 	testutil.CopyTree(t, after, before)
-	harness.MutateFile(t, filepath.Join(after, "flux/consumer.yaml"), "VALUE: before", "VALUE: after")
+	harness.MutateFile(t, filepath.Join(after, "flux", "consumer.yaml"), "VALUE: before", "VALUE: after")
 
 	var snapshots, unchanged [2]string
 	for i, root := range []string{before, after} {
-		full, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+		requireCLIOKResult2 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 			"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+		full, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 		value := []string{"before", "after"}[i]
 		assert.FatalIf(
 			t,
@@ -252,9 +266,10 @@ data: {value: '${VALUE}'}
 		testutil.WriteFile(t, snapshots[i], "apps/consumer/output.yaml", consumer)
 	}
 	assert.Diff(t, unchanged[1], unchanged[0])
-	fullDiff, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(snapshots[1], "flux"),
+	requireCLIOKResult3 := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(snapshots[1], "flux"),
 		"--path-orig", filepath.Join(snapshots[0], "flux"), "-o", "diff",
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	fullDiff, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 	assert.FatalIf(
 		t,
 		!strings.Contains(fullDiff, "-  value: before") || !strings.Contains(fullDiff, "+  value: after"),
@@ -262,8 +277,9 @@ data: {value: '${VALUE}'}
 		fullDiff,
 	)
 	for range 2 {
-		changed, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(after, "flux"),
+		requireCLIOKResult4 := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(after, "flux"),
 			"--base", base.String(), "-o", "diff", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+		changed, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 		assert.Equal(t, changed, fullDiff)
 	}
 }
@@ -359,7 +375,7 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 		{before, dir, "demo-values", "target-demo-values", "apps", "target"},
 	} {
 		t.Run("diff/"+tc.added, func(t *testing.T) {
-			out, stderr := harness.RequireCLIOK(
+			requireCLIOKResult5 := harness.RequireCLIOK(
 				t,
 				"diff",
 				"all",
@@ -375,6 +391,7 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 				"--cache-dir",
 				cache,
 			)
+			out, stderr := requireCLIOKResult5.Stdout, requireCLIOKResult5.Stderr
 			var result struct {
 				Changes []struct {
 					Kind      string `json:"Kind"`
@@ -433,8 +450,9 @@ spec:
 	testutil.GitCommitAll(t, testutil.GitInit(t, dir), "init", &gogit.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
 	})
-	out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
+	runCLIExpectErrResult6 := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	out, code := runCLIExpectErrResult6.Output, runCLIExpectErrResult6.Code
 	assert.Equal(t, code, 1)
 	assert.FatalIf(t, !strings.Contains(out, "OCIRepository  flux-system/automatic  not found") ||
 		strings.Contains(
@@ -448,7 +466,7 @@ func simpleFixture(t *testing.T) string {
 	dir := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
 	testutil.GitInit(t, dir)
-	file := filepath.Join(dir, "cluster/helmrelease.yaml")
+	file := filepath.Join(dir, "cluster", "helmrelease.yaml")
 	body, err := os.ReadFile(file)
 	assert.NoError(t, err)
 	_, release, found := strings.Cut(string(body), "---\n")
@@ -541,7 +559,12 @@ data:
 	return dir
 }
 
-func initGitFixtureFrom(t *testing.T, src string) (string, string) {
+type gitFixture struct {
+	path string
+	root string
+}
+
+func initGitFixtureFrom(t *testing.T, src string) gitFixture {
 	t.Helper()
 	dir := t.TempDir()
 	testutil.CopyTree(t, src, dir)
@@ -552,7 +575,7 @@ func initGitFixtureFrom(t *testing.T, src string) (string, string) {
 		"init",
 		&gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}},
 	)
-	return filepath.Join(dir, "flux"), dir
+	return gitFixture{path: filepath.Join(dir, "flux"), root: dir}
 }
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
@@ -584,7 +607,7 @@ data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }
 `)
 	var previousOut, previousErr string
 	for run := range 2 {
-		stdout, stderr := harness.RequireCLIOK(
+		requireCLIOKResult7 := harness.RequireCLIOK(
 			t,
 			"build",
 			"all",
@@ -598,6 +621,7 @@ data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }
 			"--log-level",
 			"warn",
 		)
+		stdout, stderr := requireCLIOKResult7.Stdout, requireCLIOKResult7.Stderr
 		assert.FatalIf(
 			t,
 			!strings.Contains(stdout, "name: consumer-output") || !strings.Contains(stdout, "greeting: desired-spec") ||

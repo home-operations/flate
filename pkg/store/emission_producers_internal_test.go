@@ -56,36 +56,28 @@ func testRecordEmittedConflictingProducersSyntheticOwnersCase(
 		s.AddObject(s.GetObject(target.Named()))
 	}
 	warnings := s.Warnings()
-	{
-		assert.FatalIf(t, len(warnings) != 1, "warnings=%+v", warnings)
-	}
+	assert.FatalIf(t, len(warnings) != 1, "warnings=%+v", warnings)
 	warning := warnings[0]
-	{
-		assert.FatalIf(
-			t,
-			warning.Count != 1 || warning.Resource != target.Named() || warning.Subject.Resource != target.Named() ||
-				len(warning.Detail) != 2 ||
-				warning.Detail[0] != chart.Named().String() ||
-				warning.Detail[1] != chart.Named().String(),
-			"conflict display=%+v",
-			warning,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			len(warning.Related) < 2 || warning.Related[0] != owners[0] || warning.Related[1] != owners[1],
-			"raw contributors=%v",
-			warning.Related,
-		)
-	}
+	assert.FatalIf(
+		t,
+		warning.Count != 1 || warning.Resource != target.Named() || warning.Subject.Resource != target.Named() ||
+			len(warning.Detail) != 2 ||
+			warning.Detail[0] != chart.Named().String() ||
+			warning.Detail[1] != chart.Named().String(),
+		"conflict display=%+v",
+		warning,
+	)
+	assert.FatalIf(
+		t,
+		len(warning.Related) < 2 || warning.Related[0] != owners[0] || warning.Related[1] != owners[1],
+		"raw contributors=%v",
+		warning.Related,
+	)
 	winner := chart.Named().String()
 	if *testCaseInput {
 		winner = "static object"
 	}
-	{
-		assert.FatalIf(t, warning.Message != "conflicting producers; using "+winner, "winner=%+v", warning)
-	}
+	assert.FatalIf(t, warning.Message != "conflicting producers; using "+winner, "winner=%+v", warning)
 }
 
 func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
@@ -100,14 +92,12 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 	}})
 	s.SetArtifact(child.Obj.Named(), &SourceArtifact{Key: "static"})
 	s.UpdateStatus(child.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(child.Obj.Named(), ArtifactContent) == nil,
-			"%s",
-			"fixture has no retained static artifact",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetArtifact(child.Obj.Named(), ArtifactContent) == nil,
+		"%s",
+		"fixture has no retained static artifact",
+	)
 	accept(
 		t,
 		s,
@@ -123,14 +113,12 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 	assert.Equal(t, s.EmissionOwner(ownerID("missing")), manifest.NamedResource{})
 	for _, id := range []manifest.NamedResource{p, child.Obj.Named()} {
 		assert.Equal(t, s.EmissionOwner(id), manifest.NamedResource{})
-		{
-			assert.FatalIf(
-				t,
-				s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil,
-				"%s",
-				"absent producer leaked live object or artifact",
-			)
-		}
+		assert.FatalIf(
+			t,
+			s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil,
+			"%s",
+			"absent producer leaked live object or artifact",
+		)
 		{
 			_, ok := s.GetStatus(id)
 			assert.FatalIf(t, ok, "%s", "absent producer leaked terminal state")
@@ -139,14 +127,12 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 		obj, observation := s.Snapshot(id, true)
 		info := observation.StatusInfo
 		conditions := observation.Conditions
-		{
-			assert.FatalIf(
-				t,
-				obj != nil || info != (StatusInfo{}) || len(conditions) != 0,
-				"%s",
-				"absent producer leaked snapshot",
-			)
-		}
+		assert.FatalIf(
+			t,
+			obj != nil || info != (StatusInfo{}) || len(conditions) != 0,
+			"%s",
+			"absent producer leaked snapshot",
+		)
 		{
 			obj, _, attempt := s.GetEmission(
 				id,
@@ -155,14 +141,12 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 				len(attempt.Manifests) != 0, "%s", "absent producer leaked accepted output")
 		}
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(s.FailedResources()) != 0 || len(s.ListObjects("", "")) != 0,
-			"%s",
-			"absent producer leaked inventory",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(s.FailedResources()) != 0 || len(s.ListObjects("", "")) != 0,
+		"%s",
+		"absent producer leaked inventory",
+	)
 	for event := EventObjectAdded; event <= EventArtifactUpdated; event++ {
 		s.AddListener(
 			event,
@@ -171,34 +155,28 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 		)()
 	}
 	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(child.Obj.Named()) == nil,
-			"%s",
-			"external anchor failed to activate privately completed output",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			s.GetArtifact(child.Obj.Named(), ArtifactContent) != nil,
-			"%s",
-			"external anchor activated a retained static artifact",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(child.Obj.Named()) == nil,
+		"%s",
+		"external anchor failed to activate privately completed output",
+	)
+	assert.FatalIf(
+		t,
+		s.GetArtifact(child.Obj.Named(), ArtifactContent) != nil,
+		"%s",
+		"external anchor activated a retained static artifact",
+	)
 	{
 		_, ok := s.GetStatus(child.Obj.Named())
 		assert.FatalIf(t, ok, "%s", "external anchor activated retained static Ready")
 	}
-	{
-		assert.FatalIf(
-			t,
-			!s.shardFor(child.Obj.Named()).cells[child.Obj.Named()].retired,
-			"%s",
-			"actual membership restored shadowed static authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!s.shardFor(child.Obj.Named()).cells[child.Obj.Named()].retired,
+		"%s",
+		"actual membership restored shadowed static authority",
+	)
 	{
 		_, ok := s.GetStatus(p)
 		assert.FatalIf(t, ok, "%s", "external anchor activated private Ready/Failed state")
@@ -333,25 +311,21 @@ func testRecordEmittedConflictingProducersCase(
 	for i, owner := range owners {
 		want[i] = owner.String()
 	}
-	{
-		assert.FatalIf(
-			t,
-			len(warnings) != 1 || warnings[0].Resource != id || warnings[0].Category != "ConflictingProducers" ||
-				!slices.Equal(warnings[0].Detail, want) ||
-				warnings[0].Count != 1,
-			"conflict warning: %+v",
-			warnings,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(warnings) != 1 || warnings[0].Resource != id || warnings[0].Category != "ConflictingProducers" ||
+			!slices.Equal(warnings[0].Detail, want) ||
+			warnings[0].Count != 1,
+		"conflict warning: %+v",
+		warnings,
+	)
 	assert.Equal(t, warnings[0].Message, "conflicting producers; using "+owners[(*testCaseInput.workers)-1].String())
 	accept(t, s, owners[(*testCaseInput.workers)-1], &Emission{Complete: true})
 	check(children[(*testCaseInput.workers)-2], owners[(*testCaseInput.workers)-2])
 	warnings = s.Warnings()
-	{
-		assert.FatalIf(t, (*testCaseInput.workers) == 2 && len(warnings) != 0 || (*testCaseInput.workers) ==
-			4 &&
-			(len(warnings) != 1 || !slices.Equal(warnings[0].Detail, want[:(*testCaseInput.workers)-1])), "withdrawn producer remained in warning: %+v", warnings)
-	}
+	assert.FatalIf(t, (*testCaseInput.workers) == 2 && len(warnings) != 0 || (*testCaseInput.workers) ==
+		4 &&
+		(len(warnings) != 1 || !slices.Equal(warnings[0].Detail, want[:(*testCaseInput.workers)-1])), "withdrawn producer remained in warning: %+v", warnings)
 	if len(warnings) != 0 {
 		assert.Equal(
 			t,

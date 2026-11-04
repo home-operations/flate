@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -175,12 +176,8 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(t, err != nil, "first render: %v", err)
-	}
-	{
-		assert.FatalIf(t, !hasRenderField(out1, "k", "v1"), "first render missing data; got %s", out1)
-	}
+	assert.FatalIf(t, err != nil, "first render: %v", err)
+	assert.FatalIf(t, !hasRenderField(out1, "k", "v1"), "first render missing data; got %s", out1)
 
 	want := make([]map[string]any, len(out1))
 	for i, doc := range out1 {
@@ -213,9 +210,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	key := renderKey(&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "selected"}, root, nil)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	eligible := renderPersistenceEligible(t)
-	{
-		assert.FatalIf(t, !ok, "%s", "owner did not retain completed render")
-	}
+	assert.FatalIf(t, !ok, "%s", "owner did not retain completed render")
 	if eligible {
 		publishTestFrame(
 			t,
@@ -254,20 +249,14 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(t, err != nil, "second render: %v", err)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			eligible && !hasRenderField(out2, "witness", "SENTINEL"),
-			"expected a cache hit returning stored bytes; got %s",
-			out2,
-		)
-	}
-	{
-		assert.ErrorIf(t, !eligible && !reflect.DeepEqual(out2, out1), "ineligible owner changed output: %s", out2)
-	}
+	assert.FatalIf(t, err != nil, "second render: %v", err)
+	assert.ErrorIf(
+		t,
+		eligible && !hasRenderField(out2, "witness", "SENTINEL"),
+		"expected a cache hit returning stored bytes; got %s",
+		out2,
+	)
+	assert.ErrorIf(t, !eligible && !reflect.DeepEqual(out2, out1), "ineligible owner changed output: %s", out2)
 
 	// Editing a recorded input must invalidate: the cache misses, krusty re-runs,
 	// and the fresh output reflects the change (never the stale sentinel).
@@ -300,20 +289,14 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(t, err != nil, "post-edit render: %v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			hasRenderField(out3, "witness", "SENTINEL"),
-			"%s",
-			"edit did not invalidate the cache (stale hit — unsound)",
-		)
-	}
-	{
-		assert.ErrorIf(t, !hasRenderField(out3, "k", "v2"), "re-render should reflect the edit; got %s", out3)
-	}
+	assert.FatalIf(t, err != nil, "post-edit render: %v", err)
+	assert.FatalIf(
+		t,
+		hasRenderField(out3, "witness", "SENTINEL"),
+		"%s",
+		"edit did not invalidate the cache (stale hit — unsound)",
+	)
+	assert.ErrorIf(t, !hasRenderField(out3, "k", "v2"), "re-render should reflect the edit; got %s", out3)
 	testutil.WriteFile(
 		t,
 		root,
@@ -338,15 +321,13 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !hasRenderField(out4, "patched", "v2"),
-			"consumed patch edit replayed stale output: %s, %v",
-			out4,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out4, "patched", "v2"),
+		"consumed patch edit replayed stale output: %s, %v",
+		out4,
+		err,
+	)
 	testutil.WriteFile(
 		t,
 		root,
@@ -372,15 +353,13 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !hasRenderField(out4, "name", "child-demo"),
-			"outside-subpath control edit replayed stale output: %s, %v",
-			out4,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out4, "name", "child-demo"),
+		"outside-subpath control edit replayed stale output: %s, %v",
+		out4,
+		err,
+	)
 	testutil.WriteFile(t, root, "child/kustomization.yaml", "resources: [../cm.yaml]\ngenerators: [../plugins]\n")
 	testutil.WriteFile(t, root, "value.txt", "v2")
 	var receipt8 *manifest.RenderReceipt
@@ -402,15 +381,13 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !hasRenderField(out4, "value.txt", "v2"),
-			"local plugin directory lost its source read set: %s, %v",
-			out4,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out4, "value.txt", "v2"),
+		"local plugin directory lost its source read set: %s, %v",
+		out4,
+		err,
+	)
 	cache.Close()
 	{
 		err := cache.owner.Close()
@@ -418,16 +395,14 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	}
 	cache = newTestTreeCache(t, cacheDir)
 	_, persisted, hit := readTestRenderFrame(t, cache, key)
-	{
-		assert.FatalIf(
-			t,
-			hit != eligible || hit && !reflect.DeepEqual(persisted, out4),
-			"replacement after reopen = %s, %v; eligible = %v",
-			persisted,
-			hit,
-			eligible,
-		)
-	}
+	assert.FatalIf(
+		t,
+		hit != eligible || hit && !reflect.DeepEqual(persisted, out4),
+		"replacement after reopen = %s, %v; eligible = %v",
+		persisted,
+		hit,
+		eligible,
+	)
 	testRenderCacheTypedEdits(ctx, t, &renderCacheTypedEditsInputs{root: &root, cache: &cache, output: &out4})
 }
 
@@ -445,9 +420,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	ctx := t.Context()
 	req := RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}
 	input, err := cache.sourceRootFor(ctx, req.Source, root)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	key := renderKey(&req, root, input.ignore)
 
 	out1, receipt11, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
@@ -461,17 +434,13 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(t, err != nil, "first render: %v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!hasRenderField(out1, "name", "a") || !hasRenderField(out1, "name", "b"),
-			"first render should include both a and b; got %s",
-			out1,
-		)
-	}
+	assert.FatalIf(t, err != nil, "first render: %v", err)
+	assert.FatalIf(
+		t,
+		!hasRenderField(out1, "name", "a") || !hasRenderField(out1, "name", "b"),
+		"first render should include both a and b; got %s",
+		out1,
+	)
 
 	{
 		writeFileErr2 := os.WriteFile(filepath.Join(root, ".sourceignore"), []byte("b.yaml\n"), 0o600)
@@ -481,13 +450,9 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	cache = newTestTreeCache(t, cacheDir)
 	req.Source = localSource(t, root)
 	input, err = cache.sourceRootFor(ctx, req.Source, root)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	changedKey := renderKey(&req, root, input.ignore)
-	{
-		assert.FatalIf(t, changedKey == key, "%s", "re-admitted ignore bytes reused the render key")
-	}
+	assert.FatalIf(t, changedKey == key, "%s", "re-admitted ignore bytes reused the render key")
 	out2, receipt12, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
 		{
@@ -499,20 +464,14 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(t, err != nil, "second render: %v", err)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			hasRenderField(out2, "name", "b"),
-			"%s",
-			"STALE HIT: a .sourceignore edit excluding b.yaml did not invalidate the cache",
-		)
-	}
-	{
-		assert.ErrorIf(t, !hasRenderField(out2, "name", "a"), "re-render should still include a; got %s", out2)
-	}
+	assert.FatalIf(t, err != nil, "second render: %v", err)
+	assert.ErrorIf(
+		t,
+		hasRenderField(out2, "name", "b"),
+		"%s",
+		"STALE HIT: a .sourceignore edit excluding b.yaml did not invalidate the cache",
+	)
+	assert.ErrorIf(t, !hasRenderField(out2, "name", "a"), "re-render should still include a; got %s", out2)
 	{
 		removeErr := os.Remove(filepath.Join(root, ".sourceignore"))
 		assert.NoError(t, removeErr)
@@ -521,17 +480,13 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	cache = newTestTreeCache(t, cacheDir)
 	req.Source = localSource(t, root)
 	input, err = cache.sourceRootFor(ctx, req.Source, root)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			renderKey(&req, root, input.ignore) == changedKey,
-			"%s",
-			"moved ignore file reused the render key",
-		)
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(
+		t,
+		renderKey(&req, root, input.ignore) == changedKey,
+		"%s",
+		"moved ignore file reused the render key",
+	)
 	out3, receipt13, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
 		{
@@ -543,15 +498,13 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 		}
 	}
 
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !hasRenderField(out3, "name", "a") || !hasRenderField(out3, "name", "b"),
-			"nested policy reused root policy membership: %s, %v",
-			out3,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !hasRenderField(out3, "name", "a") || !hasRenderField(out3, "name", "b"),
+		"nested policy reused root policy membership: %s, %v",
+		out3,
+		err,
+	)
 }
 
 // TestRender_MemoryOwnerUnchanged pins output parity across backing choices.
@@ -562,6 +515,12 @@ func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v1\n",
 	}
 	var want []map[string]any
+	closeCaches := make([]func(), 0, 2)
+	defer func() {
+		for _, closeCache := range slices.Backward(closeCaches) {
+			closeCache()
+		}
+	}()
 	for _, disk := range []bool{false, true} {
 		root, storage := testutil.WriteTree(t, files), ""
 		if disk {
@@ -569,7 +528,7 @@ func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 		}
 		first := newTestTreeCache(t, storage)
 		second := NewTreeCache(first.owner, nil, task.NewBounded(2))
-		defer second.Close()
+		closeCaches = append(closeCaches, second.Close)
 		var builds atomic.Int64
 		lower := &pausedRenderFS{FS: os.DirFS(root), builds: &builds}
 		req := RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoSpec}
@@ -614,27 +573,19 @@ func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 		t.Run(fmt.Sprintf("output-bytes-%d", len(output)), func(t *testing.T) {
 			t.Parallel()
 			frame, err := encodeFrame(&renderHeader{Reads: snap}, []byte(output))
-			{
-				assert.FatalIf(t, err != nil, "encodeFrame: %v", err)
-			}
+			assert.FatalIf(t, err != nil, "encodeFrame: %v", err)
 			gotSnapFrame, err := decodeFrame(frame)
 			gotSnap := gotSnapFrame.header.Reads
 			gotOut := gotSnapFrame.output
-			{
-				assert.FatalIf(t, err != nil, "decodeFrame: %v", err)
-			}
-			{
-				assert.ErrorIf(t, string(gotOut) != output, "output mismatch: want %q, got %q", output, gotOut)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					!reflect.DeepEqual(gotSnap, snap),
-					"snapshot mismatch: want %+v, got %+v",
-					snap,
-					gotSnap,
-				)
-			}
+			assert.FatalIf(t, err != nil, "decodeFrame: %v", err)
+			assert.ErrorIf(t, string(gotOut) != output, "output mismatch: want %q, got %q", output, gotOut)
+			assert.ErrorIf(
+				t,
+				!reflect.DeepEqual(gotSnap, snap),
+				"snapshot mismatch: want %+v, got %+v",
+				snap,
+				gotSnap,
+			)
 		})
 	}
 }
@@ -709,7 +660,7 @@ func renderPersistenceEligibleLoop(loopInputs struct {
 
 func renderCacheHitMissInvalidateLoop(loopInputs struct{ out1 *[]map[string]any }) {
 	for _, doc := range *loopInputs.out1 {
-		if name, _ := manifest.DocMetadata(doc); name == "demo" {
+		if manifest.DocMetadata(doc).Name == "demo" {
 			doc["extra"].(map[string]any)["sequence"].([]any)[0].(map[string]any)["value"] = "mutated"
 		}
 	}
@@ -747,11 +698,9 @@ func testRenderCacheTypedEdits(ctx context.Context, t *testing.T, inputs *render
 			}
 		}
 
-		{
-			assert.FatalIf(t, err != nil ||
-				!hasRenderField(out, strings.SplitN(tc.want, ": ", 2)[0], strings.SplitN(tc.want, ": ", 2)[1]) ||
-				reflect.DeepEqual(out, *inputs.output), "typed edit returned stale output: %s, %v", out, err)
-		}
+		assert.FatalIf(t, err != nil ||
+			!hasRenderField(out, strings.SplitN(tc.want, ": ", 2)[0], strings.SplitN(tc.want, ": ", 2)[1]) ||
+			reflect.DeepEqual(out, *inputs.output), "typed edit returned stale output: %s, %v", out, err)
 		repeated, receipt10, err := testutil.RenderMaps(Render(ctx, *inputs.cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
 			{
@@ -763,15 +712,13 @@ func testRenderCacheTypedEdits(ctx context.Context, t *testing.T, inputs *render
 			}
 		}
 
-		{
-			assert.FatalIf(
-				t,
-				err != nil || !reflect.DeepEqual(out, repeated),
-				"typed render is not deterministic: %s, %v",
-				repeated,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err != nil || !reflect.DeepEqual(out, repeated),
+			"typed render is not deterministic: %s, %v",
+			repeated,
+			err,
+		)
 		*inputs.output = out
 	}
 }

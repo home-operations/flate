@@ -267,28 +267,20 @@ func TestRender_SuspendedSkipsRender(t *testing.T) {
 	st.AddObject(ks)
 	execution := c.newExecution(ks.Named())
 	defer execution.run.Close()
-	source, applyIgnore, err := kustomize.SourceInput(&execution.run.Reads, ks)
+	sourceID, applyIgnore, err := kustomize.SourceInput(&execution.run.Reads, ks)
 	assert.NoError(t, err)
 	want := execution.run.Checkpoint()
-	{
-		assert.FatalIf(t, want == nil, "%v", "suspended declaration passed admission")
-	}
+	assert.FatalIf(t, want == nil, "%v", "suspended declaration passed admission")
 	before := guard.opened.Load()
-	got := execution.render(t.Context(), ks, source, applyIgnore)
+	got := execution.render(t.Context(), ks, sourceID, applyIgnore)
+	assert.ErrorIf(t, !errors.Is(got, want), "render error = %v, want admission error %v", got, want)
 	{
-		assert.ErrorIf(t, !errors.Is(got, want), "render error = %v, want admission error %v", got, want)
+		opens := guard.opened.Load() - before
+		assert.ErrorIf(t, opens != 0, "rejected render opened source %d times, want 0", opens)
 	}
 	{
-		{
-			opens := guard.opened.Load() - before
-			assert.ErrorIf(t, opens != 0, "rejected render opened source %d times, want 0", opens)
-		}
-	}
-	{
-		{
-			artifact := st.GetArtifact(ks.Named(), store.ArtifactContent)
-			assert.ErrorIf(t, artifact != nil, "rejected attempt published %T", artifact)
-		}
+		artifact := st.GetArtifact(ks.Named(), store.ArtifactContent)
+		assert.ErrorIf(t, artifact != nil, "rejected attempt published %T", artifact)
 	}
 }
 
@@ -455,9 +447,7 @@ func testReconcileEffectiveSubstitutionsCase(
 				return ex
 			},
 		})
-		{
-			assert.FatalIf(t, info.Status != store.StatusReady, "run %d: %+v", i, info)
-		}
+		assert.FatalIf(t, info.Status != store.StatusReady, "run %d: %+v", i, info)
 		current := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 		if i == 0 {
 			first = current
@@ -481,7 +471,7 @@ func testReconcileEffectiveSubstitutionsCase(
 		fresh := New(freshStore, freshFixture.Tasks, freshFixture.Trees, true)
 		fresh.Configure(Options{}, sourcecache.RetryConfig{})
 		fresh.StartLifecycle()
-		raw, err := os.ReadFile(filepath.Join(root, "apps/cm.yaml"))
+		raw, err := os.ReadFile(filepath.Join(root, "apps", "cm.yaml"))
 		assert.NoError(t, err)
 		testutil.WriteFile(t, freshRoot, "apps/cm.yaml", string(raw))
 		freshStore.AddObject(ks)

@@ -164,7 +164,8 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 	defer attempt.Finish()
 	handled := false
 	docs, warnings, err := resourceset.Render(rs, c.inputs, func(content any) (bool, error) {
-		fp, hit, err := c.run.FingerprintDedup(ctx, id, content, &attempt)
+		fingerprintDedupResult1, fingerprintDedupResult1Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
+		fp, hit, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
 		handled = hit
 		if hit || err != nil {
 			return hit, err
@@ -186,11 +187,12 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 	}
 	if !handled {
 		rs.EmissionPolicy().Stamp(docs)
-		attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(
+		parseChildrenResult2 := c.ParseChildren(
 			rs,
 			docs,
 			manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets},
 		)
+		attempt.Children, attempt.Manifests, attempt.Failures = parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 		attempt.Complete = true
 		if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 			return err

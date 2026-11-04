@@ -334,10 +334,8 @@ func testAdmitGraphProjectionMembershipNamespaceAuthority(t *testing.T) {
 				Namespace: "flux-system",
 				Name:      "external",
 			}
-			_, _, external := SourceView(l.Store, ext, root)
-			{
-				assert.FatalIf(t, !external, "%s", "foreign source was not classified external")
-			}
+			external := SourceView(l.Store, ext, root).External
+			assert.FatalIf(t, !external, "%s", "foreign source was not classified external")
 			check := func() manifest.BaseManifest {
 				t.Helper()
 				id := checkMembershipNamespace(t, l)
@@ -429,7 +427,7 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 		Namespace: "flux-system",
 		Name:      "external",
 	}
-	_, _, external := SourceView(l.Store, ext, root)
+	external := SourceView(l.Store, ext, root).External
 	assert.Equal(t, external, true)
 	assert.Equal(t, slices.Contains(l.scopes.roots, entry), testCaseInput.listed)
 	assert.Equal(t, l.documents.cache[filepath.Join(root, entry)].buildExcluded, !testCaseInput.listed)
@@ -501,7 +499,7 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
-	_, err = l.Load(t.Context(), filepath.Join(root, "apps/component"))
+	_, err = l.Load(t.Context(), filepath.Join(root, "apps", "component"))
 	assert.NoError(t, err)
 	l.Admit(root)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "authored", Name: "child"}
@@ -513,14 +511,12 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 		visits := l.scopes.visits[r.Path]
 		for i := range visits {
 			v := visits[i]
-			{
-				assert.FatalIf(
-					t,
-					v.source.Name == "external",
-					"%s",
-					"external owner projected membership onto its component",
-				)
-			}
+			assert.FatalIf(
+				t,
+				v.source.Name == "external",
+				"%s",
+				"external owner projected membership onto its component",
+			)
 		}
 	}
 }
@@ -572,7 +568,7 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 			{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"},
 		},
 	)
-	file := filepath.Join(root, "app/sibling.yaml")
+	file := filepath.Join(root, "app", "sibling.yaml")
 	authored := l.authoredObject(file, testutil.KustomizationID("flux-system", "sibling")).Obj.(*manifest.Kustomization)
 	snapshot := authored.Clone()
 	sourceID := manifest.NamedResource{
@@ -582,14 +578,12 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 		Name:      "source",
 	}
 	source, ok := l.candidates[sourceID].Obj.(*manifest.GitRepository)
-	{
-		assert.FatalIf(
-			t,
-			!ok || l.Store.GetObject(sourceID) != source,
-			"%s",
-			"projected source missing from candidate or store",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || l.Store.GetObject(sourceID) != source,
+		"%s",
+		"projected source missing from candidate or store",
+	)
 	publishedSource := source.WithNamespace(source.Namespace)
 	l.Store.DeleteObject(sourceID)
 	l.Store.AddObject(publishedSource)

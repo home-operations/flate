@@ -13,7 +13,8 @@ func TestFilter_UniversalAndRestricted(t *testing.T) {
 	t.Parallel()
 	id := testutil.KustomizationID("apps", "app")
 	var universal *Filter
-	needed, selected, dirty, revision := universal.Membership(id)
+	membership := universal.Membership(id)
+	needed, selected, dirty, revision := membership.Needed, membership.Selected, membership.Dirty, membership.Revision
 	assert.Equal(t, needed && selected && dirty, true)
 	assert.Equal(t, revision, uint64(0))
 	var restricted Filter
@@ -37,7 +38,8 @@ func TestFilter_UnionRejectsStaleProposal(t *testing.T) {
 	slices.SortFunc(want, manifest.NamedResource.Compare)
 	assert.Diff(t, added, want)
 	assert.Equal(t, retry, false)
-	needed, chosen, dirty, revision := f.Membership(support)
+	membership2 := f.Membership(support)
+	needed, chosen, dirty, revision := membership2.Needed, membership2.Selected, membership2.Dirty, membership2.Revision
 	assert.Equal(t, needed && !chosen && !dirty, true)
 	assert.Equal(t, revision, uint64(1))
 	assert.Diff(t, f.KeepNamespaces(), map[string]struct{}{"apps": {}})
@@ -48,7 +50,8 @@ func TestFilter_UnionRejectsStaleProposal(t *testing.T) {
 	added, retry = f.AddEmitted(nil, []manifest.NamedResource{support}, nil, revision)
 	assert.Equal(t, retry, false)
 	assert.Equal(t, len(added), 0)
-	needed, chosen, dirty, revision = f.Membership(support)
+	membership3 := f.Membership(support)
+	needed, chosen, dirty, revision = membership3.Needed, membership3.Selected, membership3.Dirty, membership3.Revision
 	assert.Equal(t, needed && chosen && !dirty, true)
 	assert.Equal(t, revision, uint64(2))
 	assert.Diff(t, f.KeepNamespaces(), map[string]struct{}{"apps": {}, "inputs": {}})

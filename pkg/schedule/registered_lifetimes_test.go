@@ -256,9 +256,12 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 			func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) },
 			true,
 		)()
-		for _, event := range []store.EventKind{store.EventArtifactUpdated, store.EventStatusUpdated} {
-			defer st.AddListener(event, func(manifest.NamedResource, any) { s.OnPublication() }, true)()
-		}
+		defer st.AddListener(
+			store.EventArtifactUpdated,
+			func(manifest.NamedResource, any) { s.OnPublication() },
+			true,
+		)()
+		defer st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { s.OnPublication() }, true)()
 		assert.NoError(t, s.Run(t.Context()))
 		{
 			got := renders.Load()

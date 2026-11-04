@@ -39,7 +39,8 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 	t.Helper()
 
 	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
-	upstream, _ := newMutableFakeRegistry(t, artifact)
+	registry := newMutableFakeRegistry(t, artifact)
+
 	var challenges, exchanges, wrongContext atomic.Int32
 	var generation atomic.Int32
 	var failTokens atomic.Bool
@@ -58,7 +59,7 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 			w,
 			r,
 			testFetcherBearerTokenReuseCaseCallbackInputs{
-				upstream:     &upstream,
+				upstream:     &registry.server,
 				challenges:   &challenges,
 				exchanges:    &exchanges,
 				wrongContext: &wrongContext,

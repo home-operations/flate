@@ -152,7 +152,8 @@ func e2EDiffInTreeCacheSourceStateName(t *testing.T, layout *struct {
 				"diff", "all", "--base", "cache-base", "--concurrency", "2",
 				"-o", "diff", "--cache-dir", layout.path, "--path", "flux",
 			}
-			out, stderr := harness.RequireCLIOK(t, args...)
+			requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+			out, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 			assert.ErrorIf(
 				t,
 				(*(*capturedInputs.state)) == "unchanged" && out != "",

@@ -54,9 +54,7 @@ data:
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	wantAll, err := testutil.SplitDocs([]byte(crd + "---\n" + cm))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 
 	for _, tc := range []struct {
 		name    string
@@ -114,7 +112,8 @@ func TestTemplate_ReleaseName(t *testing.T) {
 				)
 				assert.NoError(t, err)
 				assert.Equal(t, len(docs), 1)
-				name, _ := manifest.DocMetadata(docs[0])
+				metadata := manifest.DocMetadata(docs[0])
+				name := metadata.Name
 				assert.Equal(t, name, tc.want)
 			}
 		})
@@ -134,7 +133,7 @@ func TestTemplate_SelectedActionPolicy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			parsed, _, _, err := manifest.ParseDoc(map[string]any{
+			parsed2, err := manifest.ParseDoc(map[string]any{
 				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
 				"metadata": map[string]any{"name": "demo", "namespace": "default"},
 				"spec": map[string]any{
@@ -154,6 +153,7 @@ func TestTemplate_SelectedActionPolicy(t *testing.T) {
 					},
 				},
 			}, manifest.ParseDocOptions{})
+			parsed := parsed2.Object
 			assert.NoError(t, err)
 			hr := parsed.(*manifest.HelmRelease)
 			policy, openAPI := tc.install, tc.installOpenAPI
@@ -181,9 +181,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	want, err := testutil.SplitDocs([]byte(cm))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	_, _, wantErr := testutil.RenderMaps(
 		cli.Template(
 			t.Context(),
@@ -192,9 +190,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 			RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
 		),
 	)
-	{
-		assert.FatalIf(t, !errors.Is(wantErr, manifest.ErrInput), "got %v, want malformed CRD input error", wantErr)
-	}
+	assert.FatalIf(t, !errors.Is(wantErr, manifest.ErrInput), "got %v, want malformed CRD input error", wantErr)
 
 	for _, tc := range []struct {
 		name   string
@@ -226,15 +222,11 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 				),
 			)
 			if tc.policy != "Skip" {
-				{
-					assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "got %v, want malformed CRD input error", err)
-				}
+				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "got %v, want malformed CRD input error", err)
 				assert.Equal(t, err.Error(), wantErr.Error())
 				return
 			}
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			assert.Diff(t, docs, want)
 		})
 	}
@@ -258,9 +250,7 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 			RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
 		),
 	)
-	{
-		assert.FatalIf(t, !errors.Is(wantErr, manifest.ErrInput), "got %v, want malformed CRD input error", wantErr)
-	}
+	assert.FatalIf(t, !errors.Is(wantErr, manifest.ErrInput), "got %v, want malformed CRD input error", wantErr)
 	for range 2 {
 		_, _, err := testutil.RenderMaps(
 			cli.Template(
@@ -270,9 +260,7 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 				RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)},
 			),
 		)
-		{
-			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "got %v, want malformed CRD input error", err)
-		}
+		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "got %v, want malformed CRD input error", err)
 		assert.Equal(t, err.Error(), wantErr.Error())
 	}
 }
@@ -296,9 +284,7 @@ dependencies:
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 	want, err := testutil.SplitDocs([]byte(cm))
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 
 	for _, tc := range []struct {
 		name    string
@@ -335,21 +321,17 @@ dependencies:
 				),
 			)
 			if tc.enabled {
-				{
-					assert.FatalIf(
-						t,
-						!errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput),
-						"included: %v, omitted: %v; want malformed CRD input errors",
-						wantErr,
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput),
+					"included: %v, omitted: %v; want malformed CRD input errors",
+					wantErr,
+					err,
+				)
 				assert.Equal(t, err.Error(), wantErr.Error())
 				return
 			}
-			{
-				assert.FatalIf(t, wantErr != nil || err != nil, "included: %v, omitted: %v; want success", wantErr, err)
-			}
+			assert.FatalIf(t, wantErr != nil || err != nil, "included: %v, omitted: %v; want success", wantErr, err)
 			assert.Diff(t, included, want)
 			assert.Diff(t, docs, want)
 		})
@@ -370,33 +352,21 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	names := []string{"values.yaml", "values-prod.yaml"}
 
 	first, err := cli.mergeChartValuesFiles(t.Context(), &loaded, names, false)
-	{
-		assert.FatalIf(t, err != nil, "first call: %v", err)
-	}
-	{
-		assert.FatalIf(t, first["replicaCount"] != float64(3), "first call missing replicaCount: %+v", first)
-	}
+	assert.FatalIf(t, err != nil, "first call: %v", err)
+	assert.FatalIf(t, first["replicaCount"] != float64(3), "first call missing replicaCount: %+v", first)
 
 	loaded.chart.Files = nil
 	second, err := cli.mergeChartValuesFiles(t.Context(), &loaded, names, false)
-	{
-		assert.FatalIf(t, err != nil, "second call (cache hit expected): %v", err)
-	}
-	{
-		assert.FatalIf(t, second["replicaCount"] != float64(3), "second call missing replicaCount: %+v", second)
-	}
+	assert.FatalIf(t, err != nil, "second call (cache hit expected): %v", err)
+	assert.FatalIf(t, second["replicaCount"] != float64(3), "second call missing replicaCount: %+v", second)
 
 	// Caller-mutation safety: mutating the first result must not
 	// affect the second (defensive deep-clone on cache read).
 	first["replicaCount"] = "stomped"
 	first["image"].(map[string]any)["tag"] = "stomped"
 	third, err := cli.mergeChartValuesFiles(t.Context(), &loaded, names, false)
-	{
-		assert.FatalIf(t, err != nil, "third call: %v", err)
-	}
-	{
-		assert.ErrorIf(t, third["replicaCount"] != float64(3), "cache aliased prior call's map: %+v", third)
-	}
+	assert.FatalIf(t, err != nil, "third call: %v", err)
+	assert.ErrorIf(t, third["replicaCount"] != float64(3), "cache aliased prior call's map: %+v", third)
 	assert.Equal(t, third["image"].(map[string]any)["tag"], "v1")
 	assert.Equal(t, ch.Values["image"].(map[string]any)["tag"], "default")
 	assert.Equal(t, third["image"].(map[string]any)["repository"], "canonical")
@@ -429,27 +399,21 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 		[]string{"prod.yaml"},
 		false,
 	)
-	{
-		assert.FatalIf(t, err != nil, "chartA: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "chartA: %v", err)
 	b, err := cli.mergeChartValuesFiles(
 		t.Context(),
 		&chartDescription{chart: chB, fingerprint: chartFixtureDescription(t, chB).fingerprint},
 		[]string{"prod.yaml"},
 		false,
 	)
-	{
-		assert.FatalIf(t, err != nil, "chartB: %v", err)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			a["kind"] != "chartA" || b["kind"] != "chartB",
-			"distinct-chart cache aliased: a=%v b=%v",
-			a,
-			b,
-		)
-	}
+	assert.FatalIf(t, err != nil, "chartB: %v", err)
+	assert.ErrorIf(
+		t,
+		a["kind"] != "chartA" || b["kind"] != "chartB",
+		"distinct-chart cache aliased: a=%v b=%v",
+		a,
+		b,
+	)
 }
 
 func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
@@ -468,9 +432,7 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 			loaded := chartDescription{chart: ch, fingerprint: ""}
 			assert.Equal(t, chartValuesCacheKey(&loaded, []string{"prod.yaml"}, false, ""), "")
 			values, err := cli.mergeChartValuesFiles(t.Context(), &loaded, []string{"prod.yaml"}, false)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			assert.Equal(t, values["k"], any(name))
 		})
 	}
@@ -499,14 +461,10 @@ func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 			t.Parallel()
 			merged, err := cli.mergeChartValuesFiles(t.Context(), &loaded, tc.files, tc.ignore)
 			if tc.want == "" {
-				{
-					assert.FatalIf(t, err == nil, "%s", "required missing file was served from cache")
-				}
+				assert.FatalIf(t, err == nil, "%s", "required missing file was served from cache")
 				return
 			}
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			if merged["marker"] != tc.want {
 				t.Fatalf("marker = %v, want %s", merged["marker"], tc.want)
 			}

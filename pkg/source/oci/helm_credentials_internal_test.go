@@ -63,8 +63,8 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	t.Cleanup(srv.Close)
 	targetURL := strings.Replace(srv.URL, "127.0.0.1", "example.com", 1)
 	host := mustURL(t, targetURL).Host
-	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
-	configJSON := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, auth)
+	credentials := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
+	configJSON := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, credentials)
 	cache := cachetest.New(t, "", sourcecache.New)
 	var network source.Network
 	ociFetcherInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
@@ -195,7 +195,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		t.Context(),
 		http.MethodGet,
 		strings.Replace(srv.URL, "127.0.0.1", "example.com", 1),
-		nil,
+		http.NoBody,
 	)
 	_, err = (&http.Client{Transport: tr}).Do(req)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)

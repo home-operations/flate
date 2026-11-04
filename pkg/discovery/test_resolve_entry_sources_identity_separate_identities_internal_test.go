@@ -69,40 +69,32 @@ func testResolveEntrySourcesIdentitySeparateIdentities(t *testing.T) {
 			},
 		},
 	)
-	d := Session{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
+	d := Session{cfg: Config{Path: filepath.Join(root, "kubernetes", "clusters", "c0"), Store: st}}
 	count, err := d.resolveEntrySources(t.Context(), true)
-	{
-		assert.FatalIf(t, err != nil || count != 4, "resolution = %d, %v, want %d", count, err, len(ids))
-	}
+	assert.FatalIf(t, err != nil || count != 4, "resolution = %d, %v, want %d", count, err, len(ids))
 	for _, id := range ids {
 		artifact := st.GetArtifact(id, store.ArtifactContent)
 		if id.Kind != manifest.KindGitRepository {
-			{
-				assert.FatalIf(
-					t,
-					artifact != nil || st.GetObject(id) != nil,
-					"missing non-Git source aliased: %s",
-					id,
-				)
-			}
-			continue
-		}
-		{
 			assert.FatalIf(
 				t,
-				artifact == nil || artifact.(*store.SourceArtifact).LocalRoot != root ||
-					st.GetObject(id).Named() != id,
-				"Git identity changed: %s",
+				artifact != nil || st.GetObject(id) != nil,
+				"missing non-Git source aliased: %s",
 				id,
 			)
+			continue
 		}
-	}
-	{
 		assert.FatalIf(
 			t,
-			st.GetObject(wrong) != nil || st.GetArtifact(wrong, store.ArtifactContent) != nil,
-			"%v",
-			"wrong-group identity collided with an entry source",
+			artifact == nil || artifact.(*store.SourceArtifact).LocalRoot != root ||
+				st.GetObject(id).Named() != id,
+			"Git identity changed: %s",
+			id,
 		)
 	}
+	assert.FatalIf(
+		t,
+		st.GetObject(wrong) != nil || st.GetArtifact(wrong, store.ArtifactContent) != nil,
+		"%v",
+		"wrong-group identity collided with an entry source",
+	)
 }

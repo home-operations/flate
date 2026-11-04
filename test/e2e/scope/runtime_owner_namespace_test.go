@@ -61,7 +61,8 @@ func e2ERuntimeOwnerNamespaceChangedOnlyNameName(t *testing.T, direction *struct
 	counts := map[string]int{}
 	for _, doc := range docs {
 		kind := manifest.DocKind(doc)
-		name, ns := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name, ns := metadata.Name, metadata.Namespace
 		counts[kind]++
 		if kind == manifest.KindHelmRelease || kind == manifest.KindConfigMap {
 			assert.Equal(t, ns, "apps")

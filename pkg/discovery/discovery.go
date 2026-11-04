@@ -156,6 +156,22 @@ func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
 	}
 }
 
+// Session retains invocation-local declaration construction until Freeze.
+type Session struct {
+	binding         Binding
+	entryState      entryQualification
+	entryApplier    manifest.NamedResource
+	prepared        map[*manifest.Kustomization]declarationPreparation
+	substitutions   values.DependencySubstitutions
+	cfg             Config
+	loader          *loader.Loader
+	resolvedSources map[manifest.NamedResource]entryResolution
+	remotes         map[string]struct{}
+	aliasViews      map[string]*store.SourceArtifact
+	hasPins         bool
+	result          *Result
+}
+
 func (d *Session) finishDiscovery(
 	ctx context.Context,
 	cfg *Config,
@@ -219,22 +235,6 @@ func (d *Session) standaloneSecretIDs(l *loader.Loader, wipeSecrets bool) []mani
 		}
 	}
 	return standaloneSecrets
-}
-
-// Session retains invocation-local declaration construction until Freeze.
-type Session struct {
-	binding         Binding
-	entryState      entryQualification
-	entryApplier    manifest.NamedResource
-	prepared        map[*manifest.Kustomization]declarationPreparation
-	substitutions   values.DependencySubstitutions
-	cfg             Config
-	loader          *loader.Loader
-	resolvedSources map[manifest.NamedResource]entryResolution
-	remotes         map[string]struct{}
-	aliasViews      map[string]*store.SourceArtifact
-	hasPins         bool
-	result          *Result
 }
 
 type declarationPreparation struct {
@@ -378,14 +378,14 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 	if ks == nil {
 		return false, nil
 	}
-	source, _, _ := kustomize.SourceInput(d.cfg.Store, ks)
-	if d.cfg.Trees == nil || source == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+	sourceID, _, _ := kustomize.SourceInput(d.cfg.Store, ks)
+	if d.cfg.Trees == nil || sourceID == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
 		return false, nil
 	}
-	if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == source {
+	if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == sourceID {
 		return false, nil
 	}
-	if err := d.prepareProducer(ctx, ks, source); err != nil {
+	if err := d.prepareProducer(ctx, ks, sourceID); err != nil {
 		if ctx.Err() != nil {
 			return false, ctx.Err() //nolint:wrapcheck // Preserve cancellation identity after producer preparation.
 		}
@@ -442,9 +442,9 @@ func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kus
 			d.cfg.Store.AddObject(ks)
 		}
 	}
-	source := ks.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
+	sourceID := ks.SourceID()
+	if sourceID.Name == "" || sourceID.Kind == "" {
+		sourceID = manifest.BootstrapSourceID
 	}
 	failure := d.binding.Failure
 	if d.binding.Producer != ks.Named() {
@@ -452,7 +452,7 @@ func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kus
 	}
 	d.binding = Binding{
 		Producer: ks.Named(),
-		Source:   source,
+		Source:   sourceID,
 		Path:     manifest.NormalizeClaimBase(ks.Path),
 		Key:      internal.Named(),
 		Failure:  failure,
@@ -488,8 +488,8 @@ func (d *Session) matchesEntryPath(
 		(record.Builder == "" && record.Authored != ks.Named() || record.Builder != "" && record.File == record.Builder) {
 		return false
 	}
-	if source, ok := d.cfg.Store.GetObject(ks.SourceID()).(entrySource); ok {
-		_, descriptor := source.BootstrapAlias(input.LocalPath)
+	if sourceID, ok := d.cfg.Store.GetObject(ks.SourceID()).(entrySource); ok {
+		_, descriptor := sourceID.BootstrapAlias(input.LocalPath)
 		if descriptor != nil &&
 			(descriptor.Ignore != nil && *descriptor.Ignore != "" || len(descriptor.SparseCheckout) != 0) {
 			return false
@@ -499,7 +499,8 @@ func (d *Session) matchesEntryPath(
 	if err != nil {
 		return false
 	}
-	root, pinned, external := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
+	sourceViewResult1 := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
+	root, pinned, external := sourceViewResult1.Path, sourceViewResult1.Pinned, sourceViewResult1.External
 	if pinned || external {
 		return false
 	}
@@ -517,8 +518,8 @@ func (d *Session) entryCandidateReady(ctx context.Context, candidate *manifest.K
 	if d.cfg.Trees == nil || candidate.PostBuild != nil && len(candidate.PostBuild.SubstituteFrom) != 0 {
 		return false
 	}
-	source, _, _ := kustomize.SourceInput(d.cfg.Store, candidate)
-	prepared, err := d.prepareDocuments(ctx, candidate, source)
+	sourceID, _, _ := kustomize.SourceInput(d.cfg.Store, candidate)
+	prepared, err := d.prepareDocuments(ctx, candidate, sourceID)
 	if err != nil {
 		slog.Debug("discovery: entry candidate preparation deferred", "err", err)
 		return false
@@ -634,12 +635,13 @@ func (d *Session) prepareDocuments(
 	if err := kustomize.Shape(prepared, docs, d.cfg.StrictSubstitutions); err != nil {
 		return declarationPreparation{}, err
 	}
-	built, _, failures := loader.ParseChildren(
+	parseChildrenResult2 := loader.ParseChildren(
 		prepared,
 		docs,
 		manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets},
 		d.cfg.SkipKinds,
 	)
+	built, _, failures := parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 	if err := manifest.DocumentFailure(failures); err != nil {
 		return declarationPreparation{}, err
 	}
@@ -656,9 +658,9 @@ func (d *Session) prepareProducer(ctx context.Context, ks *manifest.Kustomizatio
 	if err != nil {
 		return err
 	}
-	source := ks.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
+	sourceID := ks.SourceID()
+	if sourceID.Name == "" || sourceID.Kind == "" {
+		sourceID = manifest.BootstrapSourceID
 	}
 	owner := manifest.NamedResource{}
 	if d.binding.Producer == ks.Named() || !ks.Named().ReportHidden() {
@@ -668,7 +670,7 @@ func (d *Session) prepareProducer(ctx context.Context, ks *manifest.Kustomizatio
 		loader.BuiltInput{
 			Root:   filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(ks.Path)),
 			Owner:  owner,
-			Source: source,
+			Source: sourceID,
 			Reads:  kustomize.RenderInputs(prepared.receipt),
 		},
 		prepared.children,
@@ -697,14 +699,14 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 				children[i].Obj = obj
 			}
 		}
-		source := ks.SourceID()
-		if source.Name == "" || source.Kind == "" {
-			source = manifest.BootstrapSourceID
+		sourceID := ks.SourceID()
+		if sourceID.Name == "" || sourceID.Kind == "" {
+			sourceID = manifest.BootstrapSourceID
 		}
 		input := prepared.source
 		if err := d.cfg.Trees.RecordRender(ctx, kustomize.RenderAcceptance{
 			Owner: ks.Named(), Receipt: prepared.receipt, Content: prepared.content, Entry: ks.EntryReceipt,
-			Source:                  input.HistoryIdentity(source),
+			Source:                  input.HistoryIdentity(sourceID),
 			Records:                 d.cfg.Store.ChildFootprint(ks.Named(), children, d.loader.Index),
 			Sources:                 d.cfg.Store.ChildSourcePaths(ks.Named(), children, d.loader.Index),
 			DependencySubstitutions: d.substitutions,

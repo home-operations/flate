@@ -50,13 +50,11 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 	remoteRepo := openHelper(t, remote)
 	setRef(t, remoteRepo, plumbing.NewBranchReferenceName("main"), mainCommit)
 	{
-		{
-			_, err := remoteRepo.CreateTag("v1", mainCommit, &git.CreateTagOptions{
-				Tagger:  &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
-				Message: "v1",
-			})
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		_, err := remoteRepo.CreateTag("v1", mainCommit, &git.CreateTagOptions{
+			Tagger:  &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+			Message: "v1",
+		})
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	url := filepath.Join(remote, ".git")
 
@@ -72,23 +70,17 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 			t.Parallel()
 			dir := historylessCheckout(t, url, "a.yaml", "pr-tip")
 			res, err := AutoResolve(t.Context(), dir, tc.base, cachetest.New(t, "", sourcecache.New))
-			{
-				assert.FatalIf(t, err != nil, "AutoResolve(--base=%s): %v", tc.base, err)
-			}
+			assert.FatalIf(t, err != nil, "AutoResolve(--base=%s): %v", tc.base, err)
 
 			got, err := fs.ReadFile(res.BaseInput.FS, "a.yaml")
-			{
-				assert.FatalIf(t, err != nil, "read materialized: %v", err)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					string(got) != "base",
-					"materialized a.yaml = %q, want %q (origin's main, not the checkout)",
-					got,
-					"base",
-				)
-			}
+			assert.FatalIf(t, err != nil, "read materialized: %v", err)
+			assert.ErrorIf(
+				t,
+				string(got) != "base",
+				"materialized a.yaml = %q, want %q (origin's main, not the checkout)",
+				got,
+				"base",
+			)
 			if res.BaseInput.Revision != mainCommit.String() {
 				t.Errorf("Revision = %q, want %q", res.BaseInput.Revision, mainCommit.String())
 			}
@@ -100,15 +92,13 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 			}
 			// The checkout is read-only: the fetch lands nowhere near it.
 			{
-				{
-					_, err := openHelper(t, dir).CommitObject(mainCommit)
-					assert.ErrorIf(
-						t,
-						err == nil,
-						"%v",
-						"baseline commit landed in the checkout; the fetch must not write into it",
-					)
-				}
+				_, err := openHelper(t, dir).CommitObject(mainCommit)
+				assert.ErrorIf(
+					t,
+					err == nil,
+					"%v",
+					"baseline commit landed in the checkout; the fetch must not write into it",
+				)
 			}
 		})
 	}
@@ -128,9 +118,7 @@ func TestAutoResolve_ExplicitBaseFetchedDespiteLocalHistory(t *testing.T) {
 	addOrigin(t, dir, filepath.Join(remote, ".git"))
 
 	res, err := AutoResolve(t.Context(), dir, "main", cachetest.New(t, "", sourcecache.New))
-	{
-		assert.FatalIf(t, err != nil, "AutoResolve(--base=main): %v", err)
-	}
+	assert.FatalIf(t, err != nil, "AutoResolve(--base=main): %v", err)
 
 	if res.BaseInput.Revision != mainCommit.String() {
 		t.Errorf("Revision = %q, want %q", res.BaseInput.Revision, mainCommit.String())
@@ -148,13 +136,9 @@ func TestAutoResolve_ExplicitBaseNotOnOrigin(t *testing.T) {
 	_, err := AutoResolve(t.Context(), dir, "nope", cachetest.New(t, "", sourcecache.New))
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
-	{
-		assert.FatalIf(t, err == nil, "%v", "expected error for a rev origin does not have")
-	}
+	assert.FatalIf(t, err == nil, "%v", "expected error for a rev origin does not have")
 	for _, want := range []string{"nope", "origin"} {
-		{
-			assert.ErrorIf(t, !strings.Contains(err.Error(), want), "error %q should mention %q", err, want)
-		}
+		assert.ErrorIf(t, !strings.Contains(err.Error(), want), "error %q should mention %q", err, want)
 	}
 }
 
@@ -168,17 +152,13 @@ func TestAutoResolve_ExplicitBaseNoOriginRemote(t *testing.T) {
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
-	{
-		assert.FatalIf(t, err == nil, "%v", "expected error without an origin remote")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(err.Error(), "origin remote"),
-			"error %q should say there is no origin remote to fetch from",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%v", "expected error without an origin remote")
+	assert.ErrorIf(
+		t,
+		!strings.Contains(err.Error(), "origin remote"),
+		"error %q should say there is no origin remote to fetch from",
+		err,
+	)
 }
 
 // TestAutoResolve_UnbornHEADWithoutBase: auto-detection needs a HEAD
@@ -194,13 +174,9 @@ func TestAutoResolve_UnbornHEADWithoutBase(t *testing.T) {
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
-	{
-		assert.FatalIf(t, err == nil, "%v", "expected error for an unborn HEAD without --base")
-	}
+	assert.FatalIf(t, err == nil, "%v", "expected error for an unborn HEAD without --base")
 	for _, want := range []string{"no commits", "--base"} {
-		{
-			assert.ErrorIf(t, !strings.Contains(err.Error(), want), "error %q should mention %q", err, want)
-		}
+		assert.ErrorIf(t, !strings.Contains(err.Error(), want), "error %q should mention %q", err, want)
 	}
 }
 
@@ -221,13 +197,11 @@ func historylessCheckout(t *testing.T, url, path, content string) string {
 func addOrigin(t *testing.T, dir, url string) {
 	t.Helper()
 	{
-		{
-			_, err := openHelper(
-				t,
-				dir,
-			).CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		_, err := openHelper(
+			t,
+			dir,
+		).CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{url}})
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 }
 
@@ -373,15 +347,11 @@ func fetchBlob(t *testing.T, st storage.Storer, body string) plumbing.Hash {
 	obj := &plumbing.MemoryObject{}
 	obj.SetType(plumbing.BlobObject)
 	{
-		{
-			_, err := obj.Write([]byte(body))
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
-	}
-	hash, err := st.SetEncodedObject(obj)
-	{
+		_, err := obj.Write([]byte(body))
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
+	hash, err := st.SetEncodedObject(obj)
+	assert.FatalIf(t, err != nil, "%v", err)
 	return hash
 }
 
@@ -481,10 +451,8 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 	}
 	for _, c := range []capability.Capability{sideband, capability.MultiACKDetailed} {
 		{
-			{
-				err := caps.Set(c)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := caps.Set(c)
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
 	toggles := make(map[capability.Capability]bool)
@@ -494,10 +462,8 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 	for c, enabled := range toggles {
 		if enabled {
 			{
-				{
-					err := caps.Set(c)
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
+				err := caps.Set(c)
+				assert.FatalIf(t, err != nil, "%v", err)
 			}
 		}
 	}
@@ -506,10 +472,8 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 	body := fetchBlob(t, source, "requested body")
 	var packed bytes.Buffer
 	{
-		{
-			_, err := packfile.NewEncoder(&packed, source, false).Encode([]plumbing.Hash{body}, 0)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		_, err := packfile.NewEncoder(&packed, source, false).Encode([]plumbing.Hash{body}, 0)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	fixture := &fetchPolicyTransport{pack: packed.Bytes(), failures: testCaseInput.tc.failures}
 	if testCaseInput.tc.closeErrors {
@@ -536,15 +500,13 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 	}
 	err := remote.fetch(ctx, upper, wants)
 	if testCaseInput.tc.name == "full missing objects" {
-		{
-			assert.FatalIf(
-				t,
-				err == nil ||
-					err.Error() != fmt.Sprintf("base %s is missing objects after full fetch", (*testCaseInput.pin)),
-				"missing object diagnostic: %v",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			err == nil ||
+				err.Error() != fmt.Sprintf("base %s is missing objects after full fetch", (*testCaseInput.pin)),
+			"missing object diagnostic: %v",
+			err,
+		)
 	} else {
 		assert.FatalIf(
 			t,
@@ -604,18 +566,14 @@ func testAdoptFetchedStorageCase(t *testing.T, testCaseInput testAdoptFetchedSto
 	lowerHash := fetchBlob(t, lower, "local only")
 	if testCaseInput.tc.upperMarker {
 		{
-			{
-				err := upper.SetReference(plumbing.NewHashReference(fullBaseRef, (*testCaseInput.pin)))
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := upper.SetReference(plumbing.NewHashReference(fullBaseRef, (*testCaseInput.pin)))
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
 	if testCaseInput.tc.lowerMarker {
 		{
-			{
-				err := lower.SetReference(plumbing.NewHashReference(fullBaseRef, (*testCaseInput.pin)))
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := lower.SetReference(plumbing.NewHashReference(fullBaseRef, (*testCaseInput.pin)))
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
 	readErr := &fs.PathError{Op: "open", Path: "packed-refs", Err: fs.ErrPermission}
@@ -635,15 +593,13 @@ func testAdoptFetchedStorageCase(t *testing.T, testCaseInput testAdoptFetchedSto
 	err := r.adopt(local)
 	repo := r.Repo
 	if testCaseInput.tc.readError {
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, readErr) || repo != nil,
-				"marker error: repo=%v err=%v",
-				repo,
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, readErr) || repo != nil,
+			"marker error: repo=%v err=%v",
+			repo,
+			err,
+		)
 		return
 	}
 	if err != nil || repo == nil || r.remote.full != (testCaseInput.tc.full || testCaseInput.tc.upperMarker) ||
@@ -657,42 +613,30 @@ func testAdoptFetchedStorageCase(t *testing.T, testCaseInput testAdoptFetchedSto
 	}{{upperHash, "fetched only"}, {lowerHash, "local only"}} {
 		blob, err := repo.Storer.EncodedObject(plumbing.BlobObject, obj.hash)
 		if !testCaseInput.tc.layered && obj.hash == lowerHash {
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, plumbing.ErrObjectNotFound),
-					"standalone admitted local storage: %v",
-					err,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, plumbing.ErrObjectNotFound),
+				"standalone admitted local storage: %v",
+				err,
+			)
 			continue
 		}
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		reader, err := blob.Reader()
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		data, readErr := io.ReadAll(reader)
 		{
-			{
-				err := errors.Join(readErr, reader.Close())
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := errors.Join(readErr, reader.Close())
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
-		{
-			assert.FatalIf(t, string(data) != obj.body, "object body=%q, want %q", data, obj.body)
-		}
+		assert.FatalIf(t, string(data) != obj.body, "object body=%q, want %q", data, obj.body)
 	}
 	written := fetchBlob(t, repo.Storer, "new fetched object")
-	{
-		assert.FatalIf(t, upper.HasEncodedObject(written) != nil ||
-			!errors.Is(
-				lower.HasEncodedObject(written),
-				plumbing.ErrObjectNotFound,
-			), "%v", "adopted writes did not retain fetched-upper ownership")
-	}
+	assert.FatalIf(t, upper.HasEncodedObject(written) != nil ||
+		!errors.Is(
+			lower.HasEncodedObject(written),
+			plumbing.ErrObjectNotFound,
+		), "%v", "adopted writes did not retain fetched-upper ownership")
 }
 
 func testBaseRemoteFetchPolicyCaseSegment(
@@ -733,10 +677,8 @@ func testBaseRemoteFetchPolicyCaseSegment(
 		if request.Filter != wantFilter {
 			t.Fatalf("request %d filter=%q, want %q", i, request.Filter, wantFilter)
 		}
-		{
-			assert.FatalIf(t, i > 0 &&
-				(request == (*fixture).requests[0] || request.Capabilities == (*fixture).requests[0].Capabilities), "%v", "fallback reused a partial request")
-		}
+		assert.FatalIf(t, i > 0 &&
+			(request == (*fixture).requests[0] || request.Capabilities == (*fixture).requests[0].Capabilities), "%v", "fallback reused a partial request")
 	}
 }
 
@@ -753,26 +695,22 @@ type testFetchPolicyCompletionInputs struct {
 func testFetchPolicyCompletion(t *testing.T, statementInput *testFetchPolicyCompletionInputs) {
 	t.Helper()
 	if (*statementInput.err) == nil {
-		{
+		assert.FatalIf(
+			t,
+			(*statementInput.upper).HasEncodedObject((*statementInput.body)) != nil ||
+				(*statementInput.fixture).responsesClosed != 1,
+			"%v",
+			"successful response was not consumed and closed",
+		)
+		if statementInput.testCaseInput.tc.wantFull {
 			assert.FatalIf(
 				t,
-				(*statementInput.upper).HasEncodedObject((*statementInput.body)) != nil ||
-					(*statementInput.fixture).responsesClosed != 1,
-				"%v",
-				"successful response was not consumed and closed",
+				(*statementInput.markerErr) != nil ||
+					(*statementInput.marker).Hash() != (*statementInput.testCaseInput.pin),
+				"full marker: %v, %v",
+				(*statementInput.marker),
+				(*statementInput.markerErr),
 			)
-		}
-		if statementInput.testCaseInput.tc.wantFull {
-			{
-				assert.FatalIf(
-					t,
-					(*statementInput.markerErr) != nil ||
-						(*statementInput.marker).Hash() != (*statementInput.testCaseInput.pin),
-					"full marker: %v, %v",
-					(*statementInput.marker),
-					(*statementInput.markerErr),
-				)
-			}
 		} else {
 			assert.FatalIf(
 				t,
@@ -789,22 +727,18 @@ func testFetchPolicyCompletion(t *testing.T, statementInput *testFetchPolicyComp
 			(*statementInput.marker),
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			statementInput.testCaseInput.tc.closeErrors &&
-				(!errors.Is((*statementInput.err), (*statementInput.testCaseInput.sessionClose)) || (*statementInput.fixture).responsesClosed != 1),
-			"joined close errors lost: %v",
-			(*statementInput.err),
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			statementInput.testCaseInput.tc.cancel &&
-				(errors.Is((*statementInput.err), (*statementInput.testCaseInput.refusal)) || errors.Is((*statementInput.err), transport.ErrAuthenticationRequired)),
-			"cancellation did not take precedence: %v",
-			(*statementInput.err),
-		)
-	}
+	assert.FatalIf(
+		t,
+		statementInput.testCaseInput.tc.closeErrors &&
+			(!errors.Is((*statementInput.err), (*statementInput.testCaseInput.sessionClose)) || (*statementInput.fixture).responsesClosed != 1),
+		"joined close errors lost: %v",
+		(*statementInput.err),
+	)
+	assert.FatalIf(
+		t,
+		statementInput.testCaseInput.tc.cancel &&
+			(errors.Is((*statementInput.err), (*statementInput.testCaseInput.refusal)) || errors.Is((*statementInput.err), transport.ErrAuthenticationRequired)),
+		"cancellation did not take precedence: %v",
+		(*statementInput.err),
+	)
 }

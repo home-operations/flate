@@ -50,12 +50,8 @@ metadata:
 	}
 
 	docs, _, err := renderProviders(rs, resolver, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 1, "expected 1 doc (1 inline × 1 static = 1), got %d:\n%+v", len(docs), docs)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(docs) != 1, "expected 1 doc (1 inline × 1 static = 1), got %d:\n%+v", len(docs), docs)
 	md, _ := docs[0].Document["metadata"].(map[string]any)
 	{
 		got, _ := md["name"].(string)
@@ -93,12 +89,8 @@ metadata:
 		}}, nil
 	}
 	docs, _, err := renderProviders(rs, resolver, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 2, "expected 2 perm docs (2 inline × 1 rsip), got %d:\n%+v", len(docs), docs)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(docs) != 2, "expected 2 perm docs (2 inline × 1 rsip), got %d:\n%+v", len(docs), docs)
 	gotNames := map[string]struct{}{}
 	for _, d := range docs {
 		md, _ := d.Document["metadata"].(map[string]any)
@@ -136,18 +128,14 @@ metadata:
 		}}, nil
 	}
 	docs, _, err := renderProviders(rs, resolver, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			len(docs) != 1,
-			"expected 1 doc (dyn provider dropped, 1 inline remains); got %d:\n%+v",
-			len(docs),
-			docs,
-		)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.ErrorIf(
+		t,
+		len(docs) != 1,
+		"expected 1 doc (dyn provider dropped, 1 inline remains); got %d:\n%+v",
+		len(docs),
+		docs,
+	)
 }
 
 // TestRender_PermuteIncludeEmptyProvidersCollapses verifies the
@@ -178,18 +166,14 @@ metadata: {name: x, namespace: default}`,
 		}}, nil
 	}
 	docs, _, err := renderProviders(rs, resolver, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			len(docs) != 0,
-			"expected 0 docs (Cartesian product with an empty provider), got %d:\n%+v",
-			len(docs),
-			docs,
-		)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.ErrorIf(
+		t,
+		len(docs) != 0,
+		"expected 0 docs (Cartesian product with an empty provider), got %d:\n%+v",
+		len(docs),
+		docs,
+	)
 }
 
 // TestRender_PermuteMaxPermutationsRejected guards the 10000-cap that
@@ -211,17 +195,13 @@ kind: ConfigMap
 metadata: {name: x, namespace: default}`,
 	}
 	_, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected Render to reject the >10000-permutation case")
-	}
-	{
-		assert.ErrorIf(
-			t,
-			!strings.Contains(err.Error(), "permutations"),
-			"error should mention permutations; got %v",
-			err,
-		)
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected Render to reject the >10000-permutation case")
+	assert.ErrorIf(
+		t,
+		!strings.Contains(err.Error(), "permutations"),
+		"error should mention permutations; got %v",
+		err,
+	)
 }
 
 func jsonTmpl(t *testing.T, raw string) *apix.JSON {
@@ -249,12 +229,8 @@ func TestRender_InputsExpandTemplates(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 2, "expected 2 docs, got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(docs) != 2, "expected 2 docs, got %d", len(docs))
 	names := map[string]string{}
 	for _, doc := range docs {
 		md := doc.Document["metadata"].(map[string]any)
@@ -288,12 +264,8 @@ func TestRender_Deduplication(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.ErrorIf(t, len(docs) != 3, "expected 3 unique docs (1 shared + 2 per-tenant), got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.ErrorIf(t, len(docs) != 3, "expected 3 unique docs (1 shared + 2 per-tenant), got %d", len(docs))
 }
 
 // TestRender_NoInputsRendersOnce covers d2-fleet's policies.yaml shape:
@@ -311,12 +283,8 @@ func TestRender_NoInputsRendersOnce(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 1, "expected 1 doc, got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(docs) != 1, "expected 1 doc, got %d", len(docs))
 }
 
 func TestRender_PreservesNamespaces(t *testing.T) {
@@ -342,17 +310,12 @@ func TestRender_PreservesNamespaces(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 5, "documents = %d", len(docs))
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(docs) != 5, "documents = %d", len(docs))
 	for i, want := range []string{"", "", "", "authored", "authored"} {
-		_, ns := manifest.DocMetadata(docs[i].Document)
-		{
-			assert.ErrorIf(t, ns != want, "document %d namespace = %q, want %q", i, ns, want)
-		}
+		metadata := manifest.DocMetadata(docs[i].Document)
+		ns := metadata.Namespace
+		assert.ErrorIf(t, ns != want, "document %d namespace = %q, want %q", i, ns, want)
 	}
 }
 
@@ -374,27 +337,19 @@ func TestRender_UnstampedCommonMetadata(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 	md := docs[0].Document["metadata"].(map[string]any)
-	{
-		assert.FatalIf(
-			t,
-			md["labels"] != nil || md["annotations"] != nil,
-			"%s",
-			"raw ResourceSet render contains controller stamps",
-		)
-	}
+	assert.FatalIf(
+		t,
+		md["labels"] != nil || md["annotations"] != nil,
+		"%s",
+		"raw ResourceSet render contains controller stamps",
+	)
 	rs.EmissionPolicy().Stamp(docs)
 	labels, _ := md["labels"].(map[string]any)
-	{
-		assert.ErrorIf(t, labels["team"] != "platform", "commonMetadata.labels not merged: %v", labels)
-	}
+	assert.ErrorIf(t, labels["team"] != "platform", "commonMetadata.labels not merged: %v", labels)
 	ann, _ := md["annotations"].(map[string]any)
-	{
-		assert.ErrorIf(t, ann["owner"] != "x", "commonMetadata.annotations not merged: %v", ann)
-	}
+	assert.ErrorIf(t, ann["owner"] != "x", "commonMetadata.annotations not merged: %v", ann)
 }
 
 func TestRender_UnstampedOwnerLabels(t *testing.T) {
@@ -409,31 +364,23 @@ func TestRender_UnstampedOwnerLabels(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 	md := docs[0].Document["metadata"].(map[string]any)
-	{
-		assert.FatalIf(
-			t,
-			md["labels"] != nil || md["annotations"] != nil,
-			"%s",
-			"raw ResourceSet render contains controller stamps",
-		)
-	}
+	assert.FatalIf(
+		t,
+		md["labels"] != nil || md["annotations"] != nil,
+		"%s",
+		"raw ResourceSet render contains controller stamps",
+	)
 	rs.EmissionPolicy().Stamp(docs)
 	labels, _ := md["labels"].(map[string]any)
-	{
-		assert.ErrorIf(t, labels[fluxopv1.OwnerLabelResourceSetName] != "apps", "owner name label missing: %v", labels)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			labels[fluxopv1.OwnerLabelResourceSetNamespace] != "tenant-a",
-			"owner namespace label missing: %v",
-			labels,
-		)
-	}
+	assert.ErrorIf(t, labels[fluxopv1.OwnerLabelResourceSetName] != "apps", "owner name label missing: %v", labels)
+	assert.ErrorIf(
+		t,
+		labels[fluxopv1.OwnerLabelResourceSetNamespace] != "tenant-a",
+		"owner namespace label missing: %v",
+		labels,
+	)
 }
 
 // TestRender_SprigFunctions exercises a few stdlib + slugify funcs to
@@ -454,9 +401,7 @@ func TestRender_SprigFunctions(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 	md := docs[0].Document["metadata"].(map[string]any)
 	if md["name"] != "team-one" {
 		t.Errorf("slugify failed: %v", md["name"])
@@ -491,12 +436,8 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 1, "expected 1 doc (disabled filtered), got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(docs) != 1, "expected 1 doc (disabled filtered), got %d", len(docs))
 	md := docs[0].Document["metadata"].(map[string]any)
 	if md["name"] != "a" {
 		t.Errorf("wrong tenant kept: %v", md["name"])
@@ -548,9 +489,7 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 		},
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 	data := docs[0].Document["data"].(map[string]any)
 	if data["providerAPIVersion"] != fluxopv1.GroupVersion.String() {
 		t.Errorf("inputs.provider.apiVersion=%v want %s", data["providerAPIVersion"], fluxopv1.GroupVersion.String())
@@ -583,9 +522,7 @@ func TestRender_MissingKeyErrors(t *testing.T) {
 		},
 	}
 	_, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected error for undefined input key, got nil")
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected error for undefined input key, got nil")
 }
 
 func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
@@ -621,12 +558,8 @@ func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
 		},
 		nil,
 	)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 1, "expected one status-exported doc, got %d", len(docs))
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
+	assert.FatalIf(t, len(docs) != 1, "expected one status-exported doc, got %d", len(docs))
 	if docs[0].Document["metadata"].(map[string]any)["name"] != "feature-a" {
 		t.Fatalf("status exported name not used: %+v", docs[0])
 	}
@@ -650,17 +583,13 @@ func TestResourceSetInputProvider_StatusExportedInputsOverrideDerivedID(t *testi
 
 	plan, err := rsip.InputPlan()
 	inputs := plan.Inputs
-	{
-		assert.FatalIf(t, err != nil, "InputPlan: %v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			len(inputs) != 1 || inputs[0]["id"] != "exported-id",
-			"status exported id should win, got %+v",
-			inputs,
-		)
-	}
+	assert.FatalIf(t, err != nil, "InputPlan: %v", err)
+	assert.FatalIf(
+		t,
+		len(inputs) != 1 || inputs[0]["id"] != "exported-id",
+		"status exported id should win, got %+v",
+		inputs,
+	)
 }
 
 // TestRender_MalformedTemplateErrors surfaces a parse error rather than
@@ -678,9 +607,7 @@ func TestRender_MalformedTemplateErrors(t *testing.T) {
 		},
 	}
 	_, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err == nil, "%s", "expected parse error for malformed template, got nil")
-	}
+	assert.FatalIf(t, err == nil, "%s", "expected parse error for malformed template, got nil")
 }
 
 // TestRender_ToYamlNindent covers the canonical upstream pattern
@@ -705,17 +632,13 @@ spec:
 `,
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 	spec := docs[0].Document["spec"].(map[string]any)
 	sel := spec["layerSelector"].(map[string]any)
-	{
-		assert.ErrorIf(
-			t,
-			sel["mediaType"] != "x" || sel["operation"] != "copy",
-			"toYaml|nindent did not produce nested map: %v",
-			sel,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		sel["mediaType"] != "x" || sel["operation"] != "copy",
+		"toYaml|nindent did not produce nested map: %v",
+		sel,
+	)
 }

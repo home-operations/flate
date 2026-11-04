@@ -96,7 +96,7 @@ func TestRun_Diff_UnchangedInputProducerOutput(t *testing.T) {
 	)
 	var full []string
 	for _, root := range []string{before, after} {
-		output, diagnostic, code := runCLI(
+		cli := runCLI(
 			t,
 			"build",
 			"ks",
@@ -108,6 +108,7 @@ func TestRun_Diff_UnchangedInputProducerOutput(t *testing.T) {
 			"--concurrency",
 			"2",
 		)
+		output, diagnostic, code := cli.stdout, cli.stderr, cli.code
 		assert.FatalIf(t, code != 0, "full render failed: %s", diagnostic)
 		if full == nil {
 			full = make([]string, 0, 2)
@@ -117,7 +118,7 @@ func TestRun_Diff_UnchangedInputProducerOutput(t *testing.T) {
 	if full[0] != full[1] {
 		t.Fatalf("full outputs differ: before=%s after=%s", full[0], full[1])
 	}
-	output, diagnostic, code := runCLI(
+	cli2 := runCLI(
 		t,
 		"diff",
 		"ks",
@@ -133,6 +134,7 @@ func TestRun_Diff_UnchangedInputProducerOutput(t *testing.T) {
 		"-o",
 		"diff",
 	)
+	output, diagnostic, code := cli2.stdout, cli2.stderr, cli2.code
 	assert.FatalIf(
 		t,
 		code != 0 || output != "",
@@ -153,7 +155,7 @@ func runGeneratedValuesDirectDependentAndKSCase(t *testing.T, tc *struct {
 ) {
 	t.Helper()
 
-	stdout, stderr, code := runCLI(
+	cli := runCLI(
 		t,
 		"build",
 		tc.kind,
@@ -167,6 +169,7 @@ func runGeneratedValuesDirectDependentAndKSCase(t *testing.T, tc *struct {
 		"-o",
 		"json",
 	)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != 0, "build exited %d: %s", code, stderr)
 	var docs []map[string]any
 	assert.NoError(t, json.Unmarshal([]byte(stdout), &docs))
@@ -197,7 +200,7 @@ func runGeneratedValuesDirectDependentAndKSCase(t *testing.T, tc *struct {
 		}
 	}
 	assert.FatalIf(t, !found, "selected output missing: %s", stdout)
-	stdout, stderr, code = runCLI(
+	cli2 := runCLI(
 		t,
 		"test",
 		tc.kind,
@@ -209,6 +212,7 @@ func runGeneratedValuesDirectDependentAndKSCase(t *testing.T, tc *struct {
 		"--concurrency",
 		(*capturedInputs.workers),
 	)
+	stdout, stderr, code = cli2.stdout, cli2.stderr, cli2.code
 	assert.FatalIf(
 		t,
 		code != 0 || !strings.Contains(stdout, "1 passed"),
@@ -237,8 +241,9 @@ func runDiffExcludedOrderingAndSelectedSourceFailureCase(t *testing.T, broken *b
 			"apiVersion: example.test/v1\nkind: "+foreignKind+"\nmetadata: {name: selected, namespace: flux-system}\nspec: {value: foreign-marker}\n",
 		)
 	}
-	stdout, stderr, code := runCLI(t, "diff", (*kind), "selected", "--path", headDir, "--path-orig", baseDir,
+	cli := runCLI(t, "diff", (*kind), "selected", "--path", headDir, "--path-orig", baseDir,
 		"--cache-dir", t.TempDir(), "--concurrency", "4", "-o", "diff")
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	if *broken {
 		assert.FatalIf(
 			t,

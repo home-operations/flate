@@ -109,30 +109,35 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 		}
 		start = end
 	}
-	next, objects := l.desiredAuthored(raw, repoRoot)
+	authored2 := l.desiredAuthored(raw, repoRoot)
 	for id, obj := range l.candidates {
 		if r, ok := l.Index.Lookup(id); ok && r.Path == "" && r.Authored == (manifest.NamedResource{}) {
-			objects[id], next[id] = obj, r
+			authored2.objects[id], authored2.records[id] = obj, r
 		}
 	}
 	allowed := l.roots
 	clear(allowed)
-	if allowed == nil && (len(objects) != 0 || l.documents.compact && len(next) != 0) {
-		allowed = make(map[manifest.NamedResource]bool, len(objects))
+	if allowed == nil && (len(authored2.objects) != 0 || l.documents.compact && len(authored2.records) != 0) {
+		allowed = make(map[manifest.NamedResource]bool, len(authored2.objects))
 	}
-	l.allowAuthoredObjects(next, objects, allowed, scopes)
+	l.allowAuthoredObjects(authored2.records, authored2.objects, allowed, scopes)
 	if l.documents.compact {
-		l.allowAuthoredRecords(next, allowed, scopes)
+		l.allowAuthoredRecords(authored2.records, allowed, scopes)
 	}
-	l.scopes.candidates, l.candidates = l.candidates, objects
+	l.scopes.candidates, l.candidates = l.candidates, authored2.objects
 	l.roots = allowed
-	return l.applyAuthored(next, objects, allowed)
+	return l.applyAuthored(authored2.records, authored2.objects, allowed)
+}
+
+type authoredState struct {
+	records map[manifest.NamedResource]manifest.DiscoveryRecord
+	objects map[manifest.NamedResource]store.Child
 }
 
 func (l *Loader) desiredAuthored(
 	raw []authoredRecord,
 	repoRoot string,
-) (map[manifest.NamedResource]manifest.DiscoveryRecord, map[manifest.NamedResource]store.Child) {
+) authoredState {
 	next := l.scopes.records
 	if next == nil {
 		next = map[manifest.NamedResource]manifest.DiscoveryRecord{}
@@ -154,7 +159,8 @@ func (l *Loader) desiredAuthored(
 			authored := l.authoredObject(path, id)
 			forced := ""
 			if ks, ok := authored.Obj.(*manifest.Kustomization); ok {
-				authored.Obj, forced = l.predictNamespaces(ks, repoRoot, new(r), prediction)
+				prediction2 := l.predictNamespaces(ks, repoRoot, new(r), prediction)
+				authored.Obj, forced = prediction2.object, prediction2.forced
 			}
 			var (
 				fact    Occurrence
@@ -194,7 +200,7 @@ func (l *Loader) desiredAuthored(
 			}
 		}
 	}
-	return next, objects
+	return authoredState{records: next, objects: objects}
 }
 
 func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Child {

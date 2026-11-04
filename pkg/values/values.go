@@ -174,7 +174,8 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name}
 	}
 	key := ref.GetValuesKey()
-	value, ok, err := data.Value(key)
+	valueResult, err := data.Value(key)
+	value, ok := valueResult.Value, valueResult.Found
 	if err != nil {
 		return "", err
 	}
@@ -324,7 +325,8 @@ func mergeSubstitutions(values map[string]string, data manifest.Data) error {
 		err error
 	}
 	data.Keys()(func(k string) bool {
-		v, _, err := data.Value(k)
+		valueResult, err := data.Value(k)
+		v := valueResult.Value
 		if err != nil {
 			if failure.err == nil || k < failure.key {
 				failure.err, failure.key = err, k

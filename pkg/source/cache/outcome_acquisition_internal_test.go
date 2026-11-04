@@ -114,10 +114,8 @@ func testOutcomeAcquisitionValidityCaseCallback(
 	case "rollback":
 		c.entries.Store(id, &entry{stored: desc, outcome: o})
 	case "missing":
-		{
-			removeErr2 := c.root.Remove(blobPath(desc.Digest))
-			assert.NoError(t, removeErr2)
-		}
+		removeErr2 := c.root.Remove(blobPath(desc.Digest))
+		assert.NoError(t, removeErr2)
 
 	case "corrupt":
 		{

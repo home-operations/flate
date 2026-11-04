@@ -90,7 +90,7 @@ func (q *requiredSelection) add(id manifest.NamedResource) {
 func (q *requiredSelection) seed(id manifest.NamedResource) {
 	s := q.side
 	if q.intent.Roots[0].Name == "" && s.run.filter.Enabled() {
-		if _, selected, _, _ := s.run.filter.Membership(id); !selected {
+		if selected := s.run.filter.Membership(id).Selected; !selected {
 			return
 		}
 	}
@@ -130,7 +130,7 @@ func (q *requiredSelection) selectedChild(child manifest.NamedResource) bool {
 	}
 	s := q.side
 	if s.run.filter.Enabled() {
-		_, selected, _, _ := s.run.filter.Membership(child)
+		selected := s.run.filter.Membership(child).Selected
 		return selected
 	}
 	return s.includes(child.Namespace)
@@ -140,7 +140,7 @@ func (q *requiredSelection) seedOther(other *selectionSide) {
 	s := q.side
 	for _, id := range other.roots {
 		if s.run.filter.Enabled() {
-			if _, selected, _, _ := other.run.filter.Membership(id); selected {
+			if selected := other.run.filter.Membership(id).Selected; selected {
 				q.add(id)
 			}
 		}
@@ -521,9 +521,14 @@ func nonResourceErrors(err error) error {
 	return nonResourceErrors(errors.Unwrap(err))
 }
 
-func selectionError(sides []selectionSide, runErr error) (error, error) {
+type selectionErrors struct {
+	selected  error
+	remaining error
+}
+
+func selectionError(sides []selectionSide, runErr error) selectionErrors {
 	if runErr == nil {
-		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
+		return selectionErrors{}
 	}
 	selected := make([]error, len(sides))
 	remainders := make([]error, len(sides))
@@ -535,21 +540,24 @@ func selectionError(sides []selectionSide, runErr error) (error, error) {
 		remainders[i] = nonResourceErrors(remainder)
 		selected[i] = errors.Join(selectedFailures(side.result), remainders[i])
 	}
-	mask, _, projected, remainder := projectSelectionError(runErr, sides, selected, remainders)
-	if mask == 0 {
-		selected, remaining := projectSelectionSides((1<<len(sides))-1, sides, selected, remainders)
-		return errors.Join(selected, projected), errors.Join(remaining, remainder)
+	projection := projectSelectionError(runErr, sides, selected, remainders)
+	if projection.mask == 0 {
+		projected := projectSelectionSides((1<<len(sides))-1, sides, selected, remainders)
+		return selectionErrors{
+			selected:  errors.Join(projected.selected, projection.selected),
+			remaining: errors.Join(projected.remaining, projection.remaining),
+		}
 	}
-	return projected, remainder
+	return selectionErrors{selected: projection.selected, remaining: projection.remaining}
 }
 
 func projectSelectionSides(
 	mask uint,
 	sides []selectionSide,
 	selected, remainders []error,
-) (error, error) {
+) selectionErrors {
 	if len(sides) == 1 {
-		return selected[0], remainders[0]
+		return selectionErrors{selected: selected[0], remaining: remainders[0]}
 	}
 	var chosen, remaining [2]error
 	for i := range sides {
@@ -557,7 +565,10 @@ func projectSelectionSides(
 			chosen[i], remaining[i] = selected[i], remainders[i]
 		}
 	}
-	return joinSelectedErrors(chosen[0], chosen[1]), joinSelectedErrors(remaining[0], remaining[1])
+	return selectionErrors{
+		selected:  joinSelectedErrors(chosen[0], chosen[1]),
+		remaining: joinSelectedErrors(remaining[0], remaining[1]),
+	}
 }
 
 func matchingSelectionSides(err error, sides []selectionSide) uint {
@@ -570,41 +581,65 @@ func matchingSelectionSides(err error, sides []selectionSide) uint {
 	return mask
 }
 
+type errorProjection struct {
+	mask      uint
+	clean     bool
+	selected  error
+	remaining error
+}
+
 func projectSelectionError(
 	err error,
 	sides []selectionSide,
 	selected, remainders []error,
-) (uint, bool, error, error) {
+) errorProjection {
 	if err == nil {
-		return 0, true, nil, nil
+		return errorProjection{mask: 0, clean: true, selected: nil, remaining: nil}
 	}
 	mask := matchingSelectionSides(err, sides)
 	if mask != 0 {
-		selected, remainder := projectSelectionSides(mask, sides, selected, remainders)
-		return mask, true, selected, remainder
+		projection := projectSelectionSides(mask, sides, selected, remainders)
+		return errorProjection{mask: mask, clean: true, selected: projection.selected, remaining: projection.remaining}
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		var projected, remaining []error
 		clean := true
 		for _, child := range joined.Unwrap() {
-			found, onlyTrees, selected, remainder := projectSelectionError(child, sides, selected, remainders)
-			projected, remaining = append(projected, selected), append(remaining, remainder)
-			mask, clean = mask|found, clean && onlyTrees
+			childProjection := projectSelectionError(child, sides, selected, remainders)
+			projected, remaining = append(
+				projected,
+				childProjection.selected,
+			), append(
+				remaining,
+				childProjection.remaining,
+			)
+			mask, clean = mask|childProjection.mask, clean && childProjection.clean
 		}
 		if mask != 0 && clean {
-			selected, remainder := projectSelectionSides(mask, sides, selected, remainders)
-			return mask, true, selected, remainder
+			projection := projectSelectionSides(mask, sides, selected, remainders)
+			return errorProjection{
+				mask:      mask,
+				clean:     true,
+				selected:  projection.selected,
+				remaining: projection.remaining,
+			}
 		}
 		if mask != 0 {
-			return mask, false, errors.Join(projected...), errors.Join(remaining...)
+			return errorProjection{
+				mask:      mask,
+				clean:     false,
+				selected:  errors.Join(projected...),
+				remaining: errors.Join(remaining...),
+			}
 		}
 	} else if child := errors.Unwrap(err); child != nil {
-		if found, clean, selected, remainder := projectSelectionError(child, sides, selected, remainders); found != 0 {
-			return found, clean, selected, remainder
+		projection := projectSelectionError(child, sides, selected, remainders)
+		if projection.mask != 0 {
+			return projection
 		}
 	}
 	remainder := nonResourceErrors(err)
-	return 0, false, remainder, remainder
+	return errorProjection{mask: 0, clean: false, selected: remainder, remaining: remainder}
 }
 
 func joinSelectedErrors(orig, current error) error {

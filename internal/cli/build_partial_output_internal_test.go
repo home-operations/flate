@@ -26,7 +26,8 @@ func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	)
 	testutil.WriteFile(t, root, "apps-b/kustomization.yaml", "resources: [missing.yaml]\n")
 	args := []string{"build", "ks", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json"}
-	full, stderr, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	full, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.Equal(t, code, 1)
 	assert.FatalIf(
 		t,

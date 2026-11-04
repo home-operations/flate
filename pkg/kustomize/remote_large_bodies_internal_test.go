@@ -24,19 +24,15 @@ func TestPreflightRemoteResources_LargeBodyMatchesUpstream(t *testing.T) {
 	kustomizestate.BuildMutex.Lock()
 	upstream, err := krusty.MakeKustomizer(krusty.MakeDefaultOptions()).Run(fsys, ".")
 	kustomizestate.BuildMutex.Unlock()
-	{
-		assert.FatalIf(t, err != nil, "upstream large resource: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "upstream large resource: %v", err)
 	out, err := upstream.AsYaml()
-	{
-		assert.FatalIf(
-			t,
-			err != nil || !strings.Contains(string(out), "name: large"),
-			"upstream resource output: %q error=%v",
-			out,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || !strings.Contains(string(out), "name: large"),
+		"upstream resource output: %q error=%v",
+		out,
+		err,
+	)
 	t.Logf("upstream Kustomize accepted %d-byte valid HTTP resource", len(body))
 	{
 		preflightRemoteResourcesErr := preflightRemoteResources(t.Context(), newTestTreeCache(t, ""), fsys, ".")
@@ -48,18 +44,14 @@ func TestPreflightRemoteResources_LargeBodyMatchesUpstream(t *testing.T) {
 		)
 	}
 	files := remoteFiles(t, fsys, ".")
-	{
-		assert.FatalIf(t, len(files) != 1, "large remote files: %v", files)
-	}
+	assert.FatalIf(t, len(files) != 1, "large remote files: %v", files)
 	got, err := fsys.ReadFile(files[0])
-	{
-		assert.FatalIf(
-			t,
-			err != nil || string(got) != body,
-			"large resource: size=%d error=%v, want %d bytes",
-			len(got),
-			err,
-			len(body),
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || string(got) != body,
+		"large resource: size=%d error=%v, want %d bytes",
+		len(got),
+		err,
+		len(body),
+	)
 }

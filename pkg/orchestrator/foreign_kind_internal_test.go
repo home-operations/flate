@@ -51,14 +51,10 @@ spec:
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{WipeSecrets: true},
 	)
-	{
-		assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
-	}
+	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
 	res := renderedSingleton1[0].Result
-	{
-		assert.FatalIf(t, err != nil, "Render: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "Render: %v", err)
 	if len(res.Failed) != 0 {
 		t.Errorf("foreign Bucket CRD must not fail the run; failed=%+v", res.Failed)
 	}
@@ -70,40 +66,33 @@ spec:
 		Name:      "greptimedb",
 	}
 	{
-		{
-			info, ok := o.Store().GetStatus(id)
-			assert.ErrorIf(t, ok, "foreign Bucket CRD is not a source node, so it must carry no status; got %+v", info)
-		}
+		info, ok := o.Store().GetStatus(id)
+		assert.ErrorIf(t, ok, "foreign Bucket CRD is not a source node, so it must carry no status; got %+v", info)
 	}
 	{
-		{
-			art := o.Store().GetArtifact(id, store.ArtifactContent)
-			assert.ErrorIf(t, art != nil, "foreign Bucket CRD must not be fetched; artifact=%+v", art)
-		}
+		art := o.Store().GetArtifact(id, store.ArtifactContent)
+		assert.ErrorIf(t, art != nil, "foreign Bucket CRD must not be fetched; artifact=%+v", art)
 	}
 	obj := o.Store().GetObject(id)
-	{
-		assert.FatalIf(t, manifest.KindOf(obj).Tracked, "stored object = %T, want *manifest.RawObject", obj)
-	}
+	assert.FatalIf(t, manifest.KindOf(obj).Tracked, "stored object = %T, want *manifest.RawObject", obj)
 
 	// The resource still renders — dropping it would show up in a diff as a
 	// deletion of a live resource.
 	ksID := testutil.KustomizationID("flux-system", "apps")
 	var found bool
 	for _, doc := range outputByParent(res.Manifests)[ksID] {
-		name, ns := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name, ns := metadata.Name, metadata.Namespace
 		if manifest.DocKind(doc) == manifest.KindBucket && ns == id.Namespace && name == id.Name {
 			found = true
 			{
-				{
-					got := manifest.DocAPIVersion(doc)
-					assert.ErrorIf(
-						t,
-						got != "seaweed.seaweedfs.com/v1",
-						"apiVersion = %q, want the foreign group verbatim",
-						got,
-					)
-				}
+				got := manifest.DocAPIVersion(doc)
+				assert.ErrorIf(
+					t,
+					got != "seaweed.seaweedfs.com/v1",
+					"apiVersion = %q, want the foreign group verbatim",
+					got,
+				)
 			}
 		}
 	}
@@ -144,14 +133,10 @@ spec:
 `)
 
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true})
+	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		assert.FatalIf(t, err != nil, "New: %v", err)
-	}
-	{
-		{
-			_, err := o.render(context.Background())
-			assert.FatalIf(t, err == nil, "%v", "expected the unreachable Flux Bucket's fetch to fail")
-		}
+		_, err := o.render(context.Background())
+		assert.FatalIf(t, err == nil, "%v", "expected the unreachable Flux Bucket's fetch to fail")
 	}
 	id := manifest.NamedResource{
 		Group:     "source.toolkit.fluxcd.io",
@@ -160,15 +145,13 @@ spec:
 		Name:      "minio",
 	}
 	info, ok := o.Store().GetStatus(id)
-	{
-		assert.FatalIf(
-			t,
-			!ok || info.Status != store.StatusFailed,
-			"Flux Bucket status = %+v (present=%v), want Failed from the fetch attempt",
-			info,
-			ok,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || info.Status != store.StatusFailed,
+		"Flux Bucket status = %+v (present=%v), want Failed from the fetch attempt",
+		info,
+		ok,
+	)
 }
 
 type testOrchestratorForeignBucketKindNotFetchedCaseInputs struct {
@@ -191,14 +174,12 @@ func testOrchestratorForeignBucketKindNotFetchedCase(
 	(*testCaseInput.o).store.AddObject(foreign)
 	result := (dagDispatcher{(*testCaseInput.o)}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
 	{
-		{
-			_, hasStatus := (*testCaseInput.o).store.GetStatus(foreign.Named())
-			assert.FatalIf(
-				t,
-				hasStatus || result.Assessment != nil,
-				"foreign %s entered a Flux controller", (*testCaseInput.kind),
-			)
-		}
+		_, hasStatus := (*testCaseInput.o).store.GetStatus(foreign.Named())
+		assert.FatalIf(
+			t,
+			hasStatus || result.Assessment != nil,
+			"foreign %s entered a Flux controller", (*testCaseInput.kind),
+		)
 	}
 	(*testCaseInput.o).store.UpdateStatus(
 		foreign.Named(),
@@ -206,13 +187,11 @@ func testOrchestratorForeignBucketKindNotFetchedCase(
 	)
 	(dagDispatcher{(*testCaseInput.o)}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
 	{
-		{
-			info, _ := (*testCaseInput.o).store.GetStatus(
-				foreign.Named(),
-			)
-			assert.FatalIf(t, info.Status != store.StatusPending ||
-				info.Message != "foreign status", "foreign %s status was rewritten by a Flux controller: %+v", (*testCaseInput.kind), info)
-		}
+		info, _ := (*testCaseInput.o).store.GetStatus(
+			foreign.Named(),
+		)
+		assert.FatalIf(t, info.Status != store.StatusPending ||
+			info.Message != "foreign status", "foreign %s status was rewritten by a Flux controller: %+v", (*testCaseInput.kind), info)
 	}
 }
 

@@ -32,7 +32,7 @@ func TestStartProfile_EnvironmentCleanupOnError(t *testing.T) {
 	)
 }
 
-func startProfileEnvironmentCleanupOnErrorCase(t *testing.T, mode *string, verb *string) {
+func startProfileEnvironmentCleanupOnErrorCase(t *testing.T, mode, verb *string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -43,7 +43,8 @@ func startProfileEnvironmentCleanupOnErrorCase(t *testing.T, mode *string, verb 
 		wantError = "not inside a git working tree"
 	}
 	for range 2 {
-		_, stderr, code := runCLI(t, (*verb), "all", "--path", filepath.Join(dir, "missing"))
+		cli := runCLI(t, (*verb), "all", "--path", filepath.Join(dir, "missing"))
+		stderr, code := cli.stderr, cli.code
 		assert.FatalIf(
 			t,
 			code != 1 || !strings.Contains(stderr, wantError),
@@ -94,7 +95,8 @@ func startProfileEnvironmentCleanupOnErrorIneligibleHandlers(t *testing.T) {
 	t.Setenv("FLATE_PROFILE", "cpu")
 	t.Setenv("FLATE_PROFILE_OUT", dir)
 	for _, args := range [][]string{{"--help"}, {"get", "--help"}, {"--version"}, {"cache"}, {"completion", "fish"}} {
-		_, stderr, code := runCLI(t, args...)
+		cli := runCLI(t, args...)
+		stderr, code := cli.stderr, cli.code
 		assert.FatalIf(t, code != 0, "%v: %s", args, stderr)
 	}
 	entries, err := os.ReadDir(dir)
@@ -106,7 +108,8 @@ func startProfileEnvironmentCleanupOnErrorInvalid(t *testing.T) {
 
 	t.Setenv("FLATE_PROFILE", "heap")
 	t.Setenv("FLATE_PROFILE_OUT", t.TempDir())
-	_, stderr, code := runCLI(t, "build", "all")
+	cli := runCLI(t, "build", "all")
+	stderr, code := cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "invalid FLATE_PROFILE"),
@@ -123,7 +126,8 @@ func startProfileEnvironmentCleanupOnErrorDefaultOutputDirectory(t *testing.T) {
 	t.Chdir(dir)
 	t.Setenv("FLATE_PROFILE", "mem")
 	t.Setenv("FLATE_PROFILE_OUT", "")
-	_, stderr, code := runCLI(t, "build", "all", "--path", filepath.Join(dir, "missing"))
+	cli := runCLI(t, "build", "all", "--path", filepath.Join(dir, "missing"))
+	stderr, code := cli.stderr, cli.code
 	info, err := os.Stat(filepath.Join(dir, "mem.pprof"))
 	assert.FatalIf(
 		t,
@@ -142,7 +146,8 @@ func startProfileEnvironmentCleanupOnErrorOutputDirectoryDiagnostic(t *testing.T
 	testutil.WriteFile(t, dir, "file", "not a directory")
 	t.Setenv("FLATE_PROFILE", "cpu")
 	t.Setenv("FLATE_PROFILE_OUT", filepath.Join(dir, "file"))
-	_, stderr, code := runCLI(t, "build", "all")
+	cli := runCLI(t, "build", "all")
+	stderr, code := cli.stderr, cli.code
 	assert.FatalIf(
 		t,
 		code != 1 || !strings.Contains(stderr, "FLATE_PROFILE_OUT") || strings.Contains(stderr, "--profile-out"),

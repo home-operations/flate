@@ -110,9 +110,7 @@ func testStripResourceFieldsNoOpWhenASegmentIsAbsent(
 	d := (*testCaseInput)()
 	before := DeepCopyMap(d)
 	StripResourceFields(d, []string{"spec.absent.field", "metadata.annotations.x"})
-	{
-		assert.ErrorIf(t, !reflect.DeepEqual(d, before), "%s", "absent-path strip mutated the doc")
-	}
+	assert.ErrorIf(t, !reflect.DeepEqual(d, before), "%s", "absent-path strip mutated the doc")
 }
 
 func testStripResourceFieldsNoOpWhenASegmentIsNotAMap(
@@ -125,9 +123,7 @@ func testStripResourceFieldsNoOpWhenASegmentIsNotAMap(
 	before := DeepCopyMap(d)
 
 	StripResourceFields(d, []string{"spec.sourcePVC.deeper"})
-	{
-		assert.ErrorIf(t, !reflect.DeepEqual(d, before), "%s", "non-map segment strip mutated the doc")
-	}
+	assert.ErrorIf(t, !reflect.DeepEqual(d, before), "%s", "non-map segment strip mutated the doc")
 }
 
 func testStripResourceFieldsMultiplePathsEmptyPathIgnored(

@@ -162,19 +162,20 @@ func BasicAuthFromSecret(
 	owner manifest.DiagnosticIdentity,
 	secretRef string,
 ) (string, string, error) {
-	username, _, err := sec.Value("username")
+	valueResult, err := sec.Value("username")
+	username := valueResult.Value
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
-	password, _, err := sec.Value("password")
+	password, err := sec.Value("password")
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
-	if username == "" || password == "" || manifest.HasValuePlaceholder(username) ||
-		manifest.HasValuePlaceholder(password) {
+	if username == "" || password.Value == "" || manifest.HasValuePlaceholder(username) ||
+		manifest.HasValuePlaceholder(password.Value) {
 		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")
 	}
-	return username, password, nil
+	return username, password.Value, nil
 }
 
 // SecretLookup binds credential reads to one execution's captured inputs.

@@ -48,7 +48,7 @@ func TestE2E_UnreadableManifestScope(t *testing.T) {
 				builder = "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n" + builder
 			}
 			testutil.WriteFile(t, dir, "incidental/nested/kustomization.yaml", builder)
-			assert.NoError(t, os.Symlink("missing.yaml", filepath.Join(dir, "incidental/nested/unreadable.yaml")))
+			assert.NoError(t, os.Symlink("missing.yaml", filepath.Join(dir, "incidental", "nested", "unreadable.yaml")))
 			args := []string{
 				"build",
 				"all",
@@ -60,7 +60,8 @@ func TestE2E_UnreadableManifestScope(t *testing.T) {
 				"--cache-dir",
 				t.TempDir(),
 			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			want := 0
 			if owned {
 				want = 1
@@ -88,7 +89,8 @@ func TestE2E_UnreadableManifestScope(t *testing.T) {
 
 				t.Fatalf("incidental failure acquired authority: %s", stderr)
 			}
-			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+			nextOut, nextErr, nextCode := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 			assert.Equal(t, nextCode, code)
 			assert.Equal(t, nextOut, stdout)
 			assert.Equal(t, nextErr, stderr)

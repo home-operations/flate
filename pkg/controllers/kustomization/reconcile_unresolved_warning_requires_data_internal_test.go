@@ -37,16 +37,12 @@ func TestReconcile_UnresolvedWarningRequiresData(t *testing.T) {
 	)
 	assert.Equal(t, info.Status, store.StatusFailed)
 	{
-		{
-			warnings := s.Warnings()
-			assert.FatalIf(t, len(warnings) != 0, "failed data gate published warnings: %+v", warnings)
-		}
+		warnings := s.Warnings()
+		assert.FatalIf(t, len(warnings) != 0, "failed data gate published warnings: %+v", warnings)
 	}
 	{
-		{
-			artifact := s.GetArtifact(ks.Named(), store.ArtifactContent)
-			assert.FatalIf(t, artifact != nil, "failed data gate published output: %+v", artifact)
-		}
+		artifact := s.GetArtifact(ks.Named(), store.ArtifactContent)
+		assert.FatalIf(t, artifact != nil, "failed data gate published output: %+v", artifact)
 	}
 }
 
@@ -83,14 +79,12 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	}
 	s.AddObject(ks)
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
 	}
 	firstFP := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
 	art := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
@@ -112,49 +106,44 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
 	c.Tasks.BlockTillDone()
 	secondFP := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
-	{
-		assert.ErrorIf(
-			t,
-			firstFP != secondFP,
-			"fingerprint changed across label-only re-AddObject: %q vs %q",
-			firstFP,
-			secondFP,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		firstFP != secondFP,
+		"fingerprint changed across label-only re-AddObject: %q vs %q",
+		firstFP,
+		secondFP,
+	)
 	assert.Diff(t, testutil.DocumentMaps(art.Manifests), before)
 	for _, doc := range art.Manifests {
-		name, ns := manifest.DocMetadata(doc.Document)
+		metadata := manifest.DocMetadata(doc.Document)
+		name, ns := metadata.Name, metadata.Namespace
 		want := ks.TargetNamespace
 		if manifest.DocAPIVersion(doc.Document) == "rbac.authorization.k8s.io/v1" {
 			want = ""
 		}
 		assert.Equal(t, ns, want)
-		{
-			assert.ErrorIf(t, s.GetObject(
+		assert.ErrorIf(t, s.GetObject(
+			manifest.NamedResource{
+				Group: schema.FromAPIVersionAndKind(
+					manifest.DocAPIVersion(doc.Document),
+					manifest.DocKind(doc.Document),
+				).Group,
+				Kind:      manifest.DocKind(doc.Document),
+				Namespace: want,
+				Name:      name,
+			},
+		) == nil, "replayed child %s/%s missing", want, name)
+		assert.ErrorIf(t, want != "" &&
+			s.GetObject(
 				manifest.NamedResource{
 					Group: schema.FromAPIVersionAndKind(
 						manifest.DocAPIVersion(doc.Document),
 						manifest.DocKind(doc.Document),
 					).Group,
-					Kind:      manifest.DocKind(doc.Document),
-					Namespace: want,
-					Name:      name,
+					Kind: manifest.DocKind(doc.Document),
+					Name: name,
 				},
-			) == nil, "replayed child %s/%s missing", want, name)
-		}
-		{
-			assert.ErrorIf(t, want != "" &&
-				s.GetObject(
-					manifest.NamedResource{
-						Group: schema.FromAPIVersionAndKind(
-							manifest.DocAPIVersion(doc.Document),
-							manifest.DocKind(doc.Document),
-						).Group,
-						Kind: manifest.DocKind(doc.Document),
-						Name: name,
-					},
-				) != nil, "replay published duplicate bare child %s", name)
-		}
+			) != nil, "replay published duplicate bare child %s", name)
 	}
 }
 
@@ -193,14 +182,12 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	}
 	s.AddObject(ks)
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
 	}
 	firstFP := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
 
@@ -230,23 +217,19 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	{
-		assert.ErrorIf(
-			t,
-			!sawPending,
-			"%v",
-			"genuine re-render did not downgrade to Pending; dependents would read a stale-Ready parent",
-		)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			secondFP == "" || secondFP == firstFP,
-			"fingerprint did not change after spec mutation (%q → %q); not a genuine re-render",
-			firstFP,
-			secondFP,
-		)
-	}
+	assert.ErrorIf(
+		t,
+		!sawPending,
+		"%v",
+		"genuine re-render did not downgrade to Pending; dependents would read a stale-Ready parent",
+	)
+	assert.ErrorIf(
+		t,
+		secondFP == "" || secondFP == firstFP,
+		"fingerprint did not change after spec mutation (%q → %q); not a genuine re-render",
+		firstFP,
+		secondFP,
+	)
 }
 
 // TestReconcile_MissingPathFails covers the error path: spec.path
@@ -268,12 +251,8 @@ func TestReconcile_MissingPathFails(t *testing.T) {
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
 	)
-	{
-		assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want StatusFailed", info)
-	}
-	{
-		assert.ErrorIf(t, info.Message == "", "%v", "expected non-empty failure message")
-	}
+	assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want StatusFailed", info)
+	assert.ErrorIf(t, info.Message == "", "%v", "expected non-empty failure message")
 }
 
 // TestReconcile_DependsOnFailed cascades a dep failure: when a KS's
@@ -303,12 +282,8 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		t,
 		controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode},
 	)
-	{
-		assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want StatusFailed", info)
-	}
-	{
-		assert.ErrorIf(t, info.Message == "", "%v", "expected failure message from dep cascade")
-	}
+	assert.FatalIf(t, info.Status != store.StatusFailed, "status = %+v, want StatusFailed", info)
+	assert.ErrorIf(t, info.Message == "", "%v", "expected failure message from dep cascade")
 }
 
 func testReconcileUnresolvedWarningReplayCase(
@@ -341,7 +316,7 @@ func testReconcileUnresolvedWarningReplayCase(
 	)
 	consumers := make([]*manifest.Kustomization, 2)
 	for i := range consumers {
-		obj, _, _, err := manifest.ParseDoc(map[string]any{
+		parsed, err := manifest.ParseDoc(map[string]any{
 			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 			"kind":       "Kustomization",
 			"metadata":   map[string]any{"name": fmt.Sprintf("apps-%d", i), "namespace": "flux-system"},
@@ -353,6 +328,7 @@ func testReconcileUnresolvedWarningReplayCase(
 				},
 			},
 		}, manifest.ParseDocOptions{})
+		obj := parsed.Object
 		assert.NoError(t, err)
 		consumers[i] = obj.(*manifest.Kustomization)
 		s.AddObject(consumers[i])
@@ -375,10 +351,8 @@ func testReconcileUnresolvedWarningReplayCase(
 		c.Tasks.Go(t.Context(), ks.Named().String(), func(ctx context.Context) {
 			<-start
 			{
-				{
-					deps := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone).Blocked
-					assert.ErrorIf(t, len(deps) != 0, "blocked dependencies = %v", deps)
-				}
+				deps := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone).Blocked
+				assert.ErrorIf(t, len(deps) != 0, "blocked dependencies = %v", deps)
 			}
 			if i == 0 {
 				accepted, _ = s.GetArtifact(first, store.ArtifactContent).(*store.Emission)
@@ -397,14 +371,12 @@ func testReconcileUnresolvedWarningReplayCase(
 	if *testCaseInput {
 		authority.Init(s, manifest.NamedResource{Name: "output-reader"}, nil)
 		authority.GetArtifact(first, store.ArtifactContent)
-		{
-			assert.FatalIf(
-				t,
-				!authority.Valid(),
-				"%v",
-				"captured output was already invalid before metadata replay",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!authority.Valid(),
+			"%v",
+			"captured output was already invalid before metadata replay",
+		)
 		stops := make([]store.Unsubscribe, 0, 3)
 		for _, kind := range []store.EventKind{store.EventObjectAdded, store.EventStatusUpdated, store.EventArtifactUpdated} {
 			stops = append(stops, s.AddListener(kind, func(id manifest.NamedResource, _ any) {
@@ -450,31 +422,25 @@ func testReconcileUnresolvedWarningReplayCaseTail(
 		(*tailCaseInput.c).
 			Tasks.Go(t.Context(), "metadata replay", func(ctx context.Context) {
 			{
-				{
-					deps := (*tailCaseInput.c).ReconcileNode(ctx, (*tailCaseInput.first), manifest.DrainNone).Blocked
-					assert.ErrorIf(t, len(deps) != 0, "replay blocked dependencies = %v", deps)
-				}
+				deps := (*tailCaseInput.c).ReconcileNode(ctx, (*tailCaseInput.first), manifest.DrainNone).Blocked
+				assert.ErrorIf(t, len(deps) != 0, "replay blocked dependencies = %v", deps)
 			}
 		})
 	}
 	(*tailCaseInput.c).
 		Tasks.BlockTillDone()
 	assert.Equal(t, (*tailCaseInput.c).Tasks.Failures(), int64(0))
-	{
-		assert.FatalIf(
-			t, (*tailCaseInput.accepted) ==
-				nil || (*tailCaseInput.accepted).Fingerprint == "" || len((*tailCaseInput.accepted).Manifests) != 1, "first emission = %+v", (*tailCaseInput.accepted),
-		)
-	}
+	assert.FatalIf(
+		t, (*tailCaseInput.accepted) ==
+			nil || (*tailCaseInput.accepted).Fingerprint == "" || len((*tailCaseInput.accepted).Manifests) != 1, "first emission = %+v", (*tailCaseInput.accepted),
+	)
 	current := (*tailCaseInput.s).GetArtifact((*tailCaseInput.first), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(
-			t,
-			current.Fingerprint != (*tailCaseInput.accepted).Fingerprint,
-			"%v",
-			"metadata replay changed accepted fingerprint",
-		)
-	}
+	assert.FatalIf(
+		t,
+		current.Fingerprint != (*tailCaseInput.accepted).Fingerprint,
+		"%v",
+		"metadata replay changed accepted fingerprint",
+	)
 	assert.Diff(t, current.Manifests, (*tailCaseInput.accepted).Manifests)
 	if *(*tailCaseInput.testCaseInput) {
 		(*tailCaseInput.stopReplay)()
@@ -496,25 +462,21 @@ func testReconcileUnresolvedWarningReplayCaseTail(
 		info, _ := (*tailCaseInput.s).GetStatus(ks.Named())
 		assert.Equal(t, info.Status, store.StatusReady)
 		other := (*tailCaseInput.s).GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
-		{
-			assert.FatalIf(
-				t,
-				other.Fingerprint == "" || len(other.Manifests) != 1,
-				"consumer emission = %+v",
-				other,
-			)
-		}
+		assert.FatalIf(
+			t,
+			other.Fingerprint == "" || len(other.Manifests) != 1,
+			"consumer emission = %+v",
+			other,
+		)
 		assert.Diff(t, other.Manifests[0].Document["data"], map[string]any{"greeting": "hi"})
 	}
 	warnings := (*tailCaseInput.s).Warnings()
-	{
-		assert.FatalIf(
-			t,
-			len(warnings) != 1 || warnings[0].Category != manifest.WarnUnresolvedSubstitution,
-			"warnings = %+v, want one unresolved Secret group",
-			warnings,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(warnings) != 1 || warnings[0].Category != manifest.WarnUnresolvedSubstitution,
+		"warnings = %+v, want one unresolved Secret group",
+		warnings,
+	)
 	assert.Equal(t, warnings[0].Resource, manifest.NamedResource{})
 	assert.Equal(t, warnings[0].Count, 2)
 	t.Logf(
@@ -542,19 +504,17 @@ func testReconcileAlreadyReadyNoTransientPendingCase(
 	}
 	s.AddObject(ks)
 	{
-		{
-			info := controllertest.DispatchToFixpoint(
-				t.Context(),
-				t,
-				controllertest.Dispatch{
-					Tasks:         c.Tasks,
-					Store:         s,
-					ID:            ks.Named(),
-					ReconcileNode: c.ReconcileNode,
-				},
-			)
-			assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
-		}
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{
+				Tasks:         c.Tasks,
+				Store:         s,
+				ID:            ks.Named(),
+				ReconcileNode: c.ReconcileNode,
+			},
+		)
+		assert.FatalIf(t, info.Status != store.StatusReady, "status = %+v, want StatusReady", info)
 	}
 	first := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	var sawPending atomic.Bool
@@ -572,19 +532,15 @@ func testReconcileAlreadyReadyNoTransientPendingCase(
 	s.AddObject(stamped)
 	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
 	c.Tasks.BlockTillDone()
+	assert.ErrorIf(
+		t,
+		sawPending.Load(),
+		"%v",
+		"equal validated content transiently downgraded Ready to Pending",
+	)
 	{
-		assert.ErrorIf(
-			t,
-			sawPending.Load(),
-			"%v",
-			"equal validated content transiently downgraded Ready to Pending",
-		)
-	}
-	{
-		{
-			info, _ := s.GetStatus(ks.Named())
-			assert.ErrorIf(t, info.Status != store.StatusReady, "KS not Ready after no-op re-run: %+v", info)
-		}
+		info, _ := s.GetStatus(ks.Named())
+		assert.ErrorIf(t, info.Status != store.StatusReady, "KS not Ready after no-op re-run: %+v", info)
 	}
 	if !(*testCaseInput) {
 		testutil.WriteFile(

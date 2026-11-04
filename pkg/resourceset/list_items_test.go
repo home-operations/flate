@@ -28,16 +28,13 @@ items:
     name: excluded
     annotations: {fluxcd.controlplane.io/reconcile: disabled}`}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	names := make([]string, 0, len(docs))
 	for _, doc := range docs {
-		name, ns := manifest.DocMetadata(doc.Document)
+		metadata := manifest.DocMetadata(doc.Document)
+		name, ns := metadata.Name, metadata.Namespace
 		names = append(names, name)
-		{
-			assert.ErrorIf(t, ns != "", "namespace = %q", ns)
-		}
+		assert.ErrorIf(t, ns != "", "namespace = %q", ns)
 	}
 	assert.Diff(t, names, []string{"first", "second"})
 	for _, tc := range []struct {
@@ -82,14 +79,12 @@ func testRenderListItemsCase(t *testing.T, testCaseInput *struct {
 	}
 	got, _, err := renderProviders(candidate, nil, nil)
 	if testCaseInput.wantErr {
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-				"error = %v, want classified malformed list error",
-				err,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
+			"error = %v, want classified malformed list error",
+			err,
+		)
 		return
 	}
 	assert.NoError(t, err)
@@ -97,7 +92,8 @@ func testRenderListItemsCase(t *testing.T, testCaseInput *struct {
 	if testCaseInput.name == "typed incomplete items" && len(got) == 2 {
 		assert.Equal(t, manifest.DocKind(got[0].Document), "")
 		assert.Equal(t, manifest.DocAPIVersion(got[0].Document), "")
-		name, _ := manifest.DocMetadata(got[1].Document)
+		metadata2 := manifest.DocMetadata(got[1].Document)
+		name := metadata2.Name
 		assert.Equal(t, name, "")
 	}
 	if testCaseInput.name == "nested list stays wrapped" && len(got) == 1 {

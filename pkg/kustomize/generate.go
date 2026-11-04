@@ -43,6 +43,11 @@ const (
 	buildMetadataField    = "buildMetadata"
 )
 
+type generatedManifest struct {
+	data []byte
+	path string
+}
+
 // generateManifest merges the Flux Kustomization document `obj` into the
 // kustomization.yaml that governs `dirPath` within fsys, and returns the merged
 // YAML bytes plus the fs path the caller must write them to (the existing
@@ -53,10 +58,14 @@ const (
 // encoder, so the output is byte-identical to flux's. The admitted filesystem
 // already applies source-controller's file exclusions before the scan.
 // CleanedAbs supplies the mounted base path used by the resource scan.
-func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]any) ([]byte, string, error) {
-	data, kfile, foundExisting, err := findOrGenerateKustomization(fsys, dirPath)
+func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]any) (generatedManifest, error) {
+	findOrGenerateKustomizationResult1, findOrGenerateKustomizationResult1Err := findOrGenerateKustomization(
+		fsys,
+		dirPath,
+	)
+	data, kfile, foundExisting, err := findOrGenerateKustomizationResult1.data, findOrGenerateKustomizationResult1.path, findOrGenerateKustomizationResult1.existing, findOrGenerateKustomizationResult1Err
 	if err != nil {
-		return nil, "", err
+		return generatedManifest{data: nil, path: ""}, err
 	}
 
 	kus := kustypes.Kustomization{
@@ -65,7 +74,7 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 	}
 	if unmarshalErr := yaml.Unmarshal(data, &kus); unmarshalErr != nil {
 		//nolint:wrapcheck // Flux returns this YAML diagnostic and its cause unchanged.
-		return nil, "", unmarshalErr
+		return generatedManifest{data: nil, path: ""}, unmarshalErr
 	}
 
 	// An existing kustomization with no resources would fail krusty's
@@ -77,7 +86,7 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 	}
 
 	if setNestedStringErr := setNestedString(&kus.Namespace, obj, specField, targetNSField); setNestedStringErr != nil {
-		return nil, "", setNestedStringErr
+		return generatedManifest{data: nil, path: ""}, setNestedStringErr
 	}
 	if setNestedStringErr2 := setNestedString(
 		&kus.NamePrefix,
@@ -85,7 +94,7 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		specField,
 		namePrefixField,
 	); setNestedStringErr2 != nil {
-		return nil, "", setNestedStringErr2
+		return generatedManifest{data: nil, path: ""}, setNestedStringErr2
 	}
 	if setNestedStringErr3 := setNestedString(
 		&kus.NameSuffix,
@@ -93,12 +102,12 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		specField,
 		nameSuffixField,
 	); setNestedStringErr3 != nil {
-		return nil, "", setNestedStringErr3
+		return generatedManifest{data: nil, path: ""}, setNestedStringErr3
 	}
 
 	patches, err := decodeTypedSlice[fluxapis.Patch](obj, specField, patchesField)
 	if err != nil {
-		return nil, "", fmt.Errorf("unable to get patches: %w", err)
+		return generatedManifest{data: nil, path: ""}, fmt.Errorf("unable to get patches: %w", err)
 	}
 	for _, p := range patches {
 		kus.Patches = append(kus.Patches, kustypes.Patch{
@@ -108,31 +117,31 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 	}
 
 	if componentsErr := appendGeneratedComponents(&kus, fsys, dirPath, obj); componentsErr != nil {
-		return nil, "", componentsErr
+		return generatedManifest{data: nil, path: ""}, componentsErr
 	}
 
 	if versionedErr := appendVersionedPatches(&kus, obj); versionedErr != nil {
-		return nil, "", versionedErr
+		return generatedManifest{data: nil, path: ""}, versionedErr
 	}
 
 	if imagesErr := applyGeneratedImages(&kus, obj); imagesErr != nil {
-		return nil, "", imagesErr
+		return generatedManifest{data: nil, path: ""}, imagesErr
 	}
 
 	buildMetadata, _, err := unstructured.NestedStringSlice(obj, specField, buildMetadataField)
 	if err != nil {
-		return nil, "", fmt.Errorf("unable to get buildMetadata: %w", err)
+		return generatedManifest{data: nil, path: ""}, fmt.Errorf("unable to get buildMetadata: %w", err)
 	}
 	if len(buildMetadata) > 0 {
 		kus.BuildMetadata = buildMetadata
 	}
 
-	manifest, err := yaml.Marshal(kus)
+	parsedManifest, err := yaml.Marshal(kus)
 	if err != nil {
 		//nolint:wrapcheck // Flux returns this YAML diagnostic and its cause unchanged.
-		return nil, "", err
+		return generatedManifest{data: nil, path: ""}, err
 	}
-	return manifest, kfile, nil
+	return generatedManifest{data: parsedManifest, path: kfile}, nil
 }
 
 // setNestedString assigns the nested string at fields to *dst when present,
@@ -164,17 +173,23 @@ func kustomizationFileIn(fsys filesys.FileSystem, dir string) (string, bool) {
 	return "", false
 }
 
+type kustomizationFile struct {
+	data     []byte
+	path     string
+	existing bool
+}
+
 // findOrGenerateKustomization returns the existing kustomization file's bytes
 // (foundExisting=true) or, when none is present, synthesizes one from the YAML
 // manifests in dirPath via scanManifests. Mirrors the like-named flux function.
 func findOrGenerateKustomization(
 	fsys filesys.FileSystem,
 	dirPath string,
-) ([]byte, string, bool, error) {
+) (kustomizationFile, error) {
 	if kpath, ok := kustomizationFileIn(fsys, dirPath); ok {
 		b, rerr := fsys.ReadFile(kpath)
 		//nolint:wrapcheck // Preserve Flux's filesystem diagnostic, including its path and cause.
-		return b, kpath, true, rerr
+		return kustomizationFile{data: b, path: kpath, existing: true}, rerr
 	}
 
 	// CleanedAbs and Walk MUST use the same mounted path prefix so resource
@@ -182,11 +197,11 @@ func findOrGenerateKustomization(
 	base, _, err := fsys.CleanedAbs(dirPath)
 	if err != nil {
 		//nolint:wrapcheck // Preserve Flux's filesystem diagnostic, including its path and cause.
-		return nil, "", false, err
+		return kustomizationFile{data: nil, path: "", existing: false}, err
 	}
 	files, err := scanManifests(fsys, base.String())
 	if err != nil {
-		return nil, "", false, err
+		return kustomizationFile{data: nil, path: "", existing: false}, err
 	}
 
 	kus := kustypes.Kustomization{
@@ -214,7 +229,7 @@ func findOrGenerateKustomization(
 	kfile := filepath.Join(dirPath, konfig.DefaultKustomizationFileName())
 	data, err := yaml.Marshal(kus)
 	//nolint:wrapcheck // Flux returns generated-kustomization encoding errors unchanged.
-	return data, kfile, false, err
+	return kustomizationFile{data: data, path: kfile, existing: false}, err
 }
 
 // scanManifests walks base collecting the YAML files usable as kustomization

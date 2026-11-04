@@ -17,7 +17,7 @@ func ParseChildren(
 	docs []manifest.DocOccurrence,
 	opts manifest.ParseDocOptions,
 	skipKinds []string,
-) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
+) store.ChildDocuments {
 	var policy manifest.EmissionPolicy
 	if producer, ok := parent.(emissionProducer); ok {
 		policy = producer.EmissionPolicy()
@@ -39,7 +39,7 @@ type childDocumentParser struct {
 	policy    *manifest.EmissionPolicy
 }
 
-func (p *childDocumentParser) parse() ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
+func (p *childDocumentParser) parse() store.ChildDocuments {
 	children := make([]store.Child, 0, len(p.docs))
 	visible := p.docs
 	filtered := false
@@ -68,7 +68,7 @@ func (p *childDocumentParser) parse() ([]store.Child, []manifest.DocOccurrence, 
 			visible = append(visible, outcome)
 		}
 	}
-	return children, visible, failures
+	return store.ChildDocuments{Children: children, Visible: visible, Failures: failures}
 }
 
 func (p *childDocumentParser) prepare(doc manifest.DocOccurrence) (store.Child, manifest.DocOccurrence, bool) {

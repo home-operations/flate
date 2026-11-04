@@ -121,10 +121,9 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 			},
 		},
 	}
-	obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	parsed, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj, authoritative := parsed.Object, parsed.Document
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.AddObject(obj, authoritative)
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		obj.Named(): {
@@ -133,9 +132,7 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 			},
 		},
 	}})
-	{
-		assert.FatalIf(t, len(st.Productions(obj.Named(), nil)) != 1, "%v", "fixture has no bound output prediction")
-	}
+	assert.FatalIf(t, len(st.Productions(obj.Named(), nil)) != 1, "%v", "fixture has no bound output prediction")
 	_, _, empty := st.GetEmission(generator.Named())
 	defer empty.Finish()
 	empty.Complete = true
@@ -144,22 +141,18 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 		generator.Named(),
 		store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "complete empty"},
 	)
-	{
-		assert.FatalIf(t, len(st.Productions(obj.Named(), nil)) != 0 || st.GetObject(obj.Named()) != nil ||
-			st.GetArtifact(
-				obj.Named(),
-				store.ArtifactContent,
-			) != nil, "%v", "complete empty inventory retained predicted output authority")
-	}
+	assert.FatalIf(t, len(st.Productions(obj.Named(), nil)) != 0 || st.GetObject(obj.Named()) != nil ||
+		st.GetArtifact(
+			obj.Named(),
+			store.ArtifactContent,
+		) != nil, "%v", "complete empty inventory retained predicted output authority")
 	st.AddObject(obj, authoritative)
-	{
-		assert.FatalIf(
-			t,
-			len(st.Productions(obj.Named(), nil)) != 0,
-			"%v",
-			"independent declaration revived a completed producer prediction",
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(st.Productions(obj.Named(), nil)) != 0,
+		"%v",
+		"independent declaration revived a completed producer prediction",
+	)
 	var blocked []manifest.NamedResource
 	c.Tasks.Go(t.Context(), "complete-empty", func(ctx context.Context) {
 		run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
@@ -226,10 +219,9 @@ func TestController_ArtifactMaterializersCycleDrains(t *testing.T) {
 				},
 			},
 		}
-		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		parsed2, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+		obj, authoritative := parsed2.Object, parsed2.Document
+		assert.FatalIf(t, err != nil, "%v", err)
 		st.AddObject(obj, authoritative)
 	}
 	dispatcher := &materializerDispatcher{controller: c}
@@ -239,10 +231,8 @@ func TestController_ArtifactMaterializersCycleDrains(t *testing.T) {
 	}, false)()
 	scheduler.Seed(ids)
 	{
-		{
-			err := scheduler.Run(t.Context())
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := scheduler.Run(t.Context())
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	if dispatcher.drains[manifest.DrainForce].Load() == 0 || fetcher.calls.Load() != 0 || c.Tasks.Failures() != 0 {
 		t.Fatalf(
@@ -255,21 +245,19 @@ func TestController_ArtifactMaterializersCycleDrains(t *testing.T) {
 	for i, id := range ids {
 		status, _ := st.GetStatus(id)
 		blocked := status.BlockedBy()
-		{
-			assert.FatalIf(
-				t,
-				status.Status != store.StatusFailed || !status.IsDependencyFailure() || len(blocked) != 1 ||
-					blocked[0] != ids[1-i] ||
-					st.GetArtifact(
-						id,
-						store.ArtifactContent,
-					) != nil,
-				"contentless cycle %s = %+v, blocked=%v",
-				id,
-				status,
-				blocked,
-			)
-		}
+		assert.FatalIf(
+			t,
+			status.Status != store.StatusFailed || !status.IsDependencyFailure() || len(blocked) != 1 ||
+				blocked[0] != ids[1-i] ||
+				st.GetArtifact(
+					id,
+					store.ArtifactContent,
+				) != nil,
+			"contentless cycle %s = %+v, blocked=%v",
+			id,
+			status,
+			blocked,
+		)
 	}
 }
 
@@ -294,20 +282,16 @@ func TestController_AmbientSettlementExactlyOnce(t *testing.T) {
 				dispatch := controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}
 				done := controllertest.Reconcile(t.Context(), t, dispatch, level)
 				if secret != "" && level == manifest.DrainNone {
-					{
-						assert.FatalIf(t, done || calls != 0, "%v", "ambient tier ran before repository settlement")
-					}
+					assert.FatalIf(t, done || calls != 0, "%v", "ambient tier ran before repository settlement")
 					done = controllertest.Reconcile(t.Context(), t, dispatch, manifest.DrainCascade)
 				}
-				{
-					assert.FatalIf(
-						t,
-						!done || calls != 1 || st.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
-						"settlement: done=%t calls=%d",
-						done,
-						calls,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!done || calls != 1 || st.GetArtifact(repo.Named(), store.ArtifactContent) == nil,
+					"settlement: done=%t calls=%d",
+					done,
+					calls,
+				)
 			})
 		}
 	}
@@ -342,15 +326,11 @@ func TestController_SyntheticCredentialSkip(t *testing.T) {
 	)
 	warnings := st.Warnings()
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "sources", Name: "auth"}
-	{
-		assert.FatalIf(t, info.Outcome() != store.OutcomeSkipped || info.String() != "secret sources/auth not found" ||
-			len(warnings) != 1, "skip lost display or outcome: %+v %+v", info, warnings)
-	}
-	{
-		assert.FatalIf(t, warnings[0].Resource != repo.Named() || warnings[0].Subject.Resource != chart.Named() ||
-			!slices.Equal(warnings[0].Related, []manifest.NamedResource{secret}) ||
-			st.GetArtifact(repo.Named(), store.ArtifactContent) != nil, "skip lost raw provenance: %+v", warnings)
-	}
+	assert.FatalIf(t, info.Outcome() != store.OutcomeSkipped || info.String() != "secret sources/auth not found" ||
+		len(warnings) != 1, "skip lost display or outcome: %+v %+v", info, warnings)
+	assert.FatalIf(t, warnings[0].Resource != repo.Named() || warnings[0].Subject.Resource != chart.Named() ||
+		!slices.Equal(warnings[0].Related, []manifest.NamedResource{secret}) ||
+		st.GetArtifact(repo.Named(), store.ArtifactContent) != nil, "skip lost raw provenance: %+v", warnings)
 }
 
 func TestController_AmbientFailureRetainsCause(t *testing.T) {
@@ -395,27 +375,21 @@ func TestController_AmbientFailureRetainsCause(t *testing.T) {
 				func(ctx context.Context) { err = c.run.Acquire(ctx, repo, acquisition, manifest.DrainCascade) },
 			)
 			c.Tasks.BlockTillDone()
+			assert.FatalIf(t, err == nil || err.Error() != "secret flux-system/kubernetes-secrets not found" ||
+				!errors.Is(err, cause) ||
+				errors.Is(err, manifest.ErrSourceSkipped) == rejected, "ambient classification: %v", err)
+			assert.FatalIf(
+				t,
+				!strings.Contains(manifest.ErrorDetails(err), cause.Error()),
+				"%v",
+				"lost ambient diagnostic",
+			)
 			{
-				assert.FatalIf(t, err == nil || err.Error() != "secret flux-system/kubernetes-secrets not found" ||
-					!errors.Is(err, cause) ||
-					errors.Is(err, manifest.ErrSourceSkipped) == rejected, "ambient classification: %v", err)
-			}
-			{
-				assert.FatalIf(
-					t,
-					!strings.Contains(manifest.ErrorDetails(err), cause.Error()),
-					"%v",
-					"lost ambient diagnostic",
+				response, ok := errors.AsType[*fetcherr.ResponseError](
+					err,
 				)
-			}
-			{
-				{
-					response, ok := errors.AsType[*fetcherr.ResponseError](
-						err,
-					)
-					assert.FatalIf(t, rejected &&
-						(!ok || response.StatusCode != http.StatusUnauthorized), "%v", "lost typed rejection")
-				}
+				assert.FatalIf(t, rejected &&
+					(!ok || response.StatusCode != http.StatusUnauthorized), "%v", "lost typed rejection")
 			}
 		})
 	}
@@ -466,10 +440,9 @@ func testControllerArtifactMaterializersCase(
 			},
 		},
 	}
-	obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	parsed3, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj, authoritative := parsed3.Object, parsed3.Document
+	assert.FatalIf(t, err != nil, "%v", err)
 	st.AddObject(obj, authoritative)
 	var blocked []manifest.NamedResource
 	var outcome schedule.Kind
@@ -502,18 +475,23 @@ func testControllerArtifactMaterializersCase(
 			)
 		}
 	case store.StatusReady:
-		fallthrough
+		status, _ := st.GetStatus(obj.Named())
+		assert.FatalIf(
+			t,
+			len(blocked) != 0 || status.Status != store.StatusFailed,
+			"contentless result = %+v, %v",
+			status,
+			blocked,
+		)
 	default:
 		status, _ := st.GetStatus(obj.Named())
-		{
-			assert.FatalIf(
-				t,
-				len(blocked) != 0 || status.Status != store.StatusFailed,
-				"contentless result = %+v, %v",
-				status,
-				blocked,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(blocked) != 0 || status.Status != store.StatusFailed,
+			"contentless result = %+v, %v",
+			status,
+			blocked,
+		)
 	}
 	payload := &store.SourceArtifact{
 		Kind: manifest.KindExternalArtifact,
@@ -533,14 +511,12 @@ func testControllerArtifactMaterializersCase(
 	})
 	c.Tasks.BlockTillDone()
 	status, _ := st.GetStatus(obj.Named())
-	{
-		assert.FatalIf(
-			t,
-			len(blocked) != 0 || status.Status != store.StatusReady || fetcher.calls != before,
-			"accepted bytes waited for %s producer: %+v, %v", (*testCaseInput), status,
-			blocked,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(blocked) != 0 || status.Status != store.StatusReady || fetcher.calls != before,
+		"accepted bytes waited for %s producer: %+v, %v", (*testCaseInput), status,
+		blocked,
+	)
 }
 
 func testControllerDeclaredNonGitWithAdmissionCase(
@@ -571,7 +547,8 @@ func testControllerDeclaredNonGitWithAdmissionCase(
 		"metadata":   map[string]any{"name": "declared", "namespace": "sources"},
 		"spec":       spec,
 	}
-	obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	parsed4, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+	obj := parsed4.Object
 	assert.NoError(t, err)
 	before := manifest.Fingerprint(obj)
 	f := &fakeFetcher{

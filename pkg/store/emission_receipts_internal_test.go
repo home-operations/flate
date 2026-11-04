@@ -35,19 +35,15 @@ func TestRecordEmitted_ReceiptOnly(t *testing.T) {
 	next.Render = manifest.NewRenderReceipt("second", func(a, b any) bool { return a == b })
 	st.RecordEmitted(owner.Named(), &next, nil)
 	after := st.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
-	{
-		assert.FatalIf(
-			t,
-			before == after || before.revision != after.revision || !observer.Valid() || objects.Load() != 0 ||
-				artifacts.Load() != 0,
-			"%s",
-			"receipt-only replacement changed semantic publication",
-		)
-	}
+	assert.FatalIf(
+		t,
+		before == after || before.revision != after.revision || !observer.Valid() || objects.Load() != 0 ||
+			artifacts.Load() != 0,
+		"%s",
+		"receipt-only replacement changed semantic publication",
+	)
 	assert.Equal(t, before.Render.Value().(string), "first")
 	assert.Equal(t, after.Render.Value().(string), "second")
 	assert.Equal(t, next.Render.Value().(string), "second")
-	{
-		assert.FatalIf(t, next.Footprint() == nil, "%s", "receipt-only replacement lost the accepted caller handoff")
-	}
+	assert.FatalIf(t, next.Footprint() == nil, "%s", "receipt-only replacement lost the accepted caller handoff")
 }

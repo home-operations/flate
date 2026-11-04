@@ -339,16 +339,14 @@ func testOverlayConcurrentBuildersCase(t *testing.T, testCaseInput *int,
 				return
 			}
 			data, err := tr.ReadFile("dir/z.yaml")
-			{
-				assert.ErrorIf(
-					t,
-					err != nil || string(data) != want,
-					"private render: %q, %v; want %q",
-					data,
-					err,
-					want,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				err != nil || string(data) != want,
+				"private render: %q, %v; want %q",
+				data,
+				err,
+				want,
+			)
 		})
 	}
 	close(start)

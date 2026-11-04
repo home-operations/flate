@@ -86,15 +86,15 @@ func materializeGeneratorData(r *generatorRecord, opts *options, pairs []types.P
 //nolint:ireturn // Kustomize requires its loader interface for generator inputs.
 func (r *generatorRecord) inputLoader(ctx context.Context, optsArg *options) (ifc.Loader, error) {
 	opts := *optsArg
-	input, name := new(r.reader).input(r.root)
-	input, err := fs.Sub(input, name)
+	inputFile := new(r.reader).input(r.root)
+	input, err := fs.Sub(inputFile.fs, inputFile.name)
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("generator fs %s: %w", r.root, err), "")
 	}
 	confined := tree.NewBuilder(input)
 	root, dir := r.root, filepath.Dir(r.file)
 	return generatorFileLoader{load: func(file string) ([]byte, error) {
-		if _, _, ok := kustomizeinput.CutHTTPScheme(file); ok {
+		if _, ok := kustomizeinput.CutHTTPScheme(file); ok {
 			if opts.RemoteInputs == nil {
 				return nil, errRemoteInputs
 			}

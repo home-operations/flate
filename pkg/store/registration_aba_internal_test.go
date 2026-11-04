@@ -50,9 +50,7 @@ func testReadRegistrationNoABACase2(t *testing.T, testCaseInput *string,
 	}
 	func() {
 		defer func() {
-			{
-				assert.ErrorIf(t, recover() == nil, "%s", "exhaustion did not fail before mutation")
-			}
+			assert.ErrorIf(t, recover() == nil, "%s", "exhaustion did not fail before mutation")
 		}()
 		switch *testCaseInput {
 		case "artifact":
@@ -91,9 +89,7 @@ func testReadRegistrationNoABAExhaustion(t *testing.T) {
 	defer reads.Retire()
 	func() {
 		defer func() {
-			{
-				assert.ErrorIf(t, recover() == nil, "%s", "exhaustion did not fail before mutation")
-			}
+			assert.ErrorIf(t, recover() == nil, "%s", "exhaustion did not fail before mutation")
 		}()
 		s.AddObject(b.Obj)
 	}()
@@ -125,8 +121,6 @@ func TestReadRegistration_StableWithdrawalNoABA(t *testing.T) {
 	assert.Equal(t, current.Valid(), true)
 	st.RecordEmitted(producer, &Emission{Complete: true}, nil)
 	assert.Equal(t, st.GetObject(first.Obj.Named()), manifest.BaseManifest(nil))
-	{
-		assert.FatalIf(t, current.Valid(), "%s", "withdrawal reused a captured stable-publication stamp")
-	}
+	assert.FatalIf(t, current.Valid(), "%s", "withdrawal reused a captured stable-publication stamp")
 	assert.Equal(t, earlier.Valid(), false)
 }

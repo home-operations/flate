@@ -270,34 +270,37 @@ func (d *declarationScope) compareReferences(
 			continue
 		}
 		inputs := [2]store.Child{d.objects[0][ref.NamedResource], d.objects[1][ref.NamedResource]}
-		changed, known, err := referenceChanged(ref, &inputs)
+		comparison, err := referenceChanged(ref, &inputs)
 		if err != nil {
 			return err
 		}
-		if !known {
+		if !comparison.Known {
 			continue
 		}
 		if sameInputs {
-			changed = false
+			comparison.Changed = false
 		}
 		d.out.declarations[comparisonKey{source: d.sources[0][id], owner: id, input: ref.NamedResource, use: ref.Use, position: ref.Position}] = declarationComparison{
 			objects:    [2]manifest.BaseManifest{children[0].Obj, children[1].Obj},
 			references: [2]manifest.Reference{*ref, refs[1][peer]},
-			changed:    changed,
+			changed:    comparison.Changed,
 		}
 	}
 	return nil
 }
 
-func referenceChanged(ref *manifest.Reference, inputs *[2]store.Child) (bool, bool, error) {
+// Comparison grants a change verdict only when Known is true.
+type Comparison struct{ Changed, Known bool }
+
+func referenceChanged(ref *manifest.Reference, inputs *[2]store.Child) (Comparison, error) {
 	if inputs[0].Obj == nil || inputs[1].Obj == nil {
-		return false, false, nil
+		return Comparison{}, nil
 	}
 	if _, left := inputs[0].Obj.(manifest.Data); !left {
-		return false, false, nil
+		return Comparison{}, nil
 	}
 	if _, right := inputs[1].Obj.(manifest.Data); !right {
-		return false, false, nil
+		return Comparison{}, nil
 	}
 	if ref.Key != "" {
 		values := [2]string{}
@@ -305,24 +308,24 @@ func referenceChanged(ref *manifest.Reference, inputs *[2]store.Child) (bool, bo
 		for side, input := range *inputs {
 			data, ok := input.Obj.(manifest.Data)
 			if !ok {
-				return false, false, nil
+				return Comparison{}, nil
 			}
-			var err error
-			values[side], present[side], err = data.Value(ref.Key)
+			value, err := data.Value(ref.Key)
 			if err != nil {
-				return false, false, nil //nolint:nilerr // Unreadable values leave comparison unknown.
+				return Comparison{}, nil //nolint:nilerr // Unreadable values leave comparison unknown.
 			}
+			values[side], present[side] = value.Value, value.Found
 		}
 		if !present[0] || !present[1] {
-			return false, false, nil
+			return Comparison{}, nil
 		}
-		return values[0] != values[1] || present[0] != present[1], true, nil
+		return Comparison{Changed: values[0] != values[1] || present[0] != present[1], Known: true}, nil
 	}
 	equal, err := manifest.OutputEqual(inputs[0].Obj, inputs[1].Obj, [2]map[string]any{inputs[0].Doc, inputs[1].Doc})
 	if err != nil {
-		return false, false, err
+		return Comparison{}, err
 	}
-	return !equal, true, nil
+	return Comparison{Changed: !equal, Known: true}, nil
 }
 
 func (s *Set) freezeSources() *Set {
@@ -384,18 +387,18 @@ func (s *Set) OutputChanged(
 	source manifest.NamedResource,
 	ref manifest.Reference,
 	current manifest.BaseManifest,
-) (bool, bool) {
+) Comparison {
 	if s == nil || current == nil || side > manifest.TreeHead {
-		return false, false
+		return Comparison{}
 	}
 	fact, ok := s.declarations[comparisonKey{source: source, owner: current.Named(), input: ref.NamedResource, use: ref.Use, position: ref.Position}]
 	if !ok || current != fact.objects[side] || fact.objects[manifest.TreeHead-side] == nil {
-		return false, false
+		return Comparison{}
 	}
 	if ref.Use != "" && !referencesEqual(&ref, &fact.references[side]) {
-		return false, false
+		return Comparison{}
 	}
-	return fact.changed, true
+	return Comparison{Changed: fact.changed, Known: true}
 }
 
 // OppositeDeclaration returns the opposite declaration while the local identity and declaration apply.

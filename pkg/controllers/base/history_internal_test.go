@@ -80,9 +80,7 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 						store.Child{Obj: child, Productions: []manifest.Production{production}},
 						nil,
 					)
-					{
-						assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
-					}
+					assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
 					assert.Equal(t, kept1, mode == "mutable")
 				}
 				assert.Equal(t, filter.ShouldReconcile(child.Named()), mode == "mutable")
@@ -137,9 +135,7 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 	controller := New(st, task.NewBounded(2))
 	controller.Configure(Options{Filter: filter, Loader: l})
 	kept2, admissionErr2 := controller.KeepEmitted(t.Context(), owner, store.Child{Obj: child}, nil)
-	{
-		assert.FatalIf(t, admissionErr2 != nil, "%v", admissionErr2)
-	}
+	assert.FatalIf(t, admissionErr2 != nil, "%v", admissionErr2)
 	assert.Equal(t, kept2, true)
 	assert.Equal(t, filter.ShouldReconcile(newSource.Named()), true)
 	assert.Equal(t, filter.ShouldReconcile(oldSource.Named()), false)

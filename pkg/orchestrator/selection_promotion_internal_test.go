@@ -294,10 +294,8 @@ func testSelectionPromotionBubble(
 	initiallySelected := filter.ShouldReconcile(consumer.Named())
 	close(release)
 	{
-		{
-			err := <-done
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		err := <-done
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	if !testCaseInput.mode.upfront {
 		assert.Equal(t, initialStatus, false)
@@ -309,22 +307,18 @@ func testSelectionPromotionBubble(
 	}
 	assert.Equal(t, filter.ShouldReconcile(consumer.Named()), true)
 	assert.Equal(t, tasks.Failures(), 0)
-	{
-		assert.FatalIf(
-			t,
-			renders.Load() == 0,
-			"%v",
-			"selected published consumer did not render after its input arrived",
-		)
-	}
+	assert.FatalIf(
+		t,
+		renders.Load() == 0,
+		"%v",
+		"selected published consumer did not render after its input arrived",
+	)
 	status, _ := s.GetStatus(parent.Named())
 	assert.Equal(t, status.Status, store.StatusPending)
 	status, _ = s.GetStatus(consumer.Named())
 	assert.Equal(t, status.Status, store.StatusReady)
 	output, ok := s.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
-	{
-		assert.FatalIf(t, !ok, "%v", "promoted consumer has no rendered emission")
-	}
+	assert.FatalIf(t, !ok, "%v", "promoted consumer has no rendered emission")
 	outputBytes, err := json.Marshal(testutil.DocumentMaps(output.Manifests))
 	assert.NoError(t, err)
 	assert.Equal(t, string(outputBytes), `[{"value":"promoted"}]`)

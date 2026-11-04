@@ -112,31 +112,25 @@ spec:
 		record, ok := session.loader.Index.Lookup(child)
 		assert.Equal(t, ok, true)
 		objects[i] = session.loader.IndexedObject(child, record).Obj
-		{
-			assert.FatalIf(
-				t,
-				record.File != "set.yaml" || entry.Input.LocalPath != entry.Path,
-				"shared projection lost its source coordinate: %+v",
-				record,
-			)
-		}
-	}
-	{
 		assert.FatalIf(
 			t,
-			objects[0] == nil || objects[0] != objects[1],
-			"%v",
-			"identical-content plans computed separate projected declarations",
+			record.File != "set.yaml" || entry.Input.LocalPath != entry.Path,
+			"shared projection lost its source coordinate: %+v",
+			record,
 		)
 	}
-	{
-		assert.FatalIf(
-			t,
-			entries[0][0].Path == entries[1][0].Path,
-			"%v",
-			"independent plans shared an entry coordinate",
-		)
-	}
+	assert.FatalIf(
+		t,
+		objects[0] == nil || objects[0] != objects[1],
+		"%v",
+		"identical-content plans computed separate projected declarations",
+	)
+	assert.FatalIf(
+		t,
+		entries[0][0].Path == entries[1][0].Path,
+		"%v",
+		"independent plans shared an entry coordinate",
+	)
 }
 
 func testPlanOccurrenceBoundariesCase(t *testing.T, testCaseInput *struct {
@@ -179,14 +173,12 @@ func testPlanOccurrenceBoundariesCase(t *testing.T, testCaseInput *struct {
 		Config{Path: filepath.Join(root, "alpha"), RepoRoot: root, WipeSecrets: true},
 	)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			len(entries) != 1 || entries[0].Path != filepath.Join(root, "alpha"),
-			"explicit entry widened: %+v",
-			entries,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(entries) != 1 || entries[0].Path != filepath.Join(root, "alpha"),
+		"explicit entry widened: %+v",
+		entries,
+	)
 }
 
 func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
@@ -265,12 +257,10 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 		Config{Input: &store.SourceArtifact{LocalPath: root, FS: other}, Path: root},
 	)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			len(independent) != 1 || independent[0].Path != root || independent[0].Input.FS == nil,
-			"equal coordinate borrowed another admitted view: %+v",
-			independent,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(independent) != 1 || independent[0].Path != root || independent[0].Input.FS == nil,
+		"equal coordinate borrowed another admitted view: %+v",
+		independent,
+	)
 }

@@ -41,14 +41,12 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 	assert.NoError(t, err)
 	l.Admit(root)
 	for _, name := range []string{"target", "missing", "configuration"} {
-		{
-			assert.FatalIf(
-				t,
-				!l.documents.cache[filepath.Join(root, name)].incoming,
-				"direct edge to %s was not recorded",
-				name,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!l.documents.cache[filepath.Join(root, name)].incoming,
+			"direct edge to %s was not recorded",
+			name,
+		)
 	}
 	target := filepath.Join(root, "target")
 	doc := l.documents.cache[target]
@@ -59,32 +57,26 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 		mount := filepath.Join(root, name)
 		mounted[mount] = &store.SourceArtifact{LocalPath: mount, FS: fstest.MapFS{}}
 		l.documents.setSources(maps.Clone(mounted))
-		{
-			assert.FatalIf(
-				t,
-				l.documents.cache[target].incoming,
-				"%s",
-				"mount change retained an incoming fact outside its subtree",
-			)
-		}
+		assert.FatalIf(
+			t,
+			l.documents.cache[target].incoming,
+			"%s",
+			"mount change retained an incoming fact outside its subtree",
+		)
 		roots := l.packageRoots(root, nil)
 		want := name == "a"
 		if l.documents.cache[target].incoming != want {
 			t.Fatalf("target after masking %s: incoming=%t, want %t", name, l.documents.cache[target].incoming, want)
 		}
-		{
-			assert.FatalIf(
-				t,
-				slices.Contains(roots, "target") == want,
-				"root selection after masking %s: %v",
-				name,
-				roots,
-			)
-		}
-		{
-			assert.FatalIf(t, l.documents.cache[filepath.Join(root, "missing")].incoming ||
-				l.documents.cache[filepath.Join(root, "configuration")].incoming, "%s", "masked parent's missing or configuration edge survived")
-		}
+		assert.FatalIf(
+			t,
+			slices.Contains(roots, "target") == want,
+			"root selection after masking %s: %v",
+			name,
+			roots,
+		)
+		assert.FatalIf(t, l.documents.cache[filepath.Join(root, "missing")].incoming ||
+			l.documents.cache[filepath.Join(root, "configuration")].incoming, "%s", "masked parent's missing or configuration edge survived")
 		l.packageRoots(root, nil)
 	}
 	{
@@ -93,39 +85,33 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 	}
 	l.documents.setSources(map[string]*store.SourceArtifact{root: bootstrap})
 	l.packageRoots(root, nil)
-	{
-		assert.FatalIf(
-			t,
-			l.documents.cache[target].incoming,
-			"%s",
-			"withdrawal restored an edge from a discarded parent document",
-		)
-	}
+	assert.FatalIf(
+		t,
+		l.documents.cache[target].incoming,
+		"%s",
+		"withdrawal restored an edge from a discarded parent document",
+	)
 	for _, name := range []string{"a", "b"} {
 		parent := filepath.Join(root, name)
-		body, _ := l.documents.read(parent)
+		body := l.documents.read(parent).body
 		doc := l.documents.cache[parent]
 		doc.traversed = true
 		l.documents.cache[parent] = doc
 		l.documents.references(parent, body, false, func(kustomizeinput.Reference, string) bool { return false })
-		{
-			assert.FatalIf(
-				t,
-				l.documents.cache[parent].edgesKnown,
-				"%s",
-				"partial traversal marked all direct edges known",
-			)
-		}
-		l.documents.references(parent, body, false, nil)
-	}
-	{
 		assert.FatalIf(
 			t,
-			!l.documents.cache[target].incoming,
+			l.documents.cache[parent].edgesKnown,
 			"%s",
-			"new traversal did not restore incoming facts after withdrawal",
+			"partial traversal marked all direct edges known",
 		)
+		l.documents.references(parent, body, false, nil)
 	}
+	assert.FatalIf(
+		t,
+		!l.documents.cache[target].incoming,
+		"%s",
+		"new traversal did not restore incoming facts after withdrawal",
+	)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -504,9 +490,7 @@ func testSelfProduceBuilderRecordProducedReuseCase(
 		}
 		visits = append(visits, visit)
 		_, err := builder.recordProduced(t.Context(), new(visit), nil, l)
-		{
-			assert.NoError(t, err)
-		}
+		assert.NoError(t, err)
 	}
 	{
 		got := testing.AllocsPerRun(100, func() {
@@ -600,7 +584,7 @@ func testFinalizeIndexBareDirComponentNamespaceCase(
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
 	{
-		_, err := loadForTest(t.Context(), t, l, filepath.Join(dir, "kubernetes/apps/bare"))
+		_, err := loadForTest(t.Context(), t, l, filepath.Join(dir, "kubernetes", "apps", "bare"))
 		assert.NoError(t, err)
 	}
 	{
@@ -674,9 +658,7 @@ func testFinalizeIndexBareDirComponentNamespaceCase(
 	}
 	assert.Diff(t, record.Refs, []manifest.NamedResource{generated})
 	obj, ok := candidateForTest(t, l, consumer).(*manifest.Kustomization)
-	{
-		assert.FatalIf(t, !ok, "consumer %s not stored", consumer)
-	}
+	assert.FatalIf(t, !ok, "consumer %s not stored", consumer)
 	refs := 0
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.Use == "substituteFrom" {

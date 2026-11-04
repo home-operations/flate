@@ -27,7 +27,7 @@ func decodeCR(doc map[string]any, cr any, kind, domain string) error {
 	if err := decodeInto(doc, cr); err != nil {
 		return NewError(ErrInput, fmt.Errorf("%s decode: %w", kind, err), "")
 	}
-	if _, _, missing := requireMetadata(doc); missing != "" {
+	if metadata := requireMetadata(doc); metadata.missing != "" {
 		return inputf("%s missing metadata.name", kind)
 	}
 	return nil
@@ -48,20 +48,30 @@ func DocAPIVersion(doc map[string]any) string {
 
 // DocIdentity extracts a document's resource identity without validation or namespace defaulting.
 func DocIdentity(doc map[string]any) NamedResource {
-	name, namespace := DocMetadata(doc)
-	return NamedResource{Group: apiGroup(DocAPIVersion(doc)), Kind: DocKind(doc), Namespace: namespace, Name: name}
+	metadata := DocMetadata(doc)
+	return NamedResource{
+		Group:     apiGroup(DocAPIVersion(doc)),
+		Kind:      DocKind(doc),
+		Namespace: metadata.Namespace,
+		Name:      metadata.Name,
+	}
 }
 
-// DocMetadata returns (name, namespace) from a manifest document's
-// metadata block. Both are "" when metadata is absent or unset.
-func DocMetadata(doc map[string]any) (string, string) {
+// Metadata preserves authored names without namespace defaulting.
+type Metadata struct {
+	Name      string
+	Namespace string
+}
+
+// DocMetadata preserves empty metadata fields when authors omit them.
+func DocMetadata(doc map[string]any) Metadata {
 	md, _ := doc[metadataKey].(map[string]any)
 	if md == nil {
-		return "", ""
+		return Metadata{}
 	}
 	name, _ := md[nameKey].(string)
 	namespace, _ := md[namespaceKey].(string)
-	return name, namespace
+	return Metadata{Name: name, Namespace: namespace}
 }
 
 // ParseDocOptions tunes ParseDoc behavior.
@@ -74,25 +84,30 @@ type ParseDocOptions struct {
 	DefaultNamespace string
 }
 
+// ParsedDoc retains authoritative documents even when admission fails.
+type ParsedDoc struct {
+	Object   BaseManifest
+	Document map[string]any
+	Changed  bool
+}
+
 // ParseDoc decodes recognized group/kind pairs and returns the authoritative
 // document and whether sanitation or namespace defaulting changed it, including
 // on errors. Foreign kinds become RawObjects; bare data and Kustomize build
-// directives return nil.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
-func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[string]any, bool, error) {
+// directives return no object.
+func ParseDoc(doc map[string]any, opts ParseDocOptions) (ParsedDoc, error) {
 	kind, apiVersion := DocKind(doc), DocAPIVersion(doc)
 	if opts.RequiredIdentity {
 		if err := ValidateIdentity(doc, nil); err != nil {
-			return nil, doc, false, err
+			return ParsedDoc{Document: doc}, err
 		}
 		opts.DefaultNamespace, opts.WipeSecrets = "", false
 	}
 	if kind == "" || apiGroup(apiVersion) == KustomizeDomain {
-		return nil, doc, false, nil
+		return ParsedDoc{Document: doc}, nil
 	}
 	if apiVersion == "" {
-		return nil, doc, false, inputf("missing apiVersion for %s", kind)
+		return ParsedDoc{Document: doc}, inputf("missing apiVersion for %s", kind)
 	}
 
 	changed := false
@@ -115,7 +130,7 @@ func ParseDoc(doc map[string]any, opts ParseDocOptions) (BaseManifest, map[strin
 			}
 		}
 	}
-	return obj, doc, changed, err
+	return ParsedDoc{Object: obj, Document: doc, Changed: changed}, err
 }
 
 // checkAPIVersion requires an exact API group match on a raw document.
@@ -138,13 +153,19 @@ func checkAPIVersion(doc map[string]any, want string) error {
 	return nil
 }
 
-func requireMetadata(doc map[string]any) (string, string, string) {
-	name, namespace := DocMetadata(doc)
-	if name != "" {
-		return name, namespace, ""
+type requiredMetadata struct {
+	Metadata
+
+	missing string
+}
+
+func requireMetadata(doc map[string]any) requiredMetadata {
+	metadata := DocMetadata(doc)
+	if metadata.Name != "" {
+		return requiredMetadata{Metadata: metadata}
 	}
 	if md, _ := doc[metadataKey].(map[string]any); md == nil {
-		return "", "", metadataKey
+		return requiredMetadata{missing: metadataKey}
 	}
-	return "", "", "metadata.name"
+	return requiredMetadata{missing: "metadata.name"}
 }

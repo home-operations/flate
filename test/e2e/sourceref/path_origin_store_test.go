@@ -26,9 +26,11 @@ func TestE2E_SourceRef_PathOrigUsesOwnObjectStore(t *testing.T) {
 					"changed-only selection ignores divergent source revisions with identical authored files; tracked in fl-5c42t",
 				)
 			}
-			current, _, _, _ := sourceRefFixture(t)
+			sourceRefFixtureResult1 := sourceRefFixture(t)
+			current, _, _, _ := sourceRefFixtureResult1.root, sourceRefFixtureResult1.repository, sourceRefFixtureResult1.before, sourceRefFixtureResult1.after
 			setSourceRef(t, current, tt.currentRef)
-			original, originalRepo, _, b := sourceRefFixture(t)
+			sourceRefFixtureResult2 := sourceRefFixture(t)
+			original, originalRepo, _, b := sourceRefFixtureResult2.root, sourceRefFixtureResult2.repository, sourceRefFixtureResult2.before, sourceRefFixtureResult2.after
 			assert.NoError(t, originalRepo.Storer.SetReference(
 				plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), b),
 			))
@@ -39,8 +41,18 @@ func TestE2E_SourceRef_PathOrigUsesOwnObjectStore(t *testing.T) {
 				{root: current, value: "v1.0.0"},
 				{root: original, value: "v2.0.0"},
 			} {
-				out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(side.root, "flux"),
-					"--concurrency", "2", "--cache-dir", t.TempDir())
+				requireCLIOKResult1 := harness.RequireCLIOK(
+					t,
+					"build",
+					"all",
+					"--path",
+					filepath.Join(side.root, "flux"),
+					"--concurrency",
+					"2",
+					"--cache-dir",
+					t.TempDir(),
+				)
+				out, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 				assert.FatalIf(
 					t,
 					!strings.Contains(out, "value: "+side.value),
@@ -50,7 +62,7 @@ func TestE2E_SourceRef_PathOrigUsesOwnObjectStore(t *testing.T) {
 					out,
 				)
 			}
-			out, _ := harness.RequireCLIOK(
+			requireCLIOKResult2 := harness.RequireCLIOK(
 				t,
 				"diff",
 				"all",
@@ -69,6 +81,7 @@ func TestE2E_SourceRef_PathOrigUsesOwnObjectStore(t *testing.T) {
 				"-o",
 				"diff",
 			)
+			out, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 			assertSourceValueDiff(t, out, "v2.0.0", "v1.0.0")
 		})
 	}

@@ -91,7 +91,8 @@ func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
 	n.collect(r, extra)
 	n.collectOverrides(r)
 	n.collectContexts(r)
-	n.collisions, n.update = nameOccurrenceUpdater()
+	occurrences := nameOccurrenceUpdater()
+	n.collisions, n.update = occurrences.collisions, occurrences.update
 	collectNameOccurrences(n.inventory, n.subjects, n.update)
 	n.names = prepareNames(n.clusters, n.inventory, n.subjects, n.collisions)
 	n.bindModels(r)
@@ -171,7 +172,7 @@ func (n *reportNames) collectOverrides(r *Report) {
 
 func (n *reportNames) collectContexts(r *Report) {
 	for i, group := range r.Groups {
-		adjust := n.overrides != nil && len(n.overrides[i]) > 0
+		adjust := i < len(n.overrides) && len(n.overrides[i]) > 0
 		for _, model := range group.Models {
 			adjust = adjust || model.Subjects != nil
 		}
@@ -233,8 +234,9 @@ func (n *reportNames) bindOverrides(r *Report) {
 			count := n.occurrences[group][w.Resource]
 			n.update(w.Resource.Kind, w.Resource.Group, -count)
 			n.update(w.Subject.Resource.Kind, w.Subject.Resource.Group, count)
-			kind, name := subjectLabels(&w.Subject.Resource, w.Subject.Path, n.names[group].Prefix, n.collisions)
-			r.Warnings[i].Subject = Subject{ID: w.Resource, Kind: kind, Name: name}
+			labels := subjectLabels(&w.Subject.Resource, w.Subject.Path, n.names[group].Prefix, n.collisions)
+
+			r.Warnings[i].Subject = Subject{ID: w.Resource, Kind: labels.kind, Name: labels.name}
 			n.update(w.Subject.Resource.Kind, w.Subject.Resource.Group, -count)
 			n.update(w.Resource.Kind, w.Resource.Group, count)
 		}

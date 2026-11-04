@@ -76,9 +76,7 @@ func testAdmitLocationInputErrorsCase(t *testing.T, testCaseInput *string,
 	_, err := admitLocation(t.Context(), &gitrepo.Location{ContentRoot: root, ScanPath: scan})
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
-	{
-		assert.FatalIf(t, err == nil, "%v", "expected admission error")
-	}
+	assert.FatalIf(t, err == nil, "%v", "expected admission error")
 	assert.Equal(t, strings.Contains(err.Error(), scan), true)
 	if (*testCaseInput) == "containment" {
 		assert.Equal(t, strings.Contains(err.Error(), root), true)

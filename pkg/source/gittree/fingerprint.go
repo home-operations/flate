@@ -164,27 +164,29 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS) {
 		return
 	}
 	v, native := g.view.(*gitView)
-	files, ignores, err := g.fingerprintFiles(ctx, v, native)
+	inventory, err := g.fingerprintFiles(ctx, v, native)
+
 	c.err = err
 	if c.err != nil {
 		return
 	}
 
-	selectedPolicy := selectedSourcePolicy(policy, v, native, files)
+	selectedPolicy := selectedSourcePolicy(policy, v, native, inventory.files)
 	if !selectedPolicy {
-		sourceignore.Select(policy, files, ignores)
+		sourceignore.Select(policy, inventory.files, inventory.ignores)
 	}
-	if c.err = g.identifyFiles(ctx, files); c.err != nil {
+	if c.err = g.identifyFiles(ctx, inventory.files); c.err != nil {
 		return
 	}
-	c.key = manifest.Fingerprint(files)
+	c.key = manifest.Fingerprint(inventory.files)
 	if v, ok := g.view.(*gitView); ok && v.identity != "" {
 		c.key = v.identity
 	}
+	files := inventory.files
 	c.files.Store(&files)
 }
 
-func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native bool) (map[string]string, []string, error) {
+func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native bool) (fingerprintInventory, error) {
 	var err error
 
 	files := map[string]string{}
@@ -213,7 +215,7 @@ func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native bool) (map
 		err = fs.WalkDir(g, ".", visit)
 	}
 	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
-	return files, ignores, err
+	return fingerprintInventory{files: files, ignores: ignores}, err
 }
 
 func selectedSourcePolicy(policy *sourceignore.Matcher, v *gitView, native bool, files map[string]string) bool {
@@ -279,4 +281,9 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 		identity = plumbing.ComputeHash(plumbing.BlobObject, data)
 	}
 	return identity, nil
+}
+
+type fingerprintInventory struct {
+	files   map[string]string
+	ignores []string
 }

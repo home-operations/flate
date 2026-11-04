@@ -292,7 +292,8 @@ func testBasicAuthFromSecretUnavailableMaterialCase(
 	if tc.metadata {
 		doc["sops"] = map[string]any{"version": "3.13.3", "mac": "metadata"}
 	}
-	obj, _, _, parseErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: true})
+	parsed, parseErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: true})
+	obj := parsed.Object
 	assert.NoError(t, parseErr)
 
 	sec := obj.(*manifest.Secret)

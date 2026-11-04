@@ -98,9 +98,7 @@ func TestProductions_SelfPublication(t *testing.T) {
 	changed := producer.Clone()
 	changed.Path = "changed"
 	s.AddObject(changed)
-	{
-		assert.FatalIf(t, self.Valid(), "%s", "self-publication exemption ignored replacement of the declaration")
-	}
+	assert.FatalIf(t, self.Valid(), "%s", "self-publication exemption ignored replacement of the declaration")
 }
 
 func TestReadSet_BoundInventoryPublication(t *testing.T) {

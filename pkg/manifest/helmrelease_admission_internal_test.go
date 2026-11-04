@@ -70,24 +70,21 @@ func TestParseHelmRelease_ChartTemplateAdmission(t *testing.T) {
 				"metadata": map[string]any{"name": "app", "namespace": "apps"}, "spec": spec,
 			}
 			before := DeepCopyMap(doc)
-			obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
+			parsed, err := ParseDoc(doc, ParseDocOptions{})
+			obj := parsed.Object
 			assert.Diff(t, doc, before)
 			if tc.field == "" {
 				assert.NoError(t, err)
-				{
-					assert.FatalIf(t, obj == nil, "%s", "valid declaration was not admitted")
-				}
+				assert.FatalIf(t, obj == nil, "%s", "valid declaration was not admitted")
 				return
 			}
-			{
-				assert.FatalIf(
-					t,
-					!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), tc.field),
-					"error = %v, want classified input error identifying %s",
-					err,
-					tc.field,
-				)
-			}
+			assert.FatalIf(
+				t,
+				!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), tc.field),
+				"error = %v, want classified input error identifying %s",
+				err,
+				tc.field,
+			)
 		})
 	}
 }

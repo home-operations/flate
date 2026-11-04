@@ -76,6 +76,7 @@ func authoredReferences(occurrenceValue *Occurrence) []manifest.NamedResource {
 	return refs
 }
 
+//nolint:gocritic // The pointer replaces the caller's projected manifest with the stable candidate and namespace.
 func (l *Loader) projectAuthoredManifest(
 	projected *manifest.BaseManifest,
 	obj manifest.BaseManifest,

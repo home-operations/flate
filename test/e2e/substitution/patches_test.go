@@ -164,7 +164,7 @@ func TestE2E_SubstitutionPrecedence(t *testing.T) {
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr := harness.RequireCLIOK(
+				requireCLIOKResult1 := harness.RequireCLIOK(
 					t,
 					verb,
 					"all",
@@ -175,6 +175,7 @@ func TestE2E_SubstitutionPrecedence(t *testing.T) {
 					"--concurrency=2",
 					"--log-level=info",
 				)
+				stdout, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 				assert.FatalIf(t, strings.Count(stderr, "[SuppliedPrecedence]") != 1 ||
 					!strings.Contains(stderr, "ConfigMap/apps/settings: VALUE") ||
 					strings.Contains(stdout, "repository data takes precedence") ||

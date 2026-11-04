@@ -22,7 +22,7 @@ func TestRun_Diff_ProducerDispositionAndPath(t *testing.T) {
 	}
 }
 
-func runDiffProducerDispositionAndPathCase(t *testing.T, mode *string, workers *string) {
+func runDiffProducerDispositionAndPathCase(t *testing.T, mode, workers *string) {
 	t.Helper()
 
 	orig, current := writeFixture(t), writeFixture(t)
@@ -58,7 +58,7 @@ func runDiffProducerDispositionAndPathCase(t *testing.T, mode *string, workers *
 		)
 	default:
 		assert.NoError(t, os.Rename(filepath.Join(current, "apps"), filepath.Join(current, "moved")))
-		body, err := os.ReadFile(filepath.Join(current, "flux/cluster.yaml"))
+		body, err := os.ReadFile(filepath.Join(current, "flux", "cluster.yaml"))
 		assert.NoError(t, err)
 		testutil.WriteFile(
 			t,
@@ -75,8 +75,9 @@ func runDiffProducerDispositionAndPathCase(t *testing.T, mode *string, workers *
 			)
 		}
 	}
-	stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
+	cli := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig,
 		"--output", "json", "--cache-dir", t.TempDir(), "--concurrency", (*workers))
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	wantCode := 0
 	if (*mode) == "both-failed" {
 		wantCode = 1

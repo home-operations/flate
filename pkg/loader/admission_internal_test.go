@@ -369,14 +369,12 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
 	assert.Equal(t, reads.Valid(), true)
 	st.SetArtifact(requester, &store.SourceArtifact{LocalPath: root + "/acquired", FS: fstest.MapFS{}})
-	{
-		assert.FatalIf(
-			t,
-			!reads.Valid(),
-			"%s",
-			"an unrelated source publication invalidated the consumer's materializer proof",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!reads.Valid(),
+		"%s",
+		"an unrelated source publication invalidated the consumer's materializer proof",
+	)
 }
 
 func TestAdmission_MultipleReferences(t *testing.T) {
@@ -449,9 +447,7 @@ func TestAdmission_UnchangedInputDoesNotCaptureConsumers(t *testing.T) {
 		Name:      "consumer",
 	}
 	st.DeleteObject(consumer)
-	{
-		assert.FatalIf(t, !reads.Valid(), "%s", "changing a consumer invalidated its unchanged input")
-	}
+	assert.FatalIf(t, !reads.Valid(), "%s", "changing a consumer invalidated its unchanged input")
 }
 
 func TestAdmission_IncomingChildPublicationPreservesProof(t *testing.T) {
@@ -477,14 +473,12 @@ func TestAdmission_IncomingChildPublicationPreservesProof(t *testing.T) {
 	next.Complete = true
 	reads.Bind(&next)
 	st.RecordEmitted(parent.Named(), &next, nil)
-	{
-		assert.FatalIf(
-			t,
-			st.GetObject(child.Named()) == nil || !reads.Valid(),
-			"%s",
-			"the selected incoming child invalidated its own publication",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetObject(child.Named()) == nil || !reads.Valid(),
+		"%s",
+		"the selected incoming child invalidated its own publication",
+	)
 }
 
 func TestAdmission_EmittedNamespaceChildren(t *testing.T) {
@@ -602,7 +596,8 @@ func testAdmissionMultipleReferencesCase(t *testing.T, testCaseInput *struct {
 		obj := stores[side].GetObject(consumer)
 		assert.Equal(t, c.object(input) != nil, true)
 		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-			changed, known := c.outputChanged(consumer, new(ref), obj)
+			comparison := c.outputChanged(consumer, new(ref), obj)
+			changed, known := comparison.Changed, comparison.Known
 			assert.Equal(t, known, ref.Key != "unknown")
 			if known {
 				assert.Equal(t, changed, ref.Key == "changed")

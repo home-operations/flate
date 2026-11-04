@@ -87,7 +87,8 @@ spec:
 			var cold string
 			for _, state := range []string{"cold", "warm"} {
 				t.Run(state, func(t *testing.T) {
-					out, stderr := harness.RequireCLIOK(t, args...)
+					requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+					out, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 					assert.FatalIf(
 						t,
 						!strings.Contains(out, "-  value: before") || !strings.Contains(out, "+  value: after") ||

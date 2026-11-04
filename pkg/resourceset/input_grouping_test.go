@@ -45,12 +45,8 @@ apiVersion: example.test/v1
 metadata: {name: incomplete}`,
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 10, "docs = %d, want 10", len(docs))
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(docs) != 10, "docs = %d, want 10", len(docs))
 	assert.Diff(
 		t,
 		[]string{manifest.DocAPIVersion(docs[0].Document), manifest.DocAPIVersion(docs[len(docs)-1].Document)},
@@ -90,20 +86,14 @@ metadata:
  annotations: {fluxcd.controlplane.io/reconcile: disabled}`,
 	}
 	docs, _, err := renderProviders(rs, nil, nil)
-	{
-		assert.NoError(t, err)
-	}
-	{
-		assert.FatalIf(t, len(docs) != 2, "docs = %d, want 2 JSON duplicates", len(docs))
-	}
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(docs) != 2, "docs = %d, want 2 JSON duplicates", len(docs))
 	for _, doc := range docs {
-		{
-			assert.FatalIf(
-				t,
-				doc.Document["metadata"].(map[string]any)["annotations"].(map[string]any)[fluxopv1.ReconcileAnnotation] != fluxopv1.DisabledValue,
-				"wrong resource: %v",
-				doc,
-			)
-		}
+		assert.FatalIf(
+			t,
+			doc.Document["metadata"].(map[string]any)["annotations"].(map[string]any)[fluxopv1.ReconcileAnnotation] != fluxopv1.DisabledValue,
+			"wrong resource: %v",
+			doc,
+		)
 	}
 }

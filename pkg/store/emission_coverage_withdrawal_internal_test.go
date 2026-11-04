@@ -18,14 +18,12 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		t.Helper()
 		s.SetArtifact(id, &SourceArtifact{Key: "static-l"})
 		s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: ""})
-		{
-			assert.FatalIf(
-				t,
-				s.GetObject(id) == nil || s.GetArtifact(id, ArtifactContent) == nil,
-				"%s",
-				"fixture L not initially live with an artifact",
-			)
-		}
+		assert.FatalIf(
+			t,
+			s.GetObject(id) == nil || s.GetArtifact(id, ArtifactContent) == nil,
+			"%s",
+			"fixture L not initially live with an artifact",
+		)
 		{
 			info, ok := s.GetStatus(id)
 			assert.FatalIf(t, !ok || info.Status != StatusReady, "%s", "fixture L not initially Ready")
@@ -65,33 +63,23 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 			},
 			nil,
 		)
-		{
-			assert.FatalIf(t, s.GetObject(k) == nil ||
-				!slices.ContainsFunc(
-					s.ListObjects("", ""),
-					func(obj manifest.BaseManifest) bool { return obj.Named() == l.Obj.Named() },
-				), "%s", "fixture K/L not initially visible")
-		}
+		assert.FatalIf(t, s.GetObject(k) == nil ||
+			!slices.ContainsFunc(
+				s.ListObjects("", ""),
+				func(obj manifest.BaseManifest) bool { return obj.Named() == l.Obj.Named() },
+			), "%s", "fixture K/L not initially visible")
 		seedRetained(t, s, l.Obj.Named())
-		{
-			assert.FatalIf(t, s.shardFor(k).slots[k].current.Load() != nil, "%s", "fixture K unexpectedly emitted")
-		}
+		assert.FatalIf(t, s.shardFor(k).slots[k].current.Load() != nil, "%s", "fixture K unexpectedly emitted")
 		return s, p, k, l
 	}
 	checkHidden := func(t *testing.T, s *Store, id manifest.NamedResource) {
 		t.Helper()
-		{
-			assert.ErrorIf(t, s.GetObject(id) != nil, "%v object stays visible after withdrawal", id)
-		}
-		{
-			assert.ErrorIf(t, slices.ContainsFunc(
-				s.ListObjects("", ""),
-				func(obj manifest.BaseManifest) bool { return obj.Named() == id },
-			), "%v stays listed after withdrawal", id)
-		}
-		{
-			assert.ErrorIf(t, s.GetArtifact(id, ArtifactContent) != nil, "%v artifact stays live after withdrawal", id)
-		}
+		assert.ErrorIf(t, s.GetObject(id) != nil, "%v object stays visible after withdrawal", id)
+		assert.ErrorIf(t, slices.ContainsFunc(
+			s.ListObjects("", ""),
+			func(obj manifest.BaseManifest) bool { return obj.Named() == id },
+		), "%v stays listed after withdrawal", id)
+		assert.ErrorIf(t, s.GetArtifact(id, ArtifactContent) != nil, "%v artifact stays live after withdrawal", id)
 		{
 			_, ok := s.GetStatus(id)
 			assert.ErrorIf(t, ok, "%v status stays live after withdrawal", id)
@@ -106,15 +94,13 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		if view.owner != nil {
 			owner = view.owner.id
 		}
-		{
-			assert.ErrorIf(
-				t,
-				!sh.cells[id].hidden || !sh.cells[id].retired || child.Obj != nil ||
-					owner != (manifest.NamedResource{}),
-				"%v hidden, retirement and representative disagree",
-				id,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			!sh.cells[id].hidden || !sh.cells[id].retired || child.Obj != nil ||
+				owner != (manifest.NamedResource{}),
+			"%v hidden, retirement and representative disagree",
+			id,
+		)
 		{
 			slot := sh.slots[id]
 			assert.ErrorIf(t, slot != nil && (slot.visible.Load() || !slot.hidden.Load()), "%v slot remains live", id)
@@ -183,39 +169,31 @@ func testRecordEmittedNeverEmittedCoverageWithdrawalSimple(
 			} else {
 				s.AddObject(anchor)
 			}
-			{
-				assert.FatalIf(
-					t,
-					s.GetObject(k) != anchor || s.GetObject(l.Obj.Named()) != l.Obj,
-					"%s",
-					"external anchor did not restore eligible frozen descendants",
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					s.GetArtifact(l.Obj.Named(), ArtifactContent) != nil,
-					"%s",
-					"reanchoring restored a retained artifact",
-				)
-			}
+			assert.FatalIf(
+				t,
+				s.GetObject(k) != anchor || s.GetObject(l.Obj.Named()) != l.Obj,
+				"%s",
+				"external anchor did not restore eligible frozen descendants",
+			)
+			assert.ErrorIf(
+				t,
+				s.GetArtifact(l.Obj.Named(), ArtifactContent) != nil,
+				"%s",
+				"reanchoring restored a retained artifact",
+			)
 			{
 				_, ok := s.GetStatus(l.Obj.Named())
 				assert.ErrorIf(t, ok, "%s", "reanchoring restored retained Ready")
 			}
 			sh := s.shardFor(l.Obj.Named())
-			{
-				assert.ErrorIf(
-					t,
-					sh.cells[l.Obj.Named()].retired || sh.cells[l.Obj.Named()].hidden,
-					"%s",
-					"restored frozen descendant remains retired or hidden",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				sh.cells[l.Obj.Named()].retired || sh.cells[l.Obj.Named()].hidden,
+				"%s",
+				"restored frozen descendant remains retired or hidden",
+			)
 			(*testCaseInput.seedRetained)(t, s, l.Obj.Named())
-			{
-				assert.FatalIf(t, !s.DeleteObject(k), "%s", "independent anchor was not removed")
-			}
+			assert.FatalIf(t, !s.DeleteObject(k), "%s", "independent anchor was not removed")
 			(*testCaseInput.checkHidden)(t, s, k)
 			(*testCaseInput.checkHidden)(t, s, l.Obj.Named())
 		})
@@ -274,31 +252,23 @@ func testRecordEmittedNeverEmittedCoverageWithdrawalCase(
 		}
 	})
 	tasks.BlockTillDone()
-	{
-		assert.FatalIf(t, tasks.Failures() != 0, "%s", "bounded task panicked")
-	}
+	assert.FatalIf(t, tasks.Failures() != 0, "%s", "bounded task panicked")
 	for _, id := range []manifest.NamedResource{k, l.Obj.Named(), late.Obj.Named()} {
 		(*testCaseInput.checkHidden)(t, s, id)
 	}
 	s.AddObject(&manifest.Kustomization{Name: k.Name, Namespace: k.Namespace})
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(late.Obj.Named()) != late.Obj || s.GetObject(l.Obj.Named()) != nil,
-			"%s",
-			"reanchoring must restore actual membership without restoring shadowed coverage",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			!s.shardFor(l.Obj.Named()).cells[l.Obj.Named()].retired,
-			"%s",
-			"shadowed static prediction was not retired",
-		)
-	}
-	{
-		assert.FatalIf(t, !s.DeleteObject(k), "%s", "late publisher anchor was not removed")
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(late.Obj.Named()) != late.Obj || s.GetObject(l.Obj.Named()) != nil,
+		"%s",
+		"reanchoring must restore actual membership without restoring shadowed coverage",
+	)
+	assert.FatalIf(
+		t,
+		!s.shardFor(l.Obj.Named()).cells[l.Obj.Named()].retired,
+		"%s",
+		"shadowed static prediction was not retired",
+	)
+	assert.FatalIf(t, !s.DeleteObject(k), "%s", "late publisher anchor was not removed")
 	(*testCaseInput.checkHidden)(t, s, late.Obj.Named())
 }

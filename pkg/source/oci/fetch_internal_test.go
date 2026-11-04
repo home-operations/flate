@@ -164,7 +164,7 @@ func TestFetcher_InsecureRegistryCanceledMismatch(t *testing.T) {
 	srv.Start()
 	t.Cleanup(srv.Close)
 	endpoint := "https://" + mustURL(t, srv.URL).Host + "/v2/app/manifests/latest"
-	r, err := http.NewRequestWithContext(t.Context(), http.MethodHead, endpoint, nil)
+	r, err := http.NewRequestWithContext(t.Context(), http.MethodHead, endpoint, http.NoBody)
 	assert.NoError(t, err)
 
 	_, mismatch := srv.Client().Do(r)
@@ -206,10 +206,11 @@ func TestFetcher_InsecureRegistryCanceledMismatch(t *testing.T) {
 func TestFetcher_InsecureRegistryAmbient(t *testing.T) {
 	t.Parallel()
 	art := newFakeOCIArtifact(t, map[string]string{"app.yaml": "ambient\n"})
-	srv, _ := newMutableFakeRegistry(t, art)
-	handler := srv.Config.Handler
+	registry := newMutableFakeRegistry(t, art)
+
+	handler := registry.server.Config.Handler
 	var requests atomic.Int32
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	registry.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		if user, pass, ok := r.BasicAuth(); !ok || user != "alice" || pass != "password" {
 			w.Header().Set("WWW-Authenticate", `Basic realm="registry"`)
@@ -218,8 +219,8 @@ func TestFetcher_InsecureRegistryAmbient(t *testing.T) {
 		}
 		handler.ServeHTTP(w, r)
 	})
-	srv.Start()
-	host := mustURL(t, srv.URL).Host
+	registry.server.Start()
+	host := mustURL(t, registry.server.URL).Host
 	config := fmt.Sprintf(
 		`{"auths":{%q:{"auth":%q}}}`,
 		host,
@@ -263,8 +264,9 @@ func TestFetcher_InsecureRegistryAmbient(t *testing.T) {
 func TestFetcher_InsecureRegistryConcurrent(t *testing.T) {
 	t.Parallel()
 	art := newFakeOCIArtifact(t, map[string]string{"app.yaml": "concurrent\n"})
-	srv, _ := newMutableFakeRegistry(t, art)
-	handler := srv.Config.Handler
+	registry := newMutableFakeRegistry(t, art)
+
+	handler := registry.server.Config.Handler
 	arrived := make(chan struct{}, 2)
 	release := make(chan struct{})
 	var unblock sync.Once
@@ -273,12 +275,12 @@ func TestFetcher_InsecureRegistryConcurrent(t *testing.T) {
 	initial.Store(true)
 	fail.Store(true)
 	var requests, tlsConnections atomic.Int32
-	srv.Listener = registryListener{Listener: srv.Listener, firstRead: func(p []byte) {
+	registry.server.Listener = registryListener{Listener: registry.server.Listener, firstRead: func(p []byte) {
 		if p[0] == 0x16 {
 			tlsConnections.Add(1)
 		}
 	}}
-	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	registry.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		if r.Method == http.MethodHead && initial.Load() {
 			arrived <- struct{}{}
@@ -290,7 +292,7 @@ func TestFetcher_InsecureRegistryConcurrent(t *testing.T) {
 		}
 		handler.ServeHTTP(w, r)
 	})
-	srv.Start()
+	registry.server.Start()
 	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
 
 	done := make(chan insecureRegistryResult, 2)
@@ -299,7 +301,7 @@ func TestFetcher_InsecureRegistryConcurrent(t *testing.T) {
 		repo := &manifest.OCIRepository{
 			Name:      name,
 			Namespace: "ns",
-			URL:       "oci://" + mustURL(t, srv.URL).Host + "/" + name,
+			URL:       "oci://" + mustURL(t, registry.server.URL).Host + "/" + name,
 			Insecure:  true,
 			Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 		}

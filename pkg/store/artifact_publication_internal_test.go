@@ -22,9 +22,7 @@ func TestStore_SetArtifact(t *testing.T) {
 	s.SetArtifact(id, art) // idempotent
 	assert.Equal(t, count, 1)
 	got := s.GetArtifact(id, ArtifactContent)
-	{
-		assert.ErrorIf(t, got == nil, "GetArtifact: nil")
-	}
+	assert.ErrorIf(t, got == nil, "GetArtifact: nil")
 }
 
 func TestStore_RecordEmitted_DistinctPointerDedup(t *testing.T) {

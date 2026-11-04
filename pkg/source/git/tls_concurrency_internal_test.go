@@ -40,10 +40,12 @@ func testFetcherConcurrentCustomTLSCase(t *testing.T, concurrency *int,
 	repos := make([]*manifest.GitRepository, (*concurrency)-1)
 	proxies := make([]*atomic.Int32, len(repos))
 	for i := range repos {
-		cert, ca := tlsGitCertificate(t)
-		crt, key := testutil.SelfSignedClientCert(t)
+		certificate2 := tlsGitCertificate(t)
+
+		certificate3 := testutil.SelfSignedClientCert(t)
+
 		clients := x509.NewCertPool()
-		clients.AppendCertsFromPEM([]byte(crt))
+		clients.AppendCertsFromPEM([]byte(certificate3.Cert))
 		handler := gitHTTPHandler(t, root)
 		srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if user, _, _ := r.BasicAuth(); user == "alice" && r.Method == http.MethodGet {
@@ -57,7 +59,7 @@ func testFetcherConcurrentCustomTLSCase(t *testing.T, concurrency *int,
 			handler.ServeHTTP(w, r)
 		}))
 		srv.TLS = &tls.Config{
-			Certificates: []tls.Certificate{cert},
+			Certificates: []tls.Certificate{certificate2.certificate},
 			ClientAuth:   tls.RequireAndVerifyClientCert,
 			ClientCAs:    clients,
 		}
@@ -69,9 +71,9 @@ func testFetcherConcurrentCustomTLSCase(t *testing.T, concurrency *int,
 			StringData: map[string]any{
 				"username": "alice",
 				"password": "p",
-				"ca.crt":   ca,
-				"tls.crt":  crt,
-				"tls.key":  key,
+				"ca.crt":   certificate2.pem,
+				"tls.crt":  certificate3.Cert,
+				"tls.key":  certificate3.Key,
 			},
 		}
 		repos[i] = gitRepoWithSecret(name, srv.URL, name)
@@ -86,7 +88,8 @@ func testFetcherConcurrentCustomTLSCase(t *testing.T, concurrency *int,
 	wrongCA["ca.crt"] = testutil.SelfSignedCA(t)
 	secrets["wrong-ca"] = &manifest.Secret{StringData: wrongCA}
 	wrongClient := maps.Clone(secrets[repos[0].SecretRef.Name].StringData)
-	wrongClient["tls.crt"], wrongClient["tls.key"] = testutil.SelfSignedClientCert(t)
+	certificate4 := testutil.SelfSignedClientCert(t)
+	wrongClient["tls.crt"], wrongClient["tls.key"] = certificate4.Cert, certificate4.Key
 	secrets["wrong-client"] = &manifest.Secret{StringData: wrongClient}
 	t.Cleanup(func() { unblock(); workers.Wait() })
 	done := make(chan error, len(repos))

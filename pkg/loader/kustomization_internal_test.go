@@ -21,7 +21,7 @@ import (
 func TestResolve_File(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
-	base, absolute := filepath.Join(tmp, "cluster/apps/foo"), filepath.Join(tmp, "etc/values.yaml")
+	base, absolute := filepath.Join(tmp, "cluster", "apps", "foo"), filepath.Join(tmp, "etc", "values.yaml")
 	root := filepath.VolumeName(tmp) + string(filepath.Separator)
 	cases := []struct {
 		name    string
@@ -30,7 +30,7 @@ func TestResolve_File(t *testing.T) {
 		wantAbs string
 		wantOK  bool
 	}{
-		{"relative under base", base, "data/values.yaml", filepath.Join(base, "data/values.yaml"), true},
+		{"relative under base", base, "data/values.yaml", filepath.Join(base, "data", "values.yaml"), true},
 		{"traversal parent", base, "../escape.yaml", "", false},
 		{"traversal deep", base, "../../etc/passwd", "", false},
 		{"traversal mixed", base, "sub/../../escape", "", false},
@@ -46,7 +46,7 @@ func TestResolve_File(t *testing.T) {
 		{"empty rejected", base, "", "", false},
 		{"dot", base, ".", base, true},
 		{"dot prefix", base, "..foo", filepath.Join(base, "..foo"), true},
-		{"url lexical", base, "https://example.com/x", filepath.Join(base, "https:/example.com/x"), true},
+		{"url lexical", base, "https://example.com/x", filepath.Join(base, "https:", "example.com", "x"), true},
 		{"relative base", "apps", "child/file", filepath.FromSlash("apps/child/file"), true},
 		{"dot base child", ".", "child", "", false},
 		{"empty base child", "", "child", "", false},
@@ -60,28 +60,24 @@ func TestResolve_File(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			abs, ok := kustpath.Resolve(tc.base, tc.rel, kustpath.File)
-			{
-				assert.FatalIf(
-					t,
-					ok != tc.wantOK,
-					"kustpath.Resolve(%q, %q) ok = %v, want %v",
-					tc.base,
-					tc.rel,
-					ok,
-					tc.wantOK,
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					ok && abs != tc.wantAbs,
-					"kustpath.Resolve(%q, %q) = %q, want %q",
-					tc.base,
-					tc.rel,
-					abs,
-					tc.wantAbs,
-				)
-			}
+			assert.FatalIf(
+				t,
+				ok != tc.wantOK,
+				"kustpath.Resolve(%q, %q) ok = %v, want %v",
+				tc.base,
+				tc.rel,
+				ok,
+				tc.wantOK,
+			)
+			assert.ErrorIf(
+				t,
+				ok && abs != tc.wantAbs,
+				"kustpath.Resolve(%q, %q) = %q, want %q",
+				tc.base,
+				tc.rel,
+				abs,
+				tc.wantAbs,
+			)
 		})
 	}
 }
@@ -89,7 +85,7 @@ func TestResolve_File(t *testing.T) {
 func TestResolve_Directory(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
-	base := filepath.Join(tmp, "cluster/apps/foo")
+	base := filepath.Join(tmp, "cluster", "apps", "foo")
 	cases := []struct {
 		name    string
 		base    string
@@ -97,10 +93,10 @@ func TestResolve_Directory(t *testing.T) {
 		wantAbs string
 		wantOK  bool
 	}{
-		{"relative under base", base, "sub/dir", filepath.Join(base, "sub/dir"), true},
-		{"traversal parent resolves", base, "../bar", filepath.Join(base, "../bar"), true},
-		{"traversal deep resolves", base, "../../../deploy/x", filepath.Join(tmp, "deploy/x"), true},
-		{"absolute rejected", base, filepath.Join(tmp, "etc/x"), "", false},
+		{"relative under base", base, "sub/dir", filepath.Join(base, "sub", "dir"), true},
+		{"traversal parent resolves", base, "../bar", filepath.Join(base, "..", "bar"), true},
+		{"traversal deep resolves", base, "../../../deploy/x", filepath.Join(tmp, "deploy", "x"), true},
+		{"absolute rejected", base, filepath.Join(tmp, "etc", "x"), "", false},
 		{"url rejected", base, "https://example.com/x", "", false},
 		{"empty rejected", base, "", "", false},
 		{"dot", base, ".", base, true},
@@ -110,28 +106,24 @@ func TestResolve_Directory(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			abs, ok := kustpath.Resolve(tc.base, tc.rel, kustpath.Directory)
-			{
-				assert.FatalIf(
-					t,
-					ok != tc.wantOK,
-					"kustpath.Resolve(%q, %q) ok = %v, want %v",
-					tc.base,
-					tc.rel,
-					ok,
-					tc.wantOK,
-				)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					ok && abs != tc.wantAbs,
-					"kustpath.Resolve(%q, %q) = %q, want %q",
-					tc.base,
-					tc.rel,
-					abs,
-					tc.wantAbs,
-				)
-			}
+			assert.FatalIf(
+				t,
+				ok != tc.wantOK,
+				"kustpath.Resolve(%q, %q) ok = %v, want %v",
+				tc.base,
+				tc.rel,
+				ok,
+				tc.wantOK,
+			)
+			assert.ErrorIf(
+				t,
+				ok && abs != tc.wantAbs,
+				"kustpath.Resolve(%q, %q) = %q, want %q",
+				tc.base,
+				tc.rel,
+				abs,
+				tc.wantAbs,
+			)
 		})
 	}
 }
@@ -211,23 +203,22 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	testutil.WriteFile(t, committed, "Kustomization", "namespace: host\n")
 	testutil.WriteFile(t, committed, "host.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: host}\n")
 	{
-		_, name := new(r).input(filepath.VolumeName(working) + string(filepath.Separator))
+		name := new(r).input(filepath.VolumeName(working) + string(filepath.Separator)).name
 		assert.FatalIf(t, name != ".", "filesystem root name = %q, want dot", name)
 	}
 	r.views = map[string]fs.FS{working: os.DirFS(working), committed: fstest.MapFS{
 		"Kustomization": {Data: []byte("namespace: committed\n")},
 	}}
-	first, file := r.read(working)
-	other, _ := r.read(committed)
-	{
-		assert.FatalIf(
-			t,
-			first == nil || other == nil || first.Namespace != "working" || other.Namespace != "committed",
-			"source views were mixed: working=%v committed=%v",
-			first,
-			other,
-		)
-	}
+	builder2 := r.read(working)
+	first, file := builder2.body, builder2.file
+	other := r.read(committed).body
+	assert.FatalIf(
+		t,
+		first == nil || other == nil || first.Namespace != "working" || other.Namespace != "committed",
+		"source views were mixed: working=%v committed=%v",
+		first,
+		other,
+	)
 	host := filepath.Join(committed, "host.yaml")
 	objects, err := r.parseFile(t.Context(), host, manifest.ParseDocOptions{DefaultNamespace: ""})
 	assert.NoError(t, err)
@@ -240,17 +231,18 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	}
 	testutil.WriteFile(t, working, "Kustomization", "namespace: changed\n")
 	{
-		got, gotFile := r.read(working)
+		builder4 := r.read(working)
+		got, gotFile := builder4.body, builder4.file
 		assert.FatalIf(t, got != first || gotFile != file, "%s", "positive result was re-read")
 	}
 	missing := t.TempDir()
 	{
-		got, _ := r.read(missing)
+		got := r.read(missing).body
 		assert.FatalIf(t, got != nil, "%s", "missing kustomization was discovered")
 	}
 	testutil.WriteFile(t, missing, "kustomization.yaml", "namespace: late\n")
 	{
-		got, _ := r.read(missing)
+		got := r.read(missing).body
 		assert.FatalIf(t, got != nil, "%s", "negative result was re-read")
 	}
 	t.Run("retained objects through skips and errors", func(t *testing.T) {
@@ -328,7 +320,7 @@ func testFinalizeIndexResourceMembershipCase(
 			testutil.KustomizationID("apps", "stray"),
 			l.Index.Records[testutil.KustomizationID("apps", "stray")],
 		).Obj,
-		filepath.Join(root, "app/ks.yaml"),
+		filepath.Join(root, "app", "ks.yaml"),
 	); got != testCaseInput.want {
 		t.Fatalf("admission=%t want %t", got, testCaseInput.want)
 	}
@@ -361,9 +353,7 @@ func testFinalizeIndexResourceMembershipCase2(
 	)
 	l := New(store.New())
 	_, err := loadForTest(t.Context(), t, l, root)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
@@ -437,15 +427,13 @@ metadata: {name: pending}
 		ordinals = append(ordinals, ordinal)
 	})
 	assert.Diff(t, ordinals, []int{0, 7, 9})
-	{
-		assert.FatalIf(
-			t,
-			err != nil || len(failures) != 2 || len(objects) != 3 || !errors.Is(failures[0].Err, manifest.ErrInput),
-			"objects=%v err=%v",
-			objects,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || len(failures) != 2 || len(objects) != 3 || !errors.Is(failures[0].Err, manifest.ErrInput),
+		"objects=%v err=%v",
+		objects,
+		err,
+	)
 	k := objects[0].(*manifest.Kustomization)
 	c := objects[1].(*manifest.ConfigMap)
 	before, err := k.RenderDocument()
@@ -462,7 +450,8 @@ metadata: {name: pending}
 	after, err := k.RenderDocument()
 	assert.NoError(t, err)
 	assert.Diff(t, after, before)
-	value, found, err := c.Value("VALUE")
+	valueResult, err := c.Value("VALUE")
+	value, found := valueResult.Value, valueResult.Found
 	assert.NoError(t, err)
 	assert.Equal(t, found, true)
 	assert.Equal(t, value, "keep")
@@ -491,19 +480,15 @@ func testDocumentReaderSourceViewsAndReuseLoadMissingMountedChild(
 			err,
 		)
 	}
+	assert.FatalIf(t, len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 ||
+		len(l.Index.Records) != 0 ||
+		len(retainedErrorsForTest(l)) != 0, "%s", "physical decoy supplied an object or indexed evidence")
+	assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input ||
+		new(l.documents).mountedRoot(
+			child,
+		) != (*testCaseInput), "%s", "missing child replaced the authoritative mounted view")
 	{
-		assert.FatalIf(t, len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 ||
-			len(l.Index.Records) != 0 ||
-			len(retainedErrorsForTest(l)) != 0, "%s", "physical decoy supplied an object or indexed evidence")
-	}
-	{
-		assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input ||
-			new(l.documents).mountedRoot(
-				child,
-			) != (*testCaseInput), "%s", "missing child replaced the authoritative mounted view")
-	}
-	{
-		k, _ := l.documents.read((*testCaseInput))
+		k := l.documents.read((*testCaseInput)).body
 		assert.FatalIf(
 			t,
 			k == nil || k.Namespace != "committed",
@@ -594,18 +579,16 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 	assert.Diff(t, reader.mountSources(st), mounted)
 	assert.Equal(t, len(reader.views), len(mounted))
 	for _, path := range mounted {
-		body, _ := reader.read(path)
+		body := reader.read(path).body
+		assert.FatalIf(
+			t,
+			body == nil || body.Namespace != filepath.Base(path),
+			"mounted content = %v for %s",
+			body,
+			path,
+		)
 		{
-			assert.FatalIf(
-				t,
-				body == nil || body.Namespace != filepath.Base(path),
-				"mounted content = %v for %s",
-				body,
-				path,
-			)
-		}
-		{
-			again, _ := reader.read(path)
+			again := reader.read(path).body
 			assert.FatalIf(t, again != body, "%s", "unchanged mounted document was re-parsed")
 		}
 	}
@@ -613,7 +596,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 	ociPath, bucketPath := filepath.Join(root, "oci"), filepath.Join(root, "bucket")
 	late := filepath.Join(ociPath, "late")
 	{
-		body, _ := reader.read(late)
+		body := reader.read(late).body
 		assert.FatalIf(t, body != nil, "%s", "unexpected document before replacement")
 	}
 	st.SetArtifact(oci.Named(), &store.SourceArtifact{LocalPath: ociPath, FS: fstest.MapFS{
@@ -623,7 +606,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 	st.DeleteObject(bucket.Named())
 	assert.Diff(t, reader.mountSources(st), []string{bucketPath, ociPath})
 	{
-		body, _ := reader.read(ociPath)
+		body := reader.read(ociPath).body
 		assert.FatalIf(
 			t,
 			body == nil || body.Namespace != "replaced",
@@ -632,11 +615,11 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 		)
 	}
 	{
-		body, _ := reader.read(late)
+		body := reader.read(late).body
 		assert.FatalIf(t, body == nil || body.Namespace != "late", "replacement retained negative cache: %v", body)
 	}
 	{
-		body, _ := reader.read(bucketPath)
+		body := reader.read(bucketPath).body
 		assert.FatalIf(
 			t,
 			body != nil || new(reader).mountedRoot(bucketPath) != "",
@@ -652,27 +635,19 @@ func testDocumentReaderSourceViewsAndReuseNativeReaderOwnership(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "namespace: native\n")
 	location, err := gitrepo.Locate(t.Context(), root, root)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	artifact, err := gittree.AdmitDirectory(t.Context(), location)
-	{
-		assert.NoError(t, err)
-	}
+	assert.NoError(t, err)
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, artifact)
 	r := documentReader{}
 	r.mountSources(st)
-	{
-		assert.FatalIf(t, r.views[root] != artifact.FS, "%s", "temporary reader constructed a private operation view")
-	}
+	assert.FatalIf(t, r.views[root] != artifact.FS, "%s", "temporary reader constructed a private operation view")
 	l := New(st)
 	l.mountSources()
-	{
-		assert.FatalIf(t, l.documents.views[root] == artifact.FS ||
-			st.GetArtifact(
-				manifest.BootstrapSourceID,
-				store.ArtifactContent,
-			) != artifact, "%s", "loader did not own its private view independently of the artifact")
-	}
+	assert.FatalIf(t, l.documents.views[root] == artifact.FS ||
+		st.GetArtifact(
+			manifest.BootstrapSourceID,
+			store.ArtifactContent,
+		) != artifact, "%s", "loader did not own its private view independently of the artifact")
 }

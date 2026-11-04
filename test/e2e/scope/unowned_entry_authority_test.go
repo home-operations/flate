@@ -47,8 +47,8 @@ func e2EUnownedMalformedEntryAuthorityName(t *testing.T, unreadable *bool) {
 	)
 	testutil.WriteFile(t, dir, "pkgdir/bad.yaml", "broken: [\n")
 	if *unreadable {
-		assert.NoError(t, os.Remove(filepath.Join(dir, "pkgdir/bad.yaml")))
-		assert.NoError(t, os.Symlink("missing.yaml", filepath.Join(dir, "pkgdir/bad.yaml")))
+		assert.NoError(t, os.Remove(filepath.Join(dir, "pkgdir", "bad.yaml")))
+		assert.NoError(t, os.Symlink("missing.yaml", filepath.Join(dir, "pkgdir", "bad.yaml")))
 		testutil.WriteFile(
 			t,
 			dir,
@@ -75,7 +75,8 @@ func e2EUnownedMalformedEntryAuthorityName(t *testing.T, unreadable *bool) {
 				"--cache-dir",
 				t.TempDir(),
 			}
-			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult1 := harness.RunCLIBuffers(args...)
+			stdout, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 			switch {
 			case tc.failed:
 
@@ -95,7 +96,8 @@ func e2EUnownedMalformedEntryAuthorityName(t *testing.T, unreadable *bool) {
 
 				t.Fatalf("incidental file failed independent authority: exit=%d\n%s\n%s", code, stdout, stderr)
 			}
-			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+			runCLIBuffersResult2 := harness.RunCLIBuffers(args...)
+			nextOut, nextErr, nextCode := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 			assert.Equal(t, nextCode, code)
 			assert.Equal(t, nextOut, stdout)
 			assert.Equal(t, nextErr, stderr)

@@ -88,14 +88,10 @@ func TestRenderTrees_EntrySubstitutionSelectsChangedChild(t *testing.T) {
 	for side, run := range runs {
 		want := []string{"before", "after"}[side]
 		obj, ok := run.store.Get[*manifest.Kustomization](child)
-		{
-			assert.FatalIf(t, !ok, "side %d: child declaration missing", side)
-		}
+		assert.FatalIf(t, !ok, "side %d: child declaration missing", side)
 		assert.Equal(t, obj.Path, "./workloads/"+want)
 		docs := outputByParent(run.Result.Manifests)[child]
-		{
-			assert.FatalIf(t, len(docs) != 1, "side %d: shaped child not rendered: %v", side, docs)
-		}
+		assert.FatalIf(t, len(docs) != 1, "side %d: shaped child not rendered: %v", side, docs)
 		assert.Equal(t, docs[0]["data"].(map[string]any)["value"], any(want))
 	}
 }
@@ -289,9 +285,7 @@ func testRenderTreesAdmittedViewsCase(t *testing.T, testCaseInput *string,
 				Name:      "cluster",
 			}
 			art, ok := rendered.Store().GetArtifact(selected, store.ArtifactContent).(*store.SourceArtifact)
-			{
-				assert.FatalIf(t, !ok, "side %d has no selected pinned source", side)
-			}
+			assert.FatalIf(t, !ok, "side %d has no selected pinned source", side)
 			body, err := fs.ReadFile(art.FS, "apps/app-a/cm.yaml")
 			assert.NoError(t, err)
 			assert.Equal(
@@ -311,35 +305,31 @@ func testRenderTreesAdmittedViewsCase(t *testing.T, testCaseInput *string,
 				rendered.Result.Manifests,
 			)
 		}
-		name, ns := manifest.DocMetadata(docs[0])
-		{
-			assert.FatalIf(t, name != "cfg-a", "side %d producer emitted %q, want cfg-a", side, name)
-		}
+		metadata := manifest.DocMetadata(docs[0])
+		name, ns := metadata.Name, metadata.Namespace
+		assert.FatalIf(t, name != "cfg-a", "side %d producer emitted %q, want cfg-a", side, name)
 		assert.Equal(t, ns, "")
-		obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+		parsed2, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+		obj := parsed2.Object
 		assert.NoError(t, err)
 		owners := testutil.Owners(rendered.Store().Productions(obj.Named(), nil))
+		assert.FatalIf(
+			t,
+			!slices.Contains(owners, changed),
+			"side %d owners=%v want %s",
+			side,
+			owners,
+			changed,
+		)
 		{
+			value := docs[0]["data"].(map[string]any)["k"]
 			assert.FatalIf(
 				t,
-				!slices.Contains(owners, changed),
-				"side %d owners=%v want %s",
+				value != []string{"A", "B"}[side],
+				"side %d read %v, want selected source bytes",
 				side,
-				owners,
-				changed,
+				value,
 			)
-		}
-		{
-			{
-				value := docs[0]["data"].(map[string]any)["k"]
-				assert.FatalIf(
-					t,
-					value != []string{"A", "B"}[side],
-					"side %d read %v, want selected source bytes",
-					side,
-					value,
-				)
-			}
 		}
 	}
 }
@@ -366,7 +356,7 @@ func testRenderTreesAdmittedViewsCaseCase(t *testing.T, testCaseInput testRender
 		directCfg := treeConfig{
 			Cache:       cache,
 			Concurrency: 2,
-			Path:        filepath.Join(roots[1], "clusters/a"),
+			Path:        filepath.Join(roots[1], "clusters", "a"),
 			Input:       inputs[1],
 			BaseInput:   inputs[0],
 		}
@@ -388,14 +378,14 @@ func testRenderTreesAdmittedViewsCaseCase(t *testing.T, testCaseInput testRender
 			t.Context(),
 			[]Tree{
 				{
-					Path:            filepath.Join(roots[0], "clusters/a"),
+					Path:            filepath.Join(roots[0], "clusters", "a"),
 					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
 					ExternalChanges: pairedCfg.ExternalChanges,
 					Input:           pairedCfg.BaseInput,
 					BaseInput:       pairedCfg.Input,
 				},
 				{
-					Path:            filepath.Join(roots[1], "clusters/a"),
+					Path:            filepath.Join(roots[1], "clusters", "a"),
 					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
 					Input:           pairedCfg.Input,
 					BaseInput:       pairedCfg.BaseInput,

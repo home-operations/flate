@@ -8,13 +8,11 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func renderDiff(t *testing.T, left []Doc, right []Doc, optsValue *Options) string {
+func renderDiff(t *testing.T, left, right []Doc, optsValue *Options) string {
 	t.Helper()
 	opts := *optsValue
 	out, _, err := RenderDocs(left, right, opts)
-	{
-		assert.FatalIf(t, err != nil, "RenderDocs: %v", err)
-	}
+	assert.FatalIf(t, err != nil, "RenderDocs: %v", err)
 	return string(out)
 }
 
@@ -182,33 +180,23 @@ func TestNormalize_RedactsConfigMapBinaryData(t *testing.T) {
 	}
 
 	s := renderDiff(t, mk("QUFBQQ==", "same"), mk("QkJCQg==", "same"), new(Options{Format: FormatDiff}))
-	{
-		assert.FatalIf(t, s == "", "%s", "binaryData-only change should surface as a redacted diff")
-	}
-	{
-		assert.ErrorIf(t, !strings.Contains(s, "redacted binary data"), "expected redaction marker; got:\n%s", s)
-	}
-	{
-		assert.ErrorIf(
-			t,
-			strings.Contains(s, "QUFBQQ==") || strings.Contains(s, "QkJCQg=="),
-			"raw binaryData leaked into diff body:\n%s",
-			s,
-		)
-	}
+	assert.FatalIf(t, s == "", "%s", "binaryData-only change should surface as a redacted diff")
+	assert.ErrorIf(t, !strings.Contains(s, "redacted binary data"), "expected redaction marker; got:\n%s", s)
+	assert.ErrorIf(
+		t,
+		strings.Contains(s, "QUFBQQ==") || strings.Contains(s, "QkJCQg=="),
+		"raw binaryData leaked into diff body:\n%s",
+		s,
+	)
 
 	s = renderDiff(t, mk("QUFBQQ==", "old"), mk("QkJCQg==", "new"), new(Options{Format: FormatDiff}))
-	{
-		assert.ErrorIf(
-			t,
-			strings.Contains(s, "QUFBQQ==") || strings.Contains(s, "QkJCQg=="),
-			"raw binaryData leaked into diff body:\n%s",
-			s,
-		)
-	}
-	{
-		assert.ErrorIf(t, !strings.Contains(s, "visible"), "expected visible data change to remain; got:\n%s", s)
-	}
+	assert.ErrorIf(
+		t,
+		strings.Contains(s, "QUFBQQ==") || strings.Contains(s, "QkJCQg=="),
+		"raw binaryData leaked into diff body:\n%s",
+		s,
+	)
+	assert.ErrorIf(t, !strings.Contains(s, "visible"), "expected visible data change to remain; got:\n%s", s)
 }
 
 func testRenderDocsNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
@@ -234,20 +222,16 @@ func testRenderDocsNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
 		assert.Equal(t, len(warnings), 0)
 	case "json":
 		got := jsonChanges(t, []Doc{left}, []Doc{right}, new(opts))
-		{
-			assert.ErrorIf(
-				t,
-				len(got) != 0,
-				"normalized identities should produce zero JSON changes, got %d: %+v",
-				len(got),
-				got,
-			)
-		}
+		assert.ErrorIf(
+			t,
+			len(got) != 0,
+			"normalized identities should produce zero JSON changes, got %d: %+v",
+			len(got),
+			got,
+		)
 	default:
-		{
-			out := renderDiff(t, []Doc{left}, []Doc{right}, new(opts))
-			assert.ErrorIf(t, out != "", "normalized identities should pair without a diff, got:\n%s", out)
-		}
+		out := renderDiff(t, []Doc{left}, []Doc{right}, new(opts))
+		assert.ErrorIf(t, out != "", "normalized identities should pair without a diff, got:\n%s", out)
 	}
 	assert.Diff(t, calls, map[string]int{"old": 1, "new": 1})
 	assert.Diff(t, []Doc{left, right}, before)

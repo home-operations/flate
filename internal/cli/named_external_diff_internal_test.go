@@ -12,7 +12,8 @@ import (
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_DiffKS_NamedExternalSourceDisclosure(t *testing.T) {
-	current, orig := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/home-ops.git")
+	fixture := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/home-ops.git")
+	current, orig := fixture.current, fixture.orig
 	for _, dir := range []string{current, orig} {
 		testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources: [cluster.yaml, second.yaml, external.yaml]\n")
 		for _, rel := range []string{"flux/cluster.yaml", "flux/second.yaml"} {
@@ -74,7 +75,8 @@ func runDiffKSNamedExternalSourceDisclosureName(t *testing.T, tc *struct {
 	args := append([]string{"diff", "ks"}, tc.args...)
 	args = append(args, "--path", (*current), "--path-orig", (*orig), "--cache-dir", t.TempDir(),
 		"--concurrency", "2", "-o", "diff")
-	stdout, stderr, code := runCLI(t, args...)
+	cli := runCLI(t, args...)
+	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
 	assert.FatalIf(t, code != tc.code, "diff exited %d, want %d: %s", code, tc.code, stderr)
 	origWarning := strings.Index(stderr, "orig snapshot:")
 	currentWarning := strings.Index(stderr, "current snapshot:")

@@ -35,15 +35,16 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	first.Init(s, consumer.Named(), nil)
 	defer first.Close()
 	input := NewStoreProvider(&first, true).Lookup(supplied.Named())
-	{
-		assert.FatalIf(
-			t,
-			input.Data == nil || input.Private || len(input.Materializers) != 0 || !s.ReportHidden(supplied.Named()),
-			"supplied-only input = %+v",
-			input,
-		)
-	}
-	value, _, err := input.Data.Value("VALUE")
+
+	assert.FatalIf(
+		t,
+		input.Data == nil || input.Private || len(input.Materializers) != 0 || !s.ReportHidden(supplied.Named()),
+		"supplied-only input = %+v",
+		input,
+	)
+
+	valueResult, err := input.Data.Value("VALUE")
+	value := valueResult.Value
 	assert.NoError(t, err)
 	assert.Equal(t, value, "supplied")
 	repository := &manifest.Secret{
@@ -57,17 +58,13 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 		close(published)
 	}()
 	<-published
-	{
-		assert.FatalIf(t, first.Valid(), "%s", "repository arrival did not invalidate supplied-only capture")
-	}
+	assert.FatalIf(t, first.Valid(), "%s", "repository arrival did not invalidate supplied-only capture")
 	var second store.ReadSet
 	second.Init(s, consumer.Named(), nil)
 	second.GetObject(consumer.Named())
 	defer second.Close()
 	resolved := NewStoreProvider(&second, true).Data(supplied.Named())
-	{
-		assert.FatalIf(t, resolved != repository, "%s", "accepted repository data did not supersede supply")
-	}
+	assert.FatalIf(t, resolved != repository, "%s", "accepted repository data did not supersede supply")
 	second.Accept()
 	assert.Diff(
 		t,
@@ -80,24 +77,22 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	)
 	assert.Equal(t, len(s.Warnings()), 0)
 	s.RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(t, second.Valid(), "%s", "withdrawal did not invalidate repository capture")
-	}
+	assert.FatalIf(t, second.Valid(), "%s", "withdrawal did not invalidate repository capture")
 	var third store.ReadSet
 	third.Init(s, consumer.Named(), nil)
 	defer third.Close()
 	restored := NewStoreProvider(&third, true).Data(supplied.Named())
-	value, _, err = restored.Value("VALUE")
+	valueResult2, valueResultErr := restored.Value("VALUE")
+	value, err = valueResult2.Value, valueResultErr
 	assert.NoError(t, err)
 	assert.Equal(t, value, "supplied")
-	{
-		assert.FatalIf(
-			t,
-			!s.ReportHidden(supplied.Named()) || len(s.Warnings()) != 0 || len(s.AdvisoryEvidence().Overrides) != 0,
-			"%s",
-			"withdrawal retained canonical data or stale precedence",
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		!s.ReportHidden(supplied.Named()) || len(s.Warnings()) != 0 || len(s.AdvisoryEvidence().Overrides) != 0,
+		"%s",
+		"withdrawal retained canonical data or stale precedence",
+	)
 }
 
 func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
@@ -144,8 +139,6 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 	}
 	omitted, err := ExpandValueReferences(hr, provider, nil)
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, len(omitted) != 0, "usable supply omitted: %v", omitted)
-	}
+	assert.FatalIf(t, len(omitted) != 0, "usable supply omitted: %v", omitted)
 	assert.Diff(t, hr.Values, map[string]any{"greeting": "inline", "image": map[string]any{"tag": ""}})
 }

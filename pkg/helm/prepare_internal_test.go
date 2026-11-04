@@ -57,9 +57,7 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 					},
 				}
 			}, nil, nil)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			assert.Equal(t, got.Chart.Source.Namespace, tc.want)
 			assert.Equal(t, got.Chart.Source.Name, "source")
 			assert.Equal(t, hr.Namespace, "authored")
@@ -75,9 +73,7 @@ func TestPrepare_ChartReferenceNamespace(t *testing.T) {
 			assert.Equal(t, hr.Values["key"], any("original"))
 			hr.ChartRef.Kind, hr.Chart.Source.Kind = manifest.KindOCIRepository, manifest.KindOCIRepository
 			got, _, err = Prepare(hr.WithNamespace("effective").(*manifest.HelmRelease), nil, nil, nil)
-			{
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, err)
 			assert.Equal(t, got.Chart.Source.Namespace, want)
 		})
 	}

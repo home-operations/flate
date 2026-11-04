@@ -233,7 +233,8 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 		if effective == nil {
 			continue
 		}
-		documentScope, filterOwnership := emissionOwnership(obj, parentAttributed)
+		ownership := emissionOwnership(obj, parentAttributed)
+		documentScope, filterOwnership := ownership.document, ownership.filter
 		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
 		o.selectCollectionChildren(id, parentAttributed, attempt.Children, selected)
 		for _, occurrence := range attempt.Manifests {
@@ -296,7 +297,7 @@ func (o *Orchestrator) selectCollectionChildren(
 
 func (o *Orchestrator) collectionDocumentSelected(id, target manifest.NamedResource, documentScope bool) bool {
 	if o.filter != nil && !documentScope {
-		_, ownerSelected, _, _ := o.filter.Membership(id)
+		ownerSelected := o.filter.Membership(id).Selected
 		if !ownerSelected && !o.filter.ShouldReconcile(target) {
 			return false
 		}
@@ -326,7 +327,12 @@ func (o *Orchestrator) collectionParent(
 	return parent, true
 }
 
-func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) (bool, bool) {
+type emissionScope struct {
+	document bool
+	filter   bool
+}
+
+func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) emissionScope {
 	documentScope := false
 	filterOwnership := parentAttributed
 	if producer, ok := obj.(interface {
@@ -335,7 +341,7 @@ func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) (bool, 
 		documentScope = producer.EmissionPolicy().DocumentScope
 		filterOwnership = filterOwnership || documentScope
 	}
-	return documentScope, filterOwnership
+	return emissionScope{document: documentScope, filter: filterOwnership}
 }
 
 func (o *Orchestrator) stop() {

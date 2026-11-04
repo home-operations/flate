@@ -44,15 +44,13 @@ func TestRecordEmitted_StalePayloadRejected(t *testing.T) {
 		&next,
 		map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "stale"}},
 	)
-	{
-		assert.FatalIf(
-			t,
-			s.GetObject(child.Obj.Named()) != nil || s.GetArtifact(child.Obj.Named(), ArtifactContent) != nil ||
-				s.HasInventory(producer.Named()),
-			"%s",
-			"invalid captured inputs published stale declaration or bytes",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.GetObject(child.Obj.Named()) != nil || s.GetArtifact(child.Obj.Named(), ArtifactContent) != nil ||
+			s.HasInventory(producer.Named()),
+		"%s",
+		"invalid captured inputs published stale declaration or bytes",
+	)
 }
 
 func TestRecordEmitted_BorrowedPayloadOwners(t *testing.T) {
@@ -116,45 +114,35 @@ func testRecordEmittedBorrowedPayloadOwnersCase(
 	publish(&second, "b")
 	publish(&third, "c")
 	accepted := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
-	{
-		assert.FatalIf(t, len(accepted.Children) != 3 || !accepted.Retains(&first) || !accepted.Retains(&second) ||
-			!accepted.Retains(&third), "%s", "partial publication lost a borrowed payload owner")
-	}
-	{
+	assert.FatalIf(t, len(accepted.Children) != 3 || !accepted.Retains(&first) || !accepted.Retains(&second) ||
+		!accepted.Retains(&third), "%s", "partial publication lost a borrowed payload owner")
+	assert.FatalIf(
+		t,
+		first.retired.Load() || second.retired.Load(),
+		"%s",
+		"partial publication retired a descriptor still borrowed by the inventory",
+	)
+	for _, head := range registrations {
 		assert.FatalIf(
 			t,
-			first.retired.Load() || second.retired.Load(),
+			head.first.Load() == nil,
 			"%s",
-			"partial publication retired a descriptor still borrowed by the inventory",
+			"partial publication released a borrowed payload owner's registration",
 		)
-	}
-	for _, head := range registrations {
-		{
-			assert.FatalIf(
-				t,
-				head.first.Load() == nil,
-				"%s",
-				"partial publication released a borrowed payload owner's registration",
-			)
-		}
 	}
 	if (*testCaseInput) == "close" {
 		third.Close()
 		for _, reads := range []*ReadSet{&output, &first, &second, &third} {
-			{
-				assert.FatalIf(t, !reads.retired.Load(), "%s", "closing retained a payload owner's registrations")
-			}
+			assert.FatalIf(t, !reads.retired.Load(), "%s", "closing retained a payload owner's registrations")
 		}
 		assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
 		for _, head := range registrations {
-			{
-				assert.FatalIf(
-					t,
-					head.first.Load() != nil,
-					"%s",
-					"sweep retained a closed payload owner's registration",
-				)
-			}
+			assert.FatalIf(
+				t,
+				head.first.Load() != nil,
+				"%s",
+				"sweep retained a closed payload owner's registration",
+			)
 		}
 		return
 	}
@@ -200,14 +188,12 @@ func testRecordEmittedBorrowedPayloadOwnersCaseCompletion(
 		rejected.GetObject(input.Obj.Named())
 		rejectedHead := rejected.input(input.Obj.Named()).object.head
 		for _, head := range *scope.registrations {
-			{
-				assert.FatalIf(
-					t,
-					head == rejectedHead,
-					"%s",
-					"successor-only input shares an accepted registration head",
-				)
-			}
+			assert.FatalIf(
+				t,
+				head == rejectedHead,
+				"%s",
+				"successor-only input shares an accepted registration head",
+			)
 		}
 		release := make(chan struct{})
 		barrier := &admissionBarrier{
@@ -229,78 +215,60 @@ func testRecordEmittedBorrowedPayloadOwnersCaseCompletion(
 		case <-done:
 			t.Fatal("publication did not reach the admission barrier")
 		}
-		{
-			assert.FatalIf(t, !rejected.Valid(), "%s", "reads invalid before concurrent input replacement")
-		}
+		assert.FatalIf(t, !rejected.Valid(), "%s", "reads invalid before concurrent input replacement")
 		(*scope.s).AddObject(emissionChild("successor-only", "new").Obj)
-		{
-			assert.FatalIf(t, rejected.Valid(), "%s", "input replacement did not invalidate the pending publication")
-		}
+		assert.FatalIf(t, rejected.Valid(), "%s", "input replacement did not invalidate the pending publication")
 		resume()
 		<-done
-		{
-			assert.FatalIf(t, (*scope.s).GetArtifact((*scope.owner).Named(), ArtifactContent) != (*scope.accepted) ||
-				(*scope.s).GetObject(
-					barrier.ConfigMap.Named(),
-				) != nil, "%s", "stale proposal replaced accepted payload inventory")
-		}
-		{
-			assert.FatalIf(
-				t,
-				(*scope.accepted).OutputReads != scope.output || (*scope.accepted).payloadReads != scope.first ||
-					len((*scope.accepted).borrowed) != 2,
-				"%s",
-				"rejected proposal changed accepted output and payload provenance",
-			)
-		}
+		assert.FatalIf(t, (*scope.s).GetArtifact((*scope.owner).Named(), ArtifactContent) != (*scope.accepted) ||
+			(*scope.s).GetObject(
+				barrier.ConfigMap.Named(),
+			) != nil, "%s", "stale proposal replaced accepted payload inventory")
+		assert.FatalIf(
+			t,
+			(*scope.accepted).OutputReads != scope.output || (*scope.accepted).payloadReads != scope.first ||
+				len((*scope.accepted).borrowed) != 2,
+			"%s",
+			"rejected proposal changed accepted output and payload provenance",
+		)
 		for _, reads := range []*ReadSet{scope.output, scope.first, scope.second, scope.third} {
-			{
-				assert.ErrorIf(
-					t,
-					reads.retired.Load() || !(*scope.accepted).Retains(reads),
-					"%s",
-					"rejected proposal retired accepted output or borrowed payload reads",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				reads.retired.Load() || !(*scope.accepted).Retains(reads),
+				"%s",
+				"rejected proposal retired accepted output or borrowed payload reads",
+			)
 		}
 		rejected.Retire()
 		assert.Equal(t, len(slices.Collect((*scope.s).Sweep())), 0)
-		{
+		assert.ErrorIf(
+			t,
+			!rejected.retired.Load() || rejectedHead.first.Load() != nil,
+			"%s",
+			"sweep retained rejected attempt registrations",
+		)
+		for _, head := range *scope.registrations {
 			assert.ErrorIf(
 				t,
-				!rejected.retired.Load() || rejectedHead.first.Load() != nil,
+				head.first.Load() == nil,
 				"%s",
-				"sweep retained rejected attempt registrations",
+				"sweep removed an accepted output or borrowed payload registration",
 			)
 		}
-		for _, head := range *scope.registrations {
-			{
-				assert.ErrorIf(
-					t,
-					head.first.Load() == nil,
-					"%s",
-					"sweep removed an accepted output or borrowed payload registration",
-				)
-			}
-		}
-		{
-			assert.FatalIf(
-				t,
-				(*scope.s).GetArtifact((*scope.owner).Named(), ArtifactContent) != (*scope.accepted),
-				"%s",
-				"sweep removed accepted payload inventory",
-			)
-		}
+		assert.FatalIf(
+			t,
+			(*scope.s).GetArtifact((*scope.owner).Named(), ArtifactContent) != (*scope.accepted),
+			"%s",
+			"sweep removed accepted payload inventory",
+		)
 		name := (*(*scope.testCaseInput))[len("rejected/"):]
 		(*scope.s).AddObject(emissionChild("input-"+name, "new").Obj)
-		{
-			assert.FatalIf(
-				t,
-				!slices.Contains(slices.Collect((*scope.s).Sweep()), (*scope.owner).Named()),
-				"%s",
-				"accepted input change did not notify its owner after successor rejection",
-			)
-		}
+		assert.FatalIf(
+			t,
+			!slices.Contains(slices.Collect((*scope.s).Sweep()), (*scope.owner).Named()),
+			"%s",
+			"accepted input change did not notify its owner after successor rejection",
+		)
 		return
 	}
 	last := emissionChild("c", "c")
@@ -313,20 +281,16 @@ func testRecordEmittedBorrowedPayloadOwnersCaseCompletion(
 	), true
 	scope.third.Bind(&next)
 	(*scope.s).RecordEmitted((*scope.owner).Named(), &next, nil)
-	{
-		assert.FatalIf(
-			t,
-			!scope.first.retired.Load() || !scope.second.retired.Load() || scope.third.retired.Load(),
-			"%s",
-			"completion did not release exactly the superseded payload owners",
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			(*scope.s).GetArtifact(last.Obj.Named(), ArtifactContent) == nil,
-			"%s",
-			"completion removed the current execution's accepted descriptor",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!scope.first.retired.Load() || !scope.second.retired.Load() || scope.third.retired.Load(),
+		"%s",
+		"completion did not release exactly the superseded payload owners",
+	)
+	assert.FatalIf(
+		t,
+		(*scope.s).GetArtifact(last.Obj.Named(), ArtifactContent) == nil,
+		"%s",
+		"completion removed the current execution's accepted descriptor",
+	)
 }

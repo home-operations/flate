@@ -25,14 +25,12 @@ func discoveryRecordFixture(t *testing.T) DiscoveryRecord {
 func TestDiscoveryRecord_Equal(t *testing.T) {
 	t.Parallel()
 	original := discoveryRecordFixture(t)
-	{
-		assert.FatalIf(
-			t,
-			!original.Equal(discoveryRecordFixture(t)) || !(DiscoveryRecord{}).Equal(DiscoveryRecord{}),
-			"%s",
-			"equal records differ",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!original.Equal(discoveryRecordFixture(t)) || !(DiscoveryRecord{}).Equal(DiscoveryRecord{}),
+		"%s",
+		"equal records differ",
+	)
 	for _, tc := range []struct {
 		name   string
 		mutate func(*DiscoveryRecord)
@@ -57,14 +55,12 @@ func TestDiscoveryRecord_Equal(t *testing.T) {
 			t.Parallel()
 			changed := discoveryRecordFixture(t)
 			tc.mutate(&changed)
-			{
-				assert.FatalIf(
-					t,
-					original.Equal(changed) || changed.Equal(original),
-					"%s",
-					"changed record compared equal",
-				)
-			}
+			assert.FatalIf(
+				t,
+				original.Equal(changed) || changed.Equal(original),
+				"%s",
+				"changed record compared equal",
+			)
 		})
 	}
 }
@@ -96,14 +92,12 @@ func TestDiscoveryRecord_EqualIdentities(t *testing.T) {
 				t.Parallel()
 				original, changed := discoveryRecordFixture(t), discoveryRecordFixture(t)
 				component.mutate(location.selectID(&changed))
-				{
-					assert.FatalIf(
-						t,
-						original.Equal(changed) || changed.Equal(original),
-						"%s",
-						"changed identity compared equal",
-					)
-				}
+				assert.FatalIf(
+					t,
+					original.Equal(changed) || changed.Equal(original),
+					"%s",
+					"changed identity compared equal",
+				)
 			})
 		}
 	}
@@ -121,14 +115,12 @@ func TestDiscoveryRecord_EqualPresence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			{
-				assert.FatalIf(
-					t,
-					tc.nilValue.Equal(tc.emptyValue) || tc.emptyValue.Equal(tc.nilValue),
-					"%s",
-					"nil and empty collections compared equal",
-				)
-			}
+			assert.FatalIf(
+				t,
+				tc.nilValue.Equal(tc.emptyValue) || tc.emptyValue.Equal(tc.nilValue),
+				"%s",
+				"nil and empty collections compared equal",
+			)
 		})
 	}
 }
@@ -149,14 +141,12 @@ func TestDiscoveryRecord_EqualExcludedFields(t *testing.T) {
 			t.Parallel()
 			original, changed := discoveryRecordFixture(t), discoveryRecordFixture(t)
 			tc.mutate(&changed)
-			{
-				assert.FatalIf(
-					t,
-					!original.Equal(changed) || !changed.Equal(original),
-					"%s",
-					"excluded live state changed accepted-record equality",
-				)
-			}
+			assert.FatalIf(
+				t,
+				!original.Equal(changed) || !changed.Equal(original),
+				"%s",
+				"excluded live state changed accepted-record equality",
+			)
 		})
 	}
 }

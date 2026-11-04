@@ -48,16 +48,14 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 		indexes[side] = result.Index
 		selected[side], _ = stores[side].GetArtifact(supplier, store.ArtifactContent).(*store.SourceArtifact)
 		{
-			{
-				input := selected[side]
-				assert.FatalIf(
-					t,
-					input == nil || input.FS == nil || input.LocalPath == root || input.InputAlias,
-					"side %d did not prepare a distinct committed supplier: %+v",
-					side,
-					input,
-				)
-			}
+			input := selected[side]
+			assert.FatalIf(
+				t,
+				input == nil || input.FS == nil || input.LocalPath == root || input.InputAlias,
+				"side %d did not prepare a distinct committed supplier: %+v",
+				side,
+				input,
+			)
 		}
 	}
 	bootstrap, err := change.Detect(
@@ -353,9 +351,7 @@ data: {VALUE: available}
 		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
 		assert.NoError(t, err)
 	}
-	{
-		assert.FatalIf(t, changes == nil, "%v", "resolver returned no change set")
-	}
+	assert.FatalIf(t, changes == nil, "%v", "resolver returned no change set")
 	assert.Diff(t, changes.Paths(), []string{"flux/optional.yaml"})
 
 	st := store.New()
@@ -370,74 +366,60 @@ data: {VALUE: available}
 		Namespace: "flux-system", Name: "cluster",
 	}
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}
-	{
-		assert.FatalIf(
-			t,
-			st.GetObject(app) == nil || st.GetObject(cluster) == nil,
-			"%v",
-			"discovery did not admit app and cluster",
-		)
-	}
+	assert.FatalIf(
+		t,
+		st.GetObject(app) == nil || st.GetObject(cluster) == nil,
+		"%v",
+		"discovery did not admit app and cluster",
+	)
 	record, ok := discovered.Index.Lookup(input)
-	{
-		assert.FatalIf(
-			t,
-			!ok || record.File != "flux/optional.yaml",
-			"optional input discovery record: %+v, found=%t",
-			record,
-			ok,
-		)
-	}
-	owners, _ := discovered.Index.OwnersOfFile(record.File)
-	{
-		assert.FatalIf(
-			t,
-			slices.Contains(owners, app),
-			"%v",
-			"optional input is inside app's rendered ownership",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || record.File != "flux/optional.yaml",
+		"optional input discovery record: %+v, found=%t",
+		record,
+		ok,
+	)
+	owners := discovered.Index.OwnersOfFile(record.File).Owners
+	assert.FatalIf(
+		t,
+		slices.Contains(owners, app),
+		"%v",
+		"optional input is inside app's rendered ownership",
+	)
 	optional := false
 	for ref := range manifest.References(st.GetObject(app), manifest.ReferenceRelations) {
 		optional = optional || ref.NamedResource == input && ref.Use == "substituteFrom" && ref.Optional
 	}
-	{
-		assert.FatalIf(t, !optional, "%v", "app does not declare the optional substitution input")
-	}
+	assert.FatalIf(t, !optional, "%v", "app does not declare the optional substitution input")
 	empty, err := change.Detect(t.Context(), inputs.Source, inputs.Source)
 	assert.NoError(t, err)
 	unchanged := admissiontest.Filter(
 		t,
 		admissiontest.Config{Changes: empty, Index: discovered.Index, Inventory: st, Root: ""},
 	)
-	{
-		assert.FatalIf(
-			t,
-			unchanged.ShouldReconcile(app) || unchanged.ShouldReconcile(cluster),
-			"%v",
-			"unchanged input selects app or cluster",
-		)
-	}
+	assert.FatalIf(
+		t,
+		unchanged.ShouldReconcile(app) || unchanged.ShouldReconcile(cluster),
+		"%v",
+		"unchanged input selects app or cluster",
+	)
 	filters, _ := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
 	for side, filter := range filters {
-		{
+		assert.ErrorIf(
+			t,
+			side == 1 && !filter.ShouldReconcile(input),
+			"%v",
+			"changed optional input was not selected",
+		)
+		for _, id := range []manifest.NamedResource{app, cluster} {
 			assert.ErrorIf(
 				t,
-				side == 1 && !filter.ShouldReconcile(input),
-				"%v",
-				"changed optional input was not selected",
+				!filter.ShouldReconcile(id),
+				"side %d optional input appearance did not select %s",
+				side,
+				id,
 			)
-		}
-		for _, id := range []manifest.NamedResource{app, cluster} {
-			{
-				assert.ErrorIf(
-					t,
-					!filter.ShouldReconcile(id),
-					"side %d optional input appearance did not select %s",
-					side,
-					id,
-				)
-			}
 		}
 		assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("flux-system", "stable")), false)
 	}

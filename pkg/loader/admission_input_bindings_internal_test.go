@@ -242,6 +242,12 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 	l.freezeConstruction()
 	input := stores[1].GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
 	var captured [2]store.ReadSet
+	closers := make([]func(), 0, len(captured))
+	defer func() {
+		for _, closeResource := range slices.Backward(closers) {
+			closeResource()
+		}
+	}()
 	for i := range captured {
 		consumer := &manifest.Kustomization{
 			Name:      fmt.Sprintf("consumer-%d", i),
@@ -254,7 +260,7 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 			},
 		}
 		captured[i].Init(stores[1], consumer.Named(), nil)
-		defer captured[i].Close()
+		closers = append(closers, captured[i].Close)
 		reads := &admissionArtifactReads{admissionReader: &captured[i], bySource: map[manifest.NamedResource]int{}}
 		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
 		c.proposal = &c.result

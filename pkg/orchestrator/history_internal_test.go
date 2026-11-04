@@ -259,48 +259,38 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 	owner := testutil.KustomizationID("apps", "owner")
 	if (*testCaseInput) == "deferred_required" || (*testCaseInput) == "deferred_optional" {
 		record, _ := o.index.Lookup(owner)
-		{
-			assert.FatalIf(t, record.Declaration == nil, "%v", "deferred owner lost its declaration")
-		}
+		assert.FatalIf(t, record.Declaration == nil, "%v", "deferred owner lost its declaration")
 		o.configureControllers()
 		var reads store.ReadSet
 		reads.Init(o.store, owner, nil)
 		records, _ := o.controllers.PreviousRender(t.Context(), record.Declaration, &reads)
 		reads.Retire()
-		{
-			assert.FatalIf(
-				t,
-				records != nil,
-				"%v",
-				"deferred owner accepted history before referenced substitution",
-			)
-		}
-		{
-			assert.FatalIf(
-				t,
-				o.store.GetObject(testutil.KustomizationID("apps", "sibling")) != nil,
-				"%v",
-				"deferred substitution published the effective sibling during discovery",
-			)
-		}
+		assert.FatalIf(
+			t,
+			records != nil,
+			"%v",
+			"deferred owner accepted history before referenced substitution",
+		)
+		assert.FatalIf(
+			t,
+			o.store.GetObject(testutil.KustomizationID("apps", "sibling")) != nil,
+			"%v",
+			"deferred substitution published the effective sibling during discovery",
+		)
 	}
 	result, err := o.collectResult(o.run(t.Context()))
 	if (*testCaseInput) == "cycle" {
-		{
-			assert.FatalIf(t, err == nil, "%v", "authored cycle rendered successfully")
-		}
+		assert.FatalIf(t, err == nil, "%v", "authored cycle rendered successfully")
 		for _, name := range []string{"owner", "sibling"} {
 			{
-				{
-					message, ok := o.preflightFailure(
-						testutil.KustomizationID("apps", name),
-					)
-					assert.FatalIf(t, !ok ||
-						!strings.Contains(
-							message,
-							"dependency cycle detected",
-						), "authored cycle lost its ordinary diagnosis: %s", message)
-				}
+				message, ok := o.preflightFailure(
+					testutil.KustomizationID("apps", name),
+				)
+				assert.FatalIf(t, !ok ||
+					!strings.Contains(
+						message,
+						"dependency cycle detected",
+					), "authored cycle lost its ordinary diagnosis: %s", message)
 			}
 		}
 		return
@@ -312,25 +302,21 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 	}
 	for _, id := range []manifest.NamedResource{owner, sibling} {
 		status, ok := o.store.GetStatus(id)
-		{
-			assert.FatalIf(
-				t,
-				!ok || status.Status != store.StatusReady,
-				"entry prerequisite did not reconcile: %s: %+v",
-				id,
-				status,
-			)
-		}
-	}
-	docs := outputByParent(result.Manifests)[sibling]
-	{
 		assert.FatalIf(
 			t,
-			len(docs) != 1 || docs[0]["metadata"].(map[string]any)["name"] != "workload",
-			"sibling did not render its own path: %v",
-			docs,
+			!ok || status.Status != store.StatusReady,
+			"entry prerequisite did not reconcile: %s: %+v",
+			id,
+			status,
 		)
 	}
+	docs := outputByParent(result.Manifests)[sibling]
+	assert.FatalIf(
+		t,
+		len(docs) != 1 || docs[0]["metadata"].(map[string]any)["name"] != "workload",
+		"sibling did not render its own path: %v",
+		docs,
+	)
 }
 
 func testBootstrapEntryReceiptDependencySubstitutionsCase(
@@ -475,9 +461,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		reads.Init(o.store, owner, nil)
 		defer reads.Retire()
 		records, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
-		{
-			assert.FatalIf(t, records == nil || !complete, "%v", "entry lacks complete controller history")
-		}
+		assert.FatalIf(t, records == nil || !complete, "%v", "entry lacks complete controller history")
 		return maps.Collect(records)
 	}
 	before := readHistory()
@@ -490,10 +474,8 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(owners, owner), true)
 	{
-		{
-			_, self := before[owner]
-			assert.FatalIf(t, self, "%v", "accepted entry history includes its own owner")
-		}
+		_, self := before[owner]
+		assert.FatalIf(t, self, "%v", "accepted entry history includes its own owner")
 	}
 	if (*testCaseInput) == "empty" {
 		assert.Equal(t, len(before), 0)
@@ -537,21 +519,19 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 			[]manifest.Production{{Owner: owner, Declaration: claim, Source: o.entryBinding.Source}},
 		)
 		for _, record := range before { //nolint:gocritic // Map iteration preserves the value snapshot without an extra lookup.
-			{
-				assert.FatalIf(
-					t,
-					record.Authored != (manifest.NamedResource{}) || record.Parent != (manifest.NamedResource{}) ||
-						record.BuilderOwner != (manifest.NamedResource{}) ||
-						record.Path != "" ||
-						record.File != "" ||
-						record.Builder != "" ||
-						len(record.Inputs) != 0 ||
-						record.Pinned ||
-						record.Declaration != nil,
-					"%v",
-					"accepted history contains static-only evidence",
-				)
-			}
+			assert.FatalIf(
+				t,
+				record.Authored != (manifest.NamedResource{}) || record.Parent != (manifest.NamedResource{}) ||
+					record.BuilderOwner != (manifest.NamedResource{}) ||
+					record.Path != "" ||
+					record.File != "" ||
+					record.Builder != "" ||
+					len(record.Inputs) != 0 ||
+					record.Pinned ||
+					record.Declaration != nil,
+				"%v",
+				"accepted history contains static-only evidence",
+			)
 		}
 	}
 	paths := []string{"leaf/value.yaml", "entry/child.yaml", "unrelated/value.yaml"}
@@ -592,14 +572,10 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	})
 	o.tasks.BlockTillDone()
 	assert.Equal(t, o.tasks.Failures(), int64(0))
-	{
-		assert.FatalIf(t, execution == nil, "%v", "entry reconciliation did not run")
-	}
+	assert.FatalIf(t, execution == nil, "%v", "entry reconciliation did not run")
 	defer execution.Close()
 	status, ok := o.store.GetStatus(owner)
-	{
-		assert.FatalIf(t, !ok || status.Status != store.StatusReady, "entry emission failed: %+v", status)
-	}
+	assert.FatalIf(t, !ok || status.Status != store.StatusReady, "entry emission failed: %+v", status)
 	_, _, emitted := o.store.GetEmission(owner)
 	defer emitted.Finish()
 	assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission).Complete, true)
@@ -655,21 +631,17 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	reads.Init(o.store, owner, nil)
 	defer reads.Retire()
 	records, narrow := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
-	{
-		assert.FatalIf(
-			t,
-			records == nil || !narrow,
-			"%v",
-			"controller rejected the receipt discovery saved",
-		)
-	}
+	assert.FatalIf(
+		t,
+		records == nil || !narrow,
+		"%v",
+		"controller rejected the receipt discovery saved",
+	)
 	found := false
 	for id := range records {
 		found = found || id == testutil.KustomizationID("apps", "child")
 	}
-	{
-		assert.FatalIf(t, !found, "%v", "entry receipt lost its child inventory")
-	}
+	assert.FatalIf(t, !found, "%v", "entry receipt lost its child inventory")
 	o.ksc.Trees.Close()
 	reopened, err := sourcecache.New(t.Context(), (*testCaseInput.cacheDir))
 	assert.NoError(t, err)
@@ -688,14 +660,12 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(owners, owner), true)
 	again, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
-	{
-		assert.FatalIf(
-			t,
-			again == nil || !complete,
-			"%v",
-			"controller rejected the receipt after reopening persistent cache",
-		)
-	}
+	assert.FatalIf(
+		t,
+		again == nil || !complete,
+		"%v",
+		"controller rejected the receipt after reopening persistent cache",
+	)
 	assert.Diff(t, maps.Collect(again), maps.Collect(records))
 	assert.NoError(t, o.run(t.Context()))
 }
@@ -769,7 +739,8 @@ data: {VALUE: rendered}
 	assert.NoError(t, err)
 	content := request.Content(documents)
 	assert.NoError(t, kustomize.Shape(prepared, documents, true))
-	children, _, failures := warm.ksc.ParseChildren(prepared, documents, manifest.ParseDocOptions{})
+	parseChildrenResult1 := warm.ksc.ParseChildren(prepared, documents, manifest.ParseDocOptions{})
+	children, _, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
 	assert.Equal(t, len(failures), 0)
 	assert.NoError(
 		t,

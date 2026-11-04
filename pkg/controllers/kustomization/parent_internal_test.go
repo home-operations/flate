@@ -64,16 +64,14 @@ func TestReconcile_OwnerDoesNotEraseReadyExpr(t *testing.T) {
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "hello"},
 			)
 			if expr == "false" {
-				{
-					assert.FatalIf(t, info.Status != store.StatusFailed || !info.IsDependencyFailure() ||
-						!slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) ||
-						output != nil && len(output.Manifests) != 0 ||
-						rendered != nil, "false owner gate permitted output: status=%+v artifact=%+v rendered=%v",
-						info,
-						output,
-						rendered,
-					)
-				}
+				assert.FatalIf(t, info.Status != store.StatusFailed || !info.IsDependencyFailure() ||
+					!slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) ||
+					output != nil && len(output.Manifests) != 0 ||
+					rendered != nil, "false owner gate permitted output: status=%+v artifact=%+v rendered=%v",
+					info,
+					output,
+					rendered,
+				)
 			} else {
 				assert.FatalIf(
 					t,
@@ -148,15 +146,13 @@ func testReconcileOptionalMaterializerAbsenceCase(
 	c.Tasks.BlockTillDone()
 	defer assessment.Close()
 	if testCaseInput.status == store.StatusPending || testCaseInput.required {
-		{
-			assert.FatalIf(
-				t,
-				assessment.Outcome() != schedule.Blocked ||
-					s.GetArtifact(ks.Named(), store.ArtifactContent) != nil,
-				"%v",
-				"reader did not wait for its unresolved input",
-			)
-		}
+		assert.FatalIf(
+			t,
+			assessment.Outcome() != schedule.Blocked ||
+				s.GetArtifact(ks.Named(), store.ArtifactContent) != nil,
+			"%v",
+			"reader did not wait for its unresolved input",
+		)
 		c.Tasks.Go(
 			t.Context(),
 			"settle",
@@ -172,24 +168,20 @@ func testReconcileOptionalMaterializerAbsenceCase(
 		}
 	} else {
 		art, _ := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
-		{
-			assert.FatalIf(
-				t,
-				info.Status != store.StatusReady || art == nil || len(art.Manifests) != 1,
-				"absent optional input prevented render: status=%+v artifact=%+v",
-				info,
-				art,
-			)
-		}
+		assert.FatalIf(
+			t,
+			info.Status != store.StatusReady || art == nil || len(art.Manifests) != 1,
+			"absent optional input prevented render: status=%+v artifact=%+v",
+			info,
+			art,
+		)
 	}
 	for id := range assessment.Reads.Required() {
-		{
-			assert.FatalIf(
-				t,
-				id == optional || id == producer.Named(),
-				"optional input entered required footprint: %s",
-				id,
-			)
-		}
+		assert.FatalIf(
+			t,
+			id == optional || id == producer.Named(),
+			"optional input entered required footprint: %s",
+			id,
+		)
 	}
 }

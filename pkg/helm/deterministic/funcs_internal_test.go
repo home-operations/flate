@@ -16,13 +16,9 @@ func TestFuncs_NowIsFixed(t *testing.T) {
 	fm := Funcs(SeedFor("rel", "ns"))
 	assert.Equal(t, len(fm), len(staticFuncs)+streamFuncCount)
 	raw, ok := fm["now"]
-	{
-		assert.FatalIf(t, !ok, "%s", `Funcs() missing "now" override`)
-	}
+	assert.FatalIf(t, !ok, "%s", `Funcs() missing "now" override`)
 	now, ok := raw.(func() time.Time)
-	{
-		assert.FatalIf(t, !ok, `"now" override has type %T, want func() time.Time`, raw)
-	}
+	assert.FatalIf(t, !ok, `"now" override has type %T, want func() time.Time`, raw)
 	{
 		got := now()
 		assert.ErrorIf(t, !got.Equal(fixedTime), "now() = %v, want fixedTime %v", got, fixedTime)
@@ -34,9 +30,7 @@ func TestFuncs_NowIsFixed(t *testing.T) {
 	}
 	// Stable across an independently constructed FuncMap.
 	other, ok := Funcs(SeedFor("rel", "ns"))["now"].(func() time.Time)
-	{
-		assert.FatalIf(t, !ok, "%s", `fresh Funcs() "now" override has unexpected type`)
-	}
+	assert.FatalIf(t, !ok, "%s", `fresh Funcs() "now" override has unexpected type`)
 	{
 		got := other()
 		assert.ErrorIf(t, !got.Equal(fixedTime), "now() from a fresh FuncMap = %v, want fixedTime %v", got, fixedTime)
@@ -70,9 +64,7 @@ func TestFuncs_KeysAreSorted(t *testing.T) {
 func TestFuncs_ValuesAreKeySorted(t *testing.T) {
 	t.Parallel()
 	values, ok := Funcs(SeedFor("rel", "ns"))["values"].(func(map[string]any) []any)
-	{
-		assert.FatalIf(t, !ok, "%s", "values override has unexpected type")
-	}
+	assert.FatalIf(t, !ok, "%s", "values override has unexpected type")
 	for _, tc := range []struct {
 		name string
 		dict map[string]any

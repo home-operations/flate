@@ -74,39 +74,31 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	counted := &countedDataReader{ReadSet: &reads}
 	provider := NewStoreProvider(counted, true)
 	input := provider.Lookup(first.Named())
-	{
-		assert.FatalIf(
-			t,
-			input.Data != first || !input.Offline || len(input.Materializers) != 0,
-			"captured input=%+v",
-			input,
-		)
-	}
+	assert.FatalIf(
+		t,
+		input.Data != first || !input.Offline || len(input.Materializers) != 0,
+		"captured input=%+v",
+		input,
+	)
 	absent := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: first.Namespace, Name: first.Name}
 	other := &manifest.ConfigMap{Name: first.Name, Namespace: "other", Data: map[string]any{"VALUE": "other"}}
 	s.AddObject(other)
 	missing := provider.Lookup(absent)
-	{
-		assert.FatalIf(t, missing.Data != nil || missing.Generated || missing.Offline || missing.Private ||
-			len(missing.Materializers) != 0, "missing input=%+v", missing)
-	}
+	assert.FatalIf(t, missing.Data != nil || missing.Generated || missing.Offline || missing.Private ||
+		len(missing.Materializers) != 0, "missing input=%+v", missing)
 	generated := provider.Lookup(generatedID)
-	{
-		assert.FatalIf(t, generated.Data != nil || !generated.Generated || generated.Offline || generated.Private ||
-			len(generated.Materializers) != 1 ||
-			generated.Materializers[0] != materializer, "generated input=%+v", generated)
-	}
+	assert.FatalIf(t, generated.Data != nil || !generated.Generated || generated.Offline || generated.Private ||
+		len(generated.Materializers) != 1 ||
+		generated.Materializers[0] != materializer, "generated input=%+v", generated)
 	otherInput := provider.Lookup(other.Named())
 	private := provider.Lookup(supplied.Named())
-	{
-		assert.FatalIf(
-			t,
-			otherInput.Data != other || private.Data == nil || private.Private,
-			"distinct inputs=%+v %+v",
-			otherInput,
-			private,
-		)
-	}
+	assert.FatalIf(
+		t,
+		otherInput.Data != other || private.Data == nil || private.Private,
+		"distinct inputs=%+v %+v",
+		otherInput,
+		private,
+	)
 	s.AddObject(
 		&manifest.Secret{
 			Name:       absent.Name,
@@ -119,14 +111,12 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 		input store.ReferenceFacts
 	}{{first.Named(), input}, {absent, missing}, {other.Named(), otherInput}, {supplied.Named(), private}, {generatedID, generated}} {
 		assert.Diff(t, captured.input, provider.Lookup(captured.id))
-		{
-			assert.FatalIf(
-				t,
-				provider.Data(captured.id) != captured.input.Data,
-				"%s",
-				"cached data differs from the captured input",
-			)
-		}
+		assert.FatalIf(
+			t,
+			provider.Data(captured.id) != captured.input.Data,
+			"%s",
+			"cached data differs from the captured input",
+		)
 	}
 	next := *first
 	next.Data = map[string]any{"VALUE": "next"}
@@ -135,9 +125,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 		counted.productions != 5 {
 		t.Fatalf("expansion rescanned captured input: object=%d productions=%d", counted.objects, counted.productions)
 	}
-	{
-		assert.FatalIf(t, reads.Valid(), "%s", "changed consumed data did not invalidate execution")
-	}
+	assert.FatalIf(t, reads.Valid(), "%s", "changed consumed data did not invalidate execution")
 	var fresh store.ReadSet
 	fresh.Init(s, reader, nil)
 	defer fresh.Close()

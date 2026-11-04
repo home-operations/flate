@@ -54,14 +54,17 @@ fieldSpecs:
 		"--cache-dir",
 		t.TempDir(),
 	}
-	first, _ := harness.RequireCLIOK(t, args...)
-	second, _ := harness.RequireCLIOK(t, args...)
+	requireCLIOKResult1 := harness.RequireCLIOK(t, args...)
+	first, _ := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
+	requireCLIOKResult2 := harness.RequireCLIOK(t, args...)
+	second, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	assert.FatalIf(t, first != second, "%v", "projected bootstrap output changed between runs")
 	docs, err := testutil.SplitDocs([]byte(first))
 	assert.NoError(t, err)
 	found := false
 	for _, doc := range docs {
-		name, namespace := manifest.DocMetadata(doc)
+		metadata := manifest.DocMetadata(doc)
+		name, namespace := metadata.Name, metadata.Namespace
 		if manifest.DocKind(doc) == "ConfigMap" && name == "leaf" {
 			assert.FatalIf(t, namespace != "apps", "leaf namespace = %q, want apps:\n%s", namespace, first)
 			found = true

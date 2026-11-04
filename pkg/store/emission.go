@@ -10,6 +10,13 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+// ChildDocuments retains admission failures beside successfully parsed documents.
+type ChildDocuments struct {
+	Children []Child
+	Visible  []manifest.DocOccurrence
+	Failures []manifest.DocOccurrence
+}
+
 // Child retains an admitted object and its authoritative sanitized document.
 type Child struct {
 	Obj         manifest.BaseManifest

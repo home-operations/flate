@@ -13,12 +13,13 @@ import (
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_PinnedDiff_BaseAndCurrentRefs(t *testing.T) {
-	root, repo, _, _ := sourceRefFixture(t)
+	sourceRefFixtureResult1 := sourceRefFixture(t)
+	root, repo, _, _ := sourceRefFixtureResult1.root, sourceRefFixtureResult1.repository, sourceRefFixtureResult1.before, sourceRefFixtureResult1.after
 	loader := installSourceRefTransport(t, repo.Storer)
 	setSourceRef(t, root, "tag: v2.0.0")
 	for _, concurrency := range []string{"2", "4"} {
 		t.Run("concurrency_"+concurrency, func(t *testing.T) {
-			out, stderr := harness.RequireCLIOK(
+			requireCLIOKResult1 := harness.RequireCLIOK(
 				t,
 				"diff",
 				"all",
@@ -37,6 +38,7 @@ func TestE2E_PinnedDiff_BaseAndCurrentRefs(t *testing.T) {
 				"-o",
 				"diff",
 			)
+			out, stderr := requireCLIOKResult1.Stdout, requireCLIOKResult1.Stderr
 			assertSourceValueDiff(t, out, "v1.0.0", "v2.0.0")
 			if loader.calls.Load() != 0 || strings.Contains(stderr, "declared source ref cannot be satisfied locally") {
 				t.Fatalf("locally available side refs warned/fetched: calls=%d\n%s", loader.calls.Load(), stderr)
@@ -47,18 +49,20 @@ func TestE2E_PinnedDiff_BaseAndCurrentRefs(t *testing.T) {
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
-	root, repo, _, _ := sourceRefFixture(t)
+	sourceRefFixtureResult2 := sourceRefFixture(t)
+	root, repo, _, _ := sourceRefFixtureResult2.root, sourceRefFixtureResult2.repository, sourceRefFixtureResult2.before, sourceRefFixtureResult2.after
 	loader := installSourceRefTransport(t, repo.Storer)
-	harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
-	local, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+	harness.MutateFile(t, filepath.Join(root, "apps", "cm.yaml"), "value: v2.0.0", "value: dirty")
+	requireCLIOKResult2 := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir())
+	local, _ := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
 	if loader.calls.Load() != 0 {
 		t.Fatalf("local pin accessed transport %d times", loader.calls.Load())
 	}
 	exported := t.TempDir()
 	testutil.CopyTree(t, root, exported)
 	assert.NoError(t, os.RemoveAll(filepath.Join(exported, ".git")))
-	fetched, _ := harness.RequireCLIOK(
+	requireCLIOKResult3 := harness.RequireCLIOK(
 		t,
 		"build",
 		"all",
@@ -71,6 +75,7 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 		"--git-depth",
 		"0",
 	)
+	fetched, _ := requireCLIOKResult3.Stdout, requireCLIOKResult3.Stderr
 	assert.FatalIf(
 		t,
 		fetched != local || loader.calls.Load() == 0,
@@ -81,7 +86,7 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 	for _, concurrency := range []string{"2", "4"} {
 		t.Run("concurrency_"+concurrency, func(t *testing.T) {
 			before := loader.calls.Load()
-			out, stderr := harness.RequireCLIOK(
+			requireCLIOKResult4 := harness.RequireCLIOK(
 				t,
 				"diff",
 				"all",
@@ -100,6 +105,7 @@ func TestE2E_PinnedDiff_StablePinIgnoresDirtyContent(t *testing.T) {
 				"-o",
 				"diff",
 			)
+			out, stderr := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 			if out != "" || loader.calls.Load() != before ||
 				strings.Contains(stderr, "declared source ref cannot be satisfied locally") {
 				t.Fatalf(

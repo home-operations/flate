@@ -52,11 +52,11 @@ func (c *admissionClosure) start(
 			c.seedChangedReaders(file)
 			index := *c.loader.Index
 			index.Readers = nil
-			owners, ancestors := index.OwnersOfFile(file)
-			for _, owner := range owners {
+			ownership := index.OwnersOfFile(file)
+			for _, owner := range ownership.Owners {
 				claimFile(owner, file, false)
 			}
-			for _, ancestor := range ancestors {
+			for _, ancestor := range ownership.Ancestors {
 				claimFile(ancestor, file, true)
 			}
 		}
@@ -267,6 +267,8 @@ type admissionStartClaim struct {
 	ancestor bool
 }
 
+type admissionSeeds []admissionStartSeed
+
 func (s *admissionSeeds) scanReferences(
 	c *admissionClosure,
 	id manifest.NamedResource,
@@ -333,8 +335,6 @@ func (s *admissionSeeds) scanProductions(
 	}
 	return productions
 }
-
-type admissionSeeds []admissionStartSeed
 
 func (c *admissionClosure) recordDirectState(
 	id manifest.NamedResource,
@@ -413,8 +413,8 @@ func (c *admissionClosure) propagateInitialChange(id manifest.NamedResource, edg
 			if ref.NamedResource != id {
 				continue
 			}
-			changed, known := c.outputChanged(consumer, new(ref), obj)
-			unchanged = known && !changed
+			comparison := c.outputChanged(consumer, new(ref), obj)
+			unchanged = comparison.Known && !comparison.Changed
 			if !unchanged {
 				break
 			}

@@ -113,25 +113,21 @@ func TestReadSet_CloseRetiresSourceAndInventory(t *testing.T) {
 	st.RecordEmitted(owner.Named(), &output, nil)
 	st.Retire(&contentReads)
 	st.Retire(&inventoryReads)
-	{
-		assert.FatalIf(
-			t,
-			contentReads.retired.Load() || inventoryReads.retired.Load(),
-			"%s",
-			"retirement discarded a retained output",
-		)
-	}
+	assert.FatalIf(
+		t,
+		contentReads.retired.Load() || inventoryReads.retired.Load(),
+		"%s",
+		"retirement discarded a retained output",
+	)
 	var closing ReadSet
 	closing.Init(st, owner.Named(), nil)
 	closing.Close()
-	{
-		assert.FatalIf(
-			t,
-			!contentReads.retired.Load() || !inventoryReads.retired.Load(),
-			"%s",
-			"close left an independently retained output registered",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!contentReads.retired.Load() || !inventoryReads.retired.Load(),
+		"%s",
+		"close left an independently retained output registered",
+	)
 	for _, input := range []*manifest.ConfigMap{contentInput, inventoryInput} {
 		st.AddObject(manifest.NewConfigMap(input.Named(), map[string]any{"VALUE": "second"}))
 	}
@@ -227,24 +223,20 @@ func testArtifactContentAndInventoryCase(t *testing.T, testCaseInput *testArtifa
 		clearInventory()
 	} else {
 		clearInventory()
-		{
-			assert.FatalIf(
-				t,
-				s.GetArtifact(owner.Named(), ArtifactContent) != content || first.retired.Load(),
-				"%s",
-				"replacing inventory discarded retained content or retired its reads",
-			)
-		}
-		clearContent()
-	}
-	{
 		assert.FatalIf(
 			t,
-			!first.retired.Load() || !second.Valid() || s.GetObject(child.Obj.Named()) != nil,
+			s.GetArtifact(owner.Named(), ArtifactContent) != content || first.retired.Load(),
 			"%s",
-			"replaced output registrations or generated membership survived",
+			"replacing inventory discarded retained content or retired its reads",
 		)
+		clearContent()
 	}
+	assert.FatalIf(
+		t,
+		!first.retired.Load() || !second.Valid() || s.GetObject(child.Obj.Named()) != nil,
+		"%s",
+		"replaced output registrations or generated membership survived",
+	)
 	s.AddObject(manifest.NewConfigMap(dependency.Named(), map[string]any{"key": "two"}))
 	{
 		ids := slices.Collect(s.Sweep())
@@ -255,9 +247,7 @@ func testArtifactContentAndInventoryCase(t *testing.T, testCaseInput *testArtifa
 			ids,
 		)
 	}
-	{
-		assert.FatalIf(t, captured.Valid(), "%s", "clearing content did not invalidate a captured content reader")
-	}
+	assert.FatalIf(t, captured.Valid(), "%s", "clearing content did not invalidate a captured content reader")
 }
 
 type testReportHiddenRepresentativeProvenanceCaseInputs struct {
@@ -290,14 +280,12 @@ func testReportHiddenRepresentativeProvenanceCase(
 	defer inventory.Finish()
 	inventory.Children = []Child{{Obj: child, Generated: (*testCaseInput.generated)}}
 	s.RecordEmitted(owner.Named(), &inventory, nil)
-	{
-		assert.FatalIf(
-			t,
-			s.ReportHidden(id) != (*testCaseInput.generated) || !s.ReportHidden(manifest.BootstrapSourceID),
-			"%s",
-			"report visibility did not follow generated provenance",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.ReportHidden(id) != (*testCaseInput.generated) || !s.ReportHidden(manifest.BootstrapSourceID),
+		"%s",
+		"report visibility did not follow generated provenance",
+	)
 	{
 		info, hidden := s.ReportStatus(id)
 		assert.FatalIf(
@@ -321,22 +309,18 @@ func testReportHiddenRepresentativeProvenanceCase(
 	}
 	s.AddObject(child)
 	_, hidden := s.ReportStatus(id)
-	{
-		assert.FatalIf(
-			t,
-			s.ReportHidden(id) || hidden,
-			"%s",
-			"independent representative inherited auxiliary provenance",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.ReportHidden(id) || hidden,
+		"%s",
+		"independent representative inherited auxiliary provenance",
+	)
 	s.DeleteObject(id)
 	_, hidden = s.ReportStatus(id)
-	{
-		assert.FatalIf(
-			t,
-			s.ReportHidden(id) != (*testCaseInput.generated) || hidden != (*testCaseInput.generated),
-			"%s",
-			"removing the independent representative lost emitted provenance",
-		)
-	}
+	assert.FatalIf(
+		t,
+		s.ReportHidden(id) != (*testCaseInput.generated) || hidden != (*testCaseInput.generated),
+		"%s",
+		"removing the independent representative lost emitted provenance",
+	)
 }

@@ -94,19 +94,15 @@ func TestParseFile_CompletedEmptyAndFailure(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, len(objects), 0)
 			before := reader.cache[file].objects
-			{
-				assert.FatalIf(t, before == nil, "%s", "completed read was not retained")
-			}
+			assert.FatalIf(t, before == nil, "%s", "completed read was not retained")
 			assert.NoError(t, os.Remove(file))
 			objects, err = reader.parseFile(t.Context(), file, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assert.Equal(t, len(objects), 0)
 			after := reader.cache[file].objects
 			assert.Equal(t, len(after), len(before))
-			{
-				assert.FatalIf(t, name == "failed" &&
-					(len(after) != 1 || after[0].outcome.Ordinal != 0 || !errors.Is(after[0].outcome.Err, before[0].outcome.Err)), "failure replaced: %+v", after)
-			}
+			assert.FatalIf(t, name == "failed" &&
+				(len(after) != 1 || after[0].outcome.Ordinal != 0 || !errors.Is(after[0].outcome.Err, before[0].outcome.Err)), "failure replaced: %+v", after)
 		})
 	}
 }
@@ -151,13 +147,11 @@ func TestParseFile_ReadFailures(t *testing.T) {
 			}
 			assert.Equal(t, len(objects), want)
 			failure := objects[len(objects)-1]
-			{
-				assert.FatalIf(t, failure.Obj != nil || failure.Doc != nil || failure.outcome.Document != nil ||
-					failure.outcome.Ordinal != want-1 ||
-					!errors.Is(failure.outcome.Err, tc.cause) ||
-					!errors.Is(failure.outcome.Err, manifest.ErrInput) ||
-					!errors.Is(failure.outcome.Err, manifest.ErrFlux), "invalid retained failure: %+v", failure)
-			}
+			assert.FatalIf(t, failure.Obj != nil || failure.Doc != nil || failure.outcome.Document != nil ||
+				failure.outcome.Ordinal != want-1 ||
+				!errors.Is(failure.outcome.Err, tc.cause) ||
+				!errors.Is(failure.outcome.Err, manifest.ErrInput) ||
+				!errors.Is(failure.outcome.Err, manifest.ErrFlux), "invalid retained failure: %+v", failure)
 			again, err := reader.fileObjects(file, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assert.Equal(t, len(again), want)
@@ -179,15 +173,13 @@ func TestParseFile_RunFailures(t *testing.T) {
 			reader.views[root] = input
 			for range 2 {
 				objects, err := reader.fileObjects(file, manifest.ParseDocOptions{})
-				{
-					assert.FatalIf(
-						t,
-						objects != nil || !errors.Is(err, cause) || reader.cache[file].objects != nil,
-						"run failure cached: objects=%v err=%v",
-						objects,
-						err,
-					)
-				}
+				assert.FatalIf(
+					t,
+					objects != nil || !errors.Is(err, cause) || reader.cache[file].objects != nil,
+					"run failure cached: objects=%v err=%v",
+					objects,
+					err,
+				)
 			}
 			assert.Equal(t, input.opens, 2)
 		})
@@ -210,10 +202,8 @@ func TestParseFile_OpenRegularRejection(t *testing.T) {
 	reader.views[root], reader.regular = input, true
 	objects, err := reader.fileObjects(filepath.Join(root, "pipe.yaml"), manifest.ParseDocOptions{})
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(t, len(objects) != 1 || objects[0].Obj != nil || objects[0].Doc != nil ||
-			!errors.Is(objects[0].outcome.Err, fs.ErrNotExist), "OpenRegular rejection not retained: %+v", objects)
-	}
+	assert.FatalIf(t, len(objects) != 1 || objects[0].Obj != nil || objects[0].Doc != nil ||
+		!errors.Is(objects[0].outcome.Err, fs.ErrNotExist), "OpenRegular rejection not retained: %+v", objects)
 }
 
 type failingInputFS struct {
@@ -309,9 +299,7 @@ metadata: {namespace: apps}
 		got := make([]string, 0, len(objects))
 		for _, child := range objects {
 			obj := child.Obj
-			{
-				assert.FatalIf(t, obj == nil, "%s", "nil object in parse result")
-			}
+			assert.FatalIf(t, obj == nil, "%s", "nil object in parse result")
 			got = append(got, obj.Named().Name)
 		}
 		assert.Diff(t, got, names)
@@ -373,42 +361,32 @@ func testParseFileResultOwnershipCaseCompletion(t *testing.T, scope *testParseFi
 			child := cached.objects[i]
 			if child.outcome.Err != nil {
 				failure = child.outcome.Err
-				{
-					assert.FatalIf(t, child.Obj != nil, "%s", "failed document retained an object")
-				}
+				assert.FatalIf(t, child.Obj != nil, "%s", "failed document retained an object")
 			}
 		}
-		{
-			assert.FatalIf(
-				t,
-				!errors.Is(failure, manifest.ErrInput) || !errors.Is(failure, manifest.ErrFlux),
-				"retained failure = %v",
-				failure,
-			)
-		}
+		assert.FatalIf(
+			t,
+			!errors.Is(failure, manifest.ErrInput) || !errors.Is(failure, manifest.ErrFlux),
+			"retained failure = %v",
+			failure,
+		)
 		if (*scope.testCaseInput).invalid {
 			invalid, ok := errors.AsType[*field.Error](failure)
-			{
-				assert.FatalIf(t, !ok || invalid.Field != "apiVersion", "retained API error = %v", failure)
-			}
+			assert.FatalIf(t, !ok || invalid.Field != "apiVersion", "retained API error = %v", failure)
 		}
 
 		if _, ok := cached.objects[1].Obj.(*manifest.RawObject); !ok {
 			t.Errorf("cached producer = %T, want raw object", cached.objects[1])
 		}
-		{
-			assert.FatalIf(t, cached.objects[0].Doc == nil || cached.objects[1].Doc != nil ||
-				cached.objects[len(cached.objects)-1].Doc == nil, "%s", "only tracked objects should retain authoritative documents")
-		}
+		assert.FatalIf(t, cached.objects[0].Doc == nil || cached.objects[1].Doc != nil ||
+			cached.objects[len(cached.objects)-1].Doc == nil, "%s", "only tracked objects should retain authoritative documents")
 		targets := manifest.ProducerTargets(cached.objects[1].Obj)
-		{
-			assert.FatalIf(
-				t,
-				len(targets) != 1 || targets[0].Name != "generated",
-				"released raw document corrupted producer spec: %v",
-				targets,
-			)
-		}
+		assert.FatalIf(
+			t,
+			len(targets) != 1 || targets[0].Name != "generated",
+			"released raw document corrupted producer spec: %v",
+			targets,
+		)
 		assert.Equal(t, cached.body, scope.header.body)
 		assert.Equal(t, cached.file, scope.header.file)
 		assert.Equal(t, cached.loaded, scope.header.loaded)

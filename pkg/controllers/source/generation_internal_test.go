@@ -47,14 +47,12 @@ func TestSource_GeneratedInventoryAndAcquisition(t *testing.T) {
 				Name:      "source-info",
 			}
 			data, _ := st.GetObject(id).(*manifest.ConfigMap)
-			{
-				assert.ErrorIf(
-					t,
-					data == nil || data.Data["url"] != url || !st.ReportHidden(id),
-					"%v",
-					"source acquired content before publishing its current generated declaration",
-				)
-			}
+			assert.ErrorIf(
+				t,
+				data == nil || data.Data["url"] != url || !st.ReportHidden(id),
+				"%v",
+				"source acquired content before publishing its current generated declaration",
+			)
 		}
 		var execution *base.Execution
 		c.Tasks.Go(
@@ -66,25 +64,21 @@ func TestSource_GeneratedInventoryAndAcquisition(t *testing.T) {
 		if previous != nil {
 			previous.Retire()
 		}
-		{
-			assert.FatalIf(
-				t,
-				execution == nil || !execution.Valid() || c.Tasks.Failures() != 0,
-				"%v",
-				"source publication invalidated its own retained outputs",
-			)
-		}
+		assert.FatalIf(
+			t,
+			execution == nil || !execution.Valid() || c.Tasks.Failures() != 0,
+			"%v",
+			"source publication invalidated its own retained outputs",
+		)
 		content, _ := st.GetArtifact(repository.Named(), store.ArtifactContent).(*store.SourceArtifact)
 		_, _, inventory := st.GetEmission(repository.Named())
-		{
-			assert.FatalIf(
-				t,
-				content == nil || content.Reads != &execution.Reads || len(inventory.Children) != 1,
-				"source content=%v inventory=%+v",
-				content,
-				inventory,
-			)
-		}
+		assert.FatalIf(
+			t,
+			content == nil || content.Reads != &execution.Reads || len(inventory.Children) != 1,
+			"source content=%v inventory=%+v",
+			content,
+			inventory,
+		)
 		inventory.Finish()
 		previous = execution
 	}

@@ -35,18 +35,14 @@ func TestCapture_RawSupportExcludesReadiness(t *testing.T) {
 		owner,
 	)
 	st.UpdateStatus(owner, StatusInfo{Status: StatusFailed, Reason: "", Message: "render failed"})
-	{
-		assert.FatalIf(
-			t,
-			reads.Valid() || st.GetObject(id) == nil,
-			"%s",
-			"readiness transition must invalidate its reader without withdrawing source bytes",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reads.Valid() || st.GetObject(id) == nil,
+		"%s",
+		"readiness transition must invalidate its reader without withdrawing source bytes",
+	)
 	st.RecordEmitted(owner, &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(t, st.GetObject(id) != nil, "%s", "producer replacement retained unsupported source bytes")
-	}
+	assert.FatalIf(t, st.GetObject(id) != nil, "%s", "producer replacement retained unsupported source bytes")
 }
 
 func TestReadSet_DeclarationAuthority(t *testing.T) {
@@ -120,75 +116,68 @@ func TestReadSet_DeclarationAuthority(t *testing.T) {
 	var pending ReadSet
 	pending.Init(s, ownerID("waiting"), nil)
 	t.Cleanup(pending.Retire)
-	{
-		assert.FatalIf(
-			t,
-			pending.GetDeclaration(raw.Named()) != nil || pending.GetObject(raw.Named()) != raw,
-			"%s",
-			"raw visibility supplied authority",
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		pending.GetDeclaration(raw.Named()) != nil || pending.GetObject(raw.Named()) != raw,
+		"%s",
+		"raw visibility supplied authority",
+	)
+
 	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true}, nil)
 	invalidated := slices.Collect(s.Sweep())
-	{
-		assert.FatalIf(
-			t,
-			!slices.Contains(invalidated, pending.ID()) || pending.GetDeclaration(raw.Named()) != nil,
-			"%s",
-			"arrival failed to wake or changed the first captured view",
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Contains(invalidated, pending.ID()) || pending.GetDeclaration(raw.Named()) != nil,
+		"%s",
+		"arrival failed to wake or changed the first captured view",
+	)
 	var accepted ReadSet
 	accepted.Init(s, ownerID("accepted"), nil)
 	t.Cleanup(accepted.Retire)
-	{
-		assert.FatalIf(
-			t,
-			accepted.GetDeclaration(raw.Named()) != raw || accepted.Matches(&pending),
-			"%s",
-			"same bytes concealed authority arrival",
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		accepted.GetDeclaration(raw.Named()) != raw || accepted.Matches(&pending),
+		"%s",
+		"same bytes concealed authority arrival",
+	)
+
 	s.RecordEmitted(supplier.Named(), &Emission{Complete: true}, nil)
-	{
-		assert.FatalIf(
-			t,
-			accepted.Valid() || s.GetObject(raw.Named()) != raw || s.GetDeclaration(raw.Named()) != nil,
-			"%s",
-			"withdrawal lost raw identity or retained authority",
-		)
-	}
+	assert.FatalIf(
+		t,
+		accepted.Valid() || s.GetObject(raw.Named()) != raw || s.GetDeclaration(raw.Named()) != nil,
+		"%s",
+		"withdrawal lost raw identity or retained authority",
+	)
 	var withdrawn ReadSet
 	withdrawn.Init(s, ownerID("withdrawn"), nil)
 	t.Cleanup(withdrawn.Retire)
-	{
-		assert.FatalIf(
-			t,
-			withdrawn.Matches(&accepted) || pending.Valid(),
-			"%s",
-			"same bytes concealed withdrawal or reused authority after ABA",
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		withdrawn.Matches(&accepted) || pending.Valid(),
+		"%s",
+		"same bytes concealed withdrawal or reused authority after ABA",
+	)
+
 	s.RecordEmitted(supplier.Named(), &Emission{Children: []Child{{Obj: raw}}, Complete: true}, nil)
 	var supplied ReadSet
 	supplied.Init(s, ownerID("supplied"), nil)
 	t.Cleanup(supplied.Retire)
 	supplied.GetDeclaration(raw.Named())
 	s.AddObject(raw)
-	{
-		assert.FatalIf(t, supplied.Valid(), "%s", "rooting failed to invalidate the supplier capture")
-	}
+	assert.FatalIf(t, supplied.Valid(), "%s", "rooting failed to invalidate the supplier capture")
 	var rooted ReadSet
 	rooted.Init(s, ownerID("rooted"), nil)
 	t.Cleanup(rooted.Retire)
-	{
-		assert.FatalIf(
-			t,
-			!rooted.Matches(&supplied) || rooted.GetDeclaration(raw.Named()) != raw,
-			"%s",
-			"equal effective content could not rebind rooted authority",
-		)
-	}
+
+	assert.FatalIf(
+		t,
+		!rooted.Matches(&supplied) || rooted.GetDeclaration(raw.Named()) != raw,
+		"%s",
+		"equal effective content could not rebind rooted authority",
+	)
 }
 
 func TestReadSet_BoundDeclarationAuthority(t *testing.T) {
@@ -228,14 +217,12 @@ func TestReadSet_RawOwnedSourceMaterializer(t *testing.T) {
 	if got := reads.Materializer(source.Named(), p); got != parent.Named() {
 		t.Fatalf("raw owned source materializer=%s, want %s", got, parent.Named())
 	}
-	{
-		assert.FatalIf(
-			t,
-			reads.GetDeclaration(source.Named()) != nil,
-			"%s",
-			"raw source acquired declaration authority before its failed parent emitted it",
-		)
-	}
+	assert.FatalIf(
+		t,
+		reads.GetDeclaration(source.Named()) != nil,
+		"%s",
+		"raw source acquired declaration authority before its failed parent emitted it",
+	)
 }
 
 func TestReadSet_DeclarationFreeze(t *testing.T) {
@@ -256,9 +243,7 @@ func TestReadSet_DeclarationFreeze(t *testing.T) {
 			},
 		},
 	)
-	{
-		assert.FatalIf(t, after.Matches(&before), "%s", "matching reclassified the immutable pre-index declaration")
-	}
+	assert.FatalIf(t, after.Matches(&before), "%s", "matching reclassified the immutable pre-index declaration")
 	assert.Equal(t, before.GetDeclaration(raw.Named()), manifest.BaseManifest(raw))
 	assert.Equal(t, after.GetDeclaration(raw.Named()), nil)
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{})
@@ -311,9 +296,7 @@ func testReadSetBoundDeclarationAuthorityCase(
 	assert.Equal(t, reads.GetDeclaration(raw.Obj.Named()), want)
 	assert.Equal(t, st.GetObject(raw.Obj.Named()), raw.Obj)
 	view := reads.input(raw.Obj.Named()).view
-	{
-		assert.FatalIf(t, view.accepted || view.owner != nil, "%s", "prospective child manufactured accepted authority")
-	}
+	assert.FatalIf(t, view.accepted || view.owner != nil, "%s", "prospective child manufactured accepted authority")
 	st.RecordEmitted(owner.Named(), &next, nil)
 	assert.Equal(t, st.GetDeclaration(raw.Obj.Named()), prospective.Obj)
 	assert.Equal(t, reads.GetDeclaration(raw.Obj.Named()), want)

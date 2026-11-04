@@ -75,14 +75,12 @@ func TestPlan_PinnedRootKeepsEntrySource(t *testing.T) {
 	testutil.WriteFile(t, root, "flux/repo.yaml", strings.Replace(source, "tag: v1", "tag: v2", 1))
 	entries, err := Plan(t.Context(), Config{Path: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			len(entries) != 1 || entries[0].Path != root,
-			"root pin replaced the entry's source view: %+v",
-			entries,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(entries) != 1 || entries[0].Path != root,
+		"root pin replaced the entry's source view: %+v",
+		entries,
+	)
 }
 
 func TestPlan_PinnedPathExcludesWorkingTreePackages(t *testing.T) {
@@ -146,14 +144,12 @@ func TestPlan_PinnedPathExcludesWorkingTreePackages(t *testing.T) {
 	)
 	entries, err := Plan(t.Context(), Config{Path: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
 	assert.NoError(t, err)
-	{
-		assert.FatalIf(
-			t,
-			len(entries) != 1 || entries[0].Path != root,
-			"suppressed working-tree package became a cluster: %+v",
-			entries,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(entries) != 1 || entries[0].Path != root,
+		"suppressed working-tree package became a cluster: %+v",
+		entries,
+	)
 }
 
 func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
@@ -205,9 +201,7 @@ func testRunPinnedArtifactDiscoveryCase(t *testing.T, testCaseInput *struct {
 
 	root := discoveryRefFixture(t)
 	repo, err := git.PlainOpen(root)
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	entry := "flux"
 	if testCaseInput.revealed {
 		entry = "sources"
@@ -264,30 +258,22 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}},
 	)
 	{
-		{
-			localErr := repo.Storer.SetReference(
-				plumbing.NewHashReference(plumbing.NewTagReferenceName("pinned"), hash),
-			)
-			assert.FatalIf(t, localErr != nil, "%v", localErr)
-		}
+		localErr := repo.Storer.SetReference(
+			plumbing.NewHashReference(plumbing.NewTagReferenceName("pinned"), hash),
+		)
+		assert.FatalIf(t, localErr != nil, "%v", localErr)
 	}
 	{
-		{
-			innerLocalErr := os.Remove(filepath.Join(root, "apps/child.yaml"))
-			assert.FatalIf(t, innerLocalErr != nil, "%v", innerLocalErr)
-		}
+		innerLocalErr := os.Remove(filepath.Join(root, "apps", "child.yaml"))
+		assert.FatalIf(t, innerLocalErr != nil, "%v", innerLocalErr)
 	}
 	{
-		{
-			innerInnerLocalErr := os.Remove(filepath.Join(root, "apps/cm.yaml"))
-			assert.FatalIf(t, innerInnerLocalErr != nil, "%v", innerInnerLocalErr)
-		}
+		innerInnerLocalErr := os.Remove(filepath.Join(root, "apps", "cm.yaml"))
+		assert.FatalIf(t, innerInnerLocalErr != nil, "%v", innerInnerLocalErr)
 	}
 	{
-		{
-			innerInnerInnerLocalErr := os.Remove(filepath.Join(root, "apps/generator.yaml"))
-			assert.FatalIf(t, innerInnerInnerLocalErr != nil, "%v", innerInnerInnerLocalErr)
-		}
+		innerInnerInnerLocalErr := os.Remove(filepath.Join(root, "apps", "generator.yaml"))
+		assert.FatalIf(t, innerInnerInnerLocalErr != nil, "%v", innerInnerInnerLocalErr)
 	}
 	testutil.WriteFile(
 		t,
@@ -327,29 +313,23 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		t.Context(),
 		Config{Path: scan, RepoRoot: root, SelfURLs: []string{"git://fixture.invalid/cluster"}},
 	)
-	{
-		assert.FatalIf(
-			t,
-			err != nil || len(entries) != 1 || entries[0].Path != scan,
-			"committed ownership partitioned working-tree declarations: %+v, %v",
-			entries,
-			err,
-		)
-	}
+	assert.FatalIf(
+		t,
+		err != nil || len(entries) != 1 || entries[0].Path != scan,
+		"committed ownership partitioned working-tree declarations: %+v, %v",
+		entries,
+		err,
+	)
 	result, err := Run(t.Context(), Config{
 		Path: scan, RepoRoot: root, Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
 	})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	{
-		assert.FatalIf(
-			t,
-			st.GetArtifact(foreignSource.Named(), store.ArtifactContent) != foreignArtifact,
-			"%v",
-			"pinned source replaced a foreign artifact",
-		)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
+	assert.FatalIf(
+		t,
+		st.GetArtifact(foreignSource.Named(), store.ArtifactContent) != foreignArtifact,
+		"%v",
+		"pinned source replaced a foreign artifact",
+	)
 	parent := testutil.KustomizationID("flux-system", "parent")
 	childID := testutil.KustomizationID("flux-system", "child")
 	phantom := testutil.KustomizationID("flux-system", "phantom")
@@ -371,10 +351,8 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 	generatorObj := st.GetObject(generator)
 	_, generatorDoc, attempt := st.GetEmission(generator)
 	attempt.Finish()
-	{
-		assert.FatalIf(t, generatorObj == nil || generatorDoc == nil ||
-			generatorDoc["metadata"].(map[string]any)["uid"] != "pinned", "pinned generator document = %#v", generatorDoc)
-	}
+	assert.FatalIf(t, generatorObj == nil || generatorDoc == nil ||
+		generatorDoc["metadata"].(map[string]any)["uid"] != "pinned", "pinned generator document = %#v", generatorDoc)
 	generatorRecord, _ := result.Index.Lookup(generator)
 	input := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -382,14 +360,12 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		Namespace: "flux-system",
 		Name:      "cluster",
 	}
-	{
-		assert.FatalIf(
-			t,
-			!slices.Equal(generatorRecord.Refs, []manifest.NamedResource{input}),
-			"pinned generator inputs = %v",
-			generatorRecord.Refs,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!slices.Equal(generatorRecord.Refs, []manifest.NamedResource{input}),
+		"pinned generator inputs = %v",
+		generatorRecord.Refs,
+	)
 	output := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindExternalArtifact,
@@ -397,16 +373,14 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		Name:      "pinned-output",
 	}
 	productions := st.Productions(output, result.Index)
-	{
-		assert.FatalIf(
-			t,
-			len(productions) != 1 || productions[0].Owner != parent || productions[0].Declaration != generator ||
-				productions[0].Source != input ||
-				productions[0].File != generatorRecord.File,
-			"pinned generator productions = %+v",
-			productions,
-		)
-	}
+	assert.FatalIf(
+		t,
+		len(productions) != 1 || productions[0].Owner != parent || productions[0].Declaration != generator ||
+			productions[0].Source != input ||
+			productions[0].File != generatorRecord.File,
+		"pinned generator productions = %+v",
+		productions,
+	)
 	if st.GetObject(phantom) != nil || st.GetObject(childID) == nil ||
 		parentsForTest(result.Index)[childID] != parent {
 		t.Fatalf(
@@ -418,29 +392,23 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 	}
 	generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}
 	generatedCM, ok := values.NewStoreProvider(st, true).Data(generated).(*manifest.ConfigMap)
-	{
-		assert.FatalIf(
-			t,
-			st.GetObject(generated) != nil,
-			"%v",
-			"pinned generator lookup entered canonical inventory",
-		)
-	}
-	{
-		assert.FatalIf(t, !ok || generatedCM.Data["value"] != "pinned" ||
-			values.NewStoreProvider(st, true).
-				Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) !=
-				nil, "pinned generators = %v", generatedCM)
-	}
+	assert.FatalIf(
+		t,
+		st.GetObject(generated) != nil,
+		"%v",
+		"pinned generator lookup entered canonical inventory",
+	)
+	assert.FatalIf(t, !ok || generatedCM.Data["value"] != "pinned" ||
+		values.NewStoreProvider(st, true).
+			Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) !=
+			nil, "pinned generators = %v", generatedCM)
 	fileGenerated, ok := values.NewStoreProvider(st, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).(*manifest.ConfigMap)
-	{
-		assert.FatalIf(
-			t,
-			!ok || fileGenerated.Data["value"] != "pinned",
-			"committed generator file = %v",
-			fileGenerated,
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || fileGenerated.Data["value"] != "pinned",
+		"committed generator file = %v",
+		fileGenerated,
+	)
 	for _, id := range []manifest.NamedResource{childID, cm, generated, generator} {
 		file := filepath.Join(root, filepath.FromSlash(filesForTest(result.Index)[id]))
 		if !safepath.Contains(artifact.LocalPath, file) {
@@ -448,27 +416,23 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		}
 	}
 	{
-		{
-			got := renderersForTest(result.Index, cm)
-			assert.FatalIf(
-				t,
-				!slices.Equal(got, []manifest.NamedResource{parent}),
-				"self-produce = %v, want [%s]",
-				got,
-				parent,
-			)
-		}
+		got := renderersForTest(result.Index, cm)
+		assert.FatalIf(
+			t,
+			!slices.Equal(got, []manifest.NamedResource{parent}),
+			"self-produce = %v, want [%s]",
+			got,
+			parent,
+		)
 	}
 	{
-		{
-			got := testutil.Owners(
-				st.Productions(cm, result.Index),
-			)
-			assert.FatalIf(t, !slices.Equal(
-				got,
-				[]manifest.NamedResource{parent},
-			), "producers = %v, want [%s]", got, parent)
-		}
+		got := testutil.Owners(
+			st.Productions(cm, result.Index),
+		)
+		assert.FatalIf(t, !slices.Equal(
+			got,
+			[]manifest.NamedResource{parent},
+		), "producers = %v, want [%s]", got, parent)
 	}
 }
 
@@ -493,10 +457,8 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	root := discoveryRefFixture(t)
 	if testCaseInput.noStore {
 		{
-			{
-				err := os.RemoveAll(filepath.Join(root, ".git"))
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			err := os.RemoveAll(filepath.Join(root, ".git"))
+			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
 	st := store.New()
@@ -505,13 +467,9 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	var revision string
 	if testCaseInput.base != "" {
 		repo, err := git.PlainOpen(root)
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		head, err := repo.Head()
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		revision = head.Hash().String()
 		if testCaseInput.commit {
 			repository.Reference = &sourcev1.GitRepositoryRef{Commit: revision}
@@ -520,9 +478,7 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 		repository.Ignore = &ignore
 		owner := cachetest.New(t, "", sourcecache.New)
 		result, err := baseline.AutoResolve(t.Context(), root, testCaseInput.base, owner)
-		{
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		assert.FatalIf(t, err != nil, "%v", err)
 		st.SetArtifact(manifest.BootstrapSourceID, result.BaseInput)
 	}
 	repository.RecurseSubmodules = testCaseInput.submodules
@@ -531,40 +487,34 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	}
 	d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 	{
-		{
-			_, err := d.resolveEntrySources(t.Context(), false)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+		_, err := d.resolveEntrySources(t.Context(), false)
+		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	st.AddObject(repository)
 	bootstrap := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	side := bootstrap.LocalPath
 	d.cfg.Path = side
 	aliased, err := d.resolveEntrySources(t.Context(), false)
-	{
-		assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap ||
-			st.GetObject(
-				repository.Named(),
-			) != repository, "%v", "discovery replaced the bootstrap or authored source")
-	}
+	assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap ||
+		st.GetObject(
+			repository.Named(),
+		) != repository, "%v", "discovery replaced the bootstrap or authored source")
 	if testCaseInput.base != "" {
 		want := "A"
 		if testCaseInput.head {
 			want = "B"
 		}
 		content, innerInnerInnerInnerLocalErr := fs.ReadFile(bootstrap.FS, "value.txt")
-		{
-			assert.FatalIf(
-				t,
-				innerInnerInnerInnerLocalErr != nil || string(content) != want || bootstrap.Key == "" ||
-					bootstrap.LocalRoot != root,
-				"baseline content = %q, %v; want %s with immutable checkout identity: %+v",
-				content,
-				innerInnerInnerInnerLocalErr,
-				want,
-				bootstrap,
-			)
-		}
+		assert.FatalIf(
+			t,
+			innerInnerInnerInnerLocalErr != nil || string(content) != want || bootstrap.Key == "" ||
+				bootstrap.LocalRoot != root,
+			"baseline content = %q, %v; want %s with immutable checkout identity: %+v",
+			content,
+			innerInnerInnerInnerLocalErr,
+			want,
+			bootstrap,
+		)
 	}
 	if testCaseInput.fail {
 		if !errors.Is(err, manifest.ErrFlux) ||
@@ -573,40 +523,32 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 		}
 		return
 	}
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	if testCaseInput.fallback {
+		assert.FatalIf(
+			t,
+			st.GetArtifact(repository.Named(), store.ArtifactContent) != nil,
+			"%v",
+			"fallback installed a HEAD artifact",
+		)
 		{
+			status, ok := st.GetStatus(repository.Named())
 			assert.FatalIf(
 				t,
-				st.GetArtifact(repository.Named(), store.ArtifactContent) != nil,
+				ok && status.Status == store.StatusReady,
 				"%v",
-				"fallback installed a HEAD artifact",
+				"fallback marked source ready",
 			)
-		}
-		{
-			{
-				status, ok := st.GetStatus(repository.Named())
-				assert.FatalIf(
-					t,
-					ok && status.Status == store.StatusReady,
-					"%v",
-					"fallback marked source ready",
-				)
-			}
 		}
 		warnings := st.Warnings()
 		detail := []string{
 			(*manifest.GitRepositoryRef)(repository.Reference).String(),
 			"ref unavailable in this tree's repository or checkout options require fetching",
 		}
-		{
-			assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnSourceRefUnavailable ||
-				warnings[0].Resource != repository.Named() ||
-				warnings[0].Count != 1 ||
-				!slices.Equal(warnings[0].Detail, detail), "fallback warning = %+v", warnings)
-		}
+		assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnSourceRefUnavailable ||
+			warnings[0].Resource != repository.Named() ||
+			warnings[0].Count != 1 ||
+			!slices.Equal(warnings[0].Detail, detail), "fallback warning = %+v", warnings)
 		return
 	}
 	shouldReturn := testAliasBootstrapSourcesDeclaredRefsCaseTail(

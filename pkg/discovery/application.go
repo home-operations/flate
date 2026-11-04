@@ -302,7 +302,8 @@ func (a *Admission) AddHistory(st *store.Store, id manifest.NamedResource, recor
 	if err := json.Unmarshal([]byte(record.Application), &document); err != nil {
 		return
 	}
-	obj, _, _, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	parsed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	obj := parsed.Object
 	if err == nil && obj != nil && obj.Named() == id {
 		a.addApplication(st, obj, true)
 	}
@@ -511,7 +512,8 @@ func (q *entryQualification) reusePrevious(ctx context.Context, st *store.Store,
 		}
 	}
 	if q.previous.Receipt != nil && q.trees.EntryValid(ctx, q.previous, st) {
-		object, _, _, err := manifest.ParseDoc(q.previous.Application, manifest.ParseDocOptions{})
+		parsed2, err := manifest.ParseDoc(q.previous.Application, manifest.ParseDocOptions{})
+		object := parsed2.Object
 		if err == nil && object != nil && ctx.Err() == nil {
 			a.addApplication(st, object, true)
 			q.receipt = q.previous.Receipt

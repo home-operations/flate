@@ -73,9 +73,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 				Namespace: "apps",
 				Name:      "app-api",
 			}
-			{
-				assert.FatalIf(t, !o.filter.ShouldReconcile(producer), "%v", "prediction owner not selected")
-			}
+			assert.FatalIf(t, !o.filter.ShouldReconcile(producer), "%v", "prediction owner not selected")
 			info := controllertest.DispatchToFixpoint(
 				t.Context(),
 				t,
@@ -86,21 +84,21 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 					ReconcileNode: o.ksc.ReconcileNode,
 				},
 			)
-			{
-				assert.FatalIf(t, info.Status != store.StatusReady, "producer did not settle: %+v", info)
-			}
+
+			assert.FatalIf(t, info.Status != store.StatusReady, "producer did not settle: %+v", info)
+
 			facts := o.store.ReferenceFacts(target, o.index, false, manifest.NamedResource{})
-			{
-				assert.FatalIf(t, facts.Data != nil || facts.Accepted ||
-					!slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool {
-						return p.Owner == producer && p.Declaration.Kind == "ArtifactGenerator" &&
-							p.Source == manifest.BootstrapSourceID
-					}) ||
-					o.store.GetArtifact(
-						target,
-						store.ArtifactContent,
-					) != nil, "source-qualified prediction supplied content or disappeared: %+v", facts)
-			}
+
+			assert.FatalIf(t, facts.Data != nil || facts.Accepted ||
+				!slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool {
+					return p.Owner == producer && p.Declaration.Kind == "ArtifactGenerator" &&
+						p.Source == manifest.BootstrapSourceID
+				}) ||
+				o.store.GetArtifact(
+					target,
+					store.ArtifactContent,
+				) != nil, "source-qualified prediction supplied content or disappeared: %+v", facts)
+
 			reader := d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.DrainNone).Assessment
 			defer reader.Close()
 			if reader.Outcome() != schedule.Blocked || !slices.Contains(reader.(*base.Execution).Blocked, target) {
@@ -157,14 +155,12 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 				)
 				admissiontest.Commit(t, f.o.loader, nil)
 				f.o.filter = f.o.loader.Options.Filter
-				{
-					assert.FatalIf(
-						t,
-						!f.o.filter.ShouldReconcile(reader) || !f.o.filter.ShouldReconcile(f.supplier),
-						"%v",
-						"changed-only selection lost optional materializer",
-					)
-				}
+				assert.FatalIf(
+					t,
+					!f.o.filter.ShouldReconcile(reader) || !f.o.filter.ShouldReconcile(f.supplier),
+					"%v",
+					"changed-only selection lost optional materializer",
+				)
 				f.o.configureControllers()
 				sched := schedule.New(f.o.tasks, dagDispatcher{f.o})
 				unsub := f.o.watchDAG(sched)
@@ -184,9 +180,7 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 			assert.Equal(t, len(selected), 2)
 			for side, want := range []string{"fallback", "exact"} {
 				docs := outputByParent(selected[side].Manifests)[reader]
-				{
-					assert.FatalIf(t, len(docs) != 1, "side %d selected manifests=%v", side, docs)
-				}
+				assert.FatalIf(t, len(docs) != 1, "side %d selected manifests=%v", side, docs)
 				data, _ := docs[0]["data"].(map[string]any)
 				assert.Equal(t, data["greeting"], any(want))
 				assert.Equal(t, len(selected[side].Failed), 0)
@@ -221,14 +215,12 @@ func testResolveOptionalForceCutInvalidationCase(
 	f.o.configureControllers()
 	prior := (dagDispatcher{f.o}).Dispatch(t.Context(), f.reader, manifest.DrainNone).Assessment.(*base.Execution)
 	defer prior.Close()
-	{
-		assert.FatalIf(
-			t,
-			prior.Outcome() != schedule.Blocked || prior.Reads.GetObject(f.target) != nil,
-			"%v",
-			"optional input did not retain absence",
-		)
-	}
+	assert.FatalIf(
+		t,
+		prior.Outcome() != schedule.Blocked || prior.Reads.GetObject(f.target) != nil,
+		"%v",
+		"optional input did not retain absence",
+	)
 	switch *testCaseInput.change {
 	case "declaration":
 		switch reader := f.o.store.GetObject(f.reader).(type) {
@@ -270,21 +262,15 @@ func testResolveOptionalForceCutInvalidationCase(
 			},
 		)
 	}
-	{
-		assert.FatalIf(t, prior.Valid(), "%v", "changed authority retained the prior assessment")
-	}
-	{
-		assert.FatalIf(
-			t,
-			prior.Reads.GetObject(f.target) != nil,
-			"%v",
-			"successor mutated the predecessor's frozen absence",
-		)
-	}
+	assert.FatalIf(t, prior.Valid(), "%v", "changed authority retained the prior assessment")
+	assert.FatalIf(
+		t,
+		prior.Reads.GetObject(f.target) != nil,
+		"%v",
+		"successor mutated the predecessor's frozen absence",
+	)
 	prior.Settle(t.Context(), manifest.DrainForce)
-	{
-		assert.FatalIf(t, f.rendered(), "%v", "stale force assessment published output")
-	}
+	assert.FatalIf(t, f.rendered(), "%v", "stale force assessment published output")
 	sched := schedule.New(f.o.tasks, dagDispatcher{f.o})
 	unsub := f.o.watchDAG(sched)
 	defer unsub()
@@ -301,14 +287,12 @@ func testResolveOptionalForceCutInvalidationCase(
 	output, _ := f.o.store.Get[*manifest.ConfigMap](
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"},
 	)
-	{
-		assert.FatalIf(
-			t,
-			output == nil || output.Data["greeting"] != "exact",
-			"successor output=%+v",
-			output,
-		)
-	}
+	assert.FatalIf(
+		t,
+		output == nil || output.Data["greeting"] != "exact",
+		"successor output=%+v",
+		output,
+	)
 }
 
 func testResolveOptionalQueuedSuccessorCase(t *testing.T, testCaseInput *string,
@@ -337,23 +321,19 @@ func testResolveOptionalQueuedSuccessorCase(t *testing.T, testCaseInput *string,
 			}
 			result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
 			if id == f.reader && queued.CompareAndSwap(false, true) {
-				{
-					assert.ErrorIf(
-						t,
-						result.Assessment.Outcome() != schedule.Blocked,
-						"%v",
-						"queued supplier did not retain optional absence",
-					)
-				}
+				assert.ErrorIf(
+					t,
+					result.Assessment.Outcome() != schedule.Blocked,
+					"%v",
+					"queued supplier did not retain optional absence",
+				)
 				sched.OnArrival(f.supplier, true)
-				{
-					assert.ErrorIf(
-						t,
-						started.Load() || f.rendered(),
-						"%v",
-						"queued supplier started or admitted reader before a worker slot opened",
-					)
-				}
+				assert.ErrorIf(
+					t,
+					started.Load() || f.rendered(),
+					"%v",
+					"queued supplier started or admitted reader before a worker slot opened",
+				)
 				close(releaseKeeper)
 			}
 			return result
@@ -367,12 +347,10 @@ func testResolveOptionalQueuedSuccessorCase(t *testing.T, testCaseInput *string,
 	output, _ := f.o.store.Get[*manifest.ConfigMap](
 		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"},
 	)
-	{
-		assert.FatalIf(
-			t,
-			output == nil || output.Data["greeting"] != "exact",
-			"queued successor output=%+v",
-			output,
-		)
-	}
+	assert.FatalIf(
+		t,
+		output == nil || output.Data["greeting"] != "exact",
+		"queued successor output=%+v",
+		output,
+	)
 }

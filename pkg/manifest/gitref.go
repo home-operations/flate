@@ -12,28 +12,35 @@ import (
 // GitRepositoryRef exposes the selected Flux Git reference without changing its schema.
 type GitRepositoryRef sourcev1.GitRepositoryRef
 
-// Effective returns the selected reference category and value, or empty strings for HEAD.
-func (r *GitRepositoryRef) Effective() (string, string) {
+// GitReference keeps the selected category and value together, including an empty HEAD selection.
+type GitReference struct {
+	Kind  string
+	Value string
+}
+
+// Effective returns the selected reference or an empty HEAD selection.
+func (r *GitRepositoryRef) Effective() GitReference {
 	if r != nil {
 		switch {
 		case r.Commit != "":
-			return commitKey, r.Commit
+			return GitReference{Kind: commitKey, Value: r.Commit}
 		case r.Name != "":
-			return nameKey, r.Name
+			return GitReference{Kind: nameKey, Value: r.Name}
 		case r.SemVer != "":
-			return semverKey, r.SemVer
+			return GitReference{Kind: semverKey, Value: r.SemVer}
 		case r.Tag != "":
-			return tagKey, r.Tag
+			return GitReference{Kind: tagKey, Value: r.Tag}
 		case r.Branch != "":
-			return branchKey, r.Branch
+			return GitReference{Kind: branchKey, Value: r.Branch}
 		}
 	}
-	return "", ""
+	return GitReference{}
 }
 
 // Normalized returns only the selected reference and any retained commit branch.
 func (r *GitRepositoryRef) Normalized() sourcev1.GitRepositoryRef {
-	kind, value := r.Effective()
+	reference := r.Effective()
+	kind, value := reference.Kind, reference.Value
 	ref := sourcev1.GitRepositoryRef{}
 	switch kind {
 	case commitKey:
@@ -52,7 +59,8 @@ func (r *GitRepositoryRef) Normalized() sourcev1.GitRepositoryRef {
 
 // String returns the selected kind:value diagnostic, or empty for HEAD.
 func (r *GitRepositoryRef) String() string {
-	kind, value := r.Effective()
+	reference := r.Effective()
+	kind, value := reference.Kind, reference.Value
 	if kind == "" {
 		return ""
 	}
@@ -61,7 +69,8 @@ func (r *GitRepositoryRef) String() string {
 
 // Label returns the cache label including branch context for a selected commit.
 func (r *GitRepositoryRef) Label() string {
-	kind, value := r.Effective()
+	reference := r.Effective()
+	kind, value := reference.Kind, reference.Value
 	if kind == commitKey && r.Branch != "" {
 		return "branch:" + r.Branch + "@commit:" + value
 	}
@@ -70,7 +79,8 @@ func (r *GitRepositoryRef) Label() string {
 
 // RefSpec returns a narrow fetch refspec, or empty when full/default acquisition is needed.
 func (r *GitRepositoryRef) RefSpec() config.RefSpec {
-	kind, value := r.Effective()
+	reference := r.Effective()
+	kind, value := reference.Kind, reference.Value
 	var name string
 	switch kind {
 	case nameKey:
@@ -89,7 +99,8 @@ func (r *GitRepositoryRef) RefSpec() config.RefSpec {
 
 // Validate checks selected reference syntax and a commit's retained branch context.
 func (r *GitRepositoryRef) Validate() error {
-	kind, value := r.Effective()
+	reference := r.Effective()
+	kind, value := reference.Kind, reference.Value
 	var name plumbing.ReferenceName
 	switch kind {
 	case commitKey:
@@ -122,6 +133,6 @@ func (r *GitRepositoryRef) Validate() error {
 
 // Pinned reports the conservative commit-only cache retention policy.
 func (r *GitRepositoryRef) Pinned() bool {
-	kind, _ := r.Effective()
+	kind := r.Effective().Kind
 	return kind == commitKey && r.Branch == "" && r.Tag == "" && r.SemVer == "" && r.Name == ""
 }

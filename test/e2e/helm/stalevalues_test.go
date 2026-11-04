@@ -18,7 +18,8 @@ func TestE2E_StaleValuesWarning(t *testing.T) {
 	testutil.CopyTree(t, harness.TestdataPath(t, "stalevalues"), path)
 	testutil.GitInit(t, path)
 
-	bOut, bErr, code := harness.RunCLIBuffers("build", "hr", "--path", filepath.Join(path, "cluster"))
+	runCLIBuffersResult1 := harness.RunCLIBuffers("build", "hr", "--path", filepath.Join(path, "cluster"))
+	bOut, bErr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
 	assert.FatalIf(
 		t,
 		code != 0,
@@ -43,7 +44,8 @@ func TestE2E_StaleValuesWarning(t *testing.T) {
 		bErr,
 	)
 
-	tOut, tErr, code := harness.RunCLIBuffers("test", "hr", "--path", filepath.Join(path, "cluster"))
+	runCLIBuffersResult2 := harness.RunCLIBuffers("test", "hr", "--path", filepath.Join(path, "cluster"))
+	tOut, tErr, code := runCLIBuffersResult2.Stdout, runCLIBuffersResult2.Stderr, runCLIBuffersResult2.Code
 	assert.FatalIf(
 		t,
 		code != 0,

@@ -56,7 +56,7 @@ func (r *filterFixture) index() *manifest.DiscoveryIndex {
 	for id := range index.Records {
 		r := index.Records[id]
 		{
-			owners, _ := index.OwnersOfFile(r.File)
+			owners := index.OwnersOfFile(r.File).Owners
 			r.Productions = testutil.ProductionEvidence(owners)
 			for j := range r.Productions {
 				r.Productions[j].Authored = id

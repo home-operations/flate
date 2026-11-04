@@ -268,16 +268,14 @@ func testStoreShardedConcurrentObjectChecks(
 		assert.Equal(t, owners[0].Group, id.Group)
 		for kind := EventObjectAdded; int(kind) <= numEventKinds; kind++ {
 			count, ok := scope.events[kind].Load(id)
-			{
-				assert.ErrorIf(
-					t,
-					!ok || count.(*atomic.Int64).Load() != 1,
-					"event %v for %v = %v",
-					kind,
-					id,
-					count,
-				)
-			}
+			assert.ErrorIf(
+				t,
+				!ok || count.(*atomic.Int64).Load() != 1,
+				"event %v for %v = %v",
+				kind,
+				id,
+				count,
+			)
 		}
 	}
 }

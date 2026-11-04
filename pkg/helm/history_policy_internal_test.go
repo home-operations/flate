@@ -417,14 +417,12 @@ func testTemplateHistoryPolicyProjectionCase(
 
 	changed := (*testCaseInput.hr).Clone()
 	assert.NoError(t, json.Unmarshal([]byte(testCaseInput.tc.patch), &changed.HelmReleaseSpec))
-	{
-		assert.FatalIf(
-			t,
-			manifest.Fingerprint((*testCaseInput.hr).HelmReleaseSpec) == manifest.Fingerprint(changed.HelmReleaseSpec),
-			"%s",
-			"fixture did not change a decoded declaration input",
-		)
-	}
+	assert.FatalIf(
+		t,
+		manifest.Fingerprint((*testCaseInput.hr).HelmReleaseSpec) == manifest.Fingerprint(changed.HelmReleaseSpec),
+		"%s",
+		"fixture did not change a decoded declaration input",
+	)
 	previous, complete := (*testCaseInput.renderer).PreviousRender(t.Context(), changed, nil, (*testCaseInput.input))
 	assert.Equal(t, complete, testCaseInput.tc.complete)
 	if complete {

@@ -98,10 +98,8 @@ func testFilterInlineOCICredentialChangeSelectsReleaseCase(
 	}
 	assert.Equal(t, f.ShouldReconcile(release.Named()), true)
 	assert.Equal(t, f.ShouldReconcile(sibling.Named()), false)
-	{
-		assert.FatalIf(t, st.GetObject(release.ChartSource()) != nil ||
-			len(
-				st.ListObjects(manifest.SourceDomain, manifest.KindOCIRepository),
-			) != 0, "%s", "selection depended on generated-source publication")
-	}
+	assert.FatalIf(t, st.GetObject(release.ChartSource()) != nil ||
+		len(
+			st.ListObjects(manifest.SourceDomain, manifest.KindOCIRepository),
+		) != 0, "%s", "selection depended on generated-source publication")
 }

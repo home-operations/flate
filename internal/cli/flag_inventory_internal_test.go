@@ -14,7 +14,8 @@ func TestRun_FlagInventory(t *testing.T) {
 	names := map[string]bool{}
 	for _, route := range []string{"", "build all", "get ks", "get images", "test all", "diff all", "diff images", "cache gc", "completion fish"} {
 		args := append(strings.Fields(route), "--help")
-		help, diagnostic, code := runCLI(t, args...)
+		cli := runCLI(t, args...)
+		help, diagnostic, code := cli.stdout, cli.stderr, cli.code
 		assert.FatalIf(t, code != 0, "help %q: %s", route, diagnostic)
 		for line := range strings.SplitSeq(help, "\n") {
 			fields := strings.Fields(line)

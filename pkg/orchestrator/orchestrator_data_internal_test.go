@@ -89,17 +89,13 @@ func TestOrchestrator_ParentOfAllocations(t *testing.T) {
 	var parent manifest.NamedResource
 	var ok bool
 	allocs := testing.AllocsPerRun(10, func() { parent, ok = o.parentOf(child) })
-	{
-		assert.FatalIf(t, allocs != 0 || !ok || parent != owner, "parent=%v/%t allocations=%v", parent, ok, allocs)
-	}
+	assert.FatalIf(t, allocs != 0 || !ok || parent != owner, "parent=%v/%t allocations=%v", parent, ok, allocs)
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_ChildrenByParent(t *testing.T) {
 	o, err := newTestOrchestrator(t, Tree{Path: t.TempDir()}, Config{CacheDir: t.TempDir()})
-	{
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
+	assert.FatalIf(t, err != nil, "%v", err)
 	id := func(name string) manifest.NamedResource {
 		return testutil.KustomizationID("apps", name)
 	}
@@ -108,17 +104,13 @@ func TestOrchestrator_ChildrenByParent(t *testing.T) {
 	publishFixture(t, o.store, parent, []manifest.NamedResource{second})
 	publishFixture(t, o.store, other, []manifest.NamedResource{first})
 	got := o.childrenByParent()
-	{
-		assert.FatalIf(t, !slices.Equal(got[parent], []manifest.NamedResource{first, second}) ||
-			!slices.Equal(got[other], []manifest.NamedResource{first}), "ownership snapshot = %v", got)
-	}
+	assert.FatalIf(t, !slices.Equal(got[parent], []manifest.NamedResource{first, second}) ||
+		!slices.Equal(got[other], []manifest.NamedResource{first}), "ownership snapshot = %v", got)
 	got[parent][0] = other
 	delete(got, other)
 	fresh := o.childrenByParent()
-	{
-		assert.FatalIf(t, !slices.Equal(fresh[parent], []manifest.NamedResource{first, second}) ||
-			!slices.Equal(fresh[other], []manifest.NamedResource{first}), "caller mutated ownership: %v", fresh)
-	}
+	assert.FatalIf(t, !slices.Equal(fresh[parent], []manifest.NamedResource{first, second}) ||
+		!slices.Equal(fresh[other], []manifest.NamedResource{first}), "caller mutated ownership: %v", fresh)
 }
 
 func acceptInputsForTest(t *testing.T, st *store.Store, id manifest.NamedResource, required []manifest.NamedResource) {
@@ -477,17 +469,15 @@ func testOrchestratorParentOfCase(t *testing.T, testCaseInput testOrchestratorPa
 	if testCaseInput.tc.structural {
 		want = (*testCaseInput.structural)
 	}
-	{
-		assert.FatalIf(
-			t,
-			ok != testCaseInput.tc.want || (ok && got != want),
-			"parent = %s, %t, want %s, %t",
-			got,
-			ok,
-			want,
-			testCaseInput.tc.want,
-		)
-	}
+	assert.FatalIf(
+		t,
+		ok != testCaseInput.tc.want || (ok && got != want),
+		"parent = %s, %t, want %s, %t",
+		got,
+		ok,
+		want,
+		testCaseInput.tc.want,
+	)
 }
 
 func testOrchestratorParentOfMinimumAcceptedOwner(
@@ -515,9 +505,7 @@ func testOrchestratorParentOfMinimumAcceptedOwner(
 	assert.Diff(t, o.store.Productions((*testCaseInput), nil), []manifest.Production{{Owner: a}, {Owner: z}})
 	o.store.RecordEmitted(a, &store.Emission{Complete: true}, nil)
 	parent, ok = o.parentOf((*testCaseInput))
-	{
-		assert.FatalIf(t, !ok || parent != z, "withdrawn parent=%v/%t, want %v/true", parent, ok, z)
-	}
+	assert.FatalIf(t, !ok || parent != z, "withdrawn parent=%v/%t, want %v/true", parent, ok, z)
 }
 
 type testOrchestratorParentOfEmptyDoesNotEraseOwnerInputs struct {
@@ -536,16 +524,14 @@ func testOrchestratorParentOfEmptyDoesNotEraseOwner(
 		Productions: []manifest.Production{{Owner: (*testCaseInput.rendered)}, {}},
 	}
 	parent, ok := o.parentOf((*testCaseInput.id))
-	{
-		assert.FatalIf(
-			t,
-			!ok || parent != (*testCaseInput.rendered),
-			"parent=%v/%t, want %v/true",
-			parent,
-			ok,
-			(*testCaseInput.rendered),
-		)
-	}
+	assert.FatalIf(
+		t,
+		!ok || parent != (*testCaseInput.rendered),
+		"parent=%v/%t, want %v/true",
+		parent,
+		ok,
+		(*testCaseInput.rendered),
+	)
 	assert.Diff(
 		t,
 		o.store.Productions((*testCaseInput.id), o.index),
@@ -571,9 +557,7 @@ func testOrchestratorParentOfCase2(t *testing.T, testCaseInput testOrchestratorP
 		Productions: []manifest.Production{testCaseInput.proof.production},
 	}
 	parent, ok := o.parentOf((*testCaseInput.id))
-	{
-		assert.FatalIf(t, ok || parent != (manifest.NamedResource{}), "ineligible parent=%v/%t", parent, ok)
-	}
+	assert.FatalIf(t, ok || parent != (manifest.NamedResource{}), "ineligible parent=%v/%t", parent, ok)
 	assert.Diff(
 		t,
 		o.store.Productions((*testCaseInput.id), o.index),
@@ -721,9 +705,9 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(
 			},
 			cfg.Config,
 		)
-		base, head := renderedTrees1[0], renderedTrees1[1]
+		baseRef, head := renderedTrees1[0], renderedTrees1[1]
 		assert.NoError(t, err)
-		for side, rendered := range []Rendered{base, head} {
+		for side, rendered := range []Rendered{baseRef, head} {
 			producer := testutil.KustomizationID("flux-system", "producer")
 			consumer := testutil.KustomizationID("flux-system", "consumer")
 			sibling := testutil.KustomizationID("flux-system", "sibling")
@@ -757,7 +741,8 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(
 				assert.Equal(t, string(body), previous[side])
 			}
 			previous[side] = string(body)
-			target, key := generatedInputProducerKeys(tailCaseInput, side)
+			generatedInputProducerKeysResult1 := generatedInputProducerKeys(tailCaseInput, side)
+			target, key := generatedInputProducerKeysResult1.target, generatedInputProducerKeysResult1.key
 			producerBody, err := json.Marshal(outputByParent(rendered.Result.Manifests)[producer])
 			assert.NoError(t, err)
 			wantProducer := fmt.Sprintf(
@@ -800,10 +785,15 @@ func assertGeneratedInputDeclarations(
 	}
 }
 
+type producerKeys struct {
+	target string
+	key    string
+}
+
 func generatedInputProducerKeys(
 	tailCaseInput **testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailInputs,
 	side int,
-) (string, string) {
+) producerKeys {
 	target, key := "settings", "VALUE"
 	if side == 1 && (*(*(*tailCaseInput).testCaseInput)) == "target" {
 		target = "renamed-settings"
@@ -811,7 +801,7 @@ func generatedInputProducerKeys(
 	if side == 1 && (*(*(*tailCaseInput).testCaseInput)) == "key" {
 		key = "OTHER"
 	}
-	return target, key
+	return producerKeys{target: target, key: key}
 }
 
 func generatedInputExpectedOwners(

@@ -123,7 +123,7 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 	testutil.StubDNS(t, func(context.Context, string) error { calls.Add(1); return os.ErrDeadlineExceeded })
 	tr, err := network.HTTPTransport(source.HTTPTransportConfig{})
 	assert.NoError(t, err)
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://bucket.test", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://bucket.test", http.NoBody)
 	_, err = (&http.Client{Transport: tr}).Do(req)
 	terminal, ok := errors.AsType[*cache.TerminalError](err)
 	assert.FatalIf(t, !ok || !terminal.Attempted, "seed: %v", err)

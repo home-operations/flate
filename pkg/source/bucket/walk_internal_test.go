@@ -122,58 +122,72 @@ func (w blockedArchiveWriter) Write(p []byte) (int, error) {
 func TestWalkBucket_ChunkBound(t *testing.T) {
 	t.Parallel()
 
-	requested := make(chan struct{}, 16)
-	completed := make(chan struct{}, 16)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		testWalkBucketChunkBoundCallback(
-			w,
-			r,
-			testWalkBucketChunkBoundCallbackInputs{requested: &requested, completed: &completed},
-		)
-	},
-	))
-	defer srv.Close()
-	client, err := minio.New(
-		strings.TrimPrefix(srv.URL, "http://"),
-		&minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath},
-	)
-	assert.NoError(t, err)
-
-	release := make(chan struct{})
-	unblock := sync.OnceFunc(func() { close(release) })
-	defer unblock()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := walkBucket(
-			ctx,
-			client,
-			&manifest.Bucket{BucketName: "data"},
-			bucketOutput{Writer: blockedArchiveWriter{release}},
-		)
-		done <- err
-	}()
-	for range 8 {
-		select {
-		case <-completed:
-		case <-ctx.Done():
-			t.Fatal("downloads stalled before filling window")
-		}
-	}
-	for range 8 {
-		<-requested
-	}
-	select {
-	case <-requested:
-		t.Fatal("download exceeded chunk window")
-	case <-time.After(100 * time.Millisecond):
-	}
-	unblock()
-	{
-		err := <-done
+	synctest.Test(t, func(t *testing.T) {
+		requested := make(chan struct{}, 16)
+		completed := make(chan struct{}, 16)
+		client, err := minio.New("bucket.invalid", &minio.Options{
+			Region: "us-east-1", BucketLookup: minio.BucketLookupPath,
+			Transport: bucketRoundTrip(func(r *http.Request) (*http.Response, error) {
+				recorder := httptest.NewRecorder()
+				testWalkBucketChunkBoundCallback(
+					recorder,
+					r,
+					testWalkBucketChunkBoundCallbackInputs{requested: &requested, completed: &completed},
+				)
+				response := recorder.Result()
+				response.Request = r
+				return response, nil
+			}),
+		})
 		assert.NoError(t, err)
-	}
+
+		release := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		var workers sync.WaitGroup
+		t.Cleanup(func() {
+			unblock()
+			cancel()
+			workers.Wait()
+		})
+		workers.Go(func() {
+			_, err := walkBucket(
+				ctx,
+				client,
+				&manifest.Bucket{BucketName: "data"},
+				bucketOutput{Writer: blockedArchiveWriter{release}},
+			)
+			done <- err
+		})
+		synctest.Wait()
+		for range 8 {
+			select {
+			case <-completed:
+			default:
+				t.Fatal("downloads stalled before filling window")
+			}
+		}
+		for range 8 {
+			select {
+			case <-requested:
+			default:
+				t.Fatal("download request missing before filling window")
+			}
+		}
+		select {
+		case <-requested:
+			t.Fatal("download exceeded chunk window")
+		default:
+		}
+		select {
+		case <-done:
+			t.Fatal("walk completed before writer release")
+		default:
+		}
+		unblock()
+		assert.NoError(t, <-done)
+	})
 }
 
 func TestWalkBucket_Faults(t *testing.T) {

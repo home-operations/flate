@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: workload, namespace: apps}
+data: {value: {{ .Values.value }}}

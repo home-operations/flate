@@ -1,0 +1,5 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: apps}
+spec:
+  sync: {name: self, kind: GitRepository, url: https://example.test/entry/repo, ref: refs/heads/main, path: ./elsewhere}

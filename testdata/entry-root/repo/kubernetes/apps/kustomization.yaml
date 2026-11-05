@@ -1,0 +1,3 @@
+resources:
+  - flux-system/source.yaml
+  - default/app/ks.yaml

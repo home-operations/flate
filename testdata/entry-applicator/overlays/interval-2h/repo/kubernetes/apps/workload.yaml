@@ -1,0 +1,7 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: workload, namespace: apps}
+spec:
+  interval: 2h
+  path: ./workload
+  sourceRef: {kind: GitRepository, name: self, namespace: apps}

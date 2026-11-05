@@ -1,0 +1,130 @@
+{
+  "source": {
+    "repository": "buroa/home-ops",
+    "revision": "380ca7bc59d0e58e8d85bfcaa54d8bb7057e5f70",
+    "paths": [
+      "kubernetes/apps/media/plex/ks.yaml",
+      "kubernetes/apps/flux-system/flux-instance/app/helmrelease.yaml"
+    ],
+    "reductions": "Authored minimal reductions of the app source/path topology. Replace charts and workloads with local ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/entry/repo"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base"
+      ]
+    }
+  ],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "literal-app",
+      "description": "A named Kustomization renders its complete literal ConfigMap twice.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "-n",
+              "default",
+              "-o",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/literal-app.stdout",
+              "stderr": "expect/literal-app.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/literal-app.stderr",
+      "cases": [
+        "literal-app"
+      ],
+      "purpose": "Rendered literal input and its complete reviewed output."
+    },
+    {
+      "path": "expect/literal-app.stdout",
+      "cases": [
+        "literal-app"
+      ],
+      "purpose": "Rendered literal input and its complete reviewed output."
+    },
+    {
+      "path": "repo/kubernetes/apps/default/app/app/configmap.yaml",
+      "cases": [
+        "literal-app"
+      ],
+      "purpose": "Rendered literal input and its complete reviewed output."
+    },
+    {
+      "path": "repo/kubernetes/apps/default/app/app/kustomization.yaml",
+      "cases": [
+        "literal-app"
+      ],
+      "purpose": "Rendered literal input and its complete reviewed output."
+    },
+    {
+      "path": "repo/kubernetes/apps/default/app/ks.yaml",
+      "cases": [
+        "literal-app"
+      ],
+      "purpose": "Rendered literal input and its complete reviewed output."
+    },
+    {
+      "path": "repo/kubernetes/apps/flux-system/source.yaml",
+      "cases": [
+        "literal-app"
+      ],
+      "purpose": "Rendered literal input and its complete reviewed output."
+    },
+    {
+      "path": "repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "literal-app"
+      ],
+      "purpose": "Rendered literal input and its complete reviewed output."
+    }
+  ]
+}

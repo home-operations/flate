@@ -257,3 +257,128 @@ Parallel subtests share immutable fixture inputs.
 The serial parent isolates process GC state and heap samples in the dedicated `test/reach` process.
 U1.2 owns precision for the three recorded broad-reach rows.
 Real repository inputs stay in the corpus and benchmark harness.
+
+
+## Fixture scenarios
+
+A scenario is a repository tree with declared edits and CLI invocations.
+`internal/testfixture` owns all file copies, overlays, commits, inputs, and caches.
+The end-to-end harness reads `scenario.json` and calls `cli.Run` for each invocation.
+Tests use `harness.Open`, `Case.Want`, and two calls to `Case.Run`.
+They compare each complete ordered result, including stdout, stderr, and the exit code.
+
+`scenario.json` rejects unknown fields.
+Its `source` records the repository, full revision, original paths, and reductions.
+`repositories` names independent Git stores and their relative disk directories.
+`commits` lists fixed authors, timestamps, parents, overlays, and refs in order.
+`overlays` supplies complete replacement files and declared delete, rename, or mode operations.
+`inputs` names supplied material outside the rendered repository.
+`tokens` declares exact file sentinels that need runtime references before commit creation.
+`files` assigns every file to named cases and states its purpose.
+The schema guard rejects missing expectations, undeclared files, and empty successful Kustomize packages.
+
+Each case declares initial `setup`, an optional working directory, environment values, a cache policy, and ordered `steps`.
+Each step has a unique `id` and exactly one `edit` or `invoke`.
+An edit names an overlay and never commits implicitly.
+An invocation declares `argv`, optional environment values, optional cache selection, both expectation paths, and an integer exit code.
+Priming commands have the same complete expectations as other invocations.
+A failed invocation still returns a result and does not suppress later steps.
+
+The default cache and all named caches belong to the case and live outside its repositories.
+`invoke.cache.name` selects a named cache for that invocation only.
+`invoke.cache.reset` empties only the selected cache before the invocation.
+No invocation gains `--cache-dir` implicitly.
+`case.cache.repeat` must be `reset` or `reuse`.
+Both policies restore repositories, inputs, refs, remotes, and dirty setup at the same paths before every replay.
+`reset` also empties all case caches and the isolated home directory.
+`reuse` retains them after the first replay.
+Two complete replays must produce identical results.
+
+Runtime tokens are `@@repo@@`, `@@baseline@@`, `@@inputs@@`, `@@cache@@`, and `@@commit:name@@`.
+Expectations resolve tokens against the same reserved paths and declared commits.
+Actual output keeps its absolute paths.
+The materializer never expands `${VAR}` or Helm templates.
+
+### Expected output
+
+Reviewed `expect/*.stdout` and `expect/*.stderr` files define complete bytes, including final newlines.
+No tool creates, regenerates, or accepts expectations from candidate output.
+Derive manifests from Flux behavior and the authored inputs.
+Derive ordering and diagnostics from the flate encoder contract.
+Review replacement expectations as source changes.
+
+Only actual streams from `test` invocations receive the following duration substitution.
+This includes bare `test`, `test all`, `test ks`, and `test hr`.
+Apply the grammar to stdout and stderr without moving bytes between them.
+The source is `.gc/pack/assets/corpus/corpus-parity.sh`, function `normalize`, expression `durations`:
+
+```text
+^([[:space:]]*(✓|✗) [0-9]+ passed( · [0-9]+ (skipped|failed|blocked))*[[:space:]]+)([0-9]+h)?([0-9]+m)?[0-9]+(\.[0-9]+)?(ns|µs|us|ms|s|m|h)$
+```
+
+Match each line without consuming its newline.
+Replace only the duration with `<DUR>` through the Go replacement `${1}<DUR>`.
+Preserve indentation, counts, separators, glyphs, and final newlines.
+Malformed durations and summaries without durations remain unchanged.
+Build, diff, get, and help output remains unchanged.
+Diagnostics, resource values, paths, timestamps, and retry-after values remain unchanged.
+Expected files already contain `<DUR>` and receive no normalization.
+
+### Isolation and transport
+
+The harness clears inherited `FLATE_*`, proxy, and credential variables.
+Each case owns its home directory, credentials, explicit caches, and OS cache.
+Cleanup restores the environment, working directory, logging, and transports.
+Declared HTTPS responses use `net.Pipe` without sockets or live endpoints.
+The host list is closed, and cleanup joins connection workers.
+The harness routes plain HTTP through a proxy whose name its resolver rejects.
+Named hosts, non-loopback literal IP addresses, and HTTP redirects cannot reach a live endpoint off the machine.
+Plain HTTP to localhost or a loopback IP remains outside this guarantee because upstream bypasses environment proxies for those addresses.
+The loopback proof requires a failed connection without a fixture response.
+Plain HTTP, DNS, credential helpers, AWS credential processes, and low-level transport proofs remain in package tests.
+Native credential files contain synthetic values.
+No end-to-end fixture launches a helper or a subprocess.
+
+### U0 catalog
+
+| Scenario / case | Behavior and commands | Cache regime |
+| --- | --- | --- |
+| `entry-root/literal-app` | `build ks app`: one complete ConfigMap with Flux ownership labels. | No disk persistence; reset on replay. |
+| `entry-applicator/entry-application-rendered-fluxinstance` | FluxInstance application: prime twice, workload diff twice, warm interval diff twice, isolated interval diff twice, then path invalidation. | Default cache within a sequence; named `interval-cold`; reset on replay. |
+| `entry-applicator/entry-application-rendered-kustomization` | Kustomization application: the same three edits and nine invocations. | Default cache within a sequence; named `interval-cold`; reset on replay. |
+
+Both scenarios are authored reductions of `buroa/home-ops` revision `380ca7bc59d0e58e8d85bfcaa54d8bb7057e5f70`.
+The observed paths are `kubernetes/apps/media/plex/ks.yaml` and `kubernetes/apps/flux-system/flux-instance/app/helmrelease.yaml`.
+The fixtures retain source references and application paths, with local charts and ConfigMaps replacing application payloads.
+The unapplied sibling is an authored exclusion control with a real ConfigMap.
+The alternate application is an authored invalidation control with a distinct ConfigMap.
+FluxInstance Git sync uses the full ref `refs/heads/main`, as required by Flux's source reference contract.
+
+The approved plan's literal stdout example omitted Flux ownership labels.
+The owner ruling corrects that example: `metadata.labels` includes `kustomize.toolkit.fluxcd.io/name: app` and `kustomize.toolkit.fluxcd.io/namespace: default`.
+The encoder sorts those keys before `metadata.name` and `metadata.namespace`.
+The expectations include both labels and derive from Flux application behavior.
+
+`TestRenderTrees_EntryApplicationIntervalReceipt` retains interval, workload, receipt reuse, admission, and exclusion proofs for both application forms.
+Its chart invalidation case counts the named generator through rendering.
+The implicit fixture places its exclusion control outside the entry subtree because Flux includes nested packages during implicit generation.
+Both disk scenarios use explicit entries.
+The application entry lists `source.yaml`, `generator.yaml`, `workload.yaml`, and `cm.yaml`, and excludes `unapplied`.
+Path invalidation preserves these declarations and the literal layer.
+`TestRenderTrees_ExplicitEntryIntervalSelection` uses this disk fixture for complete output, work counts, and two-run determinism.
+
+The FluxInstance end-to-end sequence remains not-run because its alternate application path renders no ConfigMap at the new path.
+Discovery owns that defect.
+Its alternate ConfigMap expectation remains present.
+The implicit Kustomization receipt case remains not-run because warm admissions lose the application receipt.
+Orchestrator receipts own that defect.
+The explicit Kustomization warm selection case stays active with zero templates and one generator admission per side.
+All held bodies and expectations remain present.
+Every other assertion stays active, including every U2 witness.
+`TestRender_EntryDeclarationQualifiesOpaqueApplier` retains qualification and receipt validity proofs.
+Warm receipt evidence requires a clean VCS-stamped test build.
+An unavailable persistence witness is not-run and does not satisfy the warm acceptance bar.
+
+U1 through U9 retain their existing fixture helpers and unmigrated files until their assigned migrations.
+The explicit allowlist lives in `test/e2e/internal/harness/migration_internal_test.go` and shrinks with each unit.
+U0 does not replace other scenario data or package fixtures.

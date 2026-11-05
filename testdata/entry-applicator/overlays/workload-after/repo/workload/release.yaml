@@ -1,0 +1,9 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: workload, namespace: apps}
+spec:
+  chart:
+    spec:
+      chart: charts/workload
+      sourceRef: {kind: GitRepository, name: self, namespace: apps}
+  values: {value: after}

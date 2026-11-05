@@ -1,0 +1,1 @@
+resources: [source.yaml, generator.yaml, workload.yaml, cm.yaml]

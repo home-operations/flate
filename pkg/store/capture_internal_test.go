@@ -43,7 +43,7 @@ func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
 	objects := reads.ListObjects(provider.Named().Group, provider.Named().Kind)
 	assert.Equal(t, len(objects), 1)
 	assert.Equal(t, objects[0].(*manifest.ResourceSetInputProvider).Labels["selected"], "false")
-	reads.Accept()
+	reads.Accept(AssessmentReconciled)
 	sh := s.shardFor(provider.Named())
 	sh.mu.RLock()
 	before := sh.byName[kindID{provider.Named().Group, provider.Named().Kind}].generation

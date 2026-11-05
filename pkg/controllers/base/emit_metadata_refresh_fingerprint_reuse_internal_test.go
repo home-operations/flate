@@ -143,7 +143,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			next.Fingerprint, next.Complete = manifest.Fingerprint("equal projection"), true
 			assert.NoError(t, first.Emit(t.Context(), obj.Named(), &next, nil))
 			next.Finish()
-			first.Reads.Accept()
+			first.Reads.Accept(store.AssessmentReconciled)
 			defer first.Close()
 			if invalidate {
 				changed := obj.Clone()
@@ -165,7 +165,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 				assert.FatalIf(t, !handled ||
 					err != nil, "projection replay: handled=%t error=%v", handled, err)
 			}
-			second.Reads.Accept()
+			second.Reads.Accept(store.AssessmentReconciled)
 			defer second.Close()
 			warning.Count = 1
 			warning.Subject = manifest.DiagnosticFor(obj.Named(), obj)
@@ -728,7 +728,7 @@ func testExecutionReplacementReclaimsBorrowedOutputCase(
 		attempt.Complete = true
 		first.Emit(t.Context(), declaration.Named(), &attempt, nil)
 		attempt.Finish()
-		first.Reads.Accept()
+		first.Reads.Accept(store.AssessmentReconciled)
 		first.Retire()
 		if output, ok := st.GetArtifact(declaration.Named(), store.ArtifactContent).(*store.Emission); !ok ||
 			output.OutputReads != &first.Reads {
@@ -768,7 +768,7 @@ func testExecutionReplacementReclaimsBorrowedOutputCase(
 		attempt.Complete = true
 		current.Emit(t.Context(), declaration.Named(), &attempt, nil)
 		attempt.Finish()
-		current.Reads.Accept()
+		current.Reads.Accept(store.AssessmentReconciled)
 	})
 	tasks.BlockTillDone()
 	assert.FatalIf(t, tasks.Failures() != 0 || current == nil, "%v", "replacement did not complete")

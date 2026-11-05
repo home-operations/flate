@@ -39,7 +39,7 @@ func TestParseChildren_SkippedDiagnostics(t *testing.T) {
 	result2 := e.ParseChildren(owner, docs, manifest.ParseDocOptions{})
 	failures = result2.Failures
 	assert.Equal(t, len(failures), 0)
-	e.Reads.Accept()
+	e.Reads.Accept(store.AssessmentReconciled)
 	warnings := s.Warnings()
 	assert.FatalIf(t, len(warnings) != 1,
 		"accepted diagnostics=%v", warnings)

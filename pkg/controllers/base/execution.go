@@ -212,7 +212,7 @@ func (e *Execution) finish(ctx context.Context, err error) {
 	if !e.Reads.Valid() {
 		return
 	}
-	defer e.Reads.Accept()
+	defer e.Reads.Accept(store.AssessmentReconciled)
 	id := e.Reads.ID()
 	e.Blocked = nil
 	e.kind = schedule.Terminal
@@ -359,7 +359,7 @@ func (e *Execution) acceptReads(ctx context.Context) {
 		e.finish(ctx, err)
 		return
 	}
-	e.Reads.Accept()
+	e.Reads.Accept(store.AssessmentReconciled)
 }
 
 func (e *Execution) reconcile[T manifest.BaseManifest](
@@ -730,7 +730,7 @@ func (e *Execution) dispatchMissing(ctx context.Context, level manifest.DrainLev
 				},
 			)
 		}
-		e.Reads.Accept()
+		e.Reads.Accept(store.AssessmentReconciled)
 	}
 }
 

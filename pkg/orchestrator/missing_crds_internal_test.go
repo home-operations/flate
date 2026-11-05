@@ -241,7 +241,7 @@ func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManif
 		reads.GetObject(ref.NamedResource)
 		reads.Require(ref.DependencyRef)
 	}
-	reads.Accept()
+	reads.Accept(store.AssessmentReconciled)
 	assert.Equal(t, reads.Valid(), true)
 	reads.Retire()
 	for range st.Sweep() {
@@ -358,7 +358,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			reads.RequireData(
 				manifest.NamedResource{Group: "", Kind: manifest.KindConfigMap, Namespace: "ns", Name: "missing"},
 			)
-			reads.Accept()
+			reads.Accept(store.AssessmentReconciled)
 			assert.Equal(t, reads.Valid(), true)
 			reads.Retire()
 			for range s.Sweep() {
@@ -623,7 +623,7 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase(
 		for _, id := range testCaseInput.semantic {
 			reads.RequireData(id)
 		}
-		reads.Accept()
+		reads.Accept(store.AssessmentReconciled)
 		assert.Equal(t, reads.Valid(), true)
 		reads.Retire()
 		for range st.Sweep() {

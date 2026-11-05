@@ -69,7 +69,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	defer captured.Close()
 	captured.Reads.GetObject(source.Named())
 	assert.Equal(t, captured.Reads.Admitted(), false)
-	captured.Reads.Accept()
+	captured.Reads.Accept(store.AssessmentReconciled)
 	start := make(chan struct{})
 	var ready sync.WaitGroup
 	ready.Add(2)

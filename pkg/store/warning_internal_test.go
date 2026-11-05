@@ -243,7 +243,7 @@ func TestWarnings_AcceptedOrigins(t *testing.T) {
 			warning.Detail = []string{}
 			reads.AddWarning(warning)
 		}
-		reads.Accept()
+		reads.Accept(AssessmentReconciled)
 	}
 	assert.Diff(t, s.Warnings(), warningSubjects(want))
 	assert.Diff(t, s.Warnings(), warningSubjects(want))
@@ -251,7 +251,7 @@ func TestWarnings_AcceptedOrigins(t *testing.T) {
 	replacement.Init(s, first.Named(), nil)
 	defer replacement.Close()
 	replacement.GetObject(first.Named())
-	replacement.Accept()
+	replacement.Accept(AssessmentReconciled)
 	for i := range want {
 		want[i].Count = 1
 	}
@@ -296,8 +296,8 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 		reads.RecordSuppliedOverride(SuppliedOverride{Resource: resource, SupplyPath: "last.yaml", Keys: keys})
 		keys[0] = "mutated"
 	}
-	a.Accept()
-	b.Accept()
+	a.Accept(AssessmentReconciled)
+	b.Accept(AssessmentReconciled)
 	want := AdvisoryEvidence{Overrides: []SuppliedOverride{
 		{Resource: resource, SupplyPath: "last.yaml", Keys: []string{"first", "z"}},
 		{Resource: resource, SupplyPath: "last.yaml", Keys: []string{"second", "z"}},
@@ -317,7 +317,7 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 	replacement.Init(s, first.Named(), nil)
 	defer replacement.Close()
 	replacement.GetObject(first.Named())
-	replacement.Accept()
+	replacement.Accept(AssessmentReconciled)
 	assert.Diff(t, s.AdvisoryEvidence(), AdvisoryEvidence{Overrides: want.Overrides[1:]})
 	s.AddObject(
 		&manifest.Secret{
@@ -391,8 +391,8 @@ func TestWarnings_RelatedIdentity(t *testing.T) {
 		warning.Related[0] = manifest.NamedResource{}
 		raw[i] = id
 	}
-	a.Accept()
-	b.Accept()
+	a.Accept(AssessmentReconciled)
+	b.Accept(AssessmentReconciled)
 	warnings := s.Warnings()
 	assert.FatalIf(t, len(warnings) != 2 || warnings[0].Count != 3 || warnings[1].Count != 3 ||
 		warnings[0].Related[0] != first.Named() ||

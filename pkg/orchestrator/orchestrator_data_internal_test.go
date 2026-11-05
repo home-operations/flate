@@ -130,7 +130,7 @@ func acceptInputsForTest(t *testing.T, st *store.Store, id manifest.NamedResourc
 		reads.GetObject(dep)
 		reads.RequireData(dep)
 	}
-	reads.Accept()
+	reads.Accept(store.AssessmentReconciled)
 	assert.Equal(t, reads.Valid(), true)
 	reads.Retire()
 	for range st.Sweep() {
@@ -251,7 +251,7 @@ func TestSelection_WithdrawsStaleRequiredFootprint(t *testing.T) {
 	reads.GetObject(obj.Named())
 	dependency := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "required", Namespace: "apps"}
 	reads.RequireData(dependency)
-	reads.Accept()
+	reads.Accept(store.AssessmentReconciled)
 	defer reads.Retire()
 	assert.Diff(t, slices.Collect(st.RequiredInputs(obj.Named())), []manifest.NamedResource{dependency})
 	changed := obj.Clone()
@@ -271,7 +271,7 @@ func TestSelection_AcceptedWarningWithdrawal(t *testing.T) {
 	first.AddWarning(
 		manifest.Warning{Resource: obj.Named(), Category: manifest.WarnUnresolvedSubstitution, Message: "missing key"},
 	)
-	first.Accept()
+	first.Accept(store.AssessmentReconciled)
 	run.Result.Warnings = run.store.Warnings()
 	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
 	assert.NoError(t, err)

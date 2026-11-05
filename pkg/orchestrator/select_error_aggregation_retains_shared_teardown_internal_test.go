@@ -646,7 +646,7 @@ func testSelectRequiredFailureOutsideOutputNamespaceUnscopedRequiredDescendant(t
 	reads.GetObject(parent.Named())
 	reads.GetObject(child.Named())
 	reads.RequireData(child.Named())
-	reads.Accept()
+	reads.Accept(store.AssessmentReconciled)
 	reads.Retire()
 	assert.Equal(t, slices.Contains(slices.Collect(run.store.RequiredInputs(parent.Named())), child.Named()), true)
 	run.filter = change.NewFilter()

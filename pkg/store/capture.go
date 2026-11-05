@@ -50,14 +50,20 @@ type Input struct {
 }
 
 type inputDetails struct {
+	inputPayload
+
 	cells        [6]registration
 	gates        *readinessGate
-	productions  []manifest.Production
-	objects      []manifest.BaseManifest
-	artifact     Artifact
+	sourceGuard  *ReadSet
 	artifactRead ArtifactRead
-	conditions   []Condition
-	status       StatusInfo
+}
+
+type inputPayload struct {
+	productions []manifest.Production
+	objects     []manifest.BaseManifest
+	artifact    Artifact
+	conditions  []Condition
+	status      StatusInfo
 }
 
 type inputBlock struct {
@@ -383,6 +389,9 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 		if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, new(input.view)) {
 			details.artifact = nil
 		}
+		if source, ok := details.artifact.(*SourceArtifact); ok {
+			details.sourceGuard = source.Reads
+		}
 	}
 	added := read &^ details.artifactRead
 	details.artifactRead |= read
@@ -528,51 +537,6 @@ func (r *ReadSet) Inputs() iter.Seq[manifest.NamedResource] {
 	}
 }
 
-// Accept replaces the current assessment and advisory bundle for this origin.
-func (r *ReadSet) Accept() {
-	if !r.Valid() {
-		return
-	}
-	r.accepted.Store(true)
-	input := r.input(r.id)
-	if head := input.object.head; head != nil && input.object.absent == nil {
-		head.assessment.Store(r)
-	}
-}
-
-// ReplacesInvalid reports whether this attempt supersedes a stale accepted assessment.
-func (r *ReadSet) ReplacesInvalid() bool {
-	r.GetObject(r.id)
-	head := r.input(r.id).object.head
-	if head == nil {
-		return false
-	}
-	previous := head.assessment.Load()
-	return previous != nil && (!previous.Valid() || previous.retired.Load() && !r.Matches(previous))
-}
-
-// Admitted reports the captured changed-only disposition.
-func (r *ReadSet) Admitted() bool { r.GetObject(r.id); return !r.input(r.id).view.excluded }
-
-// Preflight returns the captured structural admission failure.
-func (r *ReadSet) Preflight() string { r.GetObject(r.id); return r.input(r.id).view.preflight }
-
-// RequiredInputs enumerates a completed origin's accepted required footprint.
-func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq[manifest.NamedResource] {
-	sh := s.shardFor(id)
-	sh.mu.RLock()
-	head := sh.cells[id].links
-	sh.mu.RUnlock()
-	var reads *ReadSet
-	if head != nil {
-		reads = head.assessment.Load()
-	}
-	if reads == nil || !reads.Valid() {
-		return func(func(manifest.NamedResource) bool) {}
-	}
-	return reads.Required()
-}
-
 // SetIncluded publishes invocation-monotone admission and resets stale unchanged readiness.
 // Once included, an object cannot be excluded within this Store invocation.
 func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
@@ -694,12 +658,17 @@ func (r *ReadSet) Close() {
 	r.Retire()
 	sh := r.store.shardFor(r.id)
 	sh.mu.RLock()
+	head := sh.cells[r.id].links
 	source := sh.artifacts[r.id].value
 	var inventory *Emission
 	if slot := sh.slots[r.id]; slot != nil {
 		inventory = slot.current.Load()
 	}
 	sh.mu.RUnlock()
+	if head != nil {
+		head.reconciliation.Load().Retire()
+		head.binding.Load().Retire()
+	}
 	if source != nil {
 		source.Reads.Retire()
 	}
@@ -797,14 +766,14 @@ func (r *ReadSet) attachInput(input *Input) {
 }
 
 func (r *ReadSet) captureSourceAuthorities(view *capture) {
-	if view.binding != nil {
+	if view.binding != nil && view.binding.Ref.NamedResource != r.id {
 		r.GetObject(view.binding.Ref.NamedResource)
 		r.GetArtifact(view.binding.Ref.NamedResource, ArtifactContent)
-		if view.bound && !view.binding.current() {
+		if view.bound && !view.binding.sourceCurrent() {
 			r.invalid.Store(true)
 		}
 	}
-	if view.support != nil {
+	if view.support != nil && view.support.Ref.NamedResource != r.id {
 		r.GetObject(view.support.Ref.NamedResource)
 		r.GetArtifact(view.support.Ref.NamedResource, ArtifactContent)
 		if view.bound && !view.support.productionCurrent() {

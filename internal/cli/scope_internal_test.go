@@ -615,7 +615,7 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		reads.Init(o.Store(), pair[0], nil)
 		reads.GetObject(pair[0])
 		reads.RequireData(pair[1])
-		reads.Accept()
+		reads.Accept(store.AssessmentReconciled)
 		t.Cleanup(reads.Retire)
 	}
 	res := &orchestrator.Result{

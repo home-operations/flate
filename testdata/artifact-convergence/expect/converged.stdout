@@ -1,0 +1,61 @@
+---
+apiVersion: v1
+data:
+  value: transformed
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: generated-config
+  namespace: apps
+---
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata:
+  annotations:
+    ignored: retained
+  name: generator
+  namespace: apps
+  uid: built-generator
+spec:
+  artifacts:
+  - copy:
+    - from: '@repo/app/kustomization.yaml'
+      to: '@artifact/app/kustomization.yaml'
+    - from: '@repo/transformed.yaml'
+      to: '@artifact/app/cm.yaml'
+    name: generated
+    originRevision: '@repo'
+    revision: '@repo'
+  sources:
+  - alias: repo
+    kind: GitRepository
+    name: missing
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: ExternalArtifact
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: source-watcher
+    source.extensions.fluxcd.io/generator: built-generator
+  name: generated
+  namespace: apps
+spec:
+  sourceRef:
+    apiVersion: source.extensions.fluxcd.io/v1beta1
+    kind: ArtifactGenerator
+    name: generator
+    namespace: apps
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  interval: 1m
+  path: ./app
+  sourceRef:
+    kind: ExternalArtifact
+    name: generated

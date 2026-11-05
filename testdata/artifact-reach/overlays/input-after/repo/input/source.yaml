@@ -1,0 +1,9 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: input
+  namespace: apps
+spec:
+  ref:
+    commit: c25467d063e6cda0feb80e2fd5d8f70735aa7cd3
+  url: https://example.test/cluster.git

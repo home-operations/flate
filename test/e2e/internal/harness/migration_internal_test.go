@@ -14,9 +14,7 @@ import (
 )
 
 // Each migration removes its files from this fixed list. New files receive no exemption.
-const unmigratedFiles = `artifactgenerator_input_test.go
-artifactgenerator_test.go
-crds/metadata_test.go
+const unmigratedFiles = `crds/metadata_test.go
 crds/missing_crds_test.go
 crds/resourceset_test.go
 scope/authoritative_manifest_failures_test.go

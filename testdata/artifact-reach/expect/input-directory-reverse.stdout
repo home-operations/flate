@@ -1,0 +1,21 @@
+--- GitRepository apps/input (input)
++++ GitRepository apps/input (input)
+@@ -5,6 +5,6 @@
+   namespace: apps
+ spec:
+   ref:
+-    commit: @@commit:content-after@@
++    commit: @@commit:baseline-content-before@@
+   url: https://example.test/cluster.git
+ 
+
+--- ConfigMap apps/generated-config (render)
++++ ConfigMap apps/generated-config (render)
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  value: after
++  value: before
+ kind: ConfigMap
+ metadata:
+   labels:

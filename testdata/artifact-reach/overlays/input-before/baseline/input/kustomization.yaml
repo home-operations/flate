@@ -1,0 +1,1 @@
+resources: [generator.yaml, consumer.yaml, independent.yaml, unrelated.yaml, source.yaml]

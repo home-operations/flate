@@ -1,0 +1,24 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata:
+  name: generator
+  namespace: apps
+  uid: authored
+spec:
+  artifacts:
+  - copy:
+    - from: '@repo/a/'
+      to: '@artifact/'
+    name: generated-a
+  - copy:
+    - from: '@repo/b/'
+      to: '@artifact/'
+    name: generated-b
+  - copy:
+    - from: '@repo/c/'
+      to: '@artifact/'
+    name: generated-c
+  sources:
+  - alias: repo
+    kind: GitRepository
+    name: missing

@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: copied
+kind: ConfigMap
+metadata:
+  name: extracted
+  namespace: apps

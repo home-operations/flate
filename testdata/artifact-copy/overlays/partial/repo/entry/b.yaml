@@ -1,0 +1,11 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: b
+  namespace: apps
+spec:
+  interval: 1m
+  path: ./b
+  sourceRef:
+    kind: ExternalArtifact
+    name: generated-b

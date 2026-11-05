@@ -1,0 +1,8 @@
+apiVersion: v1
+data:
+  a: before
+  b: retained
+kind: ConfigMap
+metadata:
+  name: merged
+  namespace: apps

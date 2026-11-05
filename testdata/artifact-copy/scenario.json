@@ -1,0 +1,316 @@
+{
+  "source": {
+    "repository": "xunholy/k8s-gitops",
+    "revision": "2f2e6edc730457a3f45d7a73aad536afc683b5eb",
+    "paths": [
+      "kubernetes/apps/base/flux-system/artifact-generator/artifactgenerator.yaml"
+    ],
+    "reductions": "Authored reduction of source-to-artifact copy topology. Use a local Git source and small ConfigMaps. Merge, extract, failure, pin, bootstrap and convergence variants preserve the existing flate regressions."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "partial",
+      "directory": "overlays/partial",
+      "operations": [
+        {
+          "delete": "repo/entry/sources.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "artifact-generator--all-strategies",
+      "description": "artifact generator  all strategies",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds="
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/strategies.stdout",
+              "stderr": "expect/strategies.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds="
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/strategies.stdout",
+              "stderr": "expect/strategies.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--partial-failure",
+      "description": "artifact generator  partial failure",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "partial"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds="
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/partial.stdout",
+              "stderr": "expect/partial.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds="
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/partial.stdout",
+              "stderr": "expect/partial.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/partial.stderr",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/partial.stdout",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/strategies.stderr",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/strategies.stdout",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "overlays/partial/repo/a/cm.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/partial/repo/a/kustomization.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/partial/repo/b/cm.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/partial/repo/b/kustomization.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/partial/repo/entry/a.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/partial/repo/entry/b.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/partial/repo/entry/c.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/partial/repo/entry/generator.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/partial/repo/entry/kustomization.yaml",
+      "cases": [
+        "artifact-generator--partial-failure"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "repo/app/config.yaml",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/app/extracted.yaml",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/app/kustomization.yaml",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/archive.tgz",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Fixed gzip tar input containing extracted.yaml with value archive."
+    },
+    {
+      "path": "repo/base.yaml",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/entry/sources.yaml",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/overlay.yaml",
+      "cases": [
+        "artifact-generator--all-strategies"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    }
+  ]
+}

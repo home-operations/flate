@@ -1,0 +1,18 @@
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata:
+  name: generator
+  namespace: apps
+  uid: authored
+spec:
+  artifacts:
+  - copy:
+    - from: '@repo/app/kustomization.yaml'
+      to: '@artifact/render/kustomization.yaml'
+    - from: '@repo/app/cm.yaml'
+      to: '@artifact/render/cm.yaml'
+    name: generated
+  sources:
+  - alias: repo
+    kind: GitRepository
+    name: input

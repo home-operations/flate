@@ -1,0 +1,1008 @@
+{
+  "source": {
+    "repository": "xunholy/k8s-gitops",
+    "revision": "2f2e6edc730457a3f45d7a73aad536afc683b5eb",
+    "paths": [
+      "kubernetes/apps/base/flux-system/artifact-generator/artifactgenerator.yaml"
+    ],
+    "reductions": "Authored reduction of source-to-artifact copy topology. Use a local Git source and small ConfigMaps. Merge, extract, failure, pin, bootstrap and convergence variants preserve the existing flate regressions."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "content-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "content-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "content-before"
+      ],
+      "overlay": "content-after"
+    },
+    {
+      "repository": "repo",
+      "name": "input-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "content-after"
+      ],
+      "overlay": "input-before"
+    },
+    {
+      "repository": "repo",
+      "name": "input-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "input-before"
+      ],
+      "overlay": "input-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-content-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-content-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-content-before"
+      ],
+      "overlay": "content-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-input",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-content-after"
+      ],
+      "overlay": "input-before"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "content-after",
+      "directory": "overlays/content-after"
+    },
+    {
+      "name": "input-before",
+      "directory": "overlays/input-before"
+    },
+    {
+      "name": "input-after",
+      "directory": "overlays/input-after"
+    },
+    {
+      "name": "bootstrap-consumer",
+      "directory": "overlays/bootstrap-consumer"
+    },
+    {
+      "name": "emitted-after",
+      "directory": "overlays/emitted-after"
+    }
+  ],
+  "cases": [
+    {
+      "name": "artifact-generator--bootstrap-input",
+      "description": "A consumer-only edit selects its static generator with identical copied inputs on both sides.",
+      "setup": [
+        {
+          "commit": "content-before"
+        },
+        {
+          "commit": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/bootstrap",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds="
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/bootstrap.stdout",
+              "stderr": "expect/bootstrap.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "consumer-edit",
+          "edit": {
+            "overlay": "bootstrap-consumer"
+          }
+        },
+        {
+          "id": "selected",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/bootstrap",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--path-orig",
+              "@@baseline@@/bootstrap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/bootstrap-selected.stdout",
+              "stderr": "expect/bootstrap-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected-warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/bootstrap",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--path-orig",
+              "@@baseline@@/bootstrap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/bootstrap-selected.stdout",
+              "stderr": "expect/bootstrap-selected.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--emitted-changed-only-diff",
+      "description": "artifact generator  emitted changed only diff",
+      "setup": [
+        {
+          "commit": "content-before"
+        },
+        {
+          "overlay": "emitted-after"
+        },
+        {
+          "shallow": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/emitted",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--path-orig",
+              "@@baseline@@/emitted"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/emitted-selected.stdout",
+              "stderr": "expect/emitted-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/emitted",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--path-orig",
+              "@@baseline@@/emitted",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/emitted-forward.stdout",
+              "stderr": "expect/emitted-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/emitted",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--path-orig",
+              "@@repo@@/emitted",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/emitted-reverse.stdout",
+              "stderr": "expect/emitted-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--input-source-changed-only",
+      "description": "artifact generator  input source changed only",
+      "setup": [
+        {
+          "commit": "input-after"
+        },
+        {
+          "commit": "baseline-input"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/input",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds="
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/input-full-before.stdout",
+              "stderr": "expect/input-full-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/input",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds="
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/input-full-after.stdout",
+              "stderr": "expect/input-full-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "directory-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/input",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--path-orig",
+              "@@baseline@@/input"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/input-selected.stdout",
+              "stderr": "expect/input-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "directory-forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/input",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--path-orig",
+              "@@baseline@@/input",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/input-directory-forward.stdout",
+              "stderr": "expect/input-directory-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "directory-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/input",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--path-orig",
+              "@@repo@@/input",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/input-directory-reverse.stdout",
+              "stderr": "expect/input-directory-reverse.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/input",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--base",
+              "@@commit:input-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/input-selected.stdout",
+              "stderr": "expect/input-selected.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed-forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/input",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--base",
+              "@@commit:input-before@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/input-forward.stdout",
+              "stderr": "expect/input-forward.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--input-source-changed-only-reverse-committed",
+      "description": "artifact generator  input source changed only reverse committed",
+      "setup": [
+        {
+          "commit": "input-before"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/input",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--skip-kinds=",
+              "--base",
+              "@@commit:input-after@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/input-reverse.stdout",
+              "stderr": "expect/input-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/bootstrap-selected.stderr",
+      "cases": [
+        "artifact-generator--bootstrap-input"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/bootstrap-selected.stdout",
+      "cases": [
+        "artifact-generator--bootstrap-input"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/bootstrap.stderr",
+      "cases": [
+        "artifact-generator--bootstrap-input"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/bootstrap.stdout",
+      "cases": [
+        "artifact-generator--bootstrap-input"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/emitted-forward.stderr",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/emitted-forward.stdout",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/emitted-reverse.stderr",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/emitted-reverse.stdout",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/emitted-selected.stderr",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/emitted-selected.stdout",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-directory-forward.stderr",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-directory-forward.stdout",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-directory-reverse.stderr",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-directory-reverse.stdout",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-forward.stderr",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-forward.stdout",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-full-after.stderr",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-full-after.stdout",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-full-before.stderr",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-full-before.stdout",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-reverse.stderr",
+      "cases": [
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-reverse.stdout",
+      "cases": [
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-selected.stderr",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "expect/input-selected.stdout",
+      "cases": [
+        "artifact-generator--input-source-changed-only"
+      ],
+      "purpose": "Complete independently authored CLI stream for the declared invocations."
+    },
+    {
+      "path": "overlays/bootstrap-consumer/repo/bootstrap/consumer.yaml",
+      "cases": [
+        "artifact-generator--bootstrap-input"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/content-after/baseline/app/cm.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/content-after/repo/app/cm.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/emitted-after/repo/shared/generator.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-after/repo/input/source.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/baseline/input/consumer.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/baseline/input/generator.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/baseline/input/independent.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/baseline/input/kustomization.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/baseline/input/source.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/baseline/input/unrelated.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/repo/input/consumer.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/repo/input/generator.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/repo/input/independent.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/repo/input/kustomization.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/repo/input/source.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "overlays/input-before/repo/input/unrelated.yaml",
+      "cases": [
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Complete named input replacement for the declared history or edit."
+    },
+    {
+      "path": "repo/after.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/app/cm.yaml",
+      "cases": [
+        "artifact-generator--bootstrap-input",
+        "artifact-generator--emitted-changed-only-diff",
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/app/kustomization.yaml",
+      "cases": [
+        "artifact-generator--bootstrap-input",
+        "artifact-generator--emitted-changed-only-diff",
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/before.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/bootstrap/consumer.yaml",
+      "cases": [
+        "artifact-generator--bootstrap-input"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/bootstrap/generator.yaml",
+      "cases": [
+        "artifact-generator--bootstrap-input"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/emitted/consumer.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/emitted/owner.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/emitted/unrelated.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/generators/kustomization.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/generators/owner.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/shared/Kustomization",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/shared/generator.yaml",
+      "cases": [
+        "artifact-generator--emitted-changed-only-diff"
+      ],
+      "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "repo/unrelated/cm.yaml",
+      "cases": [
+        "artifact-generator--bootstrap-input",
+        "artifact-generator--emitted-changed-only-diff",
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Real unrelated workload that detects accidental selection."
+    },
+    {
+      "path": "repo/unrelated/kustomization.yaml",
+      "cases": [
+        "artifact-generator--bootstrap-input",
+        "artifact-generator--emitted-changed-only-diff",
+        "artifact-generator--input-source-changed-only",
+        "artifact-generator--input-source-changed-only-reverse-committed"
+      ],
+      "purpose": "Real unrelated workload that detects accidental selection."
+    }
+  ]
+}

@@ -116,7 +116,11 @@ spec: {url: https://example.test/excluded.git}
 	promote := func(id manifest.NamedResource) (bool, error) {
 		return loader.Promote(t.Context(), st, id, loader.PromoteOptions{
 			Record: index.Records[id].Productions[0], Admit: func(object manifest.BaseManifest) (bool, error) {
-				return controller.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: object}, nil)
+				return controller.KeepEmitted(
+					t.Context(),
+					manifest.NamedResource{},
+					loader.PrepareRequest{Generation: []store.Child{{Obj: object}}, Reads: nil},
+				)
 			},
 		})
 	}

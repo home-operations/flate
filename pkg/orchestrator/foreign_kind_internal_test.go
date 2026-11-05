@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -171,7 +173,12 @@ func testOrchestratorForeignBucketKindNotFetchedCase(
 		Namespace:  "flux-system",
 	}
 	(*testCaseInput.o).store.AddObject(foreign)
-	result := (dagDispatcher{(*testCaseInput.o)}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
+	result := (dagDispatcher{(*testCaseInput.o)}).Dispatch(
+		t.Context(),
+		foreign.Named(),
+		manifest.DrainNone,
+		schedule.Result{},
+	)
 	{
 		_, hasStatus := (*testCaseInput.o).store.GetStatus(foreign.Named())
 		assert.FatalIf(
@@ -184,7 +191,7 @@ func testOrchestratorForeignBucketKindNotFetchedCase(
 		foreign.Named(),
 		store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "foreign status"},
 	)
-	(dagDispatcher{(*testCaseInput.o)}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
+	(dagDispatcher{(*testCaseInput.o)}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone, schedule.Result{})
 	{
 		info, _ := (*testCaseInput.o).store.GetStatus(
 			foreign.Named(),

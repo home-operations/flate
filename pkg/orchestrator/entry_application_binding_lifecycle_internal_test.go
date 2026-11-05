@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	kustomizationctrl "github.com/home-operations/flate/pkg/controllers/kustomization"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -217,6 +218,7 @@ func (c bindingLifecycleEntryController) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	if id == c.state.parent {
 		c.state.orchestrator.tasks.YieldSlot(func() {
@@ -226,7 +228,7 @@ func (c bindingLifecycleEntryController) ReconcileNode(
 			}
 		})
 	}
-	execution := c.reconcileController.ReconcileNode(ctx, id, level)
+	execution := c.reconcileController.ReconcileNode(ctx, id, level, previous)
 	output, ok := c.state.orchestrator.store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
 	if execution != nil && ok && output.Complete && output.OutputReads.Valid() {
 		if id.Name == "a" || id.Name == "z" {

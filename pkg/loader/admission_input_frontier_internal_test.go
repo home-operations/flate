@@ -76,7 +76,7 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 				Name:      "declaration",
 				Namespace: "apps",
 			}
-			proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{
+			proposal, err = l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{{
 				Obj: manifest.NewSecret(input, nil, map[string]any{"VALUE": "current"}),
 				Productions: []manifest.Production{
 					{
@@ -87,7 +87,7 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 						File:        "apps/vars.yaml",
 					},
 				},
-			}})
+			}}})
 			assert.NoError(t, err)
 			want := file != "apps/changed.yaml"
 			assert.Equal(t, slices.Contains(proposal.Dirty, input), want)
@@ -367,7 +367,7 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	var reads store.ReadSet
 	reads.Init(st, consumer, nil)
 	defer reads.Close()
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: incoming, Reads: &reads})
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{incoming}, Reads: &reads})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, provider), (*testCaseInput) != "published")
 	if (*testCaseInput) == "incoming" {

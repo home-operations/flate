@@ -96,15 +96,16 @@ func reconcileFixture(t *testing.T, c *Controller, id manifest.NamedResource) st
 
 type chartSourceDispatcher struct {
 	store    *store.Store
-	dispatch func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result
+	dispatch func(context.Context, schedule.NodeID, manifest.DrainLevel, schedule.Result) schedule.Result
 }
 
 func (d chartSourceDispatcher) Dispatch(
 	ctx context.Context,
 	id schedule.NodeID,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) schedule.Result {
-	return d.dispatch(ctx, id, level)
+	return d.dispatch(ctx, id, level, previous)
 }
 
 func (d chartSourceDispatcher) Sweep(context.Context, bool) []schedule.NodeID {
@@ -138,11 +139,12 @@ func (c *Controller) reconcileNodeForTest(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	if chart, ok := c.Store.GetObject(id).(*manifest.HelmChartSource); ok && chart.ExistenceOnly() {
-		return sourcecontroller.New(c.Store, c.Tasks).ReconcileNode(ctx, id, level)
+		return sourcecontroller.New(c.Store, c.Tasks).ReconcileNode(ctx, id, level, previous)
 	}
-	return c.ReconcileNode(ctx, id, level)
+	return c.ReconcileNode(ctx, id, level, previous)
 }
 
 func TestController_ShortCircuitsToReady(t *testing.T) {
@@ -471,7 +473,7 @@ func runSharedChartSource(t *testing.T, inputs *testReconcileSharedChartSourceCo
 	parked := make(chan manifest.NamedResource, len(consumers))
 	dispatch := chartSourceDispatcher{
 		store: st,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id == source {
 				close(sourceStarted)
 				tasks.YieldSlot(func() { <-sourceRelease })
@@ -662,7 +664,7 @@ func prepareSharedChartRerun(t *testing.T, c *Controller, st *store.Store, hr *m
 		},
 		false,
 	)
-	initialRun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
+	initialRun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone, schedule.Result{})
 	assert.FatalIf(t, initialRun.Outcome() == schedule.Blocked, "%s", initialRun.Blocked)
 
 	before := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
@@ -693,7 +695,7 @@ func prepareSharedChartRerun(t *testing.T, c *Controller, st *store.Store, hr *m
 		},
 		false,
 	)
-	rerun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
+	rerun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone, schedule.Result{})
 	initialRun.Retire()
 	stopObjects()
 	stopArtifacts()

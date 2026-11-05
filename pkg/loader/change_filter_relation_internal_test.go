@@ -426,8 +426,9 @@ func testAddEmittedCrossSourceOptionalInputEvidenceCase(
 	assert.Equal(t, filter.ShouldReconcile(input), false)
 	assert.Equal(t, changes.Len(), 0)
 	assert.Equal(t, len(inputMap(changes)), 0)
-	setup := admissionClosure{loader: filter.loader, objects: st, incoming: child}
+	setup := admissionClosure{loader: filter.loader, objects: st, generation: []store.Child{child}}
 	assert.Equal(t, setup.affected(child.Obj.Named(), child.Obj), false)
+	setup.captureIncoming()
 	productions := st.IncomingProductions(child, index)
 	for i := range productions {
 		production := productions[i]

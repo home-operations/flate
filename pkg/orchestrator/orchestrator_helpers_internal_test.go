@@ -154,7 +154,7 @@ func (o *Orchestrator) prepareBootstrap(ctx context.Context) error {
 		}
 		proposal, err := o.loader.Prepare(
 			ctx,
-			loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: o.history, Invocation: true},
+			loader.PrepareRequest{Generation: nil, Reads: nil, History: o.history, Invocation: true},
 		)
 		if err != nil {
 			return err

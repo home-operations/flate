@@ -132,7 +132,7 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 		t.Helper()
 		var next *base.Execution
 		c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) {
-			next = c.ReconcileNode(ctx, hr.Named(), manifest.DrainNone)
+			next = c.ReconcileNode(ctx, hr.Named(), manifest.DrainNone, schedule.Result{})
 		})
 		c.Tasks.BlockTillDone()
 		assert.FatalIf(t, c.Tasks.Failures() != 0 || next == nil, "%v", "reconciliation task failed")
@@ -690,9 +690,9 @@ data:
 		Tasks: tasks,
 		Store: st,
 		ID:    id,
-		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, previous schedule.Result) *base.Execution {
 			defer markRendered()
-			return c.ReconcileNode(ctx, id, level)
+			return c.ReconcileNode(ctx, id, level, previous)
 		},
 	})
 	assert.FatalIf(t, info.Status != store.StatusReady, "canonical replacement status = %+v", info)

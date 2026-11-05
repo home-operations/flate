@@ -274,3 +274,282 @@ func TestCapture_DirectAndNamedReads(t *testing.T) {
 	st.AddObject(emissionChild("first", "changed").Obj)
 	assert.Equal(t, reads.Valid(), false)
 }
+
+func TestReadSet_MatchesContentFacets(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"object", "absent object", "artifact", "absent artifact", "productions", "empty productions", "objects", "empty objects"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			child := emissionChild("input", "same")
+			id := child.Obj.Named()
+			if name != "absent object" && name != "empty objects" {
+				st.AddObject(child.Obj, child.Doc)
+			}
+			if name == "artifact" {
+				st.SetArtifact(id, &SourceArtifact{Content: "same", Revision: "revision"})
+			}
+			if name == "productions" {
+				owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+				st.AddObject(owner)
+				st.RecordEmitted(owner.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
+			}
+			capture := func(reads *ReadSet) {
+				switch name {
+				case "object", "absent object":
+					reads.GetObject(id)
+				case "artifact", "absent artifact":
+					reads.GetArtifact(id, ArtifactContent|ArtifactRevision)
+				case "productions", "empty productions":
+					reads.Productions(id, nil)
+				case "objects", "empty objects":
+					reads.ListObjects(id.Group, id.Kind)
+				}
+			}
+			var previous, current, incomplete ReadSet
+			previous.Init(st, ownerID("before"), nil)
+			current.Init(st, ownerID("current"), nil)
+			incomplete.Init(st, ownerID("incomplete"), nil)
+			t.Cleanup(previous.Retire)
+			t.Cleanup(current.Retire)
+			t.Cleanup(incomplete.Retire)
+			capture(&previous)
+			capture(&current)
+			if name == "objects" || name == "empty objects" {
+				id.Name, id.Namespace = "", ""
+			}
+			incomplete.input(id)
+			assert.Equal(t, compareCapturedContent(t, &current, &previous, id), true)
+			assert.Equal(t, compareCapturedContent(t, &current, &incomplete, id), false)
+			assert.Equal(t, compareCapturedContent(t, &incomplete, &previous, id), false)
+			previous.GetStatus(child.Obj.Named())
+			assert.Equal(t, compareCapturedContent(t, &current, &previous, id), true)
+		})
+	}
+}
+
+func TestReadSet_MatchesContentChanges(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"object", "document", "artifact content", "artifact revision", "artifact origin", "productions", "objects", "collection value"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			child := emissionChild("input", "before")
+			id := child.Obj.Named()
+			st.AddObject(child.Obj, child.Doc)
+			artifact := &SourceArtifact{
+				Content: "before", Revision: "before",
+				Metadata: map[string]string{"org.opencontainers.image.revision": "before"},
+			}
+			st.SetArtifact(id, artifact)
+			var previous, current ReadSet
+			previous.Init(st, ownerID("before"), nil)
+			current.Init(st, ownerID("current"), nil)
+			t.Cleanup(previous.Retire)
+			t.Cleanup(current.Retire)
+			switch name {
+			case "object", "document":
+				previous.GetObject(id)
+				replacement := emissionChild("input", "after")
+				if name == "document" {
+					replacement.Obj = child.Obj
+				}
+				st.AddObject(replacement.Obj, replacement.Doc)
+				current.GetObject(id)
+			case "artifact content", "artifact revision", "artifact origin":
+				previous.GetArtifact(id, ArtifactContent|ArtifactRevision|ArtifactOrigin)
+				replacement := *artifact
+				switch name {
+				case "artifact content":
+					replacement.Content = "after"
+				case "artifact revision":
+					replacement.Revision = "after"
+				case "artifact origin":
+					replacement.Metadata = map[string]string{"org.opencontainers.image.revision": "after"}
+				}
+				st.SetArtifact(id, &replacement)
+				current.GetArtifact(id, ArtifactContent|ArtifactRevision|ArtifactOrigin)
+			case "productions":
+				previous.Productions(id, nil)
+				owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+				st.AddObject(owner)
+				st.RecordEmitted(owner.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
+				current.Productions(id, nil)
+			case "objects", "collection value":
+				previous.ListObjects(id.Group, id.Kind)
+				member := "added"
+				if name == "collection value" {
+					member = "input"
+				}
+				st.AddObject(emissionChild(member, "after").Obj)
+				current.ListObjects(id.Group, id.Kind)
+				id.Name, id.Namespace = "", ""
+			}
+			assert.Equal(t, compareCapturedContent(t, &current, &previous, id), false)
+			assert.Equal(t, compareCapturedContent(t, &previous, &previous, id), true)
+		})
+	}
+}
+
+func TestReadSet_MatchesContentArtifactCoverage(t *testing.T) {
+	t.Parallel()
+	for _, bit := range []ArtifactRead{ArtifactContent, ArtifactRevision, ArtifactOrigin} {
+		t.Run(strconv.Itoa(int(bit)), func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			id := manifest.BootstrapSourceID
+			st.SetArtifact(id, &SourceArtifact{Content: "content", Revision: "revision"})
+			var previous, current ReadSet
+			previous.Init(st, ownerID("before"), nil)
+			current.Init(st, ownerID("current"), nil)
+			t.Cleanup(previous.Retire)
+			t.Cleanup(current.Retire)
+			all := ArtifactContent | ArtifactRevision | ArtifactOrigin
+			previous.GetArtifact(id, all&^bit)
+			current.GetArtifact(id, all)
+			assert.Equal(t, compareCapturedContent(t, &current, &previous, id), false)
+			assert.Equal(t, compareCapturedContent(t, &previous, &current, id), true)
+		})
+	}
+}
+
+func TestReadSet_MatchesContentProductionIndex(t *testing.T) {
+	t.Parallel()
+	st := New()
+	child := emissionChild("input", "same")
+	st.AddObject(child.Obj, child.Doc)
+	first, second := new(manifest.DiscoveryIndex), new(manifest.DiscoveryIndex)
+	var previous, current, changed ReadSet
+	previous.Init(st, ownerID("before"), nil)
+	current.Init(st, ownerID("current"), nil)
+	changed.Init(st, ownerID("changed"), nil)
+	t.Cleanup(previous.Retire)
+	t.Cleanup(current.Retire)
+	t.Cleanup(changed.Retire)
+	id := child.Obj.Named()
+	previous.Productions(id, first)
+	current.Productions(id, first)
+	changed.Productions(id, second)
+	assert.Equal(t, compareCapturedContent(t, &current, &previous, id), true)
+	assert.Equal(t, compareCapturedContent(t, &changed, &previous, id), false)
+	var unsettled ReadSet
+	unsettled.Init(st, ownerID("unsettled"), nil)
+	t.Cleanup(unsettled.Retire)
+	unsettled.UnsettledProducers(id)
+	var unindexed ReadSet
+	unindexed.Init(st, ownerID("unindexed"), nil)
+	t.Cleanup(unindexed.Retire)
+	unindexed.Productions(id, nil)
+	assert.Equal(t, compareCapturedContent(t, &unindexed, &unsettled, id), false)
+}
+
+func TestReadSet_MatchesContentLookup(t *testing.T) {
+	t.Parallel()
+	for _, indexed := range []bool{false, true} {
+		t.Run(strconv.FormatBool(indexed), func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			id, other := ownerID("input"), ownerID("other")
+			var previous, current, foreign ReadSet
+			previous.Init(st, ownerID("before"), nil)
+			current.Init(st, ownerID("current"), nil)
+			foreign.Init(New(), ownerID("foreign"), nil)
+			t.Cleanup(previous.Retire)
+			t.Cleanup(current.Retire)
+			t.Cleanup(foreign.Retire)
+			for _, reads := range []*ReadSet{&previous, &current, &foreign} {
+				reads.GetObject(id)
+				reads.GetObject(other)
+				if indexed {
+					reads.indexInputs(0)
+				}
+			}
+			assert.Equal(t, compareCapturedContent(t, &current, &previous, id), true)
+			assert.Equal(t, compareCapturedContent(t, &current, &foreign, id), false)
+			assert.Equal(t, compareCapturedContent(t, &current, &previous, ownerID("absent")), false)
+			assert.Equal(t, compareCapturedContent(t, &current, nil, id), false)
+			assert.Equal(t, compareCapturedContent(t, nil, &previous, id), false)
+		})
+	}
+}
+
+type contentInputState struct {
+	input, next   *Input
+	details       *inputDetails
+	derived       uint8
+	declaration   bool
+	required      bool
+	gate          bool
+	materializer  bool
+	hasStatus     bool
+	settled       bool
+	watchProducer bool
+	producer      uint64
+	read          ArtifactRead
+	heads         [bucketFacet]*registrationHead
+	generations   [bucketFacet]uint64
+}
+
+func compareCapturedContent(t *testing.T, current, previous *ReadSet, id manifest.NamedResource) bool {
+	t.Helper()
+	states := func(reads *ReadSet) []contentInputState {
+		var result []contentInputState
+		if reads == nil {
+			return result
+		}
+		for input := reads.inputs; input != nil; input = input.next {
+			state := contentInputState{
+				input: input, next: input.next, details: input.details.Load(), derived: input.derived,
+				declaration: input.declaration, required: input.required, gate: input.gate,
+				materializer: input.materializer, hasStatus: input.hasStatus, settled: input.settled,
+				watchProducer: input.watchProducer, producer: input.producer,
+			}
+			if state.details != nil {
+				state.read = state.details.artifactRead
+			}
+			for kind := objectFacet; kind <= bucketFacet; kind++ {
+				if cell := input.cell(kind); cell != nil {
+					state.heads[kind-1] = cell.head
+					state.generations[kind-1] = cell.generation.Load()
+				}
+			}
+			result = append(result, state)
+		}
+		return result
+	}
+	before, after := states(previous), states(current)
+	var previousLast, currentLast *Input
+	if previous != nil {
+		previousLast = previous.last
+	}
+	if current != nil {
+		currentLast = current.last
+	}
+	got := current.MatchesContent(previous, id)
+	assert.Equal(t, slices.Equal(before, states(previous)), true)
+	assert.Equal(t, slices.Equal(after, states(current)), true)
+	if previous != nil {
+		assert.Equal(t, previous.last, previousLast)
+	}
+	if current != nil {
+		assert.Equal(t, current.last, currentLast)
+	}
+	return got
+}
+
+func TestReadSet_MatchesContentRequiredFacets(t *testing.T) {
+	t.Parallel()
+	st := New()
+	id := manifest.BootstrapSourceID
+	st.SetArtifact(id, &SourceArtifact{Content: "before"})
+	var previous, current ReadSet
+	previous.Init(st, ownerID("before"), nil)
+	current.Init(st, ownerID("current"), nil)
+	t.Cleanup(previous.Retire)
+	t.Cleanup(current.Retire)
+	previous.GetArtifact(id, ArtifactContent)
+	st.SetArtifact(id, &SourceArtifact{Content: "after"})
+	current.GetObject(id)
+	assert.Equal(t, compareCapturedContent(t, &current, &previous, id), true)
+	assert.Equal(t, compareCapturedContent(t, &previous, &current, id), false)
+}

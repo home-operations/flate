@@ -506,10 +506,9 @@ func (d *Session) entryReceipt(ctx context.Context, a *Admission, input *store.S
 	a.entryRequest = kustomize.RenderRequest{
 		Work: d.cfg.Work.RenderWork(), Source: input, ApplyIgnore: true, SubPath: root.Path,
 		StrictSubstitutions: d.cfg.StrictSubstitutions, SkipKinds: d.cfg.SkipKinds,
-		DependencySubstitutions: d.substitutions,
+		DependencySubstitutions: d.substitutions, Preparation: &a.entryPreparation,
 	}
 	q.previous = d.cfg.Trees.PreviousEntry(ctx, a.entryRequest)
-
 	for i := range q.previous.Inputs {
 		input := &q.previous.Inputs[i]
 		if input.Binding.Present {

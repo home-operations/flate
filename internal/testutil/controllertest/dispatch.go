@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -19,14 +21,19 @@ type Dispatch struct {
 	Tasks         *task.Service
 	Store         *store.Store
 	ID            manifest.NamedResource
-	ReconcileNode func(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution
+	ReconcileNode func(context.Context, manifest.NamedResource, manifest.DrainLevel, schedule.Result) *base.Execution
 }
 
 // Dispatch captures one reconciliation's assessment for the scheduler.
 //
 //nolint:gocritic // Each scheduler retains an independent copy of the fixture dispatch state.
-func (d Dispatch) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-	return schedule.Result{Assessment: d.ReconcileNode(ctx, id, level)}
+func (d Dispatch) Dispatch(
+	ctx context.Context,
+	id schedule.NodeID,
+	level manifest.DrainLevel,
+	previous schedule.Result,
+) schedule.Result {
+	return schedule.Result{Assessment: d.ReconcileNode(ctx, id, level, previous)}
 }
 
 // Sweep delivers pending store publications and returns invalidated executions.
@@ -44,7 +51,7 @@ func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.Dr
 	var terminal bool
 	failures := d.Tasks.Failures()
 	d.Tasks.Go(ctx, "test/"+d.ID.String(), func(ctx context.Context) {
-		assessment := d.ReconcileNode(ctx, d.ID, drain)
+		assessment := d.ReconcileNode(ctx, d.ID, drain, schedule.Result{})
 		terminal = assessment.Outcome() != schedule.Blocked
 		assessment.Close()
 	})
@@ -116,6 +123,9 @@ func keepFixtureChildren(
 	next *store.Emission,
 ) (bool, error) {
 	children := next.Children
+	if len(children) == 0 {
+		return false, nil
+	}
 	cloned := false
 	childValues := children
 	for i := range childValues {
@@ -131,9 +141,11 @@ func keepFixtureChildren(
 			}
 			next.Children[i].Obj = obj
 		}
-		if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
-			return cloned, err
-		}
+	}
+	if _, err := c.KeepEmitted(ctx, id,
+		loader.PrepareRequest{Generation: next.Children, Reads: next.Reads},
+	); err != nil {
+		return cloned, err
 	}
 	return cloned, nil
 }

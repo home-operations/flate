@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -90,7 +92,11 @@ func renderSettledEntryCandidates(t *testing.T, tree *Tree, first string) Render
 	for _, name := range []string{first, second} {
 		reads.RequireData(testutil.HelmReleaseID("apps", name))
 	}
-	_, err = o.ksc.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{}, &reads)
+	_, err = o.ksc.KeepEmitted(
+		t.Context(),
+		manifest.NamedResource{},
+		loader.PrepareRequest{Generation: nil, Reads: &reads},
+	)
 	reads.Retire()
 	assert.NoError(t, err)
 	o.controllers.HelmRelease = &settledEntryController{
@@ -123,6 +129,7 @@ func (c *settledEntryController) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	if id.Name == c.second && level == manifest.DrainNone {
 		c.tasks.YieldSlot(func() {
@@ -132,7 +139,7 @@ func (c *settledEntryController) ReconcileNode(
 			}
 		})
 	}
-	execution := c.reconcileController.ReconcileNode(ctx, id, level)
+	execution := c.reconcileController.ReconcileNode(ctx, id, level, previous)
 	if id.Name == c.first && execution != nil && execution.Outcome() == schedule.Terminal {
 		c.once.Do(func() { close(c.ready) })
 	}

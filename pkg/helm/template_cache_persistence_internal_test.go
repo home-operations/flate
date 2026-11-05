@@ -69,7 +69,11 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 
 	assert.NoError(t, renderMapsErr)
 	assert.Diff(t, again, (*inputs.first))
-	initial, renderMapsErr := (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
+	initial, renderMapsErr := (*inputs.cli).describeChart(
+		t.Context(),
+		newHR(),
+		inputs.cliSources.chartInput(newHR()),
+	)
 	assert.NoError(t, renderMapsErr)
 	var receipt20 *manifest.RenderReceipt
 	_, receipt20, renderMapsErr = testutil.RenderMaps(
@@ -96,7 +100,11 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	}
 
 	assert.NoError(t, renderMapsErr)
-	repeated, renderMapsErr := (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
+	repeated, renderMapsErr := (*inputs.cli).describeChart(
+		t.Context(),
+		newHR(),
+		inputs.cliSources.chartInput(newHR()),
+	)
 	assert.NoError(t, renderMapsErr)
 	assert.FatalIf(
 		t,
@@ -152,7 +160,11 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 	}
 
 	assert.NoError(t, renderMapsErr)
-	distinct, renderMapsErr := (*inputs.cli).describeChart(t.Context(), newHR(), (*inputs.cliSources))
+	distinct, renderMapsErr := (*inputs.cli).describeChart(
+		t.Context(),
+		newHR(),
+		inputs.cliSources.chartInput(newHR()),
+	)
 	assert.NoError(t, renderMapsErr)
 	assert.FatalIf(
 		t,

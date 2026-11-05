@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -22,7 +24,13 @@ type artifactPromotion struct {
 }
 
 func (*artifactPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *artifactPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+
+//nolint:gocritic // The admission contract requires an independent request snapshot.
+func (p *artifactPromotion) Promote(
+	_ context.Context,
+	_ loader.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
 	return p.promote(id), nil
 }
 

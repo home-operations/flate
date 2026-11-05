@@ -70,7 +70,7 @@ type chartDescription struct {
 func (c *Client) describeChart(
 	ctx context.Context,
 	hr *manifest.HelmRelease,
-	sources Sources,
+	art *store.SourceArtifact,
 ) (chartDescription, error) {
 	if hr == nil {
 		return chartDescription{}, errors.New("nil HelmRelease")
@@ -79,11 +79,6 @@ func (c *Client) describeChart(
 	if err != nil {
 		return chartDescription{}, err
 	}
-	read := store.ArtifactContent
-	if hr.TracksDigest() {
-		read |= store.ArtifactRevision
-	}
-	art := sources.LocalSourceArtifact(hr.ChartSource(), read)
 	if art == nil || art.FS == nil {
 		return chartDescription{}, manifest.NewError(
 			manifest.ErrObjectNotFound,

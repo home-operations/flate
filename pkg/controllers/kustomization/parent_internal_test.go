@@ -141,7 +141,9 @@ func testReconcileOptionalMaterializerAbsenceCase(
 	c.Tasks.Go(
 		t.Context(),
 		"reconcile",
-		func(ctx context.Context) { assessment = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone) },
+		func(ctx context.Context) {
+			assessment = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone, schedule.Result{})
+		},
 	)
 	c.Tasks.BlockTillDone()
 	defer assessment.Close()

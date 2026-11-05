@@ -289,7 +289,9 @@ func testFetcherLateProducerInvalidatesAmbientCase(
 		tasks.Go(
 			t.Context(),
 			"source",
-			func(ctx context.Context) { run = c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone) },
+			func(ctx context.Context) {
+				run = c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone, schedule.Result{})
+			},
 		)
 		tasks.BlockTillDone()
 		return run

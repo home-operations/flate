@@ -5,18 +5,19 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
 
 type indexedOrderingDeps map[manifest.NamedResource]bool
 
 func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { return i[id] }
-func (indexedOrderingDeps) Promote(context.Context, *store.ReadSet, manifest.NamedResource) (bool, error) {
+func (indexedOrderingDeps) Promote(context.Context, loader.PrepareRequest, manifest.NamedResource) (bool, error) {
 	return false, nil
 }
 

@@ -28,6 +28,7 @@ import (
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
 type RenderRequest struct {
+	Preparation *Preparation `json:"-"`
 	// Work borrows stage counters from this render execution.
 	Work *manifest.RenderWork `json:"-"`
 	// HeldSlot is TreeCache's borrowed service when this render holds its slot.
@@ -102,31 +103,81 @@ func Render(
 	return result.docs, result.receipt, nil
 }
 
+// Preparation MUST remain owned by one logical render consumer until transfer or retirement.
+type Preparation struct {
+	cache          *TreeCache
+	spec           *manifest.Kustomization
+	source         *store.SourceArtifact
+	label, subPath string
+	applyIgnore    bool
+	complete       bool
+	lower          fs.FS
+	root, key      string
+	binding        renderBinding
+}
+
+// Retire MUST follow the final consumer and clears retained input references.
+func (p *Preparation) Retire() {
+	if p != nil {
+		*p = Preparation{}
+	}
+}
+
+// Take MUST NOT move a live capture or grant publication authority.
+func (p *Preparation) Take(previous *Preparation, cache *TreeCache, request *RenderRequest) bool {
+	if p == nil || p.complete || previous == nil || !previous.complete {
+		return false
+	}
+	if !previous.matchesOwner(cache, request) {
+		return false
+	}
+	*p, *previous = *previous, Preparation{}
+	return true
+}
+
+func (p *Preparation) matchesOwner(cache *TreeCache, request *RenderRequest) bool {
+	owner := p.spec == request.Spec || p.spec != nil && request.Spec != nil && manifest.Equal(p.spec, request.Spec)
+	policy := p.binding.Strict == request.StrictSubstitutions && slices.Equal(p.binding.Skip, request.SkipKinds) &&
+		p.binding.Dependencies.Equal(request.DependencySubstitutions)
+	location := p.label == request.Label && p.subPath == request.SubPath && p.applyIgnore == request.ApplyIgnore
+	return p.cache == cache && owner && policy && location
+}
+
+func (p *Preparation) matchesSource(source *store.SourceArtifact) bool {
+	if p.source == source {
+		return true
+	}
+	return p.source != nil && source != nil && source.Content != "" &&
+		p.source.Input(store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) ==
+			source.Input(store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin)
+}
+
 type renderRequest struct {
-	request   RenderRequest
-	retry     sourcecache.RetryConfig
-	maxAge    time.Duration
-	lower     fs.FS
-	root, key string
-	binding   renderBinding
+	Preparation
+
+	request RenderRequest
+	retry   sourcecache.RetryConfig
+	maxAge  time.Duration
 }
 
 func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) (renderRequest, error) {
 	req := *incoming
 	work := req.Work.Preparation()
-	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	if c == nil {
 		err := manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		return renderRequest{}, err
 	}
 	if err := ctx.Err(); err != nil {
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return renderRequest{}, err
 	}
 	if req.Source == nil || req.Source.FS == nil {
 		err := manifest.NewError(manifest.ErrInput, nil, "source artifact content unavailable")
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		return renderRequest{}, err
 	}
@@ -135,6 +186,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	if req.ApplyIgnore {
 		input, err := c.sourceRootFor(ctx, req.Source, root)
 		if err != nil {
+			work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 			work.Finish(err)
 			return renderRequest{}, err
 		}
@@ -143,9 +195,21 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	var err error
 	root, err = filepath.Abs(root)
 	if err != nil {
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
+	if previous := req.Preparation; previous != nil && previous.complete {
+		inputs := previous.root == root && previous.subPath == req.SubPath && previous.applyIgnore == req.ApplyIgnore
+		if inputs && previous.matchesOwner(c, &req) && previous.matchesSource(req.Source) {
+			req.Work.Fingerprint(previous.key)
+			return renderRequest{Preparation: *previous}, nil
+		}
+	}
+	if req.Preparation != nil {
+		req.Preparation.Retire()
+	}
+	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	key := renderKey(&req, root, ignore)
 	req.Work.Fingerprint(key)
 	source := manifest.BootstrapSourceID
@@ -153,7 +217,9 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 		source = req.Spec.SourceID()
 	}
 	work.Finish(nil)
-	return renderRequest{
+	prepared := Preparation{
+		cache: c, spec: req.Spec, source: req.Source, label: req.Label, subPath: req.SubPath,
+		applyIgnore: req.ApplyIgnore, complete: true,
 		lower: lower, root: root, key: key,
 		binding: renderBinding{
 			key,
@@ -171,7 +237,11 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 			slices.Clone(req.SkipKinds),
 			req.DependencySubstitutions,
 		},
-	}, nil
+	}
+	if req.Preparation != nil {
+		*req.Preparation = prepared
+	}
+	return renderRequest{Preparation: prepared}, nil
 }
 
 // Mutable files are validated by the read set; immutable generations are part

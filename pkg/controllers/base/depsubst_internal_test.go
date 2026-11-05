@@ -83,7 +83,7 @@ func TestEmit_DependencySubstitutionsConcurrent(t *testing.T) {
 			defer done.Done()
 			ready.Done()
 			<-start
-			controllers[i].emit(t.Context(), parents[i].Named(), &store.Emission{
+			(&Execution{Controller: controllers[i]}).emit(t.Context(), parents[i].Named(), &store.Emission{
 				Children: []store.Child{{Obj: children[i], Doc: docs[i]}}, Complete: true,
 			}, nil)
 		}()
@@ -187,7 +187,7 @@ func testEmitDependencySubstitutionsCase(t *testing.T, testCaseInput *struct {
 			)
 		}
 	}, false)
-	c.emit(t.Context(), parent.Named(), next, nil)
+	(&Execution{Controller: c}).emit(t.Context(), parent.Named(), next, nil)
 	assert.Equal(t, arrivals, 1)
 	got, ok := st.Get[*manifest.Kustomization](child.Named())
 	assert.FatalIf(

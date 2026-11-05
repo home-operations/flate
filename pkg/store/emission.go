@@ -223,9 +223,9 @@ type contributor struct {
 }
 
 type footprint struct {
-	id          manifest.NamedResource
-	record      manifest.DiscoveryRecord
-	independent bool
+	id                      manifest.NamedResource
+	record                  manifest.DiscoveryRecord
+	independent, classified bool
 }
 
 type sourceBinding struct {

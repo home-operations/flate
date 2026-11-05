@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -83,9 +85,9 @@ func testReconcileSelfMetadataConvergesCase(t *testing.T, testCaseInput *bool,
 		Tasks: c.Tasks,
 		Store: s,
 		ID:    ks.Named(),
-		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, previous schedule.Result) *base.Execution {
 			attempts.Add(1)
-			return c.ReconcileNode(ctx, id, level)
+			return c.ReconcileNode(ctx, id, level, previous)
 		},
 	})
 	if info.Status != store.StatusReady || attempts.Load() > 2 {

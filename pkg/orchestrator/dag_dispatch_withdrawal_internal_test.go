@@ -100,7 +100,7 @@ data: {value: rendered}
 			})
 			tasks.Go(t.Context(), "dispatch-withdrawn", func(ctx context.Context) {
 				tasks.YieldSlot(func() { <-withdrawn })
-				result := d.Dispatch(ctx, l.Named(), manifest.DrainNone)
+				result := d.Dispatch(ctx, l.Named(), manifest.DrainNone, schedule.Result{})
 				defer result.Assessment.Close()
 				assert.ErrorIf(
 					t,
@@ -122,7 +122,7 @@ data: {value: rendered}
 
 			s.AddObject(l)
 			tasks.Go(t.Context(), "dispatch-restored", func(ctx context.Context) {
-				d.Dispatch(ctx, l.Named(), manifest.DrainNone)
+				d.Dispatch(ctx, l.Named(), manifest.DrainNone, schedule.Result{})
 			})
 			tasks.BlockTillDone()
 			assert.FatalIf(

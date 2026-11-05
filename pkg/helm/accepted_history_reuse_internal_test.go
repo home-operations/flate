@@ -229,7 +229,11 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		t.Parallel()
 		testTemplateAcceptedHistoryDurablePublication(t, &testCaseInput, records)
 	})
-	described, err := fresh.describeChart(t.Context(), (*testCaseInput.hr), testCaseInput.input.Sources)
+	described, err := fresh.describeChart(
+		t.Context(),
+		(*testCaseInput.hr),
+		testCaseInput.input.Sources.chartInput((*testCaseInput.hr)),
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, described.chart == nil, true)
 	assert.Equal(t, described.analysis != nil && described.record != nil, true)

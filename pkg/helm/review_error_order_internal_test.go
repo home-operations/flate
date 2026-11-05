@@ -59,7 +59,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		owner := cachetest.New(t, t.TempDir(), cache.New)
 		cli := NewClient(owner)
 		cliSources := NewSources(st)
-		d, err := cli.describeChart(t.Context(), hr, cliSources)
+		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), &d, hr.ChartValuesFiles, true)
 		assert.NoError(t, d.valuesErr)
@@ -235,7 +235,7 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 	owner := cachetest.New(t, root, cache.New)
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	if hr.TracksDigest() {
 		d.oci = &ociChartContent{

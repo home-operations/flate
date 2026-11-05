@@ -3,7 +3,6 @@ package helmrelease
 
 import (
 	"context"
-	"iter"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -29,6 +28,8 @@ type Controller struct {
 type execution struct {
 	*Controller
 
+	preparation helm.Preparation
+
 	run  base.Execution
 	data interface {
 		values.Provider
@@ -39,8 +40,23 @@ type execution struct {
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 	execution := &execution{Controller: c}
 	execution.run.Init(c.Controller, id)
+	execution.run.Preparation = execution
 	execution.data = values.NewStoreProvider(&execution.run.Reads)
 	return execution
+}
+
+func (c *execution) Retire() {
+	c.preparation.Retire()
+	c.data = nil
+}
+
+func (c *execution) prepareRequest(declaration *manifest.HelmRelease, request *helm.RenderOptions) {
+	if previous, ok := c.run.Preparation.(*execution); ok && previous != c {
+		c.preparation.Take(&previous.preparation, c.Helm, declaration, request)
+		previous.Retire()
+	}
+	c.run.Preparation = c
+	request.Preparation = &c.preparation
 }
 
 // New constructs a HelmRelease controller.
@@ -59,8 +75,10 @@ func (c *Controller) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	ex := c.newExecution(id)
+	ex.run.Take(previous)
 	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
 	return &ex.run
 }
@@ -86,7 +104,6 @@ func (c *execution) render(
 	omitted []manifest.NamedResource,
 ) error {
 	id := hr.Named()
-
 	c.SetPendingUnlessReady(id, "resolving chart")
 	hr, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).Declaration, c.data, c.Helm.ValuesCache())
 	slices.SortFunc(omitted, manifest.NamedResource.Compare)
@@ -139,6 +156,7 @@ func (c *execution) render(
 		}
 		return false, nil
 	}
+	c.prepareRequest(hr, &input)
 	docs, receipt, err := c.Helm.Template(ctx, hr, hr.Values, input)
 	if err != nil {
 		return err
@@ -193,13 +211,20 @@ func (c *execution) recordRender(ctx context.Context, id manifest.NamedResource,
 func (c *Controller) PreviousRender(
 	ctx context.Context,
 	obj manifest.BaseManifest,
-	reads *store.ReadSet,
-) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	previous schedule.Result,
+) base.History {
 	hr, ok := obj.(*manifest.HelmRelease)
 	if !ok || ctx.Err() != nil {
-		return nil, false
+		return base.History{}
 	}
+	ex := &execution{Controller: c}
+	ex.run.InitProbe(c.Controller, obj)
+	ex.run.Preparation = ex
+	ex.run.Take(previous)
+	reads := &ex.run.Reads
+	history := base.History{Assessment: &ex.run}
 	data := values.NewStoreProvider(reads)
+	ex.data = data
 	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
 	var omittedRefs []manifest.NamedResource
 	for ref := range manifest.References(hr, manifest.ReferenceRelations) {
@@ -217,7 +242,7 @@ func (c *Controller) PreviousRender(
 			manifest.DrainNone,
 		)
 		if availability.Err != nil || availability.Kind != schedule.Terminal {
-			return nil, false
+			return history
 		}
 		if availability.Omit {
 			omittedRefs = append(omittedRefs, ref.NamedResource)
@@ -226,22 +251,17 @@ func (c *Controller) PreviousRender(
 	hr = omitValues(hr, omittedRefs)
 	hr, err := helm.Prepare(hr, helm.NewSources(reads).Declaration, data, c.Helm.ValuesCache())
 	if err != nil {
-		return nil, false
+		return history
 	}
-	records, found := c.Helm.PreviousRender(
-		ctx,
-		hr,
-		hr.Values,
-		helm.RenderOptions{
-			Work:                    reads.Work().Scope().RenderWork(),
-			Options:                 c.Options,
-			DependencySubstitutions: c.DependencySubstitutions,
-			Sources:                 helm.NewSources(reads),
-			PreparationTasks:        c.Tasks,
-		},
-	)
+	request := helm.RenderOptions{
+		Work: reads.Work().Scope().RenderWork(), Options: c.Options,
+		DependencySubstitutions: c.DependencySubstitutions, Sources: helm.NewSources(reads), PreparationTasks: c.Tasks,
+	}
+	ex.prepareRequest(hr, &request)
+	records, found := c.Helm.PreviousRender(ctx, hr, hr.Values, request)
 	if !found {
-		return nil, false
+		return history
 	}
-	return records, true
+	history.Records, history.Complete = records, true
+	return history
 }

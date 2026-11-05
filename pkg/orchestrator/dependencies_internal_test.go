@@ -393,6 +393,13 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken bool)
 	}
 	prepares := excludedOrderingPreparations(side)
 	if broken {
+		prepares[manifest.WorkKey{
+			Tree: side.ID, Owner: testutil.KustomizationID("\x00", "."),
+			Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation,
+		}] = manifest.WorkCounts{
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 42,
+		}
+
 		source := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
 			Kind:      manifest.KindOCIRepository,
@@ -400,33 +407,31 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken bool)
 			Name:      "selected-source",
 		}
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: source, Source: source, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
-			Attempts:       variablePreparation,
-			Completed:      variablePreparation,
-			OwnerPrepares:  variablePreparation,
-			FileEntries:    variablePreparation,
+			Attempts:       1,
+			Completed:      1,
+			OwnerPrepares:  1,
+			FileEntries:    2,
 			RawKeyPrepares: 1,
 		}
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Owner: selectedHR, Source: source, Phase: manifest.WorkPreparation,
-		}] = manifest.WorkCounts{Attempts: 6, Completed: 6, OwnerPrepares: 6}
+		}] = manifest.WorkCounts{Attempts: 2, Completed: 2, OwnerPrepares: 2}
 	} else {
-		// The preparation deduplication lane restores an exact shared-chart vector.
 		chartPreparation := workCounts(side.Result.Work, chart, manifest.WorkPreparation)
-		assert.Equal(t, chartPreparation.Attempts >= 1, true)
-		assert.Equal(t, chartPreparation.FileEntries == 2*chartPreparation.Attempts, true)
+		assert.Equal(t, chartPreparation.Attempts, uint64(1))
+		assert.Equal(t, chartPreparation.FileEntries, uint64(2))
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: chart, Source: chart, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
-			Attempts:      chartPreparation.Attempts,
-			Completed:     chartPreparation.Attempts,
-			OwnerPrepares: chartPreparation.Attempts,
-			FileEntries:   chartPreparation.FileEntries,
+			Attempts:      1,
+			Completed:     1,
+			OwnerPrepares: 1,
+			FileEntries:   2,
 		}
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Owner: selectedHR, Source: chart, Phase: manifest.WorkPreparation,
-		}] = manifest.WorkCounts{Attempts: 5, Completed: 5, OwnerPrepares: 5, RawKeyPrepares: 6}
+		}] = manifest.WorkCounts{Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6}
 	}
 	assertWitnessPreparations(
 		t, witnessPreparations(side.Result.Work), prepares,
-		witnessPreparationLimit(len(witnessWork(side.Result.Work, manifest.WorkAdmission))),
 	)
 }
 
@@ -505,11 +510,11 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 	}
 	prepares := map[manifest.WorkKey]manifest.WorkCounts{
 		{Tree: side.ID, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
-			Attempts:       8,
-			Completed:      8,
-			OwnerPrepares:  8,
+			Attempts:       7,
+			Completed:      7,
+			OwnerPrepares:  7,
 			RawKeyPrepares: 7,
-			FileEntries:    variablePreparation,
+			FileEntries:    322,
 			ReaderEdges:    89,
 		},
 		{Tree: side.ID, Source: alias, Phase: manifest.WorkPreparation}: {FileEntries: 20, ReaderEdges: 14},
@@ -518,36 +523,36 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 			Owner:  manifest.BootstrapSourceID,
 			Source: manifest.BootstrapSourceID,
 			Phase:  manifest.WorkPreparation,
-		}: {Attempts: variablePreparation, Completed: variablePreparation, OwnerPrepares: variablePreparation},
+		}: {Attempts: 1, Completed: 1, OwnerPrepares: 1},
 		{Tree: side.ID, Owner: alias, Source: alias, Phase: manifest.WorkPreparation}: {
-			Attempts:      variablePreparation,
-			Completed:     variablePreparation,
-			OwnerPrepares: variablePreparation,
+			Attempts:      4,
+			Completed:     4,
+			OwnerPrepares: 4,
 			FileEntries:   74,
 			ReaderEdges:   7,
 		},
 		{Tree: side.ID, Owner: entry, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
-			Attempts: 7, Completed: 7, OwnerPrepares: 7, RawKeyPrepares: 6, FileEntries: 42,
+			Attempts: 2, Completed: 2, OwnerPrepares: 2, RawKeyPrepares: 6, FileEntries: 42,
 		},
 		{Tree: side.ID, Owner: selectedKS, Source: alias, Phase: manifest.WorkPreparation}: {
-			Attempts: 6, Completed: 6, OwnerPrepares: 6, RawKeyPrepares: 13, ReaderEdges: 3,
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 13, ReaderEdges: 0,
 		},
 	}
 	if side.ID.Side == manifest.TreeBase {
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation,
 		}] = manifest.WorkCounts{
-			Attempts:       8,
-			Completed:      8,
-			OwnerPrepares:  8,
+			Attempts:       7,
+			Completed:      7,
+			OwnerPrepares:  7,
 			RawKeyPrepares: 7,
-			FileEntries:    variablePreparation,
+			FileEntries:    570,
 			ReaderEdges:    97,
 		}
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: alias, Source: alias, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
-			Attempts:      variablePreparation,
-			Completed:     variablePreparation,
-			OwnerPrepares: variablePreparation,
+			Attempts:      4,
+			Completed:     4,
+			OwnerPrepares: 4,
 			FileEntries:   304,
 			ReaderEdges:   7,
 		}

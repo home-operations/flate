@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -460,12 +462,12 @@ func (f *selectedSelfFixture) assertPreparation(
 		Source: manifest.BootstrapSourceID,
 		Phase:  manifest.WorkPreparation,
 	}
-	delete(preparation, bootstrapKey)
+	assert.Equal(t, preparation[bootstrapKey], manifest.WorkCounts{})
 	files, readers := uint64(2066), uint64(2)
 	sourcePrepares, sourceEntries, sourceReaders := uint64(2), uint64(6), uint64(3)
-	rootReaders, rootEntries := uint64(438), uint64(2650)
+	rootReaders, rootEntries := uint64(438), uint64(2503)
 	if side == 1 {
-		files, readers, rootReaders, rootEntries = 884, 1, 728, 1768
+		files, readers, rootReaders, rootEntries = 884, 1, 728, 1621
 		sourcePrepares, sourceEntries, sourceReaders = 1, 4, 2
 	}
 	assertWitnessPreparations(
@@ -489,7 +491,6 @@ func (f *selectedSelfFixture) assertPreparation(
 				OwnerPrepares: sourcePrepares,
 			},
 		},
-		witnessPreparationLimit(len(f.admissions)),
 	)
 }
 
@@ -552,7 +553,7 @@ func (f *selectedSelfFixture) assertBootstrap(t *testing.T) {
 		assert.NoError(t, o.bootstrap(t.Context()))
 		var execution *controllerbase.Execution
 		o.tasks.Go(t.Context(), "bootstrap-proof", func(ctx context.Context) {
-			execution = o.src.ReconcileNode(ctx, manifest.BootstrapSourceID, manifest.DrainNone)
+			execution = o.src.ReconcileNode(ctx, manifest.BootstrapSourceID, manifest.DrainNone, schedule.Result{})
 		})
 		o.tasks.BlockTillDone()
 		assert.Equal(

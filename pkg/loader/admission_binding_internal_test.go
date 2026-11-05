@@ -53,7 +53,7 @@ func publishedAdmissionDeclarations(t *testing.T, count int) *Loader {
 	for _, published := range []bool{false, true} {
 		reads := &admissionArtifactReads{admissionReader: st}
 		c := admissionClosure{loader: l, objects: reads}
-		c.proposal = &c.result
+		c.proposal = new(Admission)
 		proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 		assert.NoError(t, err)
 		assert.Equal(t, len(proposal.Selected), count)

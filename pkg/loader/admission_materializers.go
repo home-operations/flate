@@ -19,8 +19,13 @@ type materializerDemand struct {
 }
 
 func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence {
-	var candidates [2][]Occurrence
+	mode := 0
+	if ordering {
+		mode = 1
+	}
+	candidates := c.candidates[mode]
 	objects := c.loader.Store.Objects()
+	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 	previous := c.loader.producerFacts.Load()
 	var next map[manifest.BaseManifest]producerFact
 	project := func(object manifest.BaseManifest) Occurrence {
@@ -29,10 +34,12 @@ func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence
 			cached, known = (*previous)[object]
 		}
 		if known {
-			return Occurrence{Identity: cached.identity, Authored: object.Named(), facts: cached.facts}
+			return Occurrence{Identity: cached.identity, Authored: object.Named(), object: object, facts: cached.facts}
 		}
+		c.derive()
 		projection, _ := manifest.ProjectProducer(object, nil)
 		occurrence := compactOccurrence(object, projection)
+		occurrence.object, occurrence.Authored = object, object.Named()
 		if next == nil {
 			if previous == nil {
 				capacity := c.producerFactCapacity(objects, isMaterializerObject)
@@ -47,6 +54,9 @@ func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence
 	c.collectIndexedMaterializers(&candidates, project)
 	c.collectObjectMaterializers(&candidates, objects, ordering, project)
 	c.publishProducerFacts(&previous, next)
+	for i := range candidates {
+		slices.SortFunc(candidates[i], func(a, b Occurrence) int { return a.Authored.Compare(b.Authored) })
+	}
 	return candidates
 }
 
@@ -154,9 +164,11 @@ func (c *admissionClosure) matchingInputs(
 	if reverse && c.loader.sideKnown {
 		c.matchComparedInputs(new(ref), matches)
 	}
-	if c.incoming.Obj != nil {
-		id := c.incoming.Obj.Named()
-		matches(c.source(id), id)
+	for i := range c.generation {
+		if child := &c.generation[i]; child.Obj != nil {
+			id := child.Obj.Named()
+			matches(c.source(id), id)
+		}
 	}
 	slices.SortFunc(inputs, manifest.NamedResource.Compare)
 	return inputs, nil
@@ -195,25 +207,61 @@ func (c *admissionClosure) publishProducerFacts(
 	}
 }
 
+func (c *admissionClosure) retainIndexedMaterializers(candidates *[2][]Occurrence) {
+	retained := candidates[0][:0]
+	for i := range candidates[0] {
+		occurrence := candidates[0][i]
+		if occurrence.object != nil {
+			id := occurrence.object.Named()
+			record, _ := c.loader.Index.Lookup(id)
+			if record.Builder == "" || record.Declaration != occurrence.object {
+				continue
+			}
+		} else if current, ok := c.loader.locations[occurrence.Authored]; !ok ||
+			current.facts != occurrence.facts || current.Declaration != occurrence.Declaration {
+			continue
+		}
+		retained = append(retained, occurrence)
+	}
+	clear(candidates[0][len(retained):])
+	candidates[0] = retained
+}
+
 func (c *admissionClosure) collectIndexedMaterializers(
 	candidates *[2][]Occurrence,
 	project func(manifest.BaseManifest) Occurrence,
 ) {
-	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-	for _, occurrence := range c.loader.locations {
+	c.retainIndexedMaterializers(candidates)
+	for id := range c.loader.locations {
+		occurrence := c.loader.locations[id]
 		facts := occurrence.facts
 		if facts == nil || facts.policy == nil && len(facts.targets) == 0 && !facts.needsCandidates ||
 			facts.hasPath && facts.policy != nil && len(facts.roots) == 0 {
 			continue
 		}
-		candidates[0] = append(candidates[0], occurrence)
+		if !slices.ContainsFunc(candidates[0], func(existing Occurrence) bool {
+			return existing.Declaration == occurrence.Declaration && existing.Identity == occurrence.Identity &&
+				existing.facts == occurrence.facts
+		}) {
+			candidates[0] = append(candidates[0], occurrence)
+		}
 	}
+	c.collectPreparedMaterializers(candidates, project)
+}
+
+func (c *admissionClosure) collectPreparedMaterializers(
+	candidates *[2][]Occurrence,
+	project func(manifest.BaseManifest) Occurrence,
+) {
 	for id := range c.loader.candidates {
 		child := c.loader.candidates[id]
 		if _, located := c.loader.locations[id]; located || c.loader.Index.Records[id].Builder == "" {
 			continue
 		}
 		if !isMaterializerObject(child.Obj) {
+			continue
+		}
+		if slices.ContainsFunc(candidates[0], func(existing Occurrence) bool { return existing.object == child.Obj }) {
 			continue
 		}
 		occurrence := project(child.Obj)
@@ -225,12 +273,38 @@ func (c *admissionClosure) collectIndexedMaterializers(
 	}
 }
 
+func (c *admissionClosure) retainObjectMaterializers(
+	candidates *[2][]Occurrence,
+	objects []manifest.BaseManifest,
+	ordering bool,
+) {
+	retained := candidates[1][:0]
+	for i := range candidates[1] {
+		occurrence := candidates[1][i]
+		id := occurrence.object.Named()
+		index, present := slices.BinarySearchFunc(
+			objects,
+			id,
+			func(object manifest.BaseManifest, target manifest.NamedResource) int {
+				return object.Named().Compare(target)
+			},
+		)
+		if !present || c.skipIndexedMaterializer(id, ordering) || objects[index] != occurrence.object {
+			continue
+		}
+		retained = append(retained, occurrence)
+	}
+	clear(candidates[1][len(retained):])
+	candidates[1] = retained
+}
+
 func (c *admissionClosure) collectObjectMaterializers(
 	candidates *[2][]Occurrence,
 	objects []manifest.BaseManifest,
 	ordering bool,
 	project func(manifest.BaseManifest) Occurrence,
 ) {
+	c.retainObjectMaterializers(candidates, objects, ordering)
 	for _, object := range objects {
 		id := object.Named()
 		if c.skipIndexedMaterializer(id, ordering) {
@@ -244,6 +318,9 @@ func (c *admissionClosure) collectObjectMaterializers(
 			continue
 		}
 		if !isMaterializerObject(object) {
+			continue
+		}
+		if slices.ContainsFunc(candidates[1], func(existing Occurrence) bool { return existing.object == object }) {
 			continue
 		}
 		occurrence := project(object)

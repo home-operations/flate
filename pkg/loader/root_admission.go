@@ -398,7 +398,10 @@ func (q *rootQuery) admitsRoot(obj manifest.BaseManifest, file string) bool {
 		q.live = &admissionClosure{loader: q.loader, objects: q.loader.Store}
 	}
 	if q.live != nil {
-		q.live.incoming = store.Child{Obj: obj, Productions: q.live.objects.Productions(id, q.loader.Index)}
+		q.live.generation = append(q.live.generation[:0], store.Child{
+			Obj: obj, Productions: q.live.objects.Productions(id, q.loader.Index),
+		})
+		q.live.captureIncoming()
 		defer q.live.releaseComparisons()
 		return q.live.rootEvidence(id).admitted
 	}
@@ -451,7 +454,7 @@ func (c *admissionClosure) supportedRoot(id manifest.NamedResource, original *ro
 	if evidence.occurrence.Declaration == (OccurrenceID{}) {
 		evidence.independent = evidence.admitted
 	}
-	if c.incoming.Obj == nil || c.incoming.Obj.Named() != id {
+	if c.incoming(id).Obj == nil {
 		if object, policy := c.objects.Lookup(id); object != nil && policy.Origin == manifest.SuppliedDeclaration &&
 			c.objects.GetDeclaration(id) == object && manifest.AdmitsRoot(object) {
 			return rootEvidence{admitted: true, independent: true, entry: true}
@@ -570,6 +573,9 @@ func (c *admissionClosure) rootPeer(id, owner manifest.NamedResource) bool {
 
 // An emitted application MUST NOT suppress the producer route that supports it.
 func (c *admissionClosure) rootProducer(id, target manifest.NamedResource) bool {
+	if !id.KindInfo().Parent {
+		return false
+	}
 	pending := []manifest.NamedResource{target}
 	for cursor := 0; cursor < len(pending); cursor++ {
 		current := pending[cursor]

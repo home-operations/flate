@@ -20,16 +20,19 @@ type admissionSources struct {
 }
 
 type admissionSource struct {
-	source                     manifest.NamedResource
-	changes, delta, comparison *change.Set
-	snapshots                  [2]*store.SourceArtifact
-	declarations               [2]manifest.BaseManifest
-	declaration                manifest.BaseManifest
-	input, initial             *store.SourceArtifact
-	origin                     string
-	toIndex                    string
-	paths                      []string
-	bound, paired              bool
+	source                   manifest.NamedResource
+	changes, delta           *change.Set
+	snapshots                [2]*store.SourceArtifact
+	declarations             [2]manifest.BaseManifest
+	declaration              manifest.BaseManifest
+	input, initial           *store.SourceArtifact
+	origin                   string
+	toIndex                  string
+	paths                    []string
+	bound, paired            bool
+	pathsKnown, initialKnown bool
+	frozen, sideKnown        bool
+	side                     manifest.TreeSide
 }
 
 //nolint:gochecknoglobals // A process-wide pool reuses temporary comparison storage.
@@ -83,7 +86,7 @@ func (c *admissionClosure) sourceEvidence(source manifest.NamedResource) *admiss
 func (c *admissionClosure) sources(id manifest.NamedResource) iter.Seq[manifest.NamedResource] {
 	return func(yield func(manifest.NamedResource) bool) {
 		record := c.record(id)
-		if len(record.ContentRoots) != 0 && (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) {
+		if len(record.ContentRoots) != 0 && (c.incoming(id).Obj == nil) {
 			for source := range record.ContentRoots {
 				if !yield(source) {
 					return
@@ -101,10 +104,7 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 		if evidence.delta == nil {
 			return
 		}
-		if evidence.paths == nil {
-			evidence.paths = evidence.delta.Paths()
-		}
-		for _, file := range evidence.paths {
+		for _, file := range c.sourcePaths(evidence) {
 			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
 			if evidence.paired {
 				file = c.coordinates(
@@ -120,6 +120,15 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 			}
 		}
 	}
+}
+
+func (c *admissionClosure) sourcePaths(evidence *admissionSource) []string {
+	if !evidence.pathsKnown {
+		c.derive()
+		evidence.paths, evidence.pathsKnown = evidence.delta.Paths(), true
+		c.comparisons.changed = true
+	}
+	return evidence.paths
 }
 
 func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file string) bool {

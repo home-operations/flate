@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -111,9 +113,11 @@ func (c *Controller) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	ex := &execution{Controller: c}
 	ex.run.Init(c.Controller, id)
+	ex.run.Take(previous)
 	for {
 		ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
 		if ex.acquired == nil || ex.run.Reads.Valid() {
@@ -126,6 +130,7 @@ func (c *Controller) ReconcileNode(
 			return &ex.run
 		}
 		next.run.Reads.CarryAdvisories(&ex.run.Reads)
+		next.run.Take(schedule.Result{Assessment: &ex.run})
 		ex.run.Retire()
 		ex = next
 	}

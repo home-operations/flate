@@ -606,10 +606,10 @@ spec:
 			candidate.Index = result.Index
 			candidate.Options.Filter, candidate.Options.Selection = filter, manifest.Selection{Changed: true}
 			candidate.Options.Changes = change.NewSet([]string{"config/prod.yaml"})
-			proposal, err := candidate.Prepare(t.Context(), loader.PrepareRequest{Incoming: store.Child{
+			proposal, err := candidate.Prepare(t.Context(), loader.PrepareRequest{Generation: []store.Child{{
 				Obj:         &manifest.HelmRelease{Name: "sibling", Namespace: "apps"},
 				Productions: []manifest.Production{{Owner: owner}},
-			}, Reads: nil, History: nil, Invocation: true})
+			}}, Reads: nil, History: nil, Invocation: true})
 			assert.NoError(t, err)
 			added, retry := filter.AddEmitted(
 				change.MembershipUpdate{

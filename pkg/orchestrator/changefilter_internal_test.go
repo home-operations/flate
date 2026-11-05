@@ -184,7 +184,7 @@ func TestBuildChangeFilter_HistoryWorkOwners(t *testing.T) {
 		assert.Equal(t, fresh.history[owner].Complete, true)
 		assert.Equal(t, workCounts(work, owner, manifest.WorkCache),
 			manifest.WorkCounts{Attempts: 4, Completed: 4, CacheService: 3})
-		assert.Equal(t, workCounts(work, owner, manifest.WorkPreparation).OwnerPrepares, uint64(2))
+		assert.Equal(t, workCounts(work, owner, manifest.WorkPreparation).OwnerPrepares, uint64(1))
 		for _, record := range work {
 			if record.Key.Owner == owner {
 				assert.Equal(t, record.Key.Tree, tree.ID)

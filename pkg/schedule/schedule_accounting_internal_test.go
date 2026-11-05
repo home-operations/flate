@@ -22,11 +22,14 @@ func TestRedispatch_ContentBudget(t *testing.T) {
 			t.Parallel()
 			var runs atomic.Int64
 			id := testutil.KustomizationID("ns", "feedback")
-			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
-				a := &testAssessment{}
-				a.invalid.Store(runs.Add(1) <= int64(requests))
-				return Result{Assessment: a}
-			}))
+			s := New(
+				task.NewBounded(2),
+				dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
+					a := &testAssessment{}
+					a.invalid.Store(runs.Add(1) <= int64(requests))
+					return Result{Assessment: a}
+				}),
+			)
 			s.Seed([]NodeID{id})
 			err := s.Run(t.Context())
 			if requests == maxRedispatches {
@@ -48,7 +51,7 @@ func TestRedispatch_BlockedDependencyRetries(t *testing.T) {
 	t.Parallel()
 	var runs atomic.Int64
 	id := testutil.KustomizationID("ns", "blocked")
-	s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+	s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 		a := &testAssessment{}
 		a.unresolved = runs.Add(1) <= maxRedispatches+8
 		a.invalid.Store(a.unresolved)
@@ -85,7 +88,7 @@ func TestScheduler_CallbacksOutsideMutex(t *testing.T) {
 	}
 	var runs atomic.Int64
 	s = New(callbackTasks{Service: task.NewBounded(2), callback: call}, sweepDispatcher{
-		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel) Result {
+		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 			call()
 			run := runs.Add(1)
 			a := &testAssessment{unresolved: run == 2, retire: call, close: call}
@@ -122,7 +125,7 @@ func TestRedispatch_SlotWaitPreservesContent(t *testing.T) {
 			default:
 				close(admitted)
 			}
-		}}, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+		}}, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 			runs.Add(1)
 			observed.Store(version.Load())
 			return Result{Assessment: &testAssessment{}}

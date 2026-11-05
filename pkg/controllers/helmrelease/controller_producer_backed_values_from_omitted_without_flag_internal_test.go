@@ -11,6 +11,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -426,7 +428,7 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	st.AddObject(stamped)
-	c.ReconcileNode(context.Background(), hr.Named(), 0)
+	c.ReconcileNode(context.Background(), hr.Named(), 0, schedule.Result{})
 
 	mu.Lock()
 	pending := sawPending

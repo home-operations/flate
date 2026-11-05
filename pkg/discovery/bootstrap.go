@@ -373,23 +373,24 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) {
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
-	entryRequest  kustomize.RenderRequest
-	entryEvidence *kustomize.EntryEvidence
-	applications  atomic.Pointer[applicationEvidence]
-	entryBound    atomic.Bool
-	sources       map[manifest.NamedResource]entryResolution
-	input         *store.SourceArtifact
-	path          string
-	remotes       map[string]struct{}
-	aliasViews    map[string]*store.SourceArtifact
-	entryDemand   bool
-	qualification *entryQualification
-	store         *store.Store
-	assessment    *store.ReadSet
-	loader        *loader.Loader
-	trees         *kustomize.TreeCache
-	session       *Session
-	substitutions values.DependencySubstitutions
+	entryPreparation kustomize.Preparation
+	entryRequest     kustomize.RenderRequest
+	entryEvidence    *kustomize.EntryEvidence
+	applications     atomic.Pointer[applicationEvidence]
+	entryBound       atomic.Bool
+	sources          map[manifest.NamedResource]entryResolution
+	input            *store.SourceArtifact
+	path             string
+	remotes          map[string]struct{}
+	aliasViews       map[string]*store.SourceArtifact
+	entryDemand      bool
+	qualification    *entryQualification
+	store            *store.Store
+	assessment       *store.ReadSet
+	loader           *loader.Loader
+	trees            *kustomize.TreeCache
+	session          *Session
+	substitutions    values.DependencySubstitutions
 }
 
 func (d *Session) admission() *Admission {

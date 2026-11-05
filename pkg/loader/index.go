@@ -59,12 +59,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 }
 
 func (l *Loader) freezeConstruction() {
-	bindings := map[manifest.NamedResource]admissionSource{}
-	for source := range l.Options.Changes.Sources() {
-		input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-		bindings[source] = admissionSource{initial: input}
-	}
-	l.bindings.Store(&bindings)
+	l.seedSourceAuthority()
 	l.inputReaders = map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, object := range l.Store.Objects() {
 		id := object.Named()
@@ -81,6 +76,26 @@ func (l *Loader) freezeConstruction() {
 	l.publishFrozenRecords()
 }
 
+func (l *Loader) seedSourceAuthority() {
+	if !l.frozen {
+		comparison := admissionClosure{loader: l}
+		for source := range l.Options.Changes.Sources() {
+			evidence := comparison.sourceEvidence(source)
+			if previous := l.bindings.Load(); previous != nil {
+				if cached, known := (*previous)[source]; known {
+					*evidence = cached
+				}
+			}
+			if !evidence.initialKnown {
+				evidence.initial, _ = l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+				evidence.initialKnown = true
+			}
+			comparison.comparisons.changed = true
+		}
+		comparison.releaseComparisons()
+	}
+}
+
 // Retire releases admission readers while preserving completed owners' read tracking.
 func (l *Loader) Retire() {
 	l.constructionPurpose.Store(nil)
@@ -89,16 +104,18 @@ func (l *Loader) Retire() {
 		if doc.builtInput == nil {
 			continue
 		}
-		l.Store.Retire(doc.builtInput.Support)
-		doc.built, doc.builtInput = nil, nil
-		l.documents.cache[root] = doc
+		if !l.Options.Filter.Enabled() {
+			l.Store.Retire(doc.builtInput.Support)
+			doc.built, doc.builtInput = nil, nil
+			l.documents.cache[root] = doc
+		}
 	}
 	l.InputContent = nil
 	l.Options.HistoryOwners = nil
-	l.inputReaders, l.inputObjects = nil, nil
-	l.templateProjections = nil
-	l.producerFacts.Store(nil)
 	if !l.Options.Filter.Enabled() {
+		l.inputReaders, l.inputObjects = nil, nil
+		l.templateProjections = nil
+		l.producerFacts.Store(nil)
 		l.documents = documentReader{}
 		l.facts, l.scopes, l.Options.ParsedInputs = nil, nil, nil
 		l.candidates, l.admitted, l.locations = nil, nil, nil
@@ -118,6 +135,82 @@ func (l *Loader) Retire() {
 			l.Index.Readers[file] = readers
 		}
 	}
+}
+
+// SweepPreparations MUST run at a serial construction or quiescent runtime boundary.
+func (l *Loader) SweepPreparations() {
+	if l == nil {
+		return
+	}
+	l.sweepProducerFacts()
+	l.sweepSourceBindings()
+	for root := range l.documents.cache {
+		doc := l.documents.cache[root]
+		if doc.builtInput != nil && !doc.builtInput.Support.Valid() {
+			l.Store.Retire(doc.builtInput.Support)
+			doc.built, doc.builtInput = nil, nil
+			l.documents.cache[root] = doc
+		}
+	}
+}
+
+func (l *Loader) sweepProducerFacts() {
+	if facts := l.producerFacts.Load(); facts != nil {
+		for object := range *facts {
+			id := object.Named()
+			if l.Store.GetDeclaration(id) == object {
+				continue
+			}
+			record, indexed := l.Index.Lookup(id)
+			if indexed && record.Declaration == object && (record.Builder == "" || l.preparedObject(id).Obj == object) {
+				continue
+			}
+			if candidate := l.candidates[id]; candidate.Obj == object && record.Builder == "" {
+				continue
+			}
+			delete(*facts, object)
+		}
+	}
+}
+
+func (l *Loader) sweepSourceBindings() {
+	if bindings := l.bindings.Load(); bindings != nil {
+		for id := range *bindings {
+			evidence := (*bindings)[id]
+			input, _ := l.Store.GetArtifact(id, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
+			if evidence.matchesInputs(input, l.Store.GetObject(id)) {
+				continue
+			}
+			evidence.bound, evidence.paired, evidence.pathsKnown = false, false, false
+			evidence.input, evidence.declaration, evidence.paths = nil, nil, nil
+			evidence.delta = nil
+			(*bindings)[id] = evidence
+		}
+	}
+}
+
+// Close MUST follow every loader and catalog consumer and preserve detached result data.
+func (l *Loader) Close() {
+	if l == nil {
+		return
+	}
+	l.Retire()
+	for root := range l.documents.cache {
+		doc := l.documents.cache[root]
+		if doc.builtInput != nil {
+			l.Store.Retire(doc.builtInput.Support)
+		}
+	}
+	l.documents = documentReader{}
+	l.InputContent, l.Options.HistoryOwners = nil, nil
+	l.Options.ParsedInputs, l.Options.Changes, l.Options.Projections = nil, nil, nil
+	// Detached selections MUST retain the existing catalog views.
+	l.facts, l.scopes, l.admitted = nil, nil, nil
+	l.inputReaders, l.inputObjects, l.templateProjections = nil, nil, nil
+	l.bindings.Store(nil)
+	l.producerFacts.Store(nil)
+	l.constructionPurpose.Store(nil)
+	l.projections.Clear()
 }
 
 func (l *Loader) publishFrozenRecords() {

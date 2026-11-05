@@ -349,7 +349,8 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 		s.RecordEmitted(p.Named(), &Emission{Children: []Child{emissionChild("anchor", "new")}, Complete: true}, nil)
 	})
 	wg.Wait()
-	assert.FatalIf(t, s.addAnchor(new(u)), "%s", "anchor accepted equality against a superseded effective record")
+	assert.FatalIf(t, s.addAnchor(new(u), s.index.Load()),
+		"%s", "anchor accepted equality against a superseded effective record")
 	s.AddObject(emitted.Obj)
 	assert.Equal(t, s.GetObject(seed.Obj.Named()), emitted.Obj)
 	s.RecordEmitted(p.Named(), &Emission{Complete: true}, nil)
@@ -388,7 +389,7 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 		assert.FatalIf(t, !reads.Valid(), "%s", "ignored metadata changed the consumed declaration")
 		assert.FatalIf(
 			t,
-			st.addAnchor(new(update)),
+			st.addAnchor(new(update), st.index.Load()),
 			"%s",
 			"anchor accepted equality against a superseded full document",
 		)

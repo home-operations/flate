@@ -29,7 +29,7 @@ func BenchmarkScheduler_Run(b *testing.B) {
 	for i := range ids {
 		ids[i] = testutil.KustomizationID("ns", fmt.Sprintf("node-%02d", i))
 	}
-	d := dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+	d := dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 		return Result{}
 	})
 	b.ReportAllocs()
@@ -47,7 +47,7 @@ func BenchmarkScheduler_ContentRedispatch(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		runs := 0
-		s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+		s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 			runs++
 			return Result{Assessment: benchmarkAssessment(runs > maxRedispatches)}
 		}))

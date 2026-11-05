@@ -61,7 +61,7 @@ func TestCommit_ConstructionGuard(t *testing.T) {
 		guard.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
 		proposal, prepareErr := l.Prepare(
 			t.Context(),
-			PrepareRequest{Incoming: incoming, Reads: guard, Invocation: true},
+			PrepareRequest{Generation: []store.Child{incoming}, Reads: guard, Invocation: true},
 		)
 		assert.NoError(t, prepareErr)
 		committed, err = l.Commit(t.Context(), proposal, Construction)
@@ -94,7 +94,10 @@ func TestCommit_ConstructionGuard(t *testing.T) {
 	guard.GetDeclaration(parent.Named())
 	source := guard.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	defer st.Retire(guard)
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: incoming, Reads: guard, Invocation: true})
+	proposal, err := l.Prepare(
+		t.Context(),
+		PrepareRequest{Generation: []store.Child{incoming}, Reads: guard, Invocation: true},
+	)
 	assert.NoError(t, err)
 	replaced := *source
 	replaced.Content = "replacement"
@@ -125,12 +128,12 @@ func TestCommit_RetiredSourceSupport(t *testing.T) {
 	assert.NoError(t, err)
 	proposal, err := l.Prepare(
 		t.Context(),
-		PrepareRequest{Invocation: true, Incoming: store.Child{Obj: &manifest.Kustomization{
+		PrepareRequest{Invocation: true, Generation: []store.Child{{Obj: &manifest.Kustomization{
 			Name: "entry", Namespace: "apps",
 			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "input"},
 			}},
-		}, Entry: &manifest.EntryApplication{}}},
+		}, Entry: &manifest.EntryApplication{}}}},
 	)
 	assert.NoError(t, err)
 	committed, err := l.Commit(t.Context(), proposal, Execution)
@@ -309,7 +312,7 @@ func TestCommit_AuthoritativeEntry(t *testing.T) {
 	defer st.Retire(&guard)
 	guard.GetDeclaration(child.Obj.Named())
 	child.Entry = &manifest.EntryApplication{}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: child, Reads: &guard})
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{child}, Reads: &guard})
 	assert.NoError(t, err)
 	assert.Equal(t, len(proposal.Objects), 0)
 	_, err = l.Commit(t.Context(), proposal, Construction)
@@ -335,7 +338,7 @@ func TestCommit_ProposalLifetime(t *testing.T) {
 			t.Cleanup(guard.Retire)
 			guard.GetDeclaration(parent.Named())
 			guard.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-			initial, err := l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: parent}})
+			initial, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{{Obj: parent}}})
 			assert.NoError(t, err)
 			committed, err := l.Commit(t.Context(), initial, Construction)
 			assert.NoError(t, err)
@@ -348,7 +351,7 @@ func TestCommit_ProposalLifetime(t *testing.T) {
 				child := &manifest.Kustomization{Name: "entry", Namespace: "apps"}
 				declaration = weak.Make(child)
 				proposal, err := l.Prepare(t.Context(), PrepareRequest{
-					Incoming: store.Child{Obj: child, Entry: &manifest.EntryApplication{}}, Reads: &guard,
+					Generation: []store.Child{{Obj: child, Entry: &manifest.EntryApplication{}}}, Reads: &guard,
 				})
 				assert.NoError(t, err)
 				return proposal
@@ -379,7 +382,7 @@ func TestCommit_ProposalLifetime(t *testing.T) {
 			}
 			assert.Equal(t, proposal.reads, nil)
 			assert.Equal(t, len(proposal.Objects)+len(proposal.sources), 0)
-			assert.Equal(t, proposal.Request.Incoming.Obj, nil)
+			assert.Equal(t, len(proposal.Request.Generation), 0)
 			assert.Equal(t, proposal.Request.Reads, nil)
 			assert.Diff(t, proposal.Needed, needed)
 			assert.Equal(t, guard.Valid(), outcome != "stale")

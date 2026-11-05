@@ -189,7 +189,7 @@ func (r *editWitnessRun) assertCachedWork(
 	}
 	assertWitnessCacheCounts(
 		t, new(workCounts(run.Result.Work, entry, manifest.WorkCache)), &entryCache,
-		witnessPreparationLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
+		witnessCacheLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
 	)
 
 	return helm.Attempts
@@ -297,7 +297,7 @@ func (r *editWitnessRun) assertCachedOwners(
 		}
 		assertWitnessCacheCounts(
 			t, &cached, &want,
-			witnessPreparationLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
+			witnessCacheLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
 		)
 		if want.Attempts != 0 {
 			preparation := workCounts(run.Result.Work, owner, manifest.WorkPreparation)

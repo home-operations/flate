@@ -24,7 +24,11 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 		t.Skip("entry receipt requires a clean VCS-stamped build")
 	}
 	spec := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
-	request := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
+	var cell Preparation
+	t.Cleanup(cell.Retire)
+	request := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: ".", Preparation: &cell}
+	cold := cache.PreviousEntry(t.Context(), request)
+	assert.Equal(t, cold.Application == nil, true)
 	application := map[string]any{
 		"apiVersion": "fluxcd.controlplane.io/v1",
 		"kind":       "FluxInstance",
@@ -133,6 +137,8 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	testutil.WriteFile(t, root, "generator.yaml", "original producer input")
 	testutil.WriteFile(t, root, "optional.yaml", "new producer input")
 	assert.Equal(t, cache.PreviousEntry(t.Context(), request).Application == nil, true)
+	cell.Retire()
+	assert.Equal(t, cell.complete || cell.source != nil || cell.spec != nil || cell.lower != nil, false)
 }
 
 func TestEntryApplication_RequiresCompleteFrame(t *testing.T) {

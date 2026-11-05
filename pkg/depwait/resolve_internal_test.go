@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -141,7 +143,9 @@ type inputPromotion struct {
 }
 
 func (p *inputPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *inputPromotion) Promote(_ context.Context, _ *store.ReadSet, _ manifest.NamedResource) (bool, error) {
+
+//nolint:gocritic // The admission contract requires an independent request snapshot.
+func (p *inputPromotion) Promote(_ context.Context, _ loader.PrepareRequest, _ manifest.NamedResource) (bool, error) {
 	p.calls++
 	if p.before != nil {
 		p.before()

@@ -175,7 +175,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 		manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 	}
 	s.AddObject(rs)
-	initial := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade)
+	initial := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade, schedule.Result{})
 	assert.FatalIf(t, initial.Outcome() == schedule.Blocked,
 		"initial render blocked: %v", initial.Blocked)
 
@@ -221,7 +221,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	publications := 0
 	u := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { publications++ }, false)
 	defer u()
-	current := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade)
+	current := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade, schedule.Result{})
 	assert.FatalIf(t, current.Outcome() == schedule.Blocked,
 		"final render blocked: %v", current.Blocked)
 

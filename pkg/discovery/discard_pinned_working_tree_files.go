@@ -152,6 +152,12 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 		return nil, errors.New("discovery: Store is required")
 	}
 	d := newDiscoverer(&cfg)
+	complete := false
+	defer func() {
+		if !complete {
+			d.Close()
+		}
+	}()
 	if _, err := d.resolveEntrySources(ctx, false); err != nil {
 		return nil, err
 	}
@@ -162,6 +168,7 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
 		return nil, err
 	}
+	complete = true
 	return d, nil
 }
 
@@ -176,7 +183,7 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 	}
 	d.constructionStarted = true
 	d.request = admission.Request
-	d.request.Incoming = store.Child{}
+	d.request.Generation = nil
 	// Admission can retire provisional relations, so construction MUST capture their owners first.
 	owners := d.neededMaterializers(admission.Needed)
 	admitRequiredObjectsResult2, admitRequiredObjectsResult2Err := d.admitRequiredObjects(ctx, admission)

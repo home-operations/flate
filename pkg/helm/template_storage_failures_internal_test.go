@@ -63,7 +63,7 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 			hr         **manifest.HelmRelease
 			cliSources *Sources
 		}{cli: &cli, hr: &hr, cliSources: &cliSources})
-		d, err := cli.describeChart(t.Context(), hr, cliSources)
+		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.FatalIf(t, d.record == nil, "%s", "lookup fault fixture did not warm a typed record")
 		if (*testCaseInput) == "read" {

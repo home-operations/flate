@@ -208,7 +208,7 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 					child, err := l.OccurrenceObject(t.Context(), &occurrence, input)
 					assert.NoError(t, err)
 					child.Doc["spec"].(map[string]any)["interval"] = "2h"
-					proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: child})
+					proposal, err = l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{child}})
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Dirty, testutil.HelmReleaseID("apps", "reader")), true)
 				}

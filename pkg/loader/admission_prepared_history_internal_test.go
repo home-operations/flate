@@ -144,7 +144,7 @@ func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
 			}
 			reads := &admissionArtifactReads{admissionReader: st}
 			c := admissionClosure{loader: l, objects: reads}
-			c.proposal = &c.result
+			c.proposal = new(Admission)
 			proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 			assert.NoError(t, err)
 			assert.Equal(t, len(proposal.Needed), 0)
@@ -185,7 +185,7 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 	assert.Equal(t, retry, false)
 	reads := &admissionArtifactReads{admissionReader: st}
 	c := admissionClosure{loader: l, objects: reads}
-	c.proposal = &c.result
+	c.proposal = new(Admission)
 	proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Reads: &required}))
 	assert.NoError(t, err)
 	assert.Equal(t, len(proposal.Needed), 0)
@@ -199,11 +199,11 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 		proof.Init(st, object.Named(), nil)
 		readsResult := &admissionArtifactReads{admissionReader: &proof}
 		cResult := admissionClosure{
-			loader:   l,
-			objects:  readsResult,
-			incoming: store.Child{Obj: object, Productions: st.Productions(object.Named(), l.Index)},
+			loader:     l,
+			objects:    readsResult,
+			generation: []store.Child{{Obj: object, Productions: st.Productions(object.Named(), l.Index)}},
 		}
-		cResult.proposal = &cResult.result
+		cResult.proposal = new(Admission)
 		evaluateProposal, evaluateErr := cResult.evaluate(t.Context(), new(PrepareRequest{Reads: &proof}))
 		proof.Close()
 		assert.NoError(t, evaluateErr)
@@ -225,8 +225,8 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 		Productions: []manifest.Production{{Owner: ids[0]}},
 	}
 	reads = &admissionArtifactReads{admissionReader: st}
-	c = admissionClosure{loader: l, objects: reads, incoming: child}
-	c.proposal = &c.result
+	c = admissionClosure{loader: l, objects: reads, generation: []store.Child{child}}
+	c.proposal = new(Admission)
 	proposal, err = c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, child.Obj.Named()), true)

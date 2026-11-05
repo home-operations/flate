@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
+
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -27,8 +28,20 @@ func (d dagDispatcher) BlockTillDone() {
 	d.o.tasks.BlockTillDone()
 }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-	execution := d.o.controllers.ReconcileNode(ctx, id, level)
+func (d dagDispatcher) Dispatch(
+	ctx context.Context,
+	id schedule.NodeID,
+	level manifest.DrainLevel,
+	previous schedule.Result,
+) schedule.Result {
+	if previous.Assessment == nil {
+		if probe := *d.o.probeSlot(id); probe != nil && !probe.ProbeConsumed {
+			probe.ProbeConsumed = true
+			previous.Assessment = probe
+			defer probe.Retire()
+		}
+	}
+	execution := d.o.controllers.ReconcileNode(ctx, id, level, previous)
 	if execution == nil {
 		return schedule.Result{}
 	}
@@ -37,6 +50,10 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level m
 
 func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.NodeID {
 	changed := slices.Collect(d.o.store.Sweep())
+	if quiescent {
+		d.o.sweepProbes(false)
+		d.o.loader.SweepPreparations()
+	}
 	if !quiescent || len(changed) != 0 || ctx.Err() != nil {
 		return changed
 	}
@@ -77,6 +94,7 @@ func (o *Orchestrator) seedNodes() ([]manifest.NamedResource, error) {
 }
 
 func (o *Orchestrator) runDAG(ctx context.Context) error {
+	o.sweepProbes(false)
 	dispatcher := dagDispatcher{o}
 	sched := schedule.New(dispatcher, dispatcher)
 
@@ -187,7 +205,11 @@ func (d dagDispatcher) admitRawRoots(ctx context.Context) bool {
 		}
 	}
 	if reads != nil {
-		_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, reads)
+		_, err := d.o.ksc.KeepEmitted(
+			ctx,
+			manifest.NamedResource{},
+			loader.PrepareRequest{Generation: nil, Reads: reads, Preparation: &d.o.admissionPreparation},
+		)
 		d.o.store.Retire(reads)
 		if err != nil {
 			d.o.entryFailure = err
@@ -238,7 +260,12 @@ func (o *Orchestrator) commitEntry(
 			application := manifest.EntryApplication{Source: root.SourceID(), Path: root.Path}
 			incoming = store.Child{Obj: root, Entry: &application}
 		}
-		proposal, err := o.loader.Prepare(ctx, loader.PrepareRequest{Incoming: incoming, Reads: binding.Reads})
+		proposal, err := o.loader.Prepare(
+			ctx,
+			loader.PrepareRequest{
+				Generation: []store.Child{incoming}, Reads: binding.Reads, Preparation: &o.admissionPreparation,
+			},
+		)
 		if err != nil {
 			return false, err
 		}

@@ -25,9 +25,12 @@ import (
 )
 
 // Result summarizes what discovery hydrated into the store.
-type Result struct { // Binding identifies the entry's actual producer and admitted input.
-	Binding   Binding    // Admission applies the same immutable bootstrap policy to runtime source identities.
-	Admission *Admission // RepoRoot is the bootstrap input's ownership coordinate. Admitted
+type Result struct {
+	prepared   map[manifest.NamedResource]*declarationPreparation
+	loader     *loader.Loader
+	ownsLoader bool       // Binding identifies the entry's actual producer and admitted input.
+	Binding    Binding    // Admission applies the same immutable bootstrap policy to runtime source identities.
+	Admission  *Admission // RepoRoot is the bootstrap input's ownership coordinate. Admitted
 	// inputs may use a synthetic label with no corresponding directory.
 	RepoRoot                string // Index contains the immutable static discovery facts consumed by rendering.
 	Index                   *manifest.DiscoveryIndex
@@ -44,8 +47,9 @@ type Config struct {
 	// Selection controls restricted declaration construction.
 	Selection manifest.Selection
 	// Loader borrows the invocation's sole declaration loader.
-	Loader  *loader.Loader
-	session *Session
+	Loader     *loader.Loader
+	session    *Session
+	ownsLoader bool
 	// Input is authoritative over a preseeded bootstrap artifact or disk admission.
 	Input *store.SourceArtifact
 	// Entry supplies immutable parsed input prepared by Plan for this admission.
@@ -93,6 +97,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	if cfg.Loader == nil {
 		cfg.Loader = loader.New(cfg.Store)
+		cfg.ownsLoader = true
 	}
 	if cfg.session == nil && (cfg.Selection.Changed || len(cfg.Selection.Roots) != 0) {
 		return runSelected(ctx, &cfg)
@@ -101,9 +106,16 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if d == nil {
 		d = newDiscoverer(&cfg)
 	}
+	complete := false
 	defer func() {
-		for id := range d.prepared {
-			d.retirePreparation(id)
+		if !complete {
+			d.Close()
+			return
+		}
+		for _, frame := range d.prepared {
+			if !frame.registered {
+				frame.retireSupport(d.cfg.Store)
+			}
 		}
 	}()
 	l := d.loader
@@ -118,12 +130,15 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			return nil, err
 		}
 	}
-	return d.finishDiscovery(ctx, &cfg, repoRoot, l)
+	result, err := d.finishDiscovery(ctx, &cfg, repoRoot, l)
+	complete = err == nil
+	return result, err
 }
 
 func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
 	if cfg.Loader == nil {
 		cfg.Loader = loader.New(cfg.Store)
+		cfg.ownsLoader = true
 	}
 	if cfg.Loader.Options.Filter == nil {
 		cfg.Loader.Options.Filter = change.NewFilter()
@@ -132,8 +147,19 @@ func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	complete := false
+	defer func() {
+		if !complete {
+			session.Close()
+		}
+	}()
+	var preparation *loader.Preparation
+	defer func() { preparation.Retire() }()
 	for {
-		proposal, err := cfg.Loader.Prepare(ctx, session.prepareRequest(&loader.PrepareRequest{Invocation: true}))
+		proposal, err := cfg.Loader.Prepare(
+			ctx,
+			session.prepareRequest(&loader.PrepareRequest{Invocation: true, Preparation: &preparation}),
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -141,20 +167,26 @@ func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !advanced {
-			final, err := cfg.Loader.Prepare(ctx, session.prepareRequest(&loader.PrepareRequest{Invocation: true}))
-			if err != nil {
-				return nil, err
-			}
-			committed, err := cfg.Loader.Commit(ctx, final, loader.Execution)
-			if err != nil {
-				return nil, err
-			}
-			if !committed {
-				continue
-			}
-			return session.Freeze(ctx)
+		if advanced {
+			continue
 		}
+		final, err := cfg.Loader.Prepare(
+			ctx,
+			session.prepareRequest(&loader.PrepareRequest{Invocation: true, Preparation: &preparation}),
+		)
+		if err != nil {
+			return nil, err
+		}
+		committed, err := cfg.Loader.Commit(ctx, final, loader.Execution)
+		if err != nil {
+			return nil, err
+		}
+		if !committed {
+			continue
+		}
+		result, err := session.Freeze(ctx)
+		complete = err == nil
+		return result, err
 	}
 }
 
@@ -167,7 +199,7 @@ type Session struct {
 	entryAdmission      *Admission
 	entryDemand         bool
 	entryApplier        manifest.NamedResource
-	prepared            map[manifest.NamedResource]declarationPreparation
+	prepared            map[manifest.NamedResource]*declarationPreparation
 	substitutions       values.DependencySubstitutions
 	cfg                 Config
 	loader              *loader.Loader
@@ -176,6 +208,7 @@ type Session struct {
 	aliasViews          map[string]*store.SourceArtifact
 	hasPins             bool
 	result              *Result
+	ownsLoader          bool
 }
 
 func (d *Session) finishDiscovery(
@@ -215,13 +248,16 @@ func (d *Session) finishDiscovery(
 		return nil, err
 	}
 	admission := d.finishAdmission(ctx)
-	return &Result{
+	result := &Result{
+		prepared: d.prepared, loader: l, ownsLoader: d.ownsLoader,
 		Binding:                 d.binding,
 		Admission:               admission,
 		DependencySubstitutions: d.substitutions,
 		RepoRoot:                repoRoot,
 		Index:                   l.Index,
-	}, nil
+	}
+	d.result = result
+	return result, nil
 }
 
 func (d *Session) applyDependencySubstitutions() {
@@ -268,6 +304,9 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 }
 
 type declarationPreparation struct {
+	preparation   kustomize.Preparation
+	complete      bool
+	err           error
 	work          *manifest.RenderWork
 	owner         *manifest.Kustomization
 	source        *store.SourceArtifact
@@ -275,7 +314,7 @@ type declarationPreparation struct {
 	receipt       *manifest.RenderReceipt
 	content       any
 	registered    bool
-	support       *store.ReadSet
+	support       store.ReadSet
 	warnings      []manifest.Warning
 	substitutions values.DependencySubstitutions
 }
@@ -286,9 +325,9 @@ func (p *declarationPreparation) matches(
 	substitutions values.DependencySubstitutions,
 	guard *store.ReadSet,
 ) bool {
-	return p.source == input && manifest.Equal(p.owner, ks) && p.support.Valid() &&
+	return p.complete && p.source == input && manifest.Equal(p.owner, ks) && p.support.Valid() &&
 		p.substitutions.Equal(substitutions) &&
-		(guard == nil || guard.Valid() && guard.Matches(p.support) && p.support.Valid())
+		(guard == nil || guard.Valid() && guard.Matches(&p.support) && p.support.Valid())
 }
 
 func newDiscoverer(config *Config) *Session {
@@ -304,7 +343,10 @@ func newDiscoverer(config *Config) *Session {
 		l.Options.Projections = cfg.Projections
 	}
 	l.Options.Work = cfg.Work
-	d := &Session{cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{}}
+	d := &Session{
+		cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{},
+		ownsLoader: cfg.ownsLoader || cfg.Loader == nil,
+	}
 	d.cfg.Entry = nil
 	if cfg.Entry == nil || cfg.Entry.prepared == nil {
 		return d
@@ -557,6 +599,9 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 
 func (d *Session) prepareRequest(request *loader.PrepareRequest) loader.PrepareRequest {
 	previous := d.request
+	if request.Preparation == nil {
+		request.Preparation = previous.Preparation
+	}
 	if len(request.History) != 0 || len(previous.History) == 0 || !previous.Reads.Valid() {
 		return *request
 	}
@@ -584,7 +629,7 @@ func (d *Session) commitBinding(ctx context.Context, root *manifest.Kustomizatio
 	binding.Reads.SetWork(d.cfg.Work.Recorder(&manifest.WorkKey{
 		Tree: d.cfg.Work.Identity().Tree, Owner: binding.Producer, Source: binding.Source,
 	}))
-	request := d.prepareRequest(&loader.PrepareRequest{Incoming: incoming, Reads: binding.Reads})
+	request := d.prepareRequest(&loader.PrepareRequest{Generation: []store.Child{incoming}, Reads: binding.Reads})
 	if entry := binding.Entry; entry != nil {
 		history := map[manifest.NamedResource]struct {
 			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
@@ -638,33 +683,32 @@ func (d *Session) prepareDocuments(
 	ks *manifest.Kustomization,
 	input *store.SourceArtifact,
 	guard *store.ReadSet,
-) (declarationPreparation, error) {
-	if previous, ok := d.prepared[ks.Named()]; ok && previous.matches(ks, input, d.substitutions, guard) {
-		return previous, nil
+) (*declarationPreparation, error) {
+	previous := d.prepared[ks.Named()]
+	if previous != nil && previous.matches(ks, input, d.substitutions, guard) {
+		return previous, previous.err
 	}
-	support := &store.ReadSet{}
-	support.Init(d.cfg.Store, ks.Named(), nil)
+	frame := &declarationPreparation{owner: ks, source: input, substitutions: d.substitutions}
+	if previous != nil {
+		defer previous.retire(d.cfg.Store)
+	}
+	if d.prepared == nil {
+		d.prepared = map[manifest.NamedResource]*declarationPreparation{}
+	}
+	d.prepared[ks.Named()] = frame
 	sourceID := ks.SourceID()
 	if sourceID.Kind == "" || sourceID.Name == "" {
 		sourceID = manifest.BootstrapSourceID
 	}
-	support.GetArtifact(sourceID, store.ArtifactContent)
-	if d.cfg.Store.GetDeclaration(ks.Named()) != nil {
-		support.GetDeclaration(ks.Named())
+	frame.captureSupport(d.cfg.Store, sourceID)
+	if guard != nil && (!guard.Valid() || !frame.support.Matches(guard)) {
+		frame.retire(d.cfg.Store)
+		return nil, manifest.NewError(manifest.ErrInput, nil, "construction support changed")
 	}
-	if guard != nil && (!guard.Valid() || !support.Matches(guard)) {
-		d.cfg.Store.Retire(support)
-		return declarationPreparation{}, manifest.NewError(manifest.ErrInput, nil, "construction support changed")
-	}
-	retained := false
-	defer func() {
-		if !retained {
-			d.cfg.Store.Retire(support)
-		}
-	}()
 	prepared, err := kustomize.Prepare(ks, nil)
 	if err != nil {
-		return declarationPreparation{}, err
+		frame.err, frame.complete = err, ctx.Err() == nil
+		return frame, err
 	}
 	work := d.preparationWork(ks, sourceID)
 	request := kustomize.RenderRequest{
@@ -677,12 +721,17 @@ func (d *Session) prepareDocuments(
 		SkipKinds:               d.cfg.SkipKinds,
 		DependencySubstitutions: d.substitutions,
 	}
+	request.Preparation = &frame.preparation
+	if previous != nil {
+		frame.preparation.Take(&previous.preparation, d.cfg.Trees, &request)
+	}
 	docs, receipt, found := d.cfg.Trees.PreviousRender(ctx, request)
 	if !found {
 		var err error
 		docs, receipt, err = kustomize.Render(ctx, d.cfg.Trees, request, d.cfg.RemoteRetry)
 		if err != nil {
-			return declarationPreparation{}, err
+			frame.err, frame.complete = err, ctx.Err() == nil
+			return frame, err
 		}
 	}
 	content := request.Content(docs)
@@ -695,7 +744,8 @@ func (d *Session) prepareDocuments(
 			Work:   request.Work.Substitution(),
 		},
 	); err != nil {
-		return declarationPreparation{}, err
+		frame.err, frame.complete = err, ctx.Err() == nil
+		return frame, err
 	}
 	parseChildrenResult2 := loader.ParseChildren(
 		prepared,
@@ -705,37 +755,15 @@ func (d *Session) prepareDocuments(
 	)
 	built, _, failures := parseChildrenResult2.Children, parseChildrenResult2.Visible, parseChildrenResult2.Failures
 	if err := manifest.DocumentFailure(failures); err != nil {
-		return declarationPreparation{}, err
+		frame.err, frame.complete = err, ctx.Err() == nil
+		return frame, err
 	}
-	if d.prepared == nil {
-		d.prepared = map[manifest.NamedResource]declarationPreparation{}
-	}
-	result := declarationPreparation{
-		work:          request.Work,
-		owner:         ks,
-		source:        input,
-		children:      built,
-		receipt:       receipt,
-		content:       content,
-		support:       support,
-		substitutions: d.substitutions,
-	}
+	frame.work, frame.children, frame.receipt, frame.content = request.Work, built, receipt, content
+	frame.complete = true
 	for _, doc := range docs {
-		result.warnings = append(result.warnings, doc.Warnings...)
+		frame.warnings = append(frame.warnings, doc.Warnings...)
 	}
-	retained = true
-	d.retirePreparation(ks.Named())
-	d.prepared[ks.Named()] = result
-	return result, nil
-}
-
-func (d *Session) retirePreparation(id manifest.NamedResource) {
-	prepared := d.prepared[id]
-	if !prepared.registered {
-		prepared.support.ReleaseCapture()
-		d.cfg.Store.Retire(prepared.support)
-	}
-	delete(d.prepared, id)
+	return frame, nil
 }
 
 func (d *Session) prepareProducer(
@@ -759,7 +787,7 @@ func (d *Session) prepareProducer(
 			Owner:   owner,
 			Source:  sourceID,
 			Reads:   kustomize.RenderInputs(prepared.receipt),
-			Support: prepared.support,
+			Support: &prepared.support,
 		},
 		prepared.children,
 	)

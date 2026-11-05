@@ -28,13 +28,16 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	return e.DiscoveryIndex.IsFileIndexed(id)
 }
 
+//nolint:gocritic // The admission contract requires an independent request snapshot.
 func (e *orchestratorExistence) Promote(
 	ctx context.Context,
-	reads *store.ReadSet,
+	request loader.PrepareRequest,
 	id manifest.NamedResource,
 ) (bool, error) {
+	reads := request.Reads
+
 	if e.o.preparation != nil {
-		return e.promotePrepared(ctx, reads, id)
+		return e.promotePrepared(ctx, request, id)
 	}
 	if e.o.filter.Enabled() {
 		captured := reads
@@ -43,7 +46,8 @@ func (e *orchestratorExistence) Promote(
 			captured.Init(e.o.store, id, nil)
 			defer captured.Retire()
 		}
-		_, err := e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, captured)
+		request.Reads = captured
+		_, err := e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, request)
 		if err != nil {
 			return false, err
 		}
@@ -59,7 +63,7 @@ func (e *orchestratorExistence) Promote(
 		}
 	}
 	if obj != nil {
-		return e.admit(ctx, store.Child{Obj: obj, Productions: productions}, reads)
+		return e.admit(ctx, store.Child{Obj: obj, Productions: productions}, request)
 	}
 	{
 		pValues := productions
@@ -67,7 +71,7 @@ func (e *orchestratorExistence) Promote(
 			p := pValues[pIndex]
 
 			admit := func(obj manifest.BaseManifest) (bool, error) {
-				return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
+				return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, request)
 			}
 			promoted, err := loader.Promote(
 				ctx,
@@ -87,14 +91,16 @@ func (e *orchestratorExistence) Promote(
 			return true, nil
 		}
 	}
-	return e.promoteAdmission(ctx, reads, id)
+	return e.promoteAdmission(ctx, request, id)
 }
 
+//nolint:gocritic // The admission contract requires an independent request snapshot.
 func (e *orchestratorExistence) promotePrepared(
 	ctx context.Context,
-	reads *store.ReadSet,
+	request loader.PrepareRequest,
 	id manifest.NamedResource,
 ) (bool, error) {
+	reads := request.Reads
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("context: %w", err)
 	}
@@ -105,17 +111,19 @@ func (e *orchestratorExistence) promotePrepared(
 	return obj != nil && slices.Contains(e.o.preparation.Needed, id), nil
 }
 
+//nolint:gocritic // The admission contract requires an independent request snapshot.
 func (e *orchestratorExistence) promoteAdmission(
 	ctx context.Context,
-	reads *store.ReadSet,
+	request loader.PrepareRequest,
 	id manifest.NamedResource,
 ) (bool, error) {
+	reads := request.Reads
 	if e.o.admission == nil || reads == nil || reads.GetDeclaration(reads.ID()) == nil {
 		return false, nil
 	}
 	child, artifact, err := e.o.admission.Resolve(ctx, id, nil, reads.Work().Scope())
 	if err == nil && child.Obj != nil && artifact != nil && reads.Valid() {
-		accepted, admissionErr := e.admit(ctx, child, reads)
+		accepted, admissionErr := e.admit(ctx, child, request)
 		if admissionErr != nil {
 			return false, admissionErr
 		}
@@ -130,12 +138,17 @@ func (e *orchestratorExistence) promoteAdmission(
 }
 
 //nolint:gocritic // Immutable value inputs preserve snapshot semantics.
-func (e *orchestratorExistence) admit(ctx context.Context, child store.Child, reads *store.ReadSet) (bool, error) {
+func (e *orchestratorExistence) admit(
+	ctx context.Context,
+	child store.Child,
+	request loader.PrepareRequest,
+) (bool, error) {
 	info := manifest.KindOf(child.Obj)
 	if !info.Tracked || info.Group != manifest.SourceDomain && info.Runnable {
 		return false, nil
 	}
-	return e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, child, reads)
+	request.Generation = []store.Child{child}
+	return e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, request)
 }
 
 func (o *Orchestrator) run(ctx context.Context) error {
@@ -175,6 +188,7 @@ func (o *Orchestrator) configureControllers() {
 		AllowMissingKinds:       o.cfg.AllowMissingKinds,
 	}
 	o.ksc.Configure(kustomization.Options{
+		Discovery:           o.discoveryResult,
 		Options:             common,
 		StrictSubstitutions: o.cfg.StrictSubstitutions,
 	}, o.cfg.SourceRetry)
@@ -205,10 +219,6 @@ func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 			res.Blocked[id] = info.BlockedBy()
 		}
 	}
-	if o.loader != nil {
-		o.loader.Retire()
-	}
-
 	return res, runErr
 }
 
@@ -352,6 +362,16 @@ func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) emissio
 func (o *Orchestrator) stop() {
 	o.ksc.Trees.Close()
 	o.inputs.Close()
+	o.tasks.BlockTillDone()
+	o.sweepProbes(true)
+	o.preparation.Retire()
+	o.preparation = nil
+	o.admissionPreparation.Retire()
+	o.admissionPreparation = nil
+	o.discoveryResult.Close()
+	o.discoveryResult = nil
+	o.session.Close()
+	o.loader.Close()
 	if o.unsubStatus != nil {
 		o.unsubStatus()
 		o.unsubStatus = nil

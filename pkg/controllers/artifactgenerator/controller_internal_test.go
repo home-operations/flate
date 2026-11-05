@@ -12,6 +12,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -41,7 +43,9 @@ func runForTest(t *testing.T, c *Controller, id manifest.NamedResource) {
 	c.Tasks.Go(
 		t.Context(),
 		"generator",
-		func(ctx context.Context) { t.Cleanup(c.ReconcileNode(ctx, id, manifest.DrainNone).Close) },
+		func(ctx context.Context) {
+			t.Cleanup(c.ReconcileNode(ctx, id, manifest.DrainNone, schedule.Result{}).Close)
+		},
 	)
 	c.Tasks.BlockTillDone()
 
@@ -567,7 +571,7 @@ func testInputAvailability(t *testing.T, tc *inputAvailabilityCase) {
 	)
 	if tc.name == "missing" {
 		c.Tasks.Go(t.Context(), "generator", func(ctx context.Context) {
-			c.ReconcileNode(ctx, obj.Named(), manifest.DrainCascade)
+			c.ReconcileNode(ctx, obj.Named(), manifest.DrainCascade, schedule.Result{})
 		})
 		c.Tasks.BlockTillDone()
 		status, _ = st.GetStatus(obj.Named())

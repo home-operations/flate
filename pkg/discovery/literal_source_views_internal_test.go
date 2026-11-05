@@ -46,7 +46,7 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		assert.Equal(t, ok, true)
 		proposal, err := f.loader.Prepare(
 			t.Context(),
-			loader.PrepareRequest{Incoming: store.Child{Obj: root, Entry: &application}, Reads: binding.Reads},
+			loader.PrepareRequest{Generation: []store.Child{{Obj: root, Entry: &application}}, Reads: binding.Reads},
 		)
 		assert.NoError(t, err)
 		replacement := *f.views[0]
@@ -179,7 +179,7 @@ func (f *literalSourceViewsFixture) literal(t *testing.T, index int) *manifest.K
 	reads.GetArtifact(application.Source, store.ArtifactContent)
 	proposal, err := f.loader.Prepare(
 		t.Context(),
-		loader.PrepareRequest{Incoming: store.Child{Obj: literal, Entry: &application}, Reads: &reads},
+		loader.PrepareRequest{Generation: []store.Child{{Obj: literal, Entry: &application}}, Reads: &reads},
 	)
 	assert.NoError(t, err)
 	committed, err := f.loader.Commit(t.Context(), proposal, loader.Execution)

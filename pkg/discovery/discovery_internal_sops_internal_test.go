@@ -63,7 +63,7 @@ func TestAdvance_UnreadableInputReachesFixpoint(t *testing.T) {
 	for range 3 {
 		proposal, err := l.Prepare(
 			t.Context(),
-			loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: nil, Invocation: true},
+			loader.PrepareRequest{Generation: nil, Reads: nil, History: nil, Invocation: true},
 		)
 		assert.NoError(t, err)
 		advanced, err := session.Advance(t.Context(), proposal)

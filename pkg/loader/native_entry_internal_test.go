@@ -146,7 +146,10 @@ spec: {path: ./workload}
 					)
 				}}}
 			}
-			proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: entry}, History: history})
+			proposal, err := l.Prepare(
+				t.Context(),
+				PrepareRequest{Generation: []store.Child{{Obj: entry}}, History: history},
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, entry.Named()), false)
 			assert.Equal(t, slices.Contains(proposal.Blocked, "entry"), false)

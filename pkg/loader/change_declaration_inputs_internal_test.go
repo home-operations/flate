@@ -168,7 +168,8 @@ func testSelectionSelectorCandidatesCase(t *testing.T, testCaseInput *testSelect
 	record := l.Index.Records[(*testCaseInput.provider).Named()]
 	record.Declaration = nil
 	l.Index.Records[(*testCaseInput.provider).Named()] = record
-	selected := admissionClosure{loader: l, objects: st, incoming: store.Child{Obj: testCaseInput.tc.incoming}}
+	selected := admissionClosure{loader: l, objects: st, generation: []store.Child{{Obj: testCaseInput.tc.incoming}}}
+	selected.captureIncoming()
 	var got []manifest.NamedResource
 	for ref := range manifest.References((*testCaseInput.set), manifest.ReferenceRelations) {
 		if ref.Use == "inputsFrom" {

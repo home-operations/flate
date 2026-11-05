@@ -77,7 +77,11 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 		slots.Go(t.Context(), "admit", func(context.Context) {
 			ready.Done()
 			<-start
-			c.KeepEmitted(t.Context(), parent, store.Child{Obj: child}, nil)
+			c.KeepEmitted(
+				t.Context(),
+				parent,
+				loader.PrepareRequest{Generation: []store.Child{{Obj: child}}, Reads: nil},
+			)
 		})
 	}
 	ready.Wait()
@@ -146,8 +150,7 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 					_, err := c.KeepEmitted(
 						t.Context(),
 						manifest.NamedResource{},
-						store.Child{Obj: consumer},
-						&execution.Reads,
+						loader.PrepareRequest{Generation: []store.Child{{Obj: consumer}}, Reads: &execution.Reads},
 					)
 					assert.NoError(t, err)
 				}
@@ -179,9 +182,9 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 					t,
 					execution.Reads.Work().Scope().Admission().Counts,
 					manifest.WorkCounts{
-						Attempts:      3,
-						Completed:     3,
-						OwnerPrepares: 3,
+						Attempts:      2,
+						Completed:     2,
+						OwnerPrepares: 2,
 					},
 				)
 			},
@@ -231,7 +234,11 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 	reads.Init(st, manifest.NamedResource{}, nil)
 	defer reads.Retire()
 	reads.RequireData(input)
-	_, err = c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{}, &reads)
+	_, err = c.KeepEmitted(
+		t.Context(),
+		manifest.NamedResource{},
+		loader.PrepareRequest{Generation: nil, Reads: &reads},
+	)
 	assert.NoError(t, err)
 	owner := testutil.KustomizationID("apps", "owner")
 	assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), true)
@@ -287,7 +294,11 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	reads.Init(st, input.Named(), nil)
 	defer reads.Retire()
 	reads.GetObject(input.Named())
-	_, err = c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: input}, &reads)
+	_, err = c.KeepEmitted(
+		t.Context(),
+		manifest.NamedResource{},
+		loader.PrepareRequest{Generation: []store.Child{{Obj: input}}, Reads: &reads},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, reads.Valid(), true)
 	st.DeleteObject(consumer.Named())
@@ -426,7 +437,11 @@ func testKeepEmittedLatePromotionConvergesCase(
 			if *testCaseInput {
 				<-promoted
 			}
-			c.KeepEmitted(t.Context(), parent.Named(), store.Child{Obj: child}, nil)
+			c.KeepEmitted(
+				t.Context(),
+				parent.Named(),
+				loader.PrepareRequest{Generation: []store.Child{{Obj: child}}, Reads: nil},
+			)
 			close(admitted)
 			if !(*testCaseInput) {
 				<-promoted
@@ -446,7 +461,7 @@ func testKeepEmittedLatePromotionConvergesCase(
 				<-admitted
 			}
 			assert.Equal(t, s.GetObject(child.Named()) == nil, true)
-			c.emit(
+			(&Execution{Controller: c}).emit(
 				t.Context(),
 				primary.Named(),
 				captureEmission(

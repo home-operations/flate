@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
 	src "github.com/home-operations/flate/pkg/source"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -143,7 +144,7 @@ spec:
 	)
 	id := testutil.KustomizationID("flux-system", "consumer")
 	if testCaseInput.fetchErr != nil {
-		o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade)
+		o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade, schedule.Result{})
 	}
 	status, _ := o.Store().GetStatus(id)
 	switch {

@@ -166,7 +166,7 @@ func (c *admissionClosure) rootRequired(root string) bool {
 func (c *admissionClosure) resetComparisons() {
 	if c.comparisons != nil {
 		if c.comparisons.changed {
-			c.publishComparisonBindings()
+			c.publishComparisons()
 			c.comparisons.changed = false
 		}
 		clear(c.comparisons.bindings)
@@ -174,7 +174,7 @@ func (c *admissionClosure) resetComparisons() {
 		c.comparisons.storage = c.comparisons.storage[:len(c.comparisons.names)]
 		for i := range c.comparisons.names {
 			evidence := c.comparisons.names[i]
-			evidence.bound, evidence.paths = false, nil
+			evidence.bound = false
 			c.comparisons.bindings[evidence.source] = evidence
 		}
 	}
@@ -235,39 +235,25 @@ func (c *admissionClosure) historyOwnerSupported(id manifest.NamedResource) bool
 	return false
 }
 
-func (c *admissionClosure) publishComparisonBindings() {
-	for {
-		previous := c.loader.bindings.Load()
-		next := make(map[manifest.NamedResource]admissionSource, len(c.comparisons.bindings))
-		if previous != nil {
-			maps.Copy(next, *previous)
-		}
-		for source, evidence := range c.comparisons.bindings {
-			if evidence.bound {
-				next[source] = *evidence
-			}
-		}
-		if c.loader.bindings.CompareAndSwap(previous, &next) {
-			break
-		}
-	}
-}
-
 func (c *admissionClosure) indexStartObjects(objects []manifest.BaseManifest) {
 	capacity := max(len(c.loader.Index.Records), len(objects))
 	if c.states == nil {
 		c.states = make(map[manifest.NamedResource]admissionState, capacity)
 	}
-	c.identities = make([]admissionIdentity, 0, capacity)
+	if c.identities == nil {
+		c.identities = make([]admissionIdentity, 0, capacity)
+	}
 	index := func(id manifest.NamedResource) {
 		state := c.states[id]
 		if state.listed {
 			return
 		}
 		state.listed = true
-		state.ordinal = len(c.identities) + 1
+		if state.ordinal == 0 {
+			state.ordinal = len(c.identities) + 1
+			c.identities = append(c.identities, admissionIdentity{id: id})
+		}
 		c.states[id] = state
-		c.identities = append(c.identities, admissionIdentity{id: id})
 	}
 	for id := range c.loader.Index.Records {
 		index(id)
@@ -284,6 +270,34 @@ func (c *admissionClosure) indexStartObjects(objects []manifest.BaseManifest) {
 	for id := range delta.Inputs(manifest.NamedResource{}) {
 		if c.changedInput(id, id) {
 			index(id)
+		}
+	}
+	c.retireIdentities()
+}
+
+func (c *admissionClosure) retireIdentities() {
+	previous := len(c.identities)
+	c.identities = slices.DeleteFunc(c.identities, func(identity admissionIdentity) bool {
+		if c.states[identity.id].listed {
+			return false
+		}
+		if state := c.states[identity.id]; state.incoming != 0 {
+			c.states[identity.id] = admissionState{
+				incoming:            state.incoming,
+				incomingProductions: state.incomingProductions,
+			}
+		} else {
+			delete(c.states, identity.id)
+		}
+		return true
+	})
+	if len(c.identities) != previous {
+		for i := range c.identities {
+			identity := &c.identities[i]
+			identity.stableOwner, identity.stableObject = 0, nil
+			state := c.states[identity.id]
+			state.ordinal = i + 1
+			c.states[identity.id] = state
 		}
 	}
 }
@@ -386,7 +400,13 @@ func (c *admissionClosure) recordDirectState(
 	claims []admissionStartClaim,
 ) {
 	state := c.states[id]
-	state.direct = changed
+	if state.directKnown {
+		state.requested = state.requested || c.namedSelection(id)
+		c.states[id] = state
+		return
+	}
+	c.derive()
+	state.direct, state.directKnown = changed, true
 	state.requested = state.requested || c.namedSelection(id)
 	state.eligible = record.Origin.Policy(id, nil).Root && c.loader.Options.Selection.Matches(id)
 	state.declarationChanged = state.eligible && !changed &&
@@ -559,6 +579,7 @@ func (c *admissionClosure) rescanInitialChanges(
 			return
 		}
 		state.rescan = true
+		state.initialKnown, state.directKnown, state.affectedKnown = false, false, false
 		c.states[id] = state
 		c.queue = append(c.queue, id)
 	}
@@ -655,7 +676,14 @@ func (c *admissionClosure) prepareInitialIdentity(
 	c.states[id] = state
 	obj := c.object(id)
 	record := c.record(id)
+	if state.initialKnown {
+		return obj, record, state.direct
+	}
+	c.derive()
 	changed := c.affected(id, obj) || c.changedInput(id, id)
+	state = c.states[id]
+	state.initialKnown = true
+	c.states[id] = state
 	return obj, record, changed
 }
 

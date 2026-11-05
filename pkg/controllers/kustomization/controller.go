@@ -7,10 +7,10 @@ package kustomization
 
 import (
 	"context"
-	"iter"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -30,7 +30,8 @@ type Controller struct {
 	retry cache.RetryConfig
 
 	// Trees shares remote fetches and persisted renders.
-	Trees *kustomize.TreeCache
+	Trees     *kustomize.TreeCache
+	Discovery *discovery.Result
 
 	strictSubstitutions bool
 	restricted          bool
@@ -41,12 +42,16 @@ type Controller struct {
 type Options struct {
 	base.Options
 
+	Discovery *discovery.Result
+
 	// StrictSubstitutions rejects undefined variables without defaults.
 	StrictSubstitutions bool
 }
 
 type execution struct {
 	*Controller
+
+	preparation kustomize.Preparation
 
 	run  base.Execution
 	data *values.StoreProvider
@@ -55,8 +60,26 @@ type execution struct {
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 	execution := &execution{Controller: c}
 	execution.run.Init(c.Controller, id)
+	execution.run.Preparation = execution
 	execution.data = values.NewStoreProvider(&execution.run.Reads)
 	return execution
+}
+
+func (c *execution) Retire() {
+	c.preparation.Retire()
+	c.data = nil
+}
+
+func (c *execution) prepareRequest(request *kustomize.RenderRequest) {
+	if previous, ok := c.run.Preparation.(*execution); ok && previous != c {
+		c.preparation.Take(&previous.preparation, c.Trees, request)
+		previous.Retire()
+	}
+	c.run.Preparation = c
+	request.Preparation = &c.preparation
+	if c.Discovery != nil {
+		c.Discovery.TakePreparation(c.Trees, request, &c.preparation)
+	}
 }
 
 // New constructs a Kustomization controller.
@@ -74,6 +97,7 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache) *Controlle
 //nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
 func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
+	c.Discovery = opts.Discovery
 	c.retry = retry
 	c.strictSubstitutions = opts.StrictSubstitutions
 	c.restricted = opts.Filter != nil
@@ -86,8 +110,10 @@ func (c *Controller) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	ex := c.newExecution(id)
+	ex.run.Take(previous)
 	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
 	return &ex.run
 }
@@ -161,6 +187,7 @@ func (c *execution) render(
 		DependencySubstitutions: c.DependencySubstitutions,
 		StrictSubstitutions:     c.strictSubstitutions,
 	}
+	c.prepareRequest(&request)
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
 	if err != nil {
 		return err
@@ -223,13 +250,20 @@ func (c *execution) recordRender(
 func (c *Controller) PreviousRender(
 	ctx context.Context,
 	obj manifest.BaseManifest,
-	reads *store.ReadSet,
-) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	previous schedule.Result,
+) base.History {
 	ks, ok := obj.(*manifest.Kustomization)
 	if !ok || ctx.Err() != nil {
-		return nil, false
+		return base.History{}
 	}
+	ex := &execution{Controller: c}
+	ex.run.InitProbe(c.Controller, obj)
+	ex.run.Preparation = ex
+	ex.run.Take(previous)
+	reads := &ex.run.Reads
+	history := base.History{Assessment: &ex.run}
 	data := values.NewStoreProvider(reads)
+	ex.data = data
 	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
 	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
 		if ref.Use != "substituteFrom" {
@@ -245,16 +279,16 @@ func (c *Controller) PreviousRender(
 			manifest.DrainNone,
 		)
 		if availability.Err != nil || availability.Kind != schedule.Terminal {
-			return nil, false
+			return history
 		}
 	}
 	prepared, err := kustomize.Prepare(ks, data)
 	if err != nil {
-		return nil, false
+		return history
 	}
 	source, ignore, err := kustomize.SourceInput(reads, prepared)
 	if err != nil {
-		return nil, false
+		return history
 	}
 	request := kustomize.RenderRequest{
 		Work:                    reads.Work().Scope().RenderWork(),
@@ -266,10 +300,12 @@ func (c *Controller) PreviousRender(
 		DependencySubstitutions: c.DependencySubstitutions,
 		StrictSubstitutions:     c.strictSubstitutions,
 	}
+	ex.prepareRequest(&request)
 	docs, receipt, found := c.Trees.PreviousRender(ctx, request)
 	if !found {
-		return nil, false
+		return history
 	}
 	content := request.Content(docs)
-	return c.Trees.RenderHistory(ks.Named(), receipt, content)
+	history.Records, history.Complete = c.Trees.RenderHistory(ks.Named(), receipt, content)
+	return history
 }

@@ -60,8 +60,8 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 					proposal, err := l.Prepare(
 						t.Context(),
 						loader.PrepareRequest{
-							Incoming: store.Child{},
-							Reads:    nil,
+							Generation: nil,
+							Reads:      nil,
 							History: map[manifest.NamedResource]struct {
 								Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 								Complete bool
@@ -86,8 +86,10 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 					kept1, admissionErr1 := controller.KeepEmitted(
 						t.Context(),
 						owner,
-						store.Child{Obj: child, Productions: []manifest.Production{production}},
-						nil,
+						loader.PrepareRequest{
+							Generation: []store.Child{{Obj: child, Productions: []manifest.Production{production}}},
+							Reads:      nil,
+						},
 					)
 					assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
 					assert.Equal(t, kept1, mode == "mutable")
@@ -129,7 +131,7 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 	filter := l.Options.Filter
 	proposal, err := l.Prepare(
 		t.Context(),
-		loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: map[manifest.NamedResource]struct {
+		loader.PrepareRequest{Generation: nil, Reads: nil, History: map[manifest.NamedResource]struct {
 			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 			Complete bool
 		}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
@@ -146,7 +148,11 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 	admissiontest.Commit(t, l, proposal)
 	controller := New(st, task.NewBounded(2))
 	controller.Configure(Options{Filter: filter, Loader: l})
-	kept2, admissionErr2 := controller.KeepEmitted(t.Context(), owner, store.Child{Obj: child}, nil)
+	kept2, admissionErr2 := controller.KeepEmitted(
+		t.Context(),
+		owner,
+		loader.PrepareRequest{Generation: []store.Child{{Obj: child}}, Reads: nil},
+	)
 	assert.FatalIf(t, admissionErr2 != nil, "%v", admissionErr2)
 	assert.Equal(t, kept2, true)
 	assert.Equal(t, filter.ShouldReconcile(newSource.Named()), true)

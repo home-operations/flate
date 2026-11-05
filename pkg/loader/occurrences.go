@@ -105,10 +105,8 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 	facts.templateInputs = projection.Inputs
 	facts.templateObjects = projection.Objects
 	facts.targets = append(facts.targets, projection.Targets...)
-	generated, _ := manifest.GeneratedObjects(obj)
-	for _, child := range generated {
-		facts.targets = append(facts.targets, manifest.ProducerTarget{NamedResource: child.Named()})
-	}
+	generated, _ := manifest.GeneratedTargets(obj)
+	facts.targets = append(facts.targets, generated...)
 	facts.catalog = manifest.CatalogObject(obj, obj.Named())
 	facts.structural, _ = facts.catalog.(*manifest.Kustomization)
 	if producer, ok := obj.(interface {

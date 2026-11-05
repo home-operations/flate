@@ -485,7 +485,7 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 		b.Fatalf("warm render differs: %v", err)
 	}
 	assert.Diff(b, second, first)
-	loaded, err := cli.describeChart(b.Context(), hr, cliSources)
+	loaded, err := cli.describeChart(b.Context(), hr, cliSources.chartInput(hr))
 	if err != nil || loaded.valuesPin == "" {
 		b.Fatalf("source values are not pinned: %v", err)
 	}

@@ -420,7 +420,7 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, len(docs), 0)
 		if renderPersistenceEligible(t) {
-			loaded, err := cli.describeChart(t.Context(), newHR(), cliSources)
+			loaded, err := cli.describeChart(t.Context(), newHR(), cliSources.chartInput(newHR()))
 			assert.NoError(t, err)
 			loaded.values, loaded.valuesErr = cli.observeValuesFiles(
 				t.Context(), &loaded, newHR().ChartValuesFiles,

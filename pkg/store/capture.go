@@ -9,7 +9,7 @@ import (
 )
 
 // ReadSet retains the immutable inputs consumed by one execution.
-// Its storage MUST remain owned by that execution until retirement is swept.
+// Its storage MUST remain owned until subscriptions and retained comparisons finish.
 type ReadSet struct {
 	work           *manifest.WorkRecorder
 	warnings       []manifest.Warning
@@ -37,7 +37,7 @@ type ReadSet struct {
 }
 
 // Input co-owns a captured dependency and its authority registrations.
-// Its reference MUST remain immutable until retirement is swept.
+// Its observations MUST remain immutable while retained for content comparison.
 type Input struct {
 	Ref             manifest.DependencyRef
 	next            *Input

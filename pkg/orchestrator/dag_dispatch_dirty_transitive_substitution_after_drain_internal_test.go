@@ -76,9 +76,9 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	var blocked, settled atomic.Bool
 	dispatch := fixtureDispatcher{
 		store: o.store,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id != pin {
-				result := (dagDispatcher{o}).Dispatch(ctx, id, level)
+				result := (dagDispatcher{o}).Dispatch(ctx, id, level, schedule.Result{})
 				if id == consumer && result.Assessment.Outcome() == schedule.Blocked {
 					blocked.Store(true)
 				}
@@ -211,7 +211,7 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 		defer unsubBarrier()
 		dispatch := fixtureDispatcher{
 			store: s,
-			dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
+			dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel, schedule.Result) schedule.Result {
 				s.RecordEmitted(publisher, captureEmission(s, publisher, &store.Emission{Complete: true}), nil)
 				return schedule.Result{}
 			},

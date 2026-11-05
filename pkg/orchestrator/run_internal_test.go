@@ -68,7 +68,7 @@ spec: {}
 		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
 	}}
 	{
-		promoted, err := e.Promote(t.Context(), nil, id)
+		promoted, err := e.Promote(t.Context(), loader.PrepareRequest{Reads: nil}, id)
 		assert.FatalIf(t, err != nil || !promoted || st.GetObject(id) == nil, "%v", "selected data must be admitted")
 	}
 	for _, excluded := range []manifest.NamedResource{
@@ -192,7 +192,7 @@ spec: {url: https://example.test/excluded.git}
 	{
 		promoted, err := e.Promote(
 			t.Context(),
-			reads,
+			loader.PrepareRequest{Reads: reads},
 			selected,
 		)
 		assert.FatalIf(t, err != nil || !promoted || st.GetObject(selected) == nil ||
@@ -206,7 +206,7 @@ spec: {url: https://example.test/excluded.git}
 		{
 			promoted, err := e.Promote(
 				t.Context(),
-				nil,
+				loader.PrepareRequest{Reads: nil},
 				id,
 			)
 			assert.ErrorIf(t, err != nil || promoted || st.GetObject(id) != nil ||
@@ -216,7 +216,7 @@ spec: {url: https://example.test/excluded.git}
 	assert.ErrorIf(t, len(filter.KeepNames()) != size, "%v", "ordering promotion must not expand keep")
 	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
 	{
-		promoted, err := e.Promote(t.Context(), nil, excluded)
+		promoted, err := e.Promote(t.Context(), loader.PrepareRequest{Reads: nil}, excluded)
 		assert.ErrorIf(t, err != nil || promoted, "%v", "availability must not bypass admission")
 	}
 }
@@ -263,7 +263,7 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	defer reads.Close()
 	reads.RequireData(id)
 	{
-		promoted, err := e.Promote(t.Context(), &reads, id)
+		promoted, err := e.Promote(t.Context(), loader.PrepareRequest{Reads: &reads}, id)
 		assert.FatalIf(
 			t,
 			err != nil || !promoted || !filter.ShouldReconcile(id),
@@ -354,7 +354,7 @@ func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
 				Namespace: "sources",
 				Name:      "missing",
 			}
-			promoted, err := e.Promote(t.Context(), &reads, id)
+			promoted, err := e.Promote(t.Context(), loader.PrepareRequest{Reads: &reads}, id)
 			assert.NoError(t, err)
 			assert.Equal(t, promoted, tc.want)
 			if !tc.want {

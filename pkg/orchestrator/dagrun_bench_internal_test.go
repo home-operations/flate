@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/pkg/controllers/base"
 
 	"github.com/home-operations/flate/pkg/controllers/resourceset"
@@ -22,14 +24,14 @@ func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
 			rs := &manifest.ResourceSet{Name: "bench", Namespace: "ns"}
 			s.AddObject(rs)
 			d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
-			d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone)
+			d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 			b.ReportAllocs()
 			for b.Loop() {
 				switch mode {
 				case "controller":
-					c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone)
+					c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 				case "dispatcher":
-					d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone)
+					d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 				case "observation_reads":
 					before, _ := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 					if s.GetArtifact(rs.Named(), store.ArtifactContent) != before {

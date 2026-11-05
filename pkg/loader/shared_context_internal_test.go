@@ -215,7 +215,7 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 			testCaseInput.production != "self",
 	)
 	assert.Equal(t, slices.Contains(proposal.Selected, opaque.Named()), false)
-	plain, err := l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: consumer}})
+	plain, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{{Obj: consumer}}})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(plain.Needed, owner.Named()), true)
 	wantOpaque := testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated &&
@@ -231,7 +231,10 @@ func assertAdmissionCapturedMembership(t *testing.T, l *Loader, consumer manifes
 	reads.Init(l.Store, owner, nil)
 	defer reads.Close()
 	for range 2 {
-		captured, err := l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: consumer}, Reads: &reads})
+		captured, err := l.Prepare(
+			t.Context(),
+			PrepareRequest{Generation: []store.Child{{Obj: consumer}}, Reads: &reads},
+		)
 		assert.NoError(t, err)
 		assert.Diff(t, captured.Needed, plain.Needed)
 		assert.Diff(t, captured.Selected, plain.Selected)

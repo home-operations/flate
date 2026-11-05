@@ -527,7 +527,6 @@ func (c *Client) PreviousRender(
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
 	}
-	prepared.release = hr
 	_, record := prepared.contentRender(ctx, c)
 	if record == nil {
 		return nil, false

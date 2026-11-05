@@ -461,10 +461,10 @@ func assertGeneratedSourcePreparation(t *testing.T, run Rendered, treeValue *Tre
 	switch kind {
 	case manifest.KindExternalArtifact:
 		preparation = manifest.WorkCounts{
-			Attempts:      variablePreparation,
-			Completed:     variablePreparation,
+			Attempts:      3,
+			Completed:     1,
 			Failures:      2,
-			OwnerPrepares: variablePreparation,
+			OwnerPrepares: 3,
 			FileEntries:   2,
 		}
 		generator := manifest.NamedResource{
@@ -495,7 +495,6 @@ func assertGeneratedSourcePreparation(t *testing.T, run Rendered, treeValue *Tre
 		t,
 		map[manifest.WorkKey]manifest.WorkCounts{key: gotPreparation},
 		map[manifest.WorkKey]manifest.WorkCounts{key: preparation},
-		witnessPreparationLimit(len(witnessWork(result.Work, manifest.WorkAdmission))),
 	)
 	assert.Equal(t, workCounts(result.Work, sourceID, manifest.WorkAcquisition), acquisition)
 	assert.Equal(t, workCounts(result.Work, sourceID, manifest.WorkCache), cache)

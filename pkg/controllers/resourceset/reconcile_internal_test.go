@@ -187,7 +187,7 @@ func testReconcileParentUpdateDuringRenderCase(
 		"current input is not B: %+v",
 		current,
 	)
-	run := c.ReconcileNode(t.Context(), id, manifest.DrainNone)
+	run := c.ReconcileNode(t.Context(), id, manifest.DrainNone, schedule.Result{})
 	assert.FatalIf(t, run.Outcome() == schedule.Blocked,
 		"replacement blocked: %v", run.Blocked)
 

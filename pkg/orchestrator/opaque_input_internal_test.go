@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
@@ -315,11 +317,15 @@ func assertOpaqueInputInventory(t *testing.T, runs []Rendered, owner *sourcecach
 		reads.Init(run.Store(), id, nil)
 		controller := *run.hrc
 		controller.Helm = helm.NewClient(owner)
-		records, complete := controller.PreviousRender(
+		preparedHistory318 := controller.PreviousRender(
 			t.Context(),
 			run.Store().GetObject(id),
-			&reads,
+			schedule.Result{},
 		)
+		if preparedHistory318.Assessment != nil {
+			t.Cleanup(preparedHistory318.Assessment.Close)
+		}
+		records, complete := preparedHistory318.Records, preparedHistory318.Complete
 		assert.Equal(t, complete, true)
 		found := false
 		if records != nil {

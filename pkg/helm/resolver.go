@@ -35,3 +35,14 @@ func (s Sources) LocalSourceArtifact(id manifest.NamedResource, read store.Artif
 func (s Sources) Declaration(id manifest.NamedResource) manifest.BaseManifest {
 	return s.reader.GetDeclaration(id)
 }
+
+func (s Sources) chartInput(hr *manifest.HelmRelease) *store.SourceArtifact {
+	if hr == nil {
+		return nil
+	}
+	read := store.ArtifactContent
+	if hr.TracksDigest() {
+		read |= store.ArtifactRevision
+	}
+	return s.LocalSourceArtifact(hr.ChartSource(), read)
+}

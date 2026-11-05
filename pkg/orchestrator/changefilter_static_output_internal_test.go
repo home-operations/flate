@@ -5,6 +5,8 @@ import (
 	"iter"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -63,8 +65,8 @@ func (*historyProbeController) Owns(manifest.NamedResource) bool { return true }
 func (c *historyProbeController) PreviousRender(
 	context.Context,
 	manifest.BaseManifest,
-	*store.ReadSet,
-) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	schedule.Result,
+) base.History {
 	c.calls++
-	return nil, false
+	return base.History{Records: nil, Complete: false}
 }

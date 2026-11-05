@@ -5,6 +5,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -22,6 +24,12 @@ func (g *sourceGenerator) GeneratedObjects() ([]manifest.BaseManifest, error) {
 			map[string]any{"url": g.URL},
 		),
 	}, nil
+}
+
+func (g *sourceGenerator) GeneratedTargets() ([]manifest.ProducerTarget, error) {
+	return []manifest.ProducerTarget{{
+		Kind: manifest.KindConfigMap, Name: "source-info", Namespace: g.Namespace,
+	}}, nil
 }
 
 func TestSource_GeneratedInventoryAndAcquisition(t *testing.T) {
@@ -58,7 +66,9 @@ func TestSource_GeneratedInventoryAndAcquisition(t *testing.T) {
 		c.Tasks.Go(
 			t.Context(),
 			"source",
-			func(ctx context.Context) { execution = c.ReconcileNode(ctx, repository.Named(), manifest.DrainNone) },
+			func(ctx context.Context) {
+				execution = c.ReconcileNode(ctx, repository.Named(), manifest.DrainNone, schedule.Result{})
+			},
 		)
 		c.Tasks.BlockTillDone()
 		if previous != nil {

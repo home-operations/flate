@@ -384,7 +384,10 @@ func (r *renderInvocation) prepareSession(ctx context.Context, i int) {
 	}
 	var proposal *loader.Admission
 	if failure == nil {
-		proposal, failure = o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
+		proposal, failure = o.loader.Prepare(
+			ctx,
+			loader.PrepareRequest{Invocation: true, History: o.history, Preparation: &o.admissionPreparation},
+		)
 	}
 	advanced := false
 	if failure == nil {

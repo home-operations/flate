@@ -207,7 +207,7 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 		incoming.Entry = &application
 		proposal, err := d.loader.Prepare(
 			t.Context(),
-			loader.PrepareRequest{Invocation: true, Incoming: incoming, Reads: &reads},
+			loader.PrepareRequest{Invocation: true, Generation: []store.Child{incoming}, Reads: &reads},
 		)
 		assert.NoError(t, err)
 		defer proposal.Retire()

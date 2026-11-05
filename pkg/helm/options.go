@@ -15,6 +15,9 @@ import (
 type RenderOptions struct {
 	Options
 
+	// Preparation borrows immutable values across calls. Retire all owners before mutation.
+	Preparation *Preparation `json:"-"`
+
 	// Work borrows stage counters from this render execution.
 	Work    *manifest.RenderWork `json:"-"`
 	Sources Sources              `json:"Sources"`

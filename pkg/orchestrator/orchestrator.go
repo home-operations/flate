@@ -121,20 +121,23 @@ type Orchestrator struct {
 	work       manifest.WorkSummary
 	workFrozen bool
 
-	changeNamespaces []string
-	cfg              treeConfig
-	store            *store.Store
-	tasks            *task.Service
-	src              *sourcectrl.Controller
-	ksc              *kustomization.Controller
-	hrc              *helmrelease.Controller
-	rsc              *resourcesetctrl.Controller
-	agc              *artifactgenerator.Controller
-	filter           *change.Filter
-	loader           *loader.Loader
-	session          *discovery.Session
-	preparation      *loader.Admission
-	history          map[manifest.NamedResource]struct {
+	changeNamespaces     []string
+	cfg                  treeConfig
+	store                *store.Store
+	tasks                *task.Service
+	src                  *sourcectrl.Controller
+	ksc                  *kustomization.Controller
+	hrc                  *helmrelease.Controller
+	rsc                  *resourcesetctrl.Controller
+	agc                  *artifactgenerator.Controller
+	filter               *change.Filter
+	loader               *loader.Loader
+	session              *discovery.Session
+	preparation          *loader.Admission
+	admissionPreparation *loader.Preparation
+	discoveryResult      *discovery.Result
+	probes               *base.Execution
+	history              map[manifest.NamedResource]struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
 	}
@@ -352,6 +355,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Bootstrap admission publishes a source artifact.
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
+	o.discoveryResult = res
 	o.index = res.Index
 	o.entryBinding = res.Binding
 	o.admission = res.Admission

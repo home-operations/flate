@@ -193,7 +193,7 @@ func testSharedRepositoryAcquisitionArrival(
 	d := dagDispatcher{o}
 	dispatch := fixtureDispatcher{
 		store: s,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id == p {
 				o.tasks.YieldSlot(func() {
 					waitSharedRepositoryBarrier(ctx, publishPermit)
@@ -220,7 +220,7 @@ func testSharedRepositoryAcquisitionArrival(
 			releases.waitFor(ctx, o.tasks, id, permits)
 			hidden := hiddenSharedRepositoryDeclaration(s, id, repo)
 
-			result := d.Dispatch(ctx, id, level)
+			result := d.Dispatch(ctx, id, level, schedule.Result{})
 			if testCaseInput.changesRepository(id, repo) {
 				firstRepository.Do(func() {
 					execution := result.Assessment.(*base.Execution)

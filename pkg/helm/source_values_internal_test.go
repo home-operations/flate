@@ -220,7 +220,7 @@ func TestObserveValuesFiles_UnpinnedChanges(t *testing.T) {
 	owner := cachetest.New(t, "", cache.New)
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	assert.Equal(t, d.valuesPin, "")
 	reads := 0
@@ -274,7 +274,7 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	input := d.valuesFS
 	blocked, resume := make(chan struct{}), make(chan struct{})
@@ -336,7 +336,7 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 		}
 		acquired := acquireChartFS(t, cachetest.New(t, "", cache.New), os.DirFS(root))
 		st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquired})
-		d, err := cli.describeChart(t.Context(), hr, cliSources)
+		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -607,7 +607,7 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	assert.FatalIf(t, d.valuesPin == "", "%s", "fixture has no acquired values pin")
 	if !(*testCaseInput) {
@@ -684,7 +684,7 @@ func testObserveValuesFilesRetryFailuresCase(
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	input := d.valuesFS
 	ctx, cancel := context.WithCancel(t.Context())

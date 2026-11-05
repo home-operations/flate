@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/values"
 
@@ -65,10 +67,11 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	s.AddObject(parent)
 	s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
 	c := New(s, task.NewBounded(2))
+	execution := &Execution{Controller: c}
 	_, _, next := s.GetEmission(parent.Named())
 	defer next.Finish()
 	next.Complete = true
-	c.emit(t.Context(), parent.Named(), &next, nil)
+	execution.emit(t.Context(), parent.Named(), &next, nil)
 	info, _ := s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 0 objects")
 	first := info
@@ -80,7 +83,7 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 					parent.Named(),
 					store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"},
 				)
-				c.emit(t.Context(), parent.Named(), &next, nil)
+				execution.emit(t.Context(), parent.Named(), &next, nil)
 			})
 			assert.FatalIf(t, allocations != 0, "applying publication allocates %g times", allocations)
 		}
@@ -90,12 +93,12 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	t.Run("first", func(t *testing.T) { publication(t, "applying 0 objects") })
 	{
 		allocations := testing.AllocsPerRun(100, func() {
-			c.emit(t.Context(), parent.Named(), &next, nil)
+			execution.emit(t.Context(), parent.Named(), &next, nil)
 		})
 		assert.FatalIf(t, allocations != 0, "repeated publication allocates %g times", allocations)
 	}
 	next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"kind": "ConfigMap"}})
-	c.emit(t.Context(), parent.Named(), &next, nil)
+	execution.emit(t.Context(), parent.Named(), &next, nil)
 	info, _ = s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 1 objects")
 	t.Run("changed", func(t *testing.T) { publication(t, "applying 1 objects") })
@@ -170,7 +173,9 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 }
 
 func (*gatePromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *gatePromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+
+//nolint:gocritic // The admission contract requires an independent request snapshot.
+func (p *gatePromotion) Promote(_ context.Context, _ loader.PrepareRequest, id manifest.NamedResource) (bool, error) {
 	return p.promote(id), nil
 }
 
@@ -485,7 +490,7 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			_, _, next := s.GetEmission(producer.Named())
 			defer next.Finish()
 			next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(visible), true
-			c.emit(t.Context(), producer.Named(), &next, nil)
+			(&Execution{Controller: c}).emit(t.Context(), producer.Named(), &next, nil)
 			accepted, _ := s.GetArtifact(producer.Named(), store.ArtifactContent).(*store.Emission)
 			assert.FatalIf(t, accepted == nil || len(accepted.Manifests) != 1, "accepted=%v", accepted)
 			for _, child := range children {
@@ -609,7 +614,7 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 				)
 				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
-			c.emit(
+			(&Execution{Controller: c}).emit(
 				t.Context(),
 				parent.Named(),
 				&store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true},

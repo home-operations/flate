@@ -198,7 +198,7 @@ func testSelectionPromotionBubble(
 	var dispatches, renders atomic.Int64
 	dispatch := fixtureDispatcher{
 		store: s,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			execution := controllertest.NewExecution(c, id)
 			if id == emitter.Named() {
 				tasks.YieldSlot(func() { <-release })

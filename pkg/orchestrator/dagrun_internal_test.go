@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -146,7 +148,7 @@ func renderScalePublicationsTail(t *testing.T, tailCaseInput *renderScalePublica
 	var active, overBound, rootStarts, publications atomic.Int64
 	d := fixtureDispatcher{
 		store: o.store,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			// Input acquisition yields its slot; only admission holds it continuously.
 			func() {
 				current := active.Add(1)
@@ -159,7 +161,7 @@ func renderScalePublicationsTail(t *testing.T, tailCaseInput *renderScalePublica
 					<-release
 				}
 			}()
-			return (dagDispatcher{o}).Dispatch(ctx, id, level)
+			return (dagDispatcher{o}).Dispatch(ctx, id, level, schedule.Result{})
 		},
 	}
 	s := schedule.New(o.tasks, d)
@@ -324,7 +326,7 @@ func testDAGKeepBeforeLateDataPublicationCase(
 	defer unsubArrival()
 	d := fixtureDispatcher{
 		store: st,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id == provider.Named() {
 				tasks.YieldSlot(func() { <-release })
 			}
@@ -502,6 +504,7 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 			ctx,
 			testutil.KustomizationID("flux-system", "dependent"),
 			manifest.DrainNone,
+			schedule.Result{},
 		)
 	})
 	o.tasks.BlockTillDone()
@@ -665,7 +668,11 @@ func publishSuspendedChild(t *testing.T, o *Orchestrator, gate manifest.NamedRes
 	for emittedIndex := range emittedValues {
 		emitted := emittedValues[emittedIndex]
 		if o.filter != nil {
-			if _, innerLocalErr := o.ksc.KeepEmitted(t.Context(), gate, emitted, nil); innerLocalErr != nil {
+			if _, innerLocalErr := o.ksc.KeepEmitted(
+				t.Context(),
+				gate,
+				loader.PrepareRequest{Generation: []store.Child{emitted}, Reads: nil},
+			); innerLocalErr != nil {
 				t.Error(innerLocalErr)
 				return
 			}

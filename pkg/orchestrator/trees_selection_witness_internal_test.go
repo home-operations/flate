@@ -188,7 +188,7 @@ func (tc *selectionWitnessCase) assertCache(t *testing.T, work manifest.WorkSumm
 			t,
 			&counts,
 			new(wantCache[owner]),
-			witnessPreparationLimit(len(witnessAdmissions(tc.owners, "apps"))),
+			witnessCacheLimit(len(witnessAdmissions(tc.owners, "apps"))),
 		)
 		cache[owner] = wantCache[owner]
 	}
@@ -234,7 +234,6 @@ func (tc *selectionWitnessCase) assertWork(
 		t,
 		witnessPreparations(result.Work),
 		preparations,
-		witnessPreparationLimit(len(witnessAdmissions(tc.owners, "apps"))),
 	)
 	assert.Diff(t, witnessWork(result.Work, manifest.WorkKustomize), engines)
 	assert.Diff(t, witnessWork(result.Work, manifest.WorkHelm), helm)

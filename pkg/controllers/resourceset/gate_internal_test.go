@@ -4,6 +4,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	_ "github.com/home-operations/flate/internal/kustomize"
@@ -54,7 +56,7 @@ func TestReconcile_SingleFailureTransition(t *testing.T) {
 		t.Fatalf("render body terminalized before dispatch: status=%+v, failure events=%d", info, failures.Load())
 	}
 	{
-		blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone).Blocked
+		blocked := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{}).Blocked
 		assert.FatalIf(t, len(blocked) != 0, "blocked: %v", blocked)
 	}
 	info, _ := s.GetStatus(rs.Named())

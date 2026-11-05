@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -93,7 +95,7 @@ func (w *Waiter) classify(
 		}
 	}
 	if !present && existence != nil {
-		promoted, err := existence.Promote(ctx, reads, id)
+		promoted, err := existence.Promote(ctx, loader.PrepareRequest{Reads: reads, Preparation: w.Preparation}, id)
 		if err != nil {
 			return Classification{Err: err}, false
 		}

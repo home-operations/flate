@@ -351,7 +351,7 @@ func TestAdmission_HistoryProductionPass(t *testing.T) {
 		accepted: map[manifest.NamedResource]map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {}},
 		replace:  map[manifest.NamedResource]bool{owner: true},
 	}
-	c.proposal = &c.result
+	c.proposal = &Admission{}
 	assert.Equal(t, len(c.productions(child)), 0)
 	assert.NoError(t, c.start(t.Context(), func(materializerDemand, manifest.NamedResource) bool { return false }))
 	assert.Equal(t, c.states[owner].changed, true)

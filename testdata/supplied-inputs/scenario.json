@@ -1,0 +1,968 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Minimal authored reductions of the pinned source topology. Keep parent patches, source references and dependency ownership. Workloads are local ConfigMaps and authored negative variants. Keep the supplied SSH entry at the Git root to preserve its bootstrap admission proof."
+  },
+  "repositories": [
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://local.invalid/cluster"
+        }
+      ]
+    },
+    {
+      "name": "remote",
+      "directory": "remote",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/u5-input.git"
+        },
+        {
+          "name": "ssh",
+          "url": "ssh://git@fixture/u5-input.git"
+        }
+      ]
+    },
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://local.invalid/cluster"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "remote",
+      "name": "data-reader--suppliedssh-on-both-diff-sides-remote-0",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--suppliedssh-on-both-diff-sides-remote-0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "data-reader--suppliedssh-on-both-diff-sides-remote-1",
+      "overlay": "data-reader--suppliedssh-on-both-diff-sides-remote-1-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--suppliedssh-on-both-diff-sides-remote-1"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "data-reader--string-data-precedence-repo-base",
+      "overlay": "data-reader--string-data-precedence-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/data-reader--string-data-precedence-repo-base"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "data-reader--supplied-source-produces-credential-remote-0",
+      "overlay": "data-reader--supplied-source-produces-credential-remote-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--supplied-source-produces-credential-remote-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "data-reader--supplied-source-produces-credential-repo-base",
+      "overlay": "data-reader--supplied-source-produces-credential-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/data-reader--supplied-source-produces-credential-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "data-reader--cluster-advisories-on-both-base-sides-repo-0",
+      "overlay": "data-reader--cluster-advisories-on-both-base-sides-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--cluster-advisories-on-both-base-sides-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "data-reader--cluster-advisories-on-both-base-sides-repo-1",
+      "overlay": "data-reader--cluster-advisories-on-both-base-sides-repo-1-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--cluster-advisories-on-both-base-sides-repo-1"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "data-reader--cluster-advisories-on-both-base-sides-remote-0",
+      "overlay": "data-reader--cluster-advisories-on-both-base-sides-remote-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--cluster-advisories-on-both-base-sides-remote-0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "data-reader--cluster-advisories-on-both-base-sides-remote-1",
+      "overlay": "data-reader--cluster-advisories-on-both-base-sides-remote-1-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--cluster-advisories-on-both-base-sides-remote-1"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "data-reader--suppliedssh-on-both-diff-sides-repo-1",
+      "overlay": "data-reader--suppliedssh-on-both-diff-sides-repo-1-state",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--suppliedssh-on-both-diff-sides-repo-1"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "data-reader--suppliedssh-on-both-diff-sides-baseline-0",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/data-reader--suppliedssh-on-both-diff-sides-baseline-0"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "data-reader--suppliedssh-on-both-diff-sides-remote-1-tree",
+      "directory": "overlays/data-reader--suppliedssh-on-both-diff-sides-remote-1-tree"
+    },
+    {
+      "name": "data-reader--string-data-precedence-repo-base-tree",
+      "directory": "overlays/data-reader--string-data-precedence-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux.yaml"
+        },
+        {
+          "delete": "repo/local/auth.yaml"
+        },
+        {
+          "delete": "repo/local/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "data-reader--supplied-source-produces-credential-remote-0-tree",
+      "directory": "overlays/data-reader--supplied-source-produces-credential-remote-0-tree",
+      "operations": [
+        {
+          "delete": "remote/one/cm.yaml"
+        },
+        {
+          "delete": "remote/one/kustomization.yaml"
+        },
+        {
+          "delete": "remote/two/cm.yaml"
+        },
+        {
+          "delete": "remote/two/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "data-reader--supplied-source-produces-credential-repo-base-tree",
+      "directory": "overlays/data-reader--supplied-source-produces-credential-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/local/auth.yaml"
+        },
+        {
+          "delete": "repo/local/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "data-reader--cluster-advisories-on-both-base-sides-repo-0-tree",
+      "directory": "overlays/data-reader--cluster-advisories-on-both-base-sides-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/local/auth.yaml"
+        },
+        {
+          "delete": "repo/local/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "data-reader--cluster-advisories-on-both-base-sides-repo-1-tree",
+      "directory": "overlays/data-reader--cluster-advisories-on-both-base-sides-repo-1-tree",
+      "operations": [
+        {
+          "delete": "repo/local/auth.yaml"
+        },
+        {
+          "delete": "repo/local/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "data-reader--cluster-advisories-on-both-base-sides-remote-0-tree",
+      "directory": "overlays/data-reader--cluster-advisories-on-both-base-sides-remote-0-tree",
+      "operations": [
+        {
+          "delete": "remote/one/cm.yaml"
+        },
+        {
+          "delete": "remote/one/kustomization.yaml"
+        },
+        {
+          "delete": "remote/two/cm.yaml"
+        },
+        {
+          "delete": "remote/two/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "data-reader--cluster-advisories-on-both-base-sides-remote-1-tree",
+      "directory": "overlays/data-reader--cluster-advisories-on-both-base-sides-remote-1-tree",
+      "operations": [
+        {
+          "delete": "remote/one/cm.yaml"
+        },
+        {
+          "delete": "remote/one/kustomization.yaml"
+        },
+        {
+          "delete": "remote/two/cm.yaml"
+        },
+        {
+          "delete": "remote/two/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "data-reader--suppliedssh-on-both-diff-sides-repo-1-state",
+      "directory": "overlays/data-reader--suppliedssh-on-both-diff-sides-repo-1-state"
+    }
+  ],
+  "inputs": "inputs",
+  "tokens": [],
+  "cases": [
+    {
+      "name": "data-reader--suppliedssh-on-both-diff-sides",
+      "description": "Preserve TestE2E_DataReader_SuppliedSSHOnBothDiffSides and its ordered edits.",
+      "setup": [
+        {
+          "commit": "data-reader--suppliedssh-on-both-diff-sides-repo-1"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "data-reader--suppliedssh-on-both-diff-sides-repo-1"
+          }
+        },
+        {
+          "commit": "data-reader--suppliedssh-on-both-diff-sides-baseline-0"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/heads/master",
+            "commit": "data-reader--suppliedssh-on-both-diff-sides-baseline-0"
+          }
+        },
+        {
+          "commit": "data-reader--suppliedssh-on-both-diff-sides-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "data-reader--suppliedssh-on-both-diff-sides-remote-0"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@",
+              "--supply",
+              "@@inputs@@/data-reader--suppliedssh-on-both-diff-sides/supply-0.yaml",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--skip-kinds",
+              "CustomResourceDefinition",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/data-reader--suppliedssh-on-both-diff-sides-0.stdout",
+              "stderr": "expect/data-reader--suppliedssh-on-both-diff-sides-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--supply",
+              "@@inputs@@/data-reader--suppliedssh-on-both-diff-sides/supply-0.yaml",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--skip-kinds",
+              "CustomResourceDefinition",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/data-reader--suppliedssh-on-both-diff-sides-1.stdout",
+              "stderr": "expect/data-reader--suppliedssh-on-both-diff-sides-1.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-2",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--path-orig",
+              "@@baseline@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "diff",
+              "--cache-dir",
+              "@@cache@@",
+              "--supply",
+              "@@inputs@@/data-reader--suppliedssh-on-both-diff-sides/supply-0.yaml",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/data-reader--suppliedssh-on-both-diff-sides-2.stdout",
+              "stderr": "expect/data-reader--suppliedssh-on-both-diff-sides-2.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "data-reader--string-data-precedence",
+      "description": "Preserve TestE2E_DataReader_StringDataPrecedence and its ordered edits.",
+      "setup": [
+        {
+          "commit": "data-reader--string-data-precedence-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "data-reader--string-data-precedence-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/data-reader--string-data-precedence-0.stdout",
+              "stderr": "expect/data-reader--string-data-precedence-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "data-reader--supplied-source-produces-credential",
+      "description": "Preserve TestE2E_DataReader_SuppliedSourceProducesCredential and its ordered edits.",
+      "setup": [
+        {
+          "commit": "data-reader--supplied-source-produces-credential-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "data-reader--supplied-source-produces-credential-repo-base"
+          }
+        },
+        {
+          "commit": "data-reader--supplied-source-produces-credential-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "data-reader--supplied-source-produces-credential-remote-0"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--supply",
+              "@@inputs@@/data-reader--supplied-source-produces-credential/supply-0.yaml",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/data-reader--supplied-source-produces-credential-0.stdout",
+              "stderr": "expect/data-reader--supplied-source-produces-credential-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "data-reader--cluster-advisories-on-both-base-sides",
+      "description": "Preserve TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides and its ordered edits.",
+      "setup": [
+        {
+          "commit": "data-reader--cluster-advisories-on-both-base-sides-repo-1"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "data-reader--cluster-advisories-on-both-base-sides-repo-1"
+          }
+        },
+        {
+          "commit": "data-reader--cluster-advisories-on-both-base-sides-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "data-reader--cluster-advisories-on-both-base-sides-remote-0"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--base",
+              "@@commit:data-reader--cluster-advisories-on-both-base-sides-repo-0@@",
+              "--supply",
+              "@@inputs@@/data-reader--cluster-advisories-on-both-base-sides/supply-0.yaml",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/data-reader--cluster-advisories-on-both-base-sides-0.stdout",
+              "stderr": "expect/data-reader--cluster-advisories-on-both-base-sides-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/flux.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/local/auth.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/local/kustomization.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--cluster-advisories-on-both-base-sides-0.stderr",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--cluster-advisories-on-both-base-sides-0.stdout",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--string-data-precedence-0.stderr",
+      "cases": [
+        "data-reader--string-data-precedence"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--string-data-precedence-0.stdout",
+      "cases": [
+        "data-reader--string-data-precedence"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--supplied-source-produces-credential-0.stderr",
+      "cases": [
+        "data-reader--supplied-source-produces-credential"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--supplied-source-produces-credential-0.stdout",
+      "cases": [
+        "data-reader--supplied-source-produces-credential"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--suppliedssh-on-both-diff-sides-0.stderr",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--suppliedssh-on-both-diff-sides-0.stdout",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--suppliedssh-on-both-diff-sides-1.stderr",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--suppliedssh-on-both-diff-sides-1.stdout",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--suppliedssh-on-both-diff-sides-2.stderr",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--suppliedssh-on-both-diff-sides-2.stdout",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/data-reader--cluster-advisories-on-both-base-sides/supply-0.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/data-reader--supplied-source-produces-credential/supply-0.yaml",
+      "cases": [
+        "data-reader--supplied-source-produces-credential"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/data-reader--suppliedssh-on-both-diff-sides/supply-0.yaml",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "remote/one/cm.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "remote/one/kustomization.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "remote/two/cm.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "remote/two/kustomization.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/flux.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/local/auth.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/local/kustomization.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides",
+        "data-reader--string-data-precedence",
+        "data-reader--supplied-source-produces-credential",
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "overlays/data-reader--cluster-advisories-on-both-base-sides-remote-0-tree/remote/app/cm.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--cluster-advisories-on-both-base-sides-remote-0-tree/remote/app/kustomization.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--cluster-advisories-on-both-base-sides-remote-1-tree/remote/app/cm.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--cluster-advisories-on-both-base-sides-remote-1-tree/remote/app/kustomization.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--cluster-advisories-on-both-base-sides-repo-0-tree/repo/flux.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--cluster-advisories-on-both-base-sides-repo-0-tree/repo/settings.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--cluster-advisories-on-both-base-sides-repo-1-tree/repo/flux.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--cluster-advisories-on-both-base-sides-repo-1-tree/repo/settings.yaml",
+      "cases": [
+        "data-reader--cluster-advisories-on-both-base-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--string-data-precedence-repo-base-tree/repo/apps/cm.yaml",
+      "cases": [
+        "data-reader--string-data-precedence"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--string-data-precedence-repo-base-tree/repo/apps/kustomization.yaml",
+      "cases": [
+        "data-reader--string-data-precedence"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--string-data-precedence-repo-base-tree/repo/ks.yaml",
+      "cases": [
+        "data-reader--string-data-precedence"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--string-data-precedence-repo-base-tree/repo/secret.yaml",
+      "cases": [
+        "data-reader--string-data-precedence"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--supplied-source-produces-credential-remote-0-tree/remote/credentials/auth.yaml",
+      "cases": [
+        "data-reader--supplied-source-produces-credential"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--supplied-source-produces-credential-remote-0-tree/remote/credentials/kustomization.yaml",
+      "cases": [
+        "data-reader--supplied-source-produces-credential"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--supplied-source-produces-credential-remote-0-tree/remote/workload/cm.yaml",
+      "cases": [
+        "data-reader--supplied-source-produces-credential"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--supplied-source-produces-credential-remote-0-tree/remote/workload/kustomization.yaml",
+      "cases": [
+        "data-reader--supplied-source-produces-credential"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--supplied-source-produces-credential-repo-base-tree/repo/flux.yaml",
+      "cases": [
+        "data-reader--supplied-source-produces-credential"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--suppliedssh-on-both-diff-sides-remote-1-tree/remote/one/cm.yaml",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--suppliedssh-on-both-diff-sides-remote-1-tree/remote/two/cm.yaml",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--suppliedssh-on-both-diff-sides-repo-1-state/repo/flux.yaml",
+      "cases": [
+        "data-reader--suppliedssh-on-both-diff-sides"
+      ],
+      "purpose": "The independent committed source snapshot for this diff side."
+    }
+  ]
+}

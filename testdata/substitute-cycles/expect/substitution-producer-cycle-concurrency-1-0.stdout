@@ -1,0 +1,32 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: a
+  namespace: flux-system
+spec:
+  path: ./kubernetes/cluster/a
+  postBuild:
+    substituteFrom:
+    - kind: ConfigMap
+      name: b-settings
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: b
+  namespace: flux-system
+spec:
+  path: ./kubernetes/cluster/b
+  postBuild:
+    substituteFrom:
+    - kind: ConfigMap
+      name: a-settings
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system

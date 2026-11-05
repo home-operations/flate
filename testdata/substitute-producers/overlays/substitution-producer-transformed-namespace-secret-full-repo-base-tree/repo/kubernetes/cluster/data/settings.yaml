@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: Secret
+metadata: {name: settings, namespace: original}
+data: {VERSION: NC42LjI=}

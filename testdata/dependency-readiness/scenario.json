@@ -1,0 +1,4239 @@
+{
+  "source": {
+    "repository": "truxnell/home-cluster",
+    "revision": "0f7b47a9fec9419a4c5d6b5c4a4ae219ad342c1c",
+    "paths": [
+      "kubernetes/hegira/apps/cert-manager/cert-manager/ks.yaml"
+    ],
+    "reductions": "Minimal authored reductions of the pinned source topology. Keep parent patches, source references and dependency ownership. Workloads are local ConfigMaps and authored negative variants."
+  },
+  "repositories": [
+    {
+      "name": "remote",
+      "directory": "remote",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/u5-input.git"
+        },
+        {
+          "name": "ssh",
+          "url": "ssh://git@fixture/u5-input.git"
+        },
+        {
+          "name": "local",
+          "url": "file:///__flate_fixture__/u5-input.git"
+        }
+      ]
+    },
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://local.invalid/cluster"
+        },
+        {
+          "name": "shared",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "depends-on-defaults--supplied-values-prefix-config-repo-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/depends-on-defaults--supplied-values-prefix-config-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-defaults--supplied-values-prefix-dev-config-repo-base",
+      "overlay": "depends-on-defaults--supplied-values-prefix-dev-config-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/depends-on-defaults--supplied-values-prefix-dev-config-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-defaults--changed-only-build-repo-0",
+      "overlay": "depends-on-defaults--changed-only-build-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-defaults--changed-only-build-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-defaults--changed-only-diff-repo-0",
+      "overlay": "depends-on-defaults--changed-only-build-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-defaults--changed-only-diff-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-defaults--emitted-child-default-only-repo-base",
+      "overlay": "depends-on-defaults--emitted-child-default-only-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/depends-on-defaults--emitted-child-default-only-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-defaults--emitted-child-discovered-supplier-repo-base",
+      "overlay": "depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/depends-on-defaults--emitted-child-discovered-supplier-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-defaults--empty-name-fails-repo-base",
+      "overlay": "depends-on-defaults--empty-name-fails-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/depends-on-defaults--empty-name-fails-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "ready-expr--kustomization-repo-base",
+      "overlay": "ready-expr--kustomization-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/ready-expr--kustomization-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "ready-expr--kustomization-build-repo-0",
+      "overlay": "ready-expr--kustomization-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/ready-expr--kustomization-build-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "ready-expr--kustomization-diff-repo-0",
+      "overlay": "ready-expr--kustomization-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/ready-expr--kustomization-diff-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "ready-expr--kustomization-test-repo-0",
+      "overlay": "ready-expr--kustomization-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/ready-expr--kustomization-test-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "ready-expr--emitted-indexed-false-repo-0",
+      "overlay": "ready-expr--emitted-indexed-false-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/ready-expr--emitted-indexed-false-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "ready-expr--emitted-indexed-true-repo-0",
+      "overlay": "ready-expr--emitted-indexed-false-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/ready-expr--emitted-indexed-true-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-source-interval-repo-0",
+      "overlay": "depends-on-produced-source-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-interval-repo-0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "depends-on-produced-source-interval-remote-0",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-interval-remote-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-source-interval-build-repo-0",
+      "overlay": "depends-on-produced-source-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-interval-build-repo-0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "depends-on-produced-source-interval-build-remote-0",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-interval-build-remote-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-source-interval-diff-repo-0",
+      "overlay": "depends-on-produced-source-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-interval-diff-repo-0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "depends-on-produced-source-interval-diff-remote-0",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-interval-diff-remote-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-source-substitution-repo-0",
+      "overlay": "depends-on-produced-source-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-substitution-repo-0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "depends-on-produced-source-substitution-remote-0",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-substitution-remote-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-source-substitution-build-repo-0",
+      "overlay": "depends-on-produced-source-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-substitution-build-repo-0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "depends-on-produced-source-substitution-build-remote-0",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-substitution-build-remote-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-source-substitution-diff-repo-0",
+      "overlay": "depends-on-produced-source-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-substitution-diff-repo-0"
+      ]
+    },
+    {
+      "repository": "remote",
+      "name": "depends-on-produced-source-substitution-diff-remote-0",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-source-substitution-diff-remote-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-target-interval-repo-0",
+      "overlay": "depends-on-produced-target-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-target-interval-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-target-interval-build-repo-0",
+      "overlay": "depends-on-produced-target-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-target-interval-build-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-target-interval-diff-repo-0",
+      "overlay": "depends-on-produced-target-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-target-interval-diff-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-target-substitution-repo-0",
+      "overlay": "depends-on-produced-target-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-target-substitution-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-target-substitution-build-repo-0",
+      "overlay": "depends-on-produced-target-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-target-substitution-build-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "depends-on-produced-target-substitution-diff-repo-0",
+      "overlay": "depends-on-produced-target-interval-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/depends-on-produced-target-substitution-diff-repo-0"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "depends-on-defaults--supplied-values-prefix-dev-config-repo-base-tree",
+      "directory": "overlays/depends-on-defaults--supplied-values-prefix-dev-config-repo-base-tree"
+    },
+    {
+      "name": "depends-on-defaults--changed-only-build-repo-0-tree",
+      "directory": "overlays/depends-on-defaults--changed-only-build-repo-0-tree"
+    },
+    {
+      "name": "depends-on-defaults--emitted-child-default-only-repo-base-tree",
+      "directory": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/hegira/flux/consumer.yaml"
+        }
+      ]
+    },
+    {
+      "name": "depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree",
+      "directory": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/hegira/flux/consumer.yaml"
+        }
+      ]
+    },
+    {
+      "name": "depends-on-defaults--empty-name-fails-repo-base-tree",
+      "directory": "overlays/depends-on-defaults--empty-name-fails-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/hegira/config/configmap.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/config/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/flux/config.yaml"
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--kustomization-repo-base-tree",
+      "directory": "overlays/ready-expr--kustomization-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/hegira/config/configmap.yaml"
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--emitted-indexed-false-repo-0-tree",
+      "directory": "overlays/ready-expr--emitted-indexed-false-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/hegira/flux/config.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/flux/consumer.yaml"
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-source-interval-repo-0-tree",
+      "directory": "overlays/depends-on-produced-source-interval-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/hegira/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/config/configmap.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/config/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/flux/config.yaml"
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-target-interval-repo-0-tree",
+      "directory": "overlays/depends-on-produced-target-interval-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/hegira/config/configmap.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/config/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/hegira/flux/config.yaml"
+        }
+      ]
+    },
+    {
+      "name": "setup-depends-on-defaults--changed-only-build-2",
+      "directory": "overlays/setup-depends-on-defaults--changed-only-build-2"
+    },
+    {
+      "name": "setup-depends-on-defaults--changed-only-diff-2",
+      "directory": "overlays/setup-depends-on-defaults--changed-only-diff-2"
+    },
+    {
+      "name": "setup-ready-expr--kustomization-build-2",
+      "directory": "overlays/setup-ready-expr--kustomization-build-2"
+    },
+    {
+      "name": "setup-ready-expr--kustomization-diff-2",
+      "directory": "overlays/setup-ready-expr--kustomization-diff-2"
+    },
+    {
+      "name": "setup-ready-expr--kustomization-test-2",
+      "directory": "overlays/setup-ready-expr--kustomization-test-2"
+    },
+    {
+      "name": "setup-ready-expr--emitted-indexed-true-2",
+      "directory": "overlays/setup-ready-expr--emitted-indexed-true-2"
+    },
+    {
+      "name": "edit-depends-on-produced-source-interval-2",
+      "directory": "overlays/edit-depends-on-produced-source-interval-2"
+    },
+    {
+      "name": "setup-depends-on-produced-source-interval-build-4",
+      "directory": "overlays/setup-depends-on-produced-source-interval-build-4"
+    },
+    {
+      "name": "setup-depends-on-produced-source-interval-diff-4",
+      "directory": "overlays/setup-depends-on-produced-source-interval-diff-4"
+    },
+    {
+      "name": "edit-depends-on-produced-source-substitution-2",
+      "directory": "overlays/edit-depends-on-produced-source-substitution-2"
+    },
+    {
+      "name": "setup-depends-on-produced-source-substitution-build-4",
+      "directory": "overlays/setup-depends-on-produced-source-substitution-build-4"
+    },
+    {
+      "name": "setup-depends-on-produced-source-substitution-diff-4",
+      "directory": "overlays/setup-depends-on-produced-source-substitution-diff-4"
+    },
+    {
+      "name": "edit-depends-on-produced-target-interval-2",
+      "directory": "overlays/edit-depends-on-produced-target-interval-2"
+    },
+    {
+      "name": "setup-depends-on-produced-target-interval-build-2",
+      "directory": "overlays/setup-depends-on-produced-target-interval-build-2"
+    },
+    {
+      "name": "setup-depends-on-produced-target-interval-diff-2",
+      "directory": "overlays/setup-depends-on-produced-target-interval-diff-2"
+    },
+    {
+      "name": "edit-depends-on-produced-target-substitution-2",
+      "directory": "overlays/edit-depends-on-produced-target-substitution-2"
+    },
+    {
+      "name": "setup-depends-on-produced-target-substitution-build-2",
+      "directory": "overlays/setup-depends-on-produced-target-substitution-build-2"
+    },
+    {
+      "name": "setup-depends-on-produced-target-substitution-diff-2",
+      "directory": "overlays/setup-depends-on-produced-target-substitution-diff-2"
+    }
+  ],
+  "tokens": [],
+  "cases": [
+    {
+      "name": "depends-on-defaults--supplied-values-prefix-config",
+      "description": "Preserve TestE2E_DependsOnDefaults_SuppliedValues/${PREFIX:-}config and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-defaults--supplied-values-prefix-config-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-defaults--supplied-values-prefix-config-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/depends-on-defaults--supplied-values-prefix-config-0.stdout",
+              "stderr": "expect/depends-on-defaults--supplied-values-prefix-config-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-defaults--supplied-values-prefix-dev-config",
+      "description": "Preserve TestE2E_DependsOnDefaults_SuppliedValues/${PREFIX:-dev-}config and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-defaults--supplied-values-prefix-dev-config-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-defaults--supplied-values-prefix-dev-config-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/depends-on-defaults--supplied-values-prefix-dev-config-0.stdout",
+              "stderr": "expect/depends-on-defaults--supplied-values-prefix-dev-config-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-defaults--changed-only-build",
+      "description": "Preserve TestE2E_DependsOnDefaults_ChangedOnly/build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-defaults--changed-only-build-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-defaults--changed-only-build-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-defaults--changed-only-build-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-defaults--changed-only-build-0.stdout",
+              "stderr": "expect/depends-on-defaults--changed-only-build-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-defaults--changed-only-diff",
+      "description": "Preserve TestE2E_DependsOnDefaults_ChangedOnly/diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-defaults--changed-only-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-defaults--changed-only-diff-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-defaults--changed-only-diff-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "-o",
+              "diff"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-defaults--changed-only-diff-0.stdout",
+              "stderr": "expect/depends-on-defaults--changed-only-diff-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-defaults--emitted-child-default-only",
+      "description": "Preserve TestE2E_DependsOnDefaults_EmittedChild/default-only and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-defaults--emitted-child-default-only-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-defaults--emitted-child-default-only-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-defaults--emitted-child-default-only-0.stdout",
+              "stderr": "expect/depends-on-defaults--emitted-child-default-only-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-defaults--emitted-child-discovered-supplier",
+      "description": "Preserve TestE2E_DependsOnDefaults_EmittedChild/discovered-supplier and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-defaults--emitted-child-discovered-supplier-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-defaults--emitted-child-discovered-supplier-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-defaults--emitted-child-discovered-supplier-0.stdout",
+              "stderr": "expect/depends-on-defaults--emitted-child-discovered-supplier-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-defaults--empty-name-fails",
+      "description": "Preserve TestE2E_DependsOnDefaults_EmptyNameFails and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-defaults--empty-name-fails-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-defaults--empty-name-fails-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-defaults--empty-name-fails-0.stdout",
+              "stderr": "expect/depends-on-defaults--empty-name-fails-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--kustomization",
+      "description": "Preserve TestE2E_ReadyExpr_Kustomization and its ordered edits.",
+      "setup": [
+        {
+          "commit": "ready-expr--kustomization-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "ready-expr--kustomization-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/ready-expr--kustomization-0.stdout",
+              "stderr": "expect/ready-expr--kustomization-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--kustomization-build",
+      "description": "Preserve TestE2E_ReadyExpr_Kustomization/build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "ready-expr--kustomization-build-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "ready-expr--kustomization-build-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-ready-expr--kustomization-build-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/ready-expr--kustomization-build-0.stdout",
+              "stderr": "expect/ready-expr--kustomization-build-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--kustomization-diff",
+      "description": "Preserve TestE2E_ReadyExpr_Kustomization/diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "ready-expr--kustomization-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "ready-expr--kustomization-diff-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-ready-expr--kustomization-diff-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn",
+              "-o",
+              "diff"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/ready-expr--kustomization-diff-0.stdout",
+              "stderr": "expect/ready-expr--kustomization-diff-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--kustomization-test",
+      "description": "Preserve TestE2E_ReadyExpr_Kustomization/test and its ordered edits.",
+      "setup": [
+        {
+          "commit": "ready-expr--kustomization-test-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "ready-expr--kustomization-test-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-ready-expr--kustomization-test-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/ready-expr--kustomization-test-0.stdout",
+              "stderr": "expect/ready-expr--kustomization-test-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--emitted-indexed-false",
+      "description": "Preserve TestE2E_ReadyExpr_EmittedIndexed/false and its ordered edits.",
+      "setup": [
+        {
+          "commit": "ready-expr--emitted-indexed-false-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "ready-expr--emitted-indexed-false-repo-0"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/ready-expr--emitted-indexed-false-0.stdout",
+              "stderr": "expect/ready-expr--emitted-indexed-false-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--emitted-indexed-true",
+      "description": "Preserve TestE2E_ReadyExpr_EmittedIndexed/true and its ordered edits.",
+      "setup": [
+        {
+          "commit": "ready-expr--emitted-indexed-true-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "ready-expr--emitted-indexed-true-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-ready-expr--emitted-indexed-true-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--log-level",
+              "warn",
+              "--base",
+              "HEAD"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/ready-expr--emitted-indexed-true-0.stdout",
+              "stderr": "expect/ready-expr--emitted-indexed-true-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-source-interval",
+      "description": "Preserve TestE2E_DependsOnProducedSource/interval and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-source-interval-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-interval-repo-0"
+          }
+        },
+        {
+          "commit": "depends-on-produced-source-interval-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-interval-remote-0"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-0.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-1.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-1.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-2",
+          "edit": {
+            "overlay": "edit-depends-on-produced-source-interval-2"
+          }
+        },
+        {
+          "id": "invoke-2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-2.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-2.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-3",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-3.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-3.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-source-interval-build",
+      "description": "Preserve TestE2E_DependsOnProducedSource/interval/build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-source-interval-build-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-interval-build-repo-0"
+          }
+        },
+        {
+          "commit": "depends-on-produced-source-interval-build-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-interval-build-remote-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-produced-source-interval-build-4"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-build-0.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-build-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-source-interval-diff",
+      "description": "Preserve TestE2E_DependsOnProducedSource/interval/diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-source-interval-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-interval-diff-repo-0"
+          }
+        },
+        {
+          "commit": "depends-on-produced-source-interval-diff-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-interval-diff-remote-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-produced-source-interval-diff-4"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-diff-0.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-diff-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-diff-1.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-diff-1.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-2",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-diff-2.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-diff-2.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-3",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-interval-diff-3.stdout",
+              "stderr": "expect/depends-on-produced-source-interval-diff-3.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-source-substitution",
+      "description": "Preserve TestE2E_DependsOnProducedSource/substitution and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-source-substitution-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-substitution-repo-0"
+          }
+        },
+        {
+          "commit": "depends-on-produced-source-substitution-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-substitution-remote-0"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-substitution-0.stdout",
+              "stderr": "expect/depends-on-produced-source-substitution-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-substitution-1.stdout",
+              "stderr": "expect/depends-on-produced-source-substitution-1.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-2",
+          "edit": {
+            "overlay": "edit-depends-on-produced-source-substitution-2"
+          }
+        },
+        {
+          "id": "invoke-2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-substitution-2.stdout",
+              "stderr": "expect/depends-on-produced-source-substitution-2.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-3",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-substitution-3.stdout",
+              "stderr": "expect/depends-on-produced-source-substitution-3.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-source-substitution-build",
+      "description": "Preserve TestE2E_DependsOnProducedSource/substitution/build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-source-substitution-build-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-substitution-build-repo-0"
+          }
+        },
+        {
+          "commit": "depends-on-produced-source-substitution-build-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-substitution-build-remote-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-produced-source-substitution-build-4"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-substitution-build-0.stdout",
+              "stderr": "expect/depends-on-produced-source-substitution-build-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-source-substitution-diff",
+      "description": "Preserve TestE2E_DependsOnProducedSource/substitution/diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-source-substitution-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-substitution-diff-repo-0"
+          }
+        },
+        {
+          "commit": "depends-on-produced-source-substitution-diff-remote-0"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-source-substitution-diff-remote-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-produced-source-substitution-diff-4"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--git-depth",
+              "0"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-source-substitution-diff-0.stdout",
+              "stderr": "expect/depends-on-produced-source-substitution-diff-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-target-interval",
+      "description": "Preserve TestE2E_DependsOnProducedTarget/interval and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-target-interval-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-target-interval-repo-0"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-0.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-1.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-1.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-2",
+          "edit": {
+            "overlay": "edit-depends-on-produced-target-interval-2"
+          }
+        },
+        {
+          "id": "invoke-2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-2.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-2.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-3",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-3.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-3.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-target-interval-build",
+      "description": "Preserve TestE2E_DependsOnProducedTarget/interval/build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-target-interval-build-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-target-interval-build-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-produced-target-interval-build-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-build-0.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-build-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-target-interval-diff",
+      "description": "Preserve TestE2E_DependsOnProducedTarget/interval/diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-target-interval-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-target-interval-diff-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-produced-target-interval-diff-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "json"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-diff-0.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-diff-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-diff-1.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-diff-1.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-2",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "json"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-diff-2.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-diff-2.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-3",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-interval-diff-3.stdout",
+              "stderr": "expect/depends-on-produced-target-interval-diff-3.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-target-substitution",
+      "description": "Preserve TestE2E_DependsOnProducedTarget/substitution and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-target-substitution-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-target-substitution-repo-0"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-substitution-0.stdout",
+              "stderr": "expect/depends-on-produced-target-substitution-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-substitution-1.stdout",
+              "stderr": "expect/depends-on-produced-target-substitution-1.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-2",
+          "edit": {
+            "overlay": "edit-depends-on-produced-target-substitution-2"
+          }
+        },
+        {
+          "id": "invoke-2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-substitution-2.stdout",
+              "stderr": "expect/depends-on-produced-target-substitution-2.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-3",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-substitution-3.stdout",
+              "stderr": "expect/depends-on-produced-target-substitution-3.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-target-substitution-build",
+      "description": "Preserve TestE2E_DependsOnProducedTarget/substitution/build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-target-substitution-build-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-target-substitution-build-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-produced-target-substitution-build-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-substitution-build-0.stdout",
+              "stderr": "expect/depends-on-produced-target-substitution-build-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "depends-on-produced-target-substitution-diff",
+      "description": "Preserve TestE2E_DependsOnProducedTarget/substitution/diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "depends-on-produced-target-substitution-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "depends-on-produced-target-substitution-diff-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-depends-on-produced-target-substitution-diff-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/hegira/flux",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/depends-on-produced-target-substitution-diff-0.stdout",
+              "stderr": "expect/depends-on-produced-target-substitution-diff-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/depends-on-defaults--changed-only-build-0.stderr",
+      "cases": [
+        "depends-on-defaults--changed-only-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--changed-only-build-0.stdout",
+      "cases": [
+        "depends-on-defaults--changed-only-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--changed-only-diff-0.stderr",
+      "cases": [
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--changed-only-diff-0.stdout",
+      "cases": [
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--emitted-child-default-only-0.stderr",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--emitted-child-default-only-0.stdout",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--emitted-child-discovered-supplier-0.stderr",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--emitted-child-discovered-supplier-0.stdout",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--empty-name-fails-0.stderr",
+      "cases": [
+        "depends-on-defaults--empty-name-fails"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--empty-name-fails-0.stdout",
+      "cases": [
+        "depends-on-defaults--empty-name-fails"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--supplied-values-prefix-config-0.stderr",
+      "cases": [
+        "depends-on-defaults--supplied-values-prefix-config"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--supplied-values-prefix-config-0.stdout",
+      "cases": [
+        "depends-on-defaults--supplied-values-prefix-config"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--supplied-values-prefix-dev-config-0.stderr",
+      "cases": [
+        "depends-on-defaults--supplied-values-prefix-dev-config"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-defaults--supplied-values-prefix-dev-config-0.stdout",
+      "cases": [
+        "depends-on-defaults--supplied-values-prefix-dev-config"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-0.stderr",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-0.stdout",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-1.stderr",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-1.stdout",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-2.stderr",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-2.stdout",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-3.stderr",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-3.stdout",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-build-0.stderr",
+      "cases": [
+        "depends-on-produced-source-interval-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-build-0.stdout",
+      "cases": [
+        "depends-on-produced-source-interval-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-diff-0.stderr",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-diff-0.stdout",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-diff-1.stderr",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-diff-1.stdout",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-diff-2.stderr",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-diff-2.stdout",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-diff-3.stderr",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-interval-diff-3.stdout",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-0.stderr",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-0.stdout",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-1.stderr",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-1.stdout",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-2.stderr",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-2.stdout",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-3.stderr",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-3.stdout",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-build-0.stderr",
+      "cases": [
+        "depends-on-produced-source-substitution-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-build-0.stdout",
+      "cases": [
+        "depends-on-produced-source-substitution-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-diff-0.stderr",
+      "cases": [
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-source-substitution-diff-0.stdout",
+      "cases": [
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-0.stderr",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-0.stdout",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-1.stderr",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-1.stdout",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-2.stderr",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-2.stdout",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-3.stderr",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-3.stdout",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-build-0.stderr",
+      "cases": [
+        "depends-on-produced-target-interval-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-build-0.stdout",
+      "cases": [
+        "depends-on-produced-target-interval-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-diff-0.stderr",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-diff-0.stdout",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-diff-1.stderr",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-diff-1.stdout",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-diff-2.stderr",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-diff-2.stdout",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-diff-3.stderr",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-interval-diff-3.stdout",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-0.stderr",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-0.stdout",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-1.stderr",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-1.stdout",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-2.stderr",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-2.stdout",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-3.stderr",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-3.stdout",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-build-0.stderr",
+      "cases": [
+        "depends-on-produced-target-substitution-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-build-0.stdout",
+      "cases": [
+        "depends-on-produced-target-substitution-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-diff-0.stderr",
+      "cases": [
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/depends-on-produced-target-substitution-diff-0.stdout",
+      "cases": [
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--emitted-indexed-false-0.stderr",
+      "cases": [
+        "ready-expr--emitted-indexed-false"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--emitted-indexed-false-0.stdout",
+      "cases": [
+        "ready-expr--emitted-indexed-false"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--emitted-indexed-true-0.stderr",
+      "cases": [
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--emitted-indexed-true-0.stdout",
+      "cases": [
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--kustomization-0.stderr",
+      "cases": [
+        "ready-expr--kustomization"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--kustomization-0.stdout",
+      "cases": [
+        "ready-expr--kustomization"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--kustomization-build-0.stderr",
+      "cases": [
+        "ready-expr--kustomization-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--kustomization-build-0.stdout",
+      "cases": [
+        "ready-expr--kustomization-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--kustomization-diff-0.stderr",
+      "cases": [
+        "ready-expr--kustomization-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--kustomization-diff-0.stdout",
+      "cases": [
+        "ready-expr--kustomization-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--kustomization-test-0.stderr",
+      "cases": [
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/ready-expr--kustomization-test-0.stdout",
+      "cases": [
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "remote/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff",
+        "depends-on-defaults--emitted-child-default-only",
+        "depends-on-defaults--emitted-child-discovered-supplier",
+        "depends-on-defaults--empty-name-fails",
+        "depends-on-defaults--supplied-values-prefix-config",
+        "depends-on-defaults--supplied-values-prefix-dev-config",
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff",
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff",
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true",
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "remote/kubernetes/hegira/app/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff",
+        "depends-on-defaults--emitted-child-default-only",
+        "depends-on-defaults--emitted-child-discovered-supplier",
+        "depends-on-defaults--empty-name-fails",
+        "depends-on-defaults--supplied-values-prefix-config",
+        "depends-on-defaults--supplied-values-prefix-dev-config",
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff",
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff",
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true",
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff",
+        "depends-on-defaults--emitted-child-default-only",
+        "depends-on-defaults--emitted-child-discovered-supplier",
+        "depends-on-defaults--empty-name-fails",
+        "depends-on-defaults--supplied-values-prefix-config",
+        "depends-on-defaults--supplied-values-prefix-dev-config",
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff",
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff",
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true",
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/hegira/app/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff",
+        "depends-on-defaults--emitted-child-default-only",
+        "depends-on-defaults--emitted-child-discovered-supplier",
+        "depends-on-defaults--empty-name-fails",
+        "depends-on-defaults--supplied-values-prefix-config",
+        "depends-on-defaults--supplied-values-prefix-dev-config",
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff",
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff",
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true",
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/hegira/config/configmap.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff",
+        "depends-on-defaults--emitted-child-default-only",
+        "depends-on-defaults--emitted-child-discovered-supplier",
+        "depends-on-defaults--empty-name-fails",
+        "depends-on-defaults--supplied-values-prefix-config",
+        "depends-on-defaults--supplied-values-prefix-dev-config",
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff",
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff",
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true",
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/hegira/config/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff",
+        "depends-on-defaults--emitted-child-default-only",
+        "depends-on-defaults--emitted-child-discovered-supplier",
+        "depends-on-defaults--empty-name-fails",
+        "depends-on-defaults--supplied-values-prefix-config",
+        "depends-on-defaults--supplied-values-prefix-dev-config",
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff",
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff",
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true",
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/hegira/flux/config.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff",
+        "depends-on-defaults--emitted-child-default-only",
+        "depends-on-defaults--emitted-child-discovered-supplier",
+        "depends-on-defaults--empty-name-fails",
+        "depends-on-defaults--supplied-values-prefix-config",
+        "depends-on-defaults--supplied-values-prefix-dev-config",
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff",
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff",
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true",
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff",
+        "depends-on-defaults--emitted-child-default-only",
+        "depends-on-defaults--emitted-child-discovered-supplier",
+        "depends-on-defaults--empty-name-fails",
+        "depends-on-defaults--supplied-values-prefix-config",
+        "depends-on-defaults--supplied-values-prefix-dev-config",
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff",
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff",
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true",
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/app/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/config/configmap.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/config/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/flux/config.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/flux/unrelated.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/notes.txt",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/unrelated/cm.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--changed-only-build-repo-0-tree/repo/kubernetes/hegira/unrelated/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build",
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree/repo/kubernetes/hegira/app/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree/repo/kubernetes/hegira/children/child.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree/repo/kubernetes/hegira/children/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree/repo/kubernetes/hegira/config/configmap.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree/repo/kubernetes/hegira/config/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree/repo/kubernetes/hegira/flux/config.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-default-only-repo-base-tree/repo/kubernetes/hegira/flux/parent.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-default-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/app/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/children/child.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/children/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/config/configmap.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/config/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/flux/config.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/flux/parent.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/flux/supplier.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/settings/configmap.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--emitted-child-discovered-supplier-repo-base-tree/repo/kubernetes/hegira/settings/kustomization.yaml",
+      "cases": [
+        "depends-on-defaults--emitted-child-discovered-supplier"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--empty-name-fails-repo-base-tree/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-defaults--empty-name-fails"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--empty-name-fails-repo-base-tree/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-defaults--empty-name-fails"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-defaults--supplied-values-prefix-dev-config-repo-base-tree/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-defaults--supplied-values-prefix-dev-config"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-source-interval-repo-0-tree/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-source-interval-repo-0-tree/repo/kubernetes/hegira/flux/kustomization.yaml",
+      "cases": [
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-source-interval-repo-0-tree/repo/kubernetes/hegira/flux/producer.yaml",
+      "cases": [
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-source-interval-repo-0-tree/repo/kubernetes/hegira/flux/unrelated.yaml",
+      "cases": [
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-source-interval-repo-0-tree/repo/kubernetes/hegira/producer/source.yaml",
+      "cases": [
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-source-interval-repo-0-tree/repo/kubernetes/hegira/producer/kustomization.yaml",
+      "cases": [
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-source-interval-repo-0-tree/repo/kubernetes/hegira/unrelated/cm.yaml",
+      "cases": [
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-source-interval-repo-0-tree/repo/kubernetes/hegira/unrelated/kustomization.yaml",
+      "cases": [
+        "depends-on-produced-source-interval",
+        "depends-on-produced-source-interval-build",
+        "depends-on-produced-source-interval-diff",
+        "depends-on-produced-source-substitution",
+        "depends-on-produced-source-substitution-build",
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/app/kustomization.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/dependency/configmap.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/dependency/kustomization.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/flux/kustomization.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/flux/producer.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/flux/unrelated.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/producer/dependency.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/producer/kustomization.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/unrelated/cm.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/depends-on-produced-target-interval-repo-0-tree/repo/kubernetes/hegira/unrelated/kustomization.yaml",
+      "cases": [
+        "depends-on-produced-target-interval",
+        "depends-on-produced-target-interval-build",
+        "depends-on-produced-target-interval-diff",
+        "depends-on-produced-target-substitution",
+        "depends-on-produced-target-substitution-build",
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-depends-on-produced-source-interval-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-source-interval"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-depends-on-produced-source-substitution-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-source-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-depends-on-produced-target-interval-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-target-interval"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-depends-on-produced-target-substitution-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-target-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/app/kustomization.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/children/child.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/children/kustomization.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/config/configmap.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/config/kustomization.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/flux/indexer.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/flux/parent.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/flux/settings.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/flux/unrelated.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/indexed/config.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/unowned/cm.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/unowned/ks.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/unowned/kustomization.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/unrelated/cm.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--emitted-indexed-false-repo-0-tree/repo/kubernetes/hegira/unrelated/kustomization.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-false",
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/app/kustomization.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/config/cm.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/config/kustomization.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/flux/config.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/flux/unrelated.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/unrelated/cm.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/ready-expr--kustomization-repo-base-tree/repo/kubernetes/hegira/unrelated/kustomization.yaml",
+      "cases": [
+        "ready-expr--kustomization",
+        "ready-expr--kustomization-build",
+        "ready-expr--kustomization-diff",
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-defaults--changed-only-build-2/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-defaults--changed-only-build-2/repo/kubernetes/hegira/notes.txt",
+      "cases": [
+        "depends-on-defaults--changed-only-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-defaults--changed-only-diff-2/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-defaults--changed-only-diff-2/repo/kubernetes/hegira/notes.txt",
+      "cases": [
+        "depends-on-defaults--changed-only-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-produced-source-interval-build-4/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-source-interval-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-produced-source-interval-diff-4/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-source-interval-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-produced-source-substitution-build-4/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-source-substitution-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-produced-source-substitution-diff-4/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-source-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-produced-target-interval-build-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-target-interval-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-produced-target-interval-diff-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-target-interval-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-produced-target-substitution-build-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-target-substitution-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-depends-on-produced-target-substitution-diff-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "depends-on-produced-target-substitution-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-ready-expr--emitted-indexed-true-2/repo/kubernetes/hegira/app/cm.yaml",
+      "cases": [
+        "ready-expr--emitted-indexed-true"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-ready-expr--kustomization-build-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "ready-expr--kustomization-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-ready-expr--kustomization-diff-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "ready-expr--kustomization-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-ready-expr--kustomization-test-2/repo/kubernetes/hegira/flux/consumer.yaml",
+      "cases": [
+        "ready-expr--kustomization-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    }
+  ]
+}

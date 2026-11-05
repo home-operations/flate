@@ -1,0 +1,4 @@
+
+  ⚠ warnings (2)
+    [ExternalSource] orig snapshot: Kustomization apps/consumer: external source GitRepository.source.toolkit.fluxcd.io/apps/input is outside the local tree; not rendered
+    [ExternalSource] current snapshot: Kustomization apps/consumer: external source GitRepository.source.toolkit.fluxcd.io/apps/input is outside the local tree; not rendered

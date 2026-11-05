@@ -1,0 +1,11 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: output}
+spec:
+  selector: {matchLabels: {app: output}}
+  template:
+    metadata: {labels: {app: output}}
+    spec:
+      containers:
+      - name: app
+        image: example.invalid/app:${VERSION:=empty}-old

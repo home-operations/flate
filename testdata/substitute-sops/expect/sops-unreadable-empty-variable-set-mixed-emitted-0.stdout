@@ -1,0 +1,57 @@
+---
+apiVersion: v1
+data:
+  supplied: supplied
+  value: dummy
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: rendered
+  namespace: apps
+---
+apiVersion: v1
+data:
+  CONFIG_EMPTY: ""
+  CONFIG_PLAIN: repository
+kind: ConfigMap
+metadata:
+  annotations:
+    example.test/note: repository
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+    retained: repository
+  name: settings
+  namespace: apps
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  annotations:
+    example.test/note: repository
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+    retained: repository
+  name: input
+  namespace: apps
+stringData:
+  EMPTY: ""
+  READABLE: repository
+type: Opaque
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  path: ./flux-system/app
+  postBuild:
+    substituteFrom:
+    - kind: Secret
+      name: input
+    - kind: ConfigMap
+      name: settings

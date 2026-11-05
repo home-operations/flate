@@ -1,0 +1,31 @@
+---
+apiVersion: v1
+data:
+  app: leaf
+  secret: null
+  value: from-cluster-settings
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: leaf
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: leaf-cm
+  namespace: leaf
+---
+apiVersion: v1
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    EXCLUDE_ARRAY=("a" "b" "c")
+    for x in "${EXCLUDE_ARRAY[@]}"; do
+      echo "$x"
+    done
+kind: ConfigMap
+metadata:
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+  labels:
+    kustomize.toolkit.fluxcd.io/name: leaf
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: leaf-script
+  namespace: leaf

@@ -16,17 +16,6 @@ func MustExtractLine(t *testing.T, haystack, needle string) string {
 	})
 }
 
-// MustExtractSkipLine finds the skipped line containing needle or fails the test.
-func MustExtractSkipLine(t *testing.T, haystack, needle string) string {
-	t.Helper()
-	return mustFindLine(t, haystack, needle, lineMatcher{
-		kind: "skipped",
-		match: func(line string) bool {
-			return strings.Contains(line, "‒")
-		},
-	})
-}
-
 type lineMatcher struct {
 	kind  string
 	match func(string) bool

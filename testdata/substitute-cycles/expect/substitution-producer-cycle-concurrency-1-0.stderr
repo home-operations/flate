@@ -1,0 +1,5 @@
+
+  ✗  Kustomization  flux-system/a  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b
+  ✗  Kustomization  flux-system/b  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a
+
+  ✗ 2 failed

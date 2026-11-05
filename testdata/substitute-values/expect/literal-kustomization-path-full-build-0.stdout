@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  answer: literal
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: correct
+  namespace: apps

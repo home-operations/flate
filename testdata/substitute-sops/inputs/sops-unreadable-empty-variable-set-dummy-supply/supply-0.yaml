@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: Secret
+metadata: {name: input, namespace: apps}
+stringData: {VALUE: dummy, READABLE: supplied, EMPTY: supplied, SUPPLIED_ONLY: supplied}

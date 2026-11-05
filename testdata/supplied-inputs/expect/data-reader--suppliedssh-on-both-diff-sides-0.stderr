@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [SOPSUnreadable] Secret flux-system/ursa-major-ssh: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      identity

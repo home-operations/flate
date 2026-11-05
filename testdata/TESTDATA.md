@@ -33,14 +33,6 @@ with `go test -race ./test/e2e/...`.
   app-local edit must NOT propagate to the sibling
   (`TestE2E_NonSharedChangeDoesNotPropagate`).
 
-- `parent-patches/` — the stripped-down bjw-s home-ops cluster pattern.
-  A top-level `cluster-apps` Flux Kustomization injects
-  `postBuild.substituteFrom` via `spec.patches` into every child KS rendered
-  from `./apps`. The fixture also ships a SOPS-encrypted Secret alongside the
-  patched leaf to exercise the unreadable-key admission end-to-end. Its raw data value uses complete SOPS AES256_GCM framing. Used
-  by `test/e2e/substitution` tests `TestE2E_ParentPatchesPropagateToChildren`,
-  `TestE2E_SOPSUnreadableActiveSubstitution`, and
-  `TestE2E_SubstituteDisabledAnnotation`.
 
 - `orphans/` — a parent kustomize tree that lists only one child
   Kustomization (`wired`) while a second one (`orphan`) exists on disk but
@@ -584,3 +576,96 @@ Its declared command is `build ks cluster-tenants`.
 
 `resourceset-provider/invalid-selector` covers invalid selector.
 Its declared command is `build ks cluster-tenants`.
+
+## Substitution and dependency corpus
+
+The U5 cases preserve substitution, supplied inputs, and dependencies. Expected documents follow Flux rendering and ownership rules. Selection and unreadable-data behavior follow flate policy. Each case compares complete streams and exit codes on two replays.
+
+| Case | Preserved behavior |
+| --- | --- |
+| `substitute-cycles/substitution-producer-cycle-concurrency-1` | `TestE2E_SubstitutionProducerCycle/concurrency_1` |
+| `substitute-cycles/substitution-producer-cycle-concurrency-2` | `TestE2E_SubstitutionProducerCycle/concurrency_2` |
+| `substitute-cycles/substitution-producer-cycle-concurrency-8` | `TestE2E_SubstitutionProducerCycle/concurrency_8` |
+| `substitute-cycles/substitution-cycle-downstream-concurrency-2` | `TestE2E_SubstitutionCycleDownstream/concurrency_2` |
+| `substitute-cycles/substitution-cycle-downstream-concurrency-8` | `TestE2E_SubstitutionCycleDownstream/concurrency_8` |
+| `substitute-cycles/dependency-cycle-warnings-build` | `TestE2E_DependencyCycleWarnings/build` |
+| `substitute-cycles/dependency-cycle-warnings-test` | `TestE2E_DependencyCycleWarnings/test` |
+| `dependency-readiness/depends-on-defaults--supplied-values-prefix-config` | `TestE2E_DependsOnDefaults_SuppliedValues/${PREFIX:-}config` |
+| `dependency-readiness/depends-on-defaults--supplied-values-prefix-dev-config` | `TestE2E_DependsOnDefaults_SuppliedValues/${PREFIX:-dev-}config` |
+| `dependency-readiness/depends-on-defaults--changed-only-build` | `TestE2E_DependsOnDefaults_ChangedOnly/build` |
+| `dependency-readiness/depends-on-defaults--changed-only-diff` | `TestE2E_DependsOnDefaults_ChangedOnly/diff` |
+| `dependency-readiness/depends-on-defaults--emitted-child-default-only` | `TestE2E_DependsOnDefaults_EmittedChild/default-only` |
+| `dependency-readiness/depends-on-defaults--emitted-child-discovered-supplier` | `TestE2E_DependsOnDefaults_EmittedChild/discovered-supplier` |
+| `dependency-readiness/depends-on-defaults--empty-name-fails` | `TestE2E_DependsOnDefaults_EmptyNameFails` |
+| `dependency-readiness/ready-expr--kustomization` | `TestE2E_ReadyExpr_Kustomization` |
+| `dependency-readiness/ready-expr--kustomization-build` | `TestE2E_ReadyExpr_Kustomization/build` |
+| `dependency-readiness/ready-expr--kustomization-diff` | `TestE2E_ReadyExpr_Kustomization/diff` |
+| `dependency-readiness/ready-expr--kustomization-test` | `TestE2E_ReadyExpr_Kustomization/test` |
+| `dependency-readiness/ready-expr--emitted-indexed-false` | `TestE2E_ReadyExpr_EmittedIndexed/false` |
+| `dependency-readiness/ready-expr--emitted-indexed-true` | `TestE2E_ReadyExpr_EmittedIndexed/true` |
+| `dependency-readiness/depends-on-produced-source-interval` | `TestE2E_DependsOnProducedSource/interval` |
+| `dependency-readiness/depends-on-produced-source-interval-build` | `TestE2E_DependsOnProducedSource/interval/build` |
+| `dependency-readiness/depends-on-produced-source-interval-diff` | `TestE2E_DependsOnProducedSource/interval/diff` |
+| `dependency-readiness/depends-on-produced-source-substitution` | `TestE2E_DependsOnProducedSource/substitution` |
+| `dependency-readiness/depends-on-produced-source-substitution-build` | `TestE2E_DependsOnProducedSource/substitution/build` |
+| `dependency-readiness/depends-on-produced-source-substitution-diff` | `TestE2E_DependsOnProducedSource/substitution/diff` |
+| `dependency-readiness/depends-on-produced-target-interval` | `TestE2E_DependsOnProducedTarget/interval` |
+| `dependency-readiness/depends-on-produced-target-interval-build` | `TestE2E_DependsOnProducedTarget/interval/build` |
+| `dependency-readiness/depends-on-produced-target-interval-diff` | `TestE2E_DependsOnProducedTarget/interval/diff` |
+| `dependency-readiness/depends-on-produced-target-substitution` | `TestE2E_DependsOnProducedTarget/substitution` |
+| `dependency-readiness/depends-on-produced-target-substitution-build` | `TestE2E_DependsOnProducedTarget/substitution/build` |
+| `dependency-readiness/depends-on-produced-target-substitution-diff` | `TestE2E_DependsOnProducedTarget/substitution/diff` |
+| `supplied-inputs/data-reader--suppliedssh-on-both-diff-sides` | `TestE2E_DataReader_SuppliedSSHOnBothDiffSides` |
+| `supplied-inputs/data-reader--string-data-precedence` | `TestE2E_DataReader_StringDataPrecedence` |
+| `supplied-inputs/data-reader--supplied-source-produces-credential` | `TestE2E_DataReader_SuppliedSourceProducesCredential` |
+| `supplied-inputs/data-reader--cluster-advisories-on-both-base-sides` | `TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides` |
+| `substitute-values/parent-patches-propagate-to-children` | `TestE2E_ParentPatchesPropagateToChildren` |
+| `substitute-values/substitute-disabled-annotation` | `TestE2E_SubstituteDisabledAnnotation` |
+| `substitute-values/substitution-precedence-build` | `TestE2E_SubstitutionPrecedence/build` |
+| `substitute-values/substitution-precedence-test` | `TestE2E_SubstitutionPrecedence/test` |
+| `substitute-values/unapplied-package-patches-unapplied` | `TestE2E_UnappliedPackagePatches/unapplied` |
+| `substitute-values/unapplied-package-patches-applied` | `TestE2E_UnappliedPackagePatches/applied` |
+| `substitute-values/literal-kustomization-path-full-build` | `TestE2E_LiteralKustomizationPath/full-build` |
+| `substitute-values/literal-kustomization-path-own-postbuild` | `TestE2E_LiteralKustomizationPath/own-postBuild` |
+| `substitute-values/literal-kustomization-path-changed-only` | `TestE2E_LiteralKustomizationPath/changed-only` |
+| `substitute-values/literal-kustomization-path-paired-diff` | `TestE2E_LiteralKustomizationPath/paired-diff` |
+| `substitute-values/literal-kustomization-path-reverse-diff` | `TestE2E_LiteralKustomizationPath/reverse-diff` |
+| `substitute-producers/bootstrap-generator-env-and-file-substitution` | `TestE2E_BootstrapGeneratorEnvAndFileSubstitution` |
+| `substitute-producers/substitution-producer-rendering-configmap-full` | `TestE2E_SubstitutionProducerRendering/ConfigMap/full` |
+| `substitute-producers/substitution-producer-rendering-configmap-direct` | `TestE2E_SubstitutionProducerRendering/ConfigMap/direct` |
+| `substitute-producers/substitution-producer-rendering-configmap-inherited` | `TestE2E_SubstitutionProducerRendering/ConfigMap/inherited` |
+| `substitute-producers/substitution-producer-rendering-configmap-env` | `TestE2E_SubstitutionProducerRendering/ConfigMap/env` |
+| `substitute-producers/substitution-producer-rendering-configmap-path-orig` | `TestE2E_SubstitutionProducerRendering/ConfigMap/path-orig` |
+| `substitute-producers/substitution-producer-rendering-configmap-diff` | `TestE2E_SubstitutionProducerRendering/ConfigMap/diff` |
+| `substitute-producers/substitution-producer-rendering-secret-full` | `TestE2E_SubstitutionProducerRendering/Secret/full` |
+| `substitute-producers/substitution-producer-rendering-secret-direct` | `TestE2E_SubstitutionProducerRendering/Secret/direct` |
+| `substitute-producers/substitution-producer-rendering-secret-inherited` | `TestE2E_SubstitutionProducerRendering/Secret/inherited` |
+| `substitute-producers/substitution-producer-transformed-namespace-configmap-full` | `TestE2E_SubstitutionProducerTransformedNamespace/ConfigMap/full` |
+| `substitute-producers/substitution-producer-transformed-namespace-configmap-changed` | `TestE2E_SubstitutionProducerTransformedNamespace/ConfigMap/changed` |
+| `substitute-producers/substitution-producer-transformed-namespace-secret-full` | `TestE2E_SubstitutionProducerTransformedNamespace/Secret/full` |
+| `substitute-producers/substitution-producer-transformed-namespace-secret-changed` | `TestE2E_SubstitutionProducerTransformedNamespace/Secret/changed` |
+| `substitute-sops/data-reader--generator-embedded-ciphertext-secretgenerator` | `TestE2E_DataReader_GeneratorEmbeddedCiphertext/secretGenerator` |
+| `substitute-sops/data-reader--generator-embedded-ciphertext-configmapgenerator` | `TestE2E_DataReader_GeneratorEmbeddedCiphertext/configMapGenerator` |
+| `substitute-sops/sops-unreadable-active-substitution` | `TestE2E_SOPSUnreadableActiveSubstitution` |
+| `substitute-sops/sops-unreadable-empty-variable-set-default-inactive` | `TestE2E_SOPSUnreadableEmptyVariableSet/default_inactive` |
+| `substitute-sops/sops-unreadable-empty-variable-set-default-skipped` | `TestE2E_SOPSUnreadableEmptyVariableSet/default_skipped` |
+| `substitute-sops/sops-unreadable-empty-variable-set-active-inline` | `TestE2E_SOPSUnreadableEmptyVariableSet/active_inline` |
+| `substitute-sops/sops-unreadable-empty-variable-set-active-readable` | `TestE2E_SOPSUnreadableEmptyVariableSet/active_readable` |
+| `substitute-sops/sops-unreadable-empty-variable-set-always-empty` | `TestE2E_SOPSUnreadableEmptyVariableSet/always_empty` |
+| `substitute-sops/sops-unreadable-empty-variable-set-strict-active` | `TestE2E_SOPSUnreadableEmptyVariableSet/strict_active` |
+| `substitute-sops/sops-unreadable-empty-variable-set-resource-disabled` | `TestE2E_SOPSUnreadableEmptyVariableSet/resource_disabled` |
+| `substitute-sops/sops-unreadable-empty-variable-set-dummy-supply` | `TestE2E_SOPSUnreadableEmptyVariableSet/dummy_supply` |
+| `substitute-sops/sops-unreadable-empty-variable-set-mixed-emitted` | `TestE2E_SOPSUnreadableEmptyVariableSet/mixed_emitted` |
+| `substitute-sops/sops-unreadable-empty-variable-set-mixed-skipped` | `TestE2E_SOPSUnreadableEmptyVariableSet/mixed_skipped` |
+| `substitute-sops/sops-unreadable-empty-variable-set-no-postbuild` | `TestE2E_SOPSUnreadableEmptyVariableSet/no_postBuild` |
+| `substitute-sops/sops-unreadable-diff-both-directions-ciphertext` | `TestE2E_SOPSUnreadableDiffBothDirections/ciphertext` |
+| `substitute-sops/sops-unreadable-diff-both-directions-plaintext` | `TestE2E_SOPSUnreadableDiffBothDirections/plaintext` |
+| `substitute-sops/sops-unreadable-diff-both-directions-metadata` | `TestE2E_SOPSUnreadableDiffBothDirections/metadata` |
+
+`helm-dependencies/changed-onlyhr-depends-on-unchanged-dep` preserves the shared Helm dependency consumer, merged in U3. Its unchanged dependency producer remains skipped.
+
+The supplied SSH corpus case compares both full builds and the supplied paired diff. The absent-agent branch stays in `internal/cli/TestRun_SuppliedSSHSnapshotOnBothDiffSides` with every original assertion. `pkg/source/git/TestFetcher_SSHAcquisitionsOnBothSides` also requires zero authenticated acquisitions for an absent agent. The native-agent proof uses real package-test sockets. The corpus uses only declared Git URLs and generated test keys.
+
+The ancestor-patch cases follow `bjw-s-labs/home-ops` at `656b3515052fcdb0450ca56151809852e383200d`, `kubernetes/flux/cluster/ks.yaml`. They retain the parent patch and child ownership structure. Local ConfigMaps replace unrelated workloads. The dependency cases follow `truxnell/home-cluster` at `0f7b47a9fec9419a4c5d6b5c4a4ae219ad342c1c`, `kubernetes/hegira/apps/cert-manager/cert-manager/ks.yaml`. The readiness expressions, emitted sources, and negative variants are authored reductions.
+
+Expected manifests use Flux `Generator.WriteFile` and `SecureBuild` from `github.com/fluxcd/pkg/kustomize`. Flux removes newlines from substitution values before expansion. Expected labels identify the applying Kustomization. Source admission, output selection, ciphertext removal, and diagnostic routing use flate policy. All expectations are source changes, never accepted CLI output.

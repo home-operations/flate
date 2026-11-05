@@ -1,0 +1,10 @@
+--- Deployment flux-system/output (kubernetes/cluster/app)
++++ Deployment flux-system/output (kubernetes/cluster/app)
+@@ -16,6 +16,6 @@
+         app: output
+     spec:
+       containers:
+-      - image: example.invalid/app:4.6.2-old
++      - image: example.invalid/app:4.6.2-new
+         name: app
+ 

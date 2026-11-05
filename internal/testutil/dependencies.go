@@ -230,27 +230,4 @@ func WriteSubstitutionProducerCluster(tb testing.TB, root, kind string) {
 	)
 }
 
-// WriteSubstitutionCycleCluster creates mutually dependent file-backed substitution producers.
-func WriteSubstitutionCycleCluster(tb testing.TB, root string) {
-	tb.Helper()
-	WriteFile(tb, root, "kustomization.yaml", "resources: [flux]\n")
-	WriteFile(tb, root, "flux/kustomization.yaml", "resources: [a.yaml, b.yaml]\n")
-	for _, pair := range []struct{ name, peer string }{{"a", "b"}, {"b", "a"}} {
-		body := strings.Replace(dependencyKS(pair.name, pair.name, ""), "name: shared", "name: flux-system", 1)
-		WriteFile(
-			tb,
-			root,
-			"flux/"+pair.name+".yaml",
-			body+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: "+pair.peer+"-settings}]}\n",
-		)
-		WriteFile(tb, root, pair.name+"/kustomization.yaml", "namespace: flux-system\nresources: [settings.yaml]\n")
-		WriteFile(
-			tb,
-			root,
-			pair.name+"/settings.yaml",
-			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+pair.name+"-settings}\ndata: {VALUE: "+pair.name+"}\n",
-		)
-	}
-}
-
 const fixtureAppName = "app"

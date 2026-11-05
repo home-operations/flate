@@ -1,0 +1,21 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster, namespace: flux-system}
+spec: {url: https://local.invalid/cluster}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: private, namespace: flux-system}
+spec:
+  url: https://example.test/u5-input.git
+  ref: {commit: 5a320c5f0f91d50be9d5d7e6c6d54707d44831ce}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: flux-system
+spec:
+  path: ./app
+  sourceRef: {kind: GitRepository, name: private}
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}

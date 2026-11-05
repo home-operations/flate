@@ -1,0 +1,745 @@
+{
+  "source": {
+    "repository": "jfroy/flatops",
+    "revision": "a2e1cbf6cae6742b624ea66db20ce064f9a2f014",
+    "paths": [
+      "kubernetes/apps/actions-runner-system/arc/ks.yaml"
+    ],
+    "reductions": "Minimal authored reductions of the pinned source topology. Keep parent patches, source references and dependency ownership. Workloads are local ConfigMaps and authored negative variants."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://local.invalid/cluster"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "substitution-producer-cycle-concurrency-1-repo-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-cycle-concurrency-1-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-cycle-concurrency-2-repo-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-cycle-concurrency-2-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-cycle-concurrency-8-repo-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-cycle-concurrency-8-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-cycle-downstream-concurrency-2-repo-base",
+      "overlay": "substitution-cycle-downstream-concurrency-2-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-cycle-downstream-concurrency-2-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-cycle-downstream-concurrency-8-repo-base",
+      "overlay": "substitution-cycle-downstream-concurrency-2-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-cycle-downstream-concurrency-8-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "dependency-cycle-warnings-build-repo-base",
+      "overlay": "dependency-cycle-warnings-build-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/dependency-cycle-warnings-build-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "dependency-cycle-warnings-test-repo-base",
+      "overlay": "dependency-cycle-warnings-build-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/dependency-cycle-warnings-test-repo-base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "substitution-cycle-downstream-concurrency-2-repo-base-tree",
+      "directory": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree"
+    },
+    {
+      "name": "dependency-cycle-warnings-build-repo-base-tree",
+      "directory": "overlays/dependency-cycle-warnings-build-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/cluster/a/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/a/settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/b/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/b/settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux/kustomization.yaml"
+        }
+      ]
+    }
+  ],
+  "tokens": [],
+  "cases": [
+    {
+      "name": "substitution-producer-cycle-concurrency-1",
+      "description": "Preserve TestE2E_SubstitutionProducerCycle/concurrency_1 and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-cycle-concurrency-1-repo-base"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "1",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-cycle-concurrency-1-0.stdout",
+              "stderr": "expect/substitution-producer-cycle-concurrency-1-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-cycle-concurrency-2",
+      "description": "Preserve TestE2E_SubstitutionProducerCycle/concurrency_2 and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-cycle-concurrency-2-repo-base"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-cycle-concurrency-2-0.stdout",
+              "stderr": "expect/substitution-producer-cycle-concurrency-2-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-cycle-concurrency-8",
+      "description": "Preserve TestE2E_SubstitutionProducerCycle/concurrency_8 and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-cycle-concurrency-8-repo-base"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "8",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-cycle-concurrency-8-0.stdout",
+              "stderr": "expect/substitution-producer-cycle-concurrency-8-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-cycle-downstream-concurrency-2",
+      "description": "Preserve TestE2E_SubstitutionCycleDownstream/concurrency_2 and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-cycle-downstream-concurrency-2-repo-base"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/substitution-cycle-downstream-concurrency-2-0.stdout",
+              "stderr": "expect/substitution-cycle-downstream-concurrency-2-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-cycle-downstream-concurrency-8",
+      "description": "Preserve TestE2E_SubstitutionCycleDownstream/concurrency_8 and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-cycle-downstream-concurrency-8-repo-base"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "8",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/substitution-cycle-downstream-concurrency-8-0.stdout",
+              "stderr": "expect/substitution-cycle-downstream-concurrency-8-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "dependency-cycle-warnings-build",
+      "description": "Preserve TestE2E_DependencyCycleWarnings/build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "dependency-cycle-warnings-build-repo-base"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--concurrency=2"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/dependency-cycle-warnings-build-0.stdout",
+              "stderr": "expect/dependency-cycle-warnings-build-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "dependency-cycle-warnings-test",
+      "description": "Preserve TestE2E_DependencyCycleWarnings/test and its ordered edits.",
+      "setup": [
+        {
+          "commit": "dependency-cycle-warnings-test-repo-base"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--concurrency=2"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/dependency-cycle-warnings-test-0.stdout",
+              "stderr": "expect/dependency-cycle-warnings-test-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/dependency-cycle-warnings-build-0.stderr",
+      "cases": [
+        "dependency-cycle-warnings-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/dependency-cycle-warnings-build-0.stdout",
+      "cases": [
+        "dependency-cycle-warnings-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/dependency-cycle-warnings-test-0.stderr",
+      "cases": [
+        "dependency-cycle-warnings-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/dependency-cycle-warnings-test-0.stdout",
+      "cases": [
+        "dependency-cycle-warnings-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-cycle-downstream-concurrency-2-0.stderr",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-cycle-downstream-concurrency-2-0.stdout",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-cycle-downstream-concurrency-8-0.stderr",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-cycle-downstream-concurrency-8-0.stdout",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-cycle-concurrency-1-0.stderr",
+      "cases": [
+        "substitution-producer-cycle-concurrency-1"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-cycle-concurrency-1-0.stdout",
+      "cases": [
+        "substitution-producer-cycle-concurrency-1"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-cycle-concurrency-2-0.stderr",
+      "cases": [
+        "substitution-producer-cycle-concurrency-2"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-cycle-concurrency-2-0.stdout",
+      "cases": [
+        "substitution-producer-cycle-concurrency-2"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-cycle-concurrency-8-0.stderr",
+      "cases": [
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-cycle-concurrency-8-0.stdout",
+      "cases": [
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/a/kustomization.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test",
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8",
+        "substitution-producer-cycle-concurrency-1",
+        "substitution-producer-cycle-concurrency-2",
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/a/settings.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test",
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8",
+        "substitution-producer-cycle-concurrency-1",
+        "substitution-producer-cycle-concurrency-2",
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/b/kustomization.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test",
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8",
+        "substitution-producer-cycle-concurrency-1",
+        "substitution-producer-cycle-concurrency-2",
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/b/settings.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test",
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8",
+        "substitution-producer-cycle-concurrency-1",
+        "substitution-producer-cycle-concurrency-2",
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/flux/a.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test",
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8",
+        "substitution-producer-cycle-concurrency-1",
+        "substitution-producer-cycle-concurrency-2",
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/flux/b.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test",
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8",
+        "substitution-producer-cycle-concurrency-1",
+        "substitution-producer-cycle-concurrency-2",
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/flux/kustomization.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test",
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8",
+        "substitution-producer-cycle-concurrency-1",
+        "substitution-producer-cycle-concurrency-2",
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test",
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8",
+        "substitution-producer-cycle-concurrency-1",
+        "substitution-producer-cycle-concurrency-2",
+        "substitution-producer-cycle-concurrency-8"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "overlays/dependency-cycle-warnings-build-repo-base-tree/repo/kubernetes/cluster/flux/a.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/dependency-cycle-warnings-build-repo-base-tree/repo/kubernetes/cluster/flux/b.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/dependency-cycle-warnings-build-repo-base-tree/repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "dependency-cycle-warnings-build",
+        "dependency-cycle-warnings-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/a/kustomization.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/a/settings.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/b/kustomization.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/b/settings.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/flux/a.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/flux/b.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/flux/kustomization.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-cycle-downstream-concurrency-2-repo-base-tree/repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "substitution-cycle-downstream-concurrency-2",
+        "substitution-cycle-downstream-concurrency-8"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    }
+  ]
+}

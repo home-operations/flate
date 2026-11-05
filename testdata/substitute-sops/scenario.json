@@ -1,0 +1,2447 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Minimal authored reductions of the pinned source topology. Keep parent patches, source references and dependency ownership. Workloads are local ConfigMaps and authored negative variants."
+  },
+  "repositories": [
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": []
+    },
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://local.invalid/cluster"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "data-reader--generator-embedded-ciphertext-secretgenerator-repo-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/data-reader--generator-embedded-ciphertext-secretgenerator-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base",
+      "overlay": "data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-active-substitution-repo-base",
+      "overlay": "sops-unreadable-active-substitution-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-active-substitution-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-default-inactive-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-default-inactive-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-default-inactive-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-default-skipped-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-default-inactive-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-default-skipped-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-active-inline-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-active-inline-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-active-inline-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-active-readable-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-active-readable-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-active-readable-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-always-empty-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-always-empty-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-always-empty-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-strict-active-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-active-inline-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-strict-active-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-resource-disabled-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-resource-disabled-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-resource-disabled-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-dummy-supply-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-default-inactive-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-dummy-supply-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-mixed-emitted-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-mixed-emitted-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-mixed-skipped-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-mixed-skipped-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-empty-variable-set-no-postbuild-repo-base",
+      "overlay": "sops-unreadable-empty-variable-set-no-postbuild-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-empty-variable-set-no-postbuild-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-diff-both-directions-ciphertext-repo-base",
+      "overlay": "sops-unreadable-diff-both-directions-ciphertext-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-diff-both-directions-ciphertext-repo-base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "sops-unreadable-diff-both-directions-ciphertext-baseline-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-diff-both-directions-ciphertext-baseline-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-diff-both-directions-plaintext-repo-base",
+      "overlay": "sops-unreadable-diff-both-directions-ciphertext-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-diff-both-directions-plaintext-repo-base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "sops-unreadable-diff-both-directions-plaintext-baseline-base",
+      "overlay": "sops-unreadable-diff-both-directions-plaintext-baseline-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-diff-both-directions-plaintext-baseline-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sops-unreadable-diff-both-directions-metadata-repo-base",
+      "overlay": "sops-unreadable-diff-both-directions-ciphertext-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-diff-both-directions-metadata-repo-base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "sops-unreadable-diff-both-directions-metadata-baseline-base",
+      "overlay": "sops-unreadable-diff-both-directions-metadata-baseline-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/sops-unreadable-diff-both-directions-metadata-baseline-base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree",
+      "directory": "overlays/data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree"
+    },
+    {
+      "name": "sops-unreadable-active-substitution-repo-base-tree",
+      "directory": "overlays/sops-unreadable-active-substitution-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-default-inactive-repo-base-tree",
+      "directory": "overlays/sops-unreadable-empty-variable-set-default-inactive-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-active-inline-repo-base-tree",
+      "directory": "overlays/sops-unreadable-empty-variable-set-active-inline-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-active-readable-repo-base-tree",
+      "directory": "overlays/sops-unreadable-empty-variable-set-active-readable-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-always-empty-repo-base-tree",
+      "directory": "overlays/sops-unreadable-empty-variable-set-always-empty-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-resource-disabled-repo-base-tree",
+      "directory": "overlays/sops-unreadable-empty-variable-set-resource-disabled-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree",
+      "directory": "overlays/sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-no-postbuild-repo-base-tree",
+      "directory": "overlays/sops-unreadable-empty-variable-set-no-postbuild-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-diff-both-directions-ciphertext-repo-base-tree",
+      "directory": "overlays/sops-unreadable-diff-both-directions-ciphertext-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-diff-both-directions-plaintext-baseline-base-tree",
+      "directory": "overlays/sops-unreadable-diff-both-directions-plaintext-baseline-base-tree"
+    },
+    {
+      "name": "sops-unreadable-diff-both-directions-metadata-baseline-base-tree",
+      "directory": "overlays/sops-unreadable-diff-both-directions-metadata-baseline-base-tree"
+    },
+    {
+      "name": "edit-sops-unreadable-diff-both-directions-ciphertext-1",
+      "directory": "overlays/edit-sops-unreadable-diff-both-directions-ciphertext-1"
+    },
+    {
+      "name": "edit-sops-unreadable-diff-both-directions-plaintext-1",
+      "directory": "overlays/edit-sops-unreadable-diff-both-directions-plaintext-1"
+    },
+    {
+      "name": "edit-sops-unreadable-diff-both-directions-metadata-1",
+      "directory": "overlays/edit-sops-unreadable-diff-both-directions-metadata-1"
+    }
+  ],
+  "inputs": "inputs",
+  "tokens": [],
+  "cases": [
+    {
+      "name": "data-reader--generator-embedded-ciphertext-secretgenerator",
+      "description": "Preserve TestE2E_DataReader_GeneratorEmbeddedCiphertext/secretGenerator and its ordered edits.",
+      "setup": [
+        {
+          "commit": "data-reader--generator-embedded-ciphertext-secretgenerator-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "data-reader--generator-embedded-ciphertext-secretgenerator-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/flux-system",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/data-reader--generator-embedded-ciphertext-secretgenerator-0.stdout",
+              "stderr": "expect/data-reader--generator-embedded-ciphertext-secretgenerator-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "data-reader--generator-embedded-ciphertext-configmapgenerator",
+      "description": "Preserve TestE2E_DataReader_GeneratorEmbeddedCiphertext/configMapGenerator and its ordered edits.",
+      "setup": [
+        {
+          "commit": "data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/flux-system",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/data-reader--generator-embedded-ciphertext-configmapgenerator-0.stdout",
+              "stderr": "expect/data-reader--generator-embedded-ciphertext-configmapgenerator-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-active-substitution",
+      "description": "Preserve TestE2E_SOPSUnreadableActiveSubstitution and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-active-substitution-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-active-substitution-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "leaf",
+              "-n",
+              "flux-system",
+              "--path",
+              "@@repo@@/flux-system",
+              "--concurrency",
+              "2",
+              "-o",
+              "yaml"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-active-substitution-0.stdout",
+              "stderr": "expect/sops-unreadable-active-substitution-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-default-inactive",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/default_inactive and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-default-inactive-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-default-inactive-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-default-inactive-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-default-inactive-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-default-skipped",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/default_skipped and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-default-skipped-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-default-skipped-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "Secret"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-default-skipped-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-default-skipped-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-active-inline",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/active_inline and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-active-inline-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-active-inline-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-active-inline-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-active-inline-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-active-readable",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/active_readable and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-active-readable-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-active-readable-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-active-readable-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-active-readable-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-always-empty",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/always_empty and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-always-empty-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-always-empty-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-always-empty-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-always-empty-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-strict-active",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/strict_active and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-strict-active-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-strict-active-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--strict-substitutions"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-strict-active-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-strict-active-0.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-resource-disabled",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/resource_disabled and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-resource-disabled-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-resource-disabled-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-resource-disabled-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-resource-disabled-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-dummy-supply",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/dummy_supply and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-dummy-supply-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-dummy-supply-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--supply",
+              "@@inputs@@/sops-unreadable-empty-variable-set-dummy-supply/supply-0.yaml"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-dummy-supply-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-dummy-supply-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-mixed-emitted",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/mixed_emitted and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-mixed-emitted-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-mixed-emitted-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--supply",
+              "@@inputs@@/sops-unreadable-empty-variable-set-mixed-emitted/supply-0.yaml",
+              "--supply",
+              "@@inputs@@/sops-unreadable-empty-variable-set-mixed-emitted/supply-1.yaml"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-mixed-emitted-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-mixed-emitted-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-mixed-skipped",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/mixed_skipped and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-mixed-skipped-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-mixed-skipped-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "Secret,ConfigMap",
+              "--supply",
+              "@@inputs@@/sops-unreadable-empty-variable-set-mixed-skipped/supply-0.yaml",
+              "--supply",
+              "@@inputs@@/sops-unreadable-empty-variable-set-mixed-skipped/supply-1.yaml"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-mixed-skipped-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-mixed-skipped-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-empty-variable-set-no-postbuild",
+      "description": "Preserve TestE2E_SOPSUnreadableEmptyVariableSet/no_postBuild and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-empty-variable-set-no-postbuild-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-empty-variable-set-no-postbuild-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-no-postbuild-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-no-postbuild-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-diff-both-directions-ciphertext",
+      "description": "Preserve TestE2E_SOPSUnreadableDiffBothDirections/ciphertext and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-diff-both-directions-ciphertext-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-diff-both-directions-ciphertext-repo-base"
+          }
+        },
+        {
+          "commit": "sops-unreadable-diff-both-directions-ciphertext-baseline-base"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-diff-both-directions-ciphertext-baseline-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-1",
+          "edit": {
+            "overlay": "edit-sops-unreadable-diff-both-directions-ciphertext-1"
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-diff-both-directions-plaintext",
+      "description": "Preserve TestE2E_SOPSUnreadableDiffBothDirections/plaintext and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-diff-both-directions-plaintext-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-diff-both-directions-plaintext-repo-base"
+          }
+        },
+        {
+          "commit": "sops-unreadable-diff-both-directions-plaintext-baseline-base"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-diff-both-directions-plaintext-baseline-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-plaintext-0.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-plaintext-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-1",
+          "edit": {
+            "overlay": "edit-sops-unreadable-diff-both-directions-plaintext-1"
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-plaintext-1.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-plaintext-1.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sops-unreadable-diff-both-directions-metadata",
+      "description": "Preserve TestE2E_SOPSUnreadableDiffBothDirections/metadata and its ordered edits.",
+      "setup": [
+        {
+          "commit": "sops-unreadable-diff-both-directions-metadata-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-diff-both-directions-metadata-repo-base"
+          }
+        },
+        {
+          "commit": "sops-unreadable-diff-both-directions-metadata-baseline-base"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/heads/master",
+            "commit": "sops-unreadable-diff-both-directions-metadata-baseline-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-metadata-0.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-metadata-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "edit-1",
+          "edit": {
+            "overlay": "edit-sops-unreadable-diff-both-directions-metadata-1"
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--path-orig",
+              "@@baseline@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              ""
+            ],
+            "env": {},
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-diff-both-directions-metadata-1.stdout",
+              "stderr": "expect/sops-unreadable-diff-both-directions-metadata-1.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/flux-system/kustomization.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator",
+        "data-reader--generator-embedded-ciphertext-secretgenerator",
+        "sops-unreadable-active-substitution",
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext",
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-active-readable",
+        "sops-unreadable-empty-variable-set-always-empty",
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply",
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped",
+        "sops-unreadable-empty-variable-set-no-postbuild",
+        "sops-unreadable-empty-variable-set-resource-disabled",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/flux-system/secret.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator",
+        "data-reader--generator-embedded-ciphertext-secretgenerator",
+        "sops-unreadable-active-substitution",
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext",
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-active-readable",
+        "sops-unreadable-empty-variable-set-always-empty",
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply",
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped",
+        "sops-unreadable-empty-variable-set-no-postbuild",
+        "sops-unreadable-empty-variable-set-resource-disabled",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--generator-embedded-ciphertext-configmapgenerator-0.stderr",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--generator-embedded-ciphertext-configmapgenerator-0.stdout",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--generator-embedded-ciphertext-secretgenerator-0.stderr",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-secretgenerator"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/data-reader--generator-embedded-ciphertext-secretgenerator-0.stdout",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-secretgenerator"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-active-substitution-0.stderr",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-active-substitution-0.stdout",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stderr",
+      "cases": [
+        "sops-unreadable-diff-both-directions-ciphertext"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-ciphertext-0.stdout",
+      "cases": [
+        "sops-unreadable-diff-both-directions-ciphertext"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stderr",
+      "cases": [
+        "sops-unreadable-diff-both-directions-ciphertext"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-ciphertext-1.stdout",
+      "cases": [
+        "sops-unreadable-diff-both-directions-ciphertext"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-metadata-0.stderr",
+      "cases": [
+        "sops-unreadable-diff-both-directions-metadata"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-metadata-0.stdout",
+      "cases": [
+        "sops-unreadable-diff-both-directions-metadata"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-metadata-1.stderr",
+      "cases": [
+        "sops-unreadable-diff-both-directions-metadata"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-metadata-1.stdout",
+      "cases": [
+        "sops-unreadable-diff-both-directions-metadata"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-plaintext-0.stderr",
+      "cases": [
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-plaintext-0.stdout",
+      "cases": [
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-plaintext-1.stderr",
+      "cases": [
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-diff-both-directions-plaintext-1.stdout",
+      "cases": [
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-active-inline-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-inline"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-active-inline-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-inline"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-active-readable-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-readable"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-active-readable-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-readable"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-always-empty-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-always-empty"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-always-empty-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-always-empty"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-default-inactive-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-inactive"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-default-inactive-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-inactive"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-default-skipped-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-skipped"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-default-skipped-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-skipped"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-dummy-supply-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-dummy-supply"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-dummy-supply-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-dummy-supply"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-mixed-emitted-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-mixed-emitted-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-mixed-skipped-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-mixed-skipped-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-no-postbuild-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-no-postbuild"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-no-postbuild-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-no-postbuild"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-resource-disabled-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-resource-disabled"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-resource-disabled-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-resource-disabled"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-strict-active-0.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-strict-active-0.stdout",
+      "cases": [
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/sops-unreadable-empty-variable-set-dummy-supply/supply-0.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-dummy-supply"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/sops-unreadable-empty-variable-set-mixed-emitted/supply-0.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/sops-unreadable-empty-variable-set-mixed-emitted/supply-1.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/sops-unreadable-empty-variable-set-mixed-skipped/supply-0.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/sops-unreadable-empty-variable-set-mixed-skipped/supply-1.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/flux-system/apps/cm.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator",
+        "data-reader--generator-embedded-ciphertext-secretgenerator",
+        "sops-unreadable-active-substitution",
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext",
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-active-readable",
+        "sops-unreadable-empty-variable-set-always-empty",
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply",
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped",
+        "sops-unreadable-empty-variable-set-no-postbuild",
+        "sops-unreadable-empty-variable-set-resource-disabled",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/flux-system/apps/kustomization.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator",
+        "data-reader--generator-embedded-ciphertext-secretgenerator",
+        "sops-unreadable-active-substitution",
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext",
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-active-readable",
+        "sops-unreadable-empty-variable-set-always-empty",
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply",
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped",
+        "sops-unreadable-empty-variable-set-no-postbuild",
+        "sops-unreadable-empty-variable-set-resource-disabled",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/flux-system/flux/ks.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator",
+        "data-reader--generator-embedded-ciphertext-secretgenerator",
+        "sops-unreadable-active-substitution",
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext",
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-active-readable",
+        "sops-unreadable-empty-variable-set-always-empty",
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply",
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped",
+        "sops-unreadable-empty-variable-set-no-postbuild",
+        "sops-unreadable-empty-variable-set-resource-disabled",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/flux-system/flux/kustomization.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator",
+        "data-reader--generator-embedded-ciphertext-secretgenerator",
+        "sops-unreadable-active-substitution",
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext",
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-active-readable",
+        "sops-unreadable-empty-variable-set-always-empty",
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply",
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped",
+        "sops-unreadable-empty-variable-set-no-postbuild",
+        "sops-unreadable-empty-variable-set-resource-disabled",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/flux-system/kustomization.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator",
+        "data-reader--generator-embedded-ciphertext-secretgenerator",
+        "sops-unreadable-active-substitution",
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext",
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-active-readable",
+        "sops-unreadable-empty-variable-set-always-empty",
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply",
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped",
+        "sops-unreadable-empty-variable-set-no-postbuild",
+        "sops-unreadable-empty-variable-set-resource-disabled",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/flux-system/values.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator",
+        "data-reader--generator-embedded-ciphertext-secretgenerator",
+        "sops-unreadable-active-substitution",
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext",
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-active-readable",
+        "sops-unreadable-empty-variable-set-always-empty",
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply",
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped",
+        "sops-unreadable-empty-variable-set-no-postbuild",
+        "sops-unreadable-empty-variable-set-resource-disabled",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "overlays/data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree/repo/flux-system/apps/cm.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree/repo/flux-system/apps/kustomization.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree/repo/flux-system/flux/ks.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree/repo/flux-system/flux/kustomization.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/data-reader--generator-embedded-ciphertext-configmapgenerator-repo-base-tree/repo/flux-system/values.yaml",
+      "cases": [
+        "data-reader--generator-embedded-ciphertext-configmapgenerator"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-sops-unreadable-diff-both-directions-ciphertext-1/baseline/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-ciphertext"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-sops-unreadable-diff-both-directions-ciphertext-1/repo/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-ciphertext"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-sops-unreadable-diff-both-directions-metadata-1/baseline/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-metadata"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-sops-unreadable-diff-both-directions-metadata-1/repo/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-metadata"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-sops-unreadable-diff-both-directions-plaintext-1/baseline/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/edit-sops-unreadable-diff-both-directions-plaintext-1/repo/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-active-substitution-repo-base-tree/repo/flux-system/apps/cluster-secrets.sops.yaml",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-active-substitution-repo-base-tree/repo/flux-system/apps/cluster-settings.yaml",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-active-substitution-repo-base-tree/repo/flux-system/apps/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-active-substitution-repo-base-tree/repo/flux-system/apps/leaf/app/cm.yaml",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-active-substitution-repo-base-tree/repo/flux-system/apps/leaf/app/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-active-substitution-repo-base-tree/repo/flux-system/apps/leaf/app/script-cm.yaml",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-active-substitution-repo-base-tree/repo/flux-system/apps/leaf/ks.yaml",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-active-substitution-repo-base-tree/repo/flux-system/cluster/flux-system.yaml",
+      "cases": [
+        "sops-unreadable-active-substitution"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-diff-both-directions-ciphertext-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-diff-both-directions-ciphertext-repo-base-tree/repo/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-ciphertext",
+        "sops-unreadable-diff-both-directions-metadata",
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-diff-both-directions-metadata-baseline-base-tree/baseline/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-metadata"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-diff-both-directions-plaintext-baseline-base-tree/baseline/flux-system/secret.yaml",
+      "cases": [
+        "sops-unreadable-diff-both-directions-plaintext"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-inline-repo-base-tree/repo/flux-system/app/cm.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-inline-repo-base-tree/repo/flux-system/app/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-inline-repo-base-tree/repo/flux-system/app/secret.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-inline-repo-base-tree/repo/flux-system/flux.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-inline-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-inline",
+        "sops-unreadable-empty-variable-set-strict-active"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-readable-repo-base-tree/repo/flux-system/app/cm.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-readable"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-readable-repo-base-tree/repo/flux-system/app/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-readable"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-readable-repo-base-tree/repo/flux-system/app/secret.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-readable"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-readable-repo-base-tree/repo/flux-system/flux.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-readable"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-active-readable-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-readable"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-always-empty-repo-base-tree/repo/flux-system/app/cm.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-always-empty"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-always-empty-repo-base-tree/repo/flux-system/app/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-always-empty"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-always-empty-repo-base-tree/repo/flux-system/app/secret.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-always-empty"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-always-empty-repo-base-tree/repo/flux-system/flux.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-always-empty"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-always-empty-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-always-empty"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-default-inactive-repo-base-tree/repo/flux-system/app/cm.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-default-inactive-repo-base-tree/repo/flux-system/app/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-default-inactive-repo-base-tree/repo/flux-system/app/secret.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-default-inactive-repo-base-tree/repo/flux-system/flux.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-default-inactive-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-default-inactive",
+        "sops-unreadable-empty-variable-set-default-skipped",
+        "sops-unreadable-empty-variable-set-dummy-supply"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree/repo/flux-system/app/cm.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree/repo/flux-system/app/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree/repo/flux-system/app/secret.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree/repo/flux-system/app/settings.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree/repo/flux-system/flux.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-mixed-emitted-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-mixed-emitted",
+        "sops-unreadable-empty-variable-set-mixed-skipped"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-no-postbuild-repo-base-tree/repo/flux-system/app/cm.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-no-postbuild"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-no-postbuild-repo-base-tree/repo/flux-system/app/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-no-postbuild"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-no-postbuild-repo-base-tree/repo/flux-system/app/secret.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-no-postbuild"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-no-postbuild-repo-base-tree/repo/flux-system/flux.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-no-postbuild"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-no-postbuild-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-no-postbuild"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-resource-disabled-repo-base-tree/repo/flux-system/app/cm.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-resource-disabled"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-resource-disabled-repo-base-tree/repo/flux-system/app/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-resource-disabled"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-resource-disabled-repo-base-tree/repo/flux-system/app/secret.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-resource-disabled"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-resource-disabled-repo-base-tree/repo/flux-system/flux.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-resource-disabled"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/sops-unreadable-empty-variable-set-resource-disabled-repo-base-tree/repo/flux-system/kustomization.yaml",
+      "cases": [
+        "sops-unreadable-empty-variable-set-resource-disabled"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Secret
+metadata: {name: ursa-major-ssh, namespace: flux-system}
+stringData:
+  identity: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtz
+    c2gtZWQyNTUxOQAAACAj7GQuDRD62C+E+JkzHxvaajAVKcHySSX3/PV+gfeKxwAA
+    AJAPxaLDD8WiwwAAAAtzc2gtZWQyNTUxOQAAACAj7GQuDRD62C+E+JkzHxvaajAV
+    KcHySSX3/PV+gfeKxwAAAEAmmrtqbR3moAA4VB7+ShayeMHlw1Pyay8FSRfCO7Pi
+    uyPsZC4NEPrYL4T4mTMfG9pqMBUpwfJJJff89X6B94rHAAAAB2ZpeHR1cmUBAgME
+    BQY=
+    -----END OPENSSH PRIVATE KEY-----
+  known_hosts: fixture ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICPsZC4NEPrYL4T4mTMfG9pqMBUpwfJJJff89X6B94rH

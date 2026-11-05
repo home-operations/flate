@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settings
+  namespace: apps
+  labels: {retained: repository}
+  annotations: {example.test/note: repository}
+data: {CONFIG_PLAIN: repository, CONFIG_EMPTY: '', CONFIG_ENCRYPTED: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}
+sops: {mac: encrypted}

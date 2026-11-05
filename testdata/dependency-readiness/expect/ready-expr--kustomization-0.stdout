@@ -1,0 +1,26 @@
+---
+apiVersion: v1
+data:
+  version: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: consumer-output
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: prod-config
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: dependency-output
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: unrelated
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: unrelated-output

@@ -1,0 +1,40 @@
+---
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: consumer-output
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  dependsOn:
+  - name: generated-raw-done
+  interval: 1h
+  path: ./kubernetes/hegira/app
+  postBuild:
+    substitute:
+      VALUE: after
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: producer
+  namespace: apps
+spec:
+  path: ./kubernetes/hegira/producer
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unrelated
+  namespace: apps
+spec:
+  path: ./kubernetes/hegira/unrelated

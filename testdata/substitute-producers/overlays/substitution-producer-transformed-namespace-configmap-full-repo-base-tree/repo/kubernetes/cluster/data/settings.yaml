@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: settings, namespace: original}
+data: {VERSION: 4.6.2}

@@ -276,7 +276,9 @@ func testResolveOptionalForceCutInvalidationCase(
 	defer unsub()
 	seeds := []schedule.NodeID{f.reader, f.supplier}
 	_, _, inventory := f.o.store.GetEmission(f.reader)
-	for _, child := range inventory.Children {
+	childValues := inventory.Children
+	for childIndex := range childValues {
+		child := childValues[childIndex]
 		if child.Generated && manifest.KindOf(child.Obj).Runnable {
 			seeds = append(seeds, child.Obj.Named())
 		}

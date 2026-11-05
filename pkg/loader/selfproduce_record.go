@@ -36,6 +36,7 @@ func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact 
 		return
 	}
 	o.Identity = id
+	o.requiresBuild = pr.visit.requiresBuild && pr.visit.owner == (manifest.NamedResource{})
 	r := b.idx.Records[id]
 	if r.Authored == (manifest.NamedResource{}) {
 		r.Authored, r.Path, r.File = o.Authored, pr.visit.file, pr.coordinate

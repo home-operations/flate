@@ -584,7 +584,7 @@ spec:
 	s.AddObject(ks)
 	l := loader.New(s)
 	l.SourceRoot = root
-	_, err = l.Load(t.Context(), filepath.Join(root, "apps"), nil)
+	_, err = l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	s.SetDiscoveryIndex(l.Index)

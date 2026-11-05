@@ -310,7 +310,9 @@ func (s *Store) retireBootstrapMembersLocked(proposal *Emission, region *objectR
 			r, _ := s.index.Load().Lookup(target)
 			sh := s.shardFor(target)
 			cell := sh.cells[target]
-			if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
+			supported := bootstrapSeed(r.Productions) ||
+				cell.classified && cell.binding != nil && cell.binding.Ref.NamedResource == proposal.binding.source
+			if supported && cell.static != nil && !cell.rooted && !cell.retired {
 				position, _ := region.position(target)
 				if region.states[position].supportsProducer && cell.bound() &&
 					semanticEqual(Child{Obj: cell.static, Doc: cell.document}, entry.child) {
@@ -328,6 +330,30 @@ func (s *Store) retireBootstrapMembersLocked(proposal *Emission, region *objectR
 				sh.cells[target] = cell
 				region.states[position].seed = true
 			}
+		}
+	}
+	s.retireSourceSupportLocked(proposal.origin, proposal, region)
+}
+
+func (s *Store) retireSourceSupportLocked(id manifest.NamedResource, proposal *Emission, region *objectRegion) {
+	for stateIndex1 := range region.states {
+		state := region.states[stateIndex1]
+		sh := s.shardFor(state.id)
+		cell := sh.cells[state.id]
+		if !cell.classified || cell.retired || state.supportsProducer || cell.binding == nil ||
+			cell.binding.Ref.NamedResource != proposal.binding.source {
+			continue
+		}
+		covered := proposal.shadows(new(s.contributionBinding(id))) &&
+			slices.ContainsFunc(proposal.coverage, func(f footprint) bool { return f.id == state.id })
+		if !covered {
+			covered = slices.ContainsFunc(proposal.entries, func(entry admission) bool {
+				return entry.child.Obj.Named() == state.id
+			})
+		}
+		if covered {
+			cell.retired, cell.rooted = true, false
+			sh.cells[state.id] = cell
 		}
 	}
 }
@@ -355,7 +381,7 @@ func (s *Store) hideProducerLocked(ps *shard, id manifest.NamedResource, slot *p
 		if !cell.hidden {
 			ps.derived = true
 			if cell.generation == 0 {
-				ps.admitAbsenceLocked(id, objectFacet)
+				ps.admitAbsenceLocked(id, objectFacet, nil)
 			}
 			cell.authority = ps.advanceLocked(cell.current())
 			cell.hidden, cell.independent = true, independent

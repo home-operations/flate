@@ -97,7 +97,7 @@ func (c *Controller) Configure(opts Options) {
 // KeepEmitted admits the incoming child and reports whether it is selected.
 // Admission MUST precede publication; a nil child admits the captured required inputs only.
 //
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
+//nolint:gocritic // Admission retains the child snapshot after the caller can change its slice.
 func (c *Controller) KeepEmitted(
 	ctx context.Context,
 	parent manifest.NamedResource,
@@ -162,19 +162,6 @@ func (c *Controller) admissionProof(reads *store.ReadSet) *store.ReadSet {
 	return proof
 }
 
-func admitEmittedInput(proof *store.ReadSet, input *store.Child) {
-	source := manifest.BootstrapSourceID
-	for itemIndex := range input.Productions {
-		proof := input.Productions[itemIndex]
-
-		if proof.Source != (manifest.NamedResource{}) {
-			source = proof.Source
-			break
-		}
-	}
-	proof.Admit(input.Obj, source, manifest.NamedResource{}, input.Doc)
-}
-
 // SetPendingUnlessReady initializes progress without changing an existing condition.
 func (c *Controller) SetPendingUnlessReady(id manifest.NamedResource, msg string) {
 	if info, ok := c.Store.GetStatus(id); ok {
@@ -228,40 +215,26 @@ func (a *emittedAdmission) prepare(ctx context.Context) (admissionState, error) 
 	if a.inferProductions {
 		a.incoming.Productions = a.proof.Promotions(a.incoming.Obj.Named(), nil)
 	}
-	proposal, err := a.controller.loader.Prepare(ctx, a.incoming, a.proof, nil)
+	proposal, err := a.controller.loader.Prepare(ctx, loader.PrepareRequest{Incoming: a.incoming, Reads: a.proof})
 	if err != nil {
 		return admissionState{committed: false, retry: false}, err
 	}
+	defer proposal.Retire()
 	if !a.reads.Valid() {
 		return admissionState{committed: false, retry: false}, nil
 	}
 	if !a.proof.Valid() {
 		return admissionState{committed: false, retry: true}, nil
 	}
-	if err := ctx.Err(); err != nil {
-		return admissionState{committed: false, retry: false}, fmt.Errorf("context: %w", err)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return admissionState{committed: false, retry: false}, fmt.Errorf("context: %w", contextErr)
 	}
-	added, retry := a.filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
-	if retry {
-		return admissionState{committed: false, retry: true}, nil
+	committed, err := a.controller.loader.Commit(ctx, proposal, loader.Execution)
+	if err != nil {
+		return admissionState{}, err
 	}
-	for _, id := range added {
-		a.controller.Store.SetIncluded(id, true)
-	}
-	for _, input := range proposal.Objects {
-		if err := ctx.Err(); err != nil {
-			return admissionState{committed: false, retry: false}, fmt.Errorf("context: %w", err)
-		}
-		if !a.reads.Valid() {
-			return admissionState{committed: false, retry: false}, nil
-		}
-		if !a.proof.Valid() {
-			return admissionState{committed: false, retry: true}, nil
-		}
-		admitEmittedInput(a.proof, &input)
-	}
-	if !a.proof.Valid() {
-		return admissionState{committed: false, retry: true}, nil
+	if !committed {
+		return admissionState{retry: a.reads.Valid()}, nil
 	}
 	return admissionState{committed: true, retry: false}, nil
 }

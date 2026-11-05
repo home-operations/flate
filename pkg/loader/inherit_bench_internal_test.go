@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -22,7 +24,7 @@ func BenchmarkProjectAuthored_SharedBootstrapPath(b *testing.B) {
 	testutil.WriteFile(b, root, "app/peers.yaml", docs.String())
 	l := New(store.New())
 	l.SourceRoot = root
-	if _, err := l.Load(b.Context(), root, nil); err != nil {
+	if _, err := l.Load(b.Context(), root, manifest.NamedResource{}, nil); err != nil {
 		b.Fatal(err)
 	}
 	l.Admit(root)

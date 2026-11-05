@@ -133,8 +133,7 @@ func TestLoader_ComponentParseFailure(t *testing.T) {
 			l.SourceRoot = root
 			l.Options.Selection = tc.selection
 			l.Options.Filter = change.NewFilter()
-			count, err := l.Load(t.Context(), filepath.Join(root, "component"), nil)
-
+			count, err := l.Load(t.Context(), filepath.Join(root, "component"), manifest.NamedResource{}, nil)
 			assert.FatalIf(t, err != nil || count != 0, "Load = (%d, %v), want retained parse failure", count, err)
 
 			failed := l.documents.cache[filepath.Join(root, "component", "bad.yaml")].objects
@@ -189,7 +188,7 @@ func TestLoader_InvalidBuilderStopsRawDescent(t *testing.T) {
 				testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n"),
 			)
 			l := New(store.New())
-			_, err := l.Load(t.Context(), root, nil)
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(root)
 			{
@@ -348,8 +347,7 @@ func testLoaderWarningConditionsFailedNestedResourcePreservesParentCount(t *test
 	l.SourceRoot = root
 	l.documents = readerForTest(root)
 	l.documents.views[root] = unreadableInputFS{FS: os.DirFS(root), denied: "nested/blocked.yaml"}
-	count, err := l.Load(t.Context(), root, nil)
-
+	count, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.FatalIf(
 		t,
 		count != 1 || err != nil,

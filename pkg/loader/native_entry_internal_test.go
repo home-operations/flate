@@ -8,6 +8,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"sigs.k8s.io/kustomize/kyaml/filesys"
+
+	internalkustomize "github.com/home-operations/flate/internal/kustomize"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -45,10 +49,10 @@ spec: {interval: 1h}
 			l.Options.Filter = change.NewFilter()
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes = change.NewSet([]string{file})
-			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Blocked, "entry"), file != "workload/value.yaml")
 		})
@@ -83,7 +87,7 @@ spec: {interval: 1h}
 					child.Named(): {File: "entry/child.yaml", Declaration: child, Parent: owner.Named()},
 				},
 			}
-			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Selected, child.Named()), true)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), true)
@@ -121,7 +125,7 @@ spec: {path: ./workload}
 			l.Options.Filter = change.NewFilter()
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes = change.NewSet([]string{"entry/unreferenced.yaml"})
-			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
@@ -142,10 +146,181 @@ spec: {path: ./workload}
 					)
 				}}}
 			}
-			proposal, err := l.Prepare(t.Context(), store.Child{Obj: entry}, nil, history)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: entry}, History: history})
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, entry.Named()), false)
 			assert.Equal(t, slices.Contains(proposal.Blocked, "entry"), false)
+		})
+	}
+}
+
+func TestAdmission_NamedDemandRequiresNativeOwner(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"entry/kustomization.yaml": {Data: []byte("resources: [apps.yaml]\n")},
+		"entry/apps.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: apps}
+spec: {path: ./workload, postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}}
+`)},
+		"workload/kustomization.yaml": {Data: []byte("resources: [release.yaml]\n")},
+		"workload/release.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: selected, namespace: apps}
+spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}, valuesFrom: [{kind: ConfigMap, name: settings}]}
+`)},
+	}}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	selected := manifest.NamedResource{
+		Group:     manifest.HelmReleaseDomain,
+		Kind:      manifest.KindHelmRelease,
+		Namespace: "apps",
+		Name:      "selected",
+	}
+	parent := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "apps",
+		Name:      "apps",
+	}
+	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{selected}}
+	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	_, err = l.Load(t.Context(), filepath.Join(root, "workload"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	assert.NoError(t, err)
+	defer proposal.Retire()
+	// Pass 18 index authority admits the authored parent without native preparation.
+	assert.Equal(t, len(proposal.Blocked), 0)
+	assert.Equal(t, slices.ContainsFunc(proposal.Objects, func(child store.Child) bool {
+		return child.Obj.Named() == parent && child.SourceSupport == manifest.BootstrapSourceID
+	}), true)
+	assert.Equal(t, slices.Contains(proposal.Needed, parent), true)
+	assert.Equal(t, slices.Contains(proposal.Ordinary, parent), true)
+	assert.Equal(t, slices.Contains(proposal.Selected, parent), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, parent), false)
+	assert.Equal(t, st.GetObject(selected) == nil, true)
+	assert.Equal(
+		t,
+		slices.ContainsFunc(proposal.Objects, func(child store.Child) bool { return child.Obj.Named() == selected }),
+		false,
+	)
+}
+
+func TestAdmission_BuiltParentRequiresNativeOwner(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, transformation, prefix string }{
+		{name: "renamed", transformation: "namePrefix: built-\n", prefix: "built-"},
+		{name: "same_name", transformation: "patches:\n- target: {kind: Kustomization, name: apps}\n  patch: |-\n    - op: add\n      path: /spec/sourceRef\n      value: {kind: GitRepository, name: effective, namespace: apps}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+				"entry/kustomization.yaml": {Data: []byte("resources: [apps.yaml]\n" + tc.transformation)},
+				"entry/apps.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: apps, namespace: apps}
+spec: {path: ./workload, postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}}
+`)},
+				"workload/kustomization.yaml": {Data: []byte("resources: [release.yaml]\n")},
+				"workload/release.yaml": {Data: []byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: selected, namespace: apps}
+spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}, valuesFrom: [{kind: ConfigMap, name: settings}]}
+`)},
+			}}
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Filter = change.NewFilter()
+			selected := manifest.NamedResource{
+				Group:     manifest.HelmReleaseDomain,
+				Kind:      manifest.KindHelmRelease,
+				Namespace: "apps",
+				Name:      "selected",
+			}
+			parent := manifest.NamedResource{
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Namespace: "apps",
+				Name:      tc.prefix + "apps",
+			}
+			l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{selected}}
+			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			_, err = l.Load(t.Context(), filepath.Join(root, "workload"), manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			_, authored := l.occurrence(parent)
+			assert.Equal(t, authored, false)
+			assert.Equal(t, l.Index.Records[parent].Builder, "")
+			assert.Diff(t, proposal.Blocked, []string{"entry"})
+			assert.Equal(t, slices.ContainsFunc(proposal.Objects, func(child store.Child) bool {
+				return child.Obj.Named() == parent
+			}), false)
+			assert.Equal(t, slices.Contains(proposal.Needed, parent), true)
+			assert.Equal(t, slices.Contains(proposal.Ordinary, parent), true)
+			assert.Equal(t, slices.Contains(proposal.Selected, parent), false)
+			assert.Equal(t, slices.Contains(proposal.Dirty, parent), false)
+			assert.Equal(t, st.GetObject(selected) == nil, true)
+			assert.Equal(
+				t,
+				slices.ContainsFunc(
+					proposal.Objects,
+					func(child store.Child) bool { return child.Obj.Named() == selected },
+				),
+				false,
+			)
+
+			native := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
+			fs := filesys.MakeFsInMemory()
+			for name, file := range input.FS.(fstest.MapFS) {
+				target := filepath.Join(root, name)
+				assert.NoError(t, fs.MkdirAll(filepath.Dir(target)))
+				assert.NoError(t, fs.WriteFile(target, file.Data))
+			}
+			internalkustomize.BuildMutex.Lock()
+			result, buildErr := internalkustomize.Build(fs, filepath.Join(root, "entry"))
+			internalkustomize.BuildMutex.Unlock()
+			assert.NoError(t, buildErr)
+			data, err := result.AsYaml()
+			assert.NoError(t, err)
+			children := builtObjectsForTest(t, string(data))
+			l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
+				Root: filepath.Join(root, "entry"), Owner: native.Named(), Source: manifest.BootstrapSourceID,
+			}), children)
+			next, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+			assert.NoError(t, err)
+			defer next.Retire()
+			assert.Equal(t, slices.ContainsFunc(next.Objects, func(child store.Child) bool {
+				return child.Obj.Named() == parent && child.Obj == children[0].Obj
+			}), true)
+			assert.Equal(t, slices.ContainsFunc(next.Objects, func(child store.Child) bool {
+				return child.Obj.Named() == selected
+			}), false)
+			if tc.name == "same_name" {
+				assert.Equal(t, children[0].Obj.(*manifest.Kustomization).SourceID().Name, "effective")
+			}
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{LocalPath: root, FS: input.FS, Content: "replacement"},
+			)
+			_, current := l.BuiltChildren(filepath.Join(root, "entry"), native.Named(), nil)
+			assert.Equal(t, current, false)
+			_, authored = l.occurrence(parent)
+			assert.Equal(t, authored, false)
 		})
 	}
 }

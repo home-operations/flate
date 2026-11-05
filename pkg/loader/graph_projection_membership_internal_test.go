@@ -231,7 +231,7 @@ spec:
 	l.SourceRoot = root
 	l.Options.Selection.Changed = true
 	admitForTest(l.Store, root)
-	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	child := testutil.KustomizationID("apps", "child")
 	owner := manifest.NamedResource{
@@ -325,7 +325,7 @@ func testAdmitGraphProjectionMembershipNamespaceAuthority(t *testing.T) {
 			testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
 			l := New(store.New())
 			l.SourceRoot = root
-			_, err := l.Load(t.Context(), root, nil)
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(root)
 			ext := manifest.NamedResource{
@@ -421,7 +421,7 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 	testutil.WriteFile(t, root, "excluded/kustomization.yaml", "resources: []\n")
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	ext := manifest.NamedResource{
@@ -436,7 +436,9 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 	assert.Equal(t, slices.Contains(l.scopes.roots, entry), testCaseInput.listed)
 	assert.Equal(t, l.documents.cache[filepath.Join(root, entry)].buildExcluded, !testCaseInput.listed)
 	names := make([]string, 0, len(l.Kustomizations()))
-	for _, child := range l.Kustomizations() {
+	children := l.Kustomizations()
+	for i := range children {
+		child := &children[i]
 		names = append(names, child.Obj.Named().Name)
 	}
 	assert.Equal(t, slices.Contains(names, "app"), testCaseInput.listed)
@@ -501,9 +503,9 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	_, err = l.Load(t.Context(), filepath.Join(root, "apps", "component"), nil)
+	_, err = l.Load(t.Context(), filepath.Join(root, "apps", "component"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "authored", Name: "child"}
@@ -555,7 +557,7 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 	testutil.WriteFile(t, root, "app/ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 
@@ -658,7 +660,7 @@ func testAdmitGraphProjectionPathWitnessConstructionLifetime(t *testing.T) {
 	}
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	witnesses := l.PathObjects()
 	assert.Equal(t, len(witnesses), 2)
@@ -681,7 +683,9 @@ func checkMembershipNamespace(t *testing.T, l *Loader) manifest.NamedResource {
 			indexed = append(indexed, id)
 		}
 	}
-	for _, child := range l.Kustomizations() {
+	children := l.Kustomizations()
+	for i := range children {
+		child := &children[i]
 		if id := child.Obj.Named(); id.Name == "child" {
 			admitted = append(admitted, id)
 		}

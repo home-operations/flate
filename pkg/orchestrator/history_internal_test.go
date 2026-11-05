@@ -22,6 +22,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -560,12 +561,10 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 			)
 			proposal, failure := fixture.Prepare(
 				t.Context(),
-				store.Child{},
-				nil,
-				map[manifest.NamedResource]struct {
+				loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: map[manifest.NamedResource]struct {
 					Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 					Complete bool
-				}{owner: {Records: maps.All(records), Complete: true}},
+				}{owner: {Records: maps.All(records), Complete: true}}, Invocation: true},
 			)
 			assert.NoError(t, failure)
 			admissiontest.Commit(t, fixture, proposal)

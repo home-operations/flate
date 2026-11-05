@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -56,19 +57,27 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 				filter := l.Options.Filter
 				production := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID}
 				if side == 0 {
-					proposal, err := l.Prepare(t.Context(), store.Child{}, nil, map[manifest.NamedResource]struct {
-						Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-						Complete bool
-					}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-						yield(
-							child.Named(),
-							manifest.DiscoveryRecord{
-								Refs:         []manifest.NamedResource{source.Named()},
-								ContentRoots: map[manifest.NamedResource][]string{source.Named(): {child.Path}},
-								Productions:  []manifest.Production{production},
-							},
-						)
-					}, Complete: true}})
+					proposal, err := l.Prepare(
+						t.Context(),
+						loader.PrepareRequest{
+							Incoming: store.Child{},
+							Reads:    nil,
+							History: map[manifest.NamedResource]struct {
+								Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+								Complete bool
+							}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+								yield(
+									child.Named(),
+									manifest.DiscoveryRecord{
+										Refs:         []manifest.NamedResource{source.Named()},
+										ContentRoots: map[manifest.NamedResource][]string{source.Named(): {child.Path}},
+										Productions:  []manifest.Production{production},
+									},
+								)
+							}, Complete: true}},
+							Invocation: true,
+						},
+					)
 					assert.NoError(t, err)
 					admissiontest.Commit(t, l, proposal)
 				} else {
@@ -118,18 +127,21 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 		admissiontest.Config{Changes: change.NewSet([]string{"apps/red/file"}), Index: nil, Inventory: st, Root: root},
 	)
 	filter := l.Options.Filter
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, map[manifest.NamedResource]struct {
-		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-		Complete bool
-	}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-		yield(
-			child.Named(),
-			manifest.DiscoveryRecord{
-				Refs:         []manifest.NamedResource{oldSource.Named()},
-				ContentRoots: map[manifest.NamedResource][]string{oldSource.Named(): {"elsewhere"}},
-			},
-		)
-	}}})
+	proposal, err := l.Prepare(
+		t.Context(),
+		loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: map[manifest.NamedResource]struct {
+			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+			Complete bool
+		}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+			yield(
+				child.Named(),
+				manifest.DiscoveryRecord{
+					Refs:         []manifest.NamedResource{oldSource.Named()},
+					ContentRoots: map[manifest.NamedResource][]string{oldSource.Named(): {"elsewhere"}},
+				},
+			)
+		}}}, Invocation: true},
+	)
 	assert.NoError(t, err)
 	admissiontest.Commit(t, l, proposal)
 	controller := New(st, task.NewBounded(2))

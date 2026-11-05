@@ -43,12 +43,16 @@ func (s *Store) AddDeclaration(child Declaration) {
 	}
 	bucket := sh.byName[kindID{id.Group, id.Kind}]
 	sh.requireCapacityLocked(cell.authority, bucket.authority)
+	const declarationFacets = 2
+	if !sh.canAdmit(declarationFacets) {
+		sh.mu.Unlock()
+		panic("store: authority generation exhausted")
+	}
 	if cell.generation == 0 {
-		sh.admitAbsenceLocked(id, objectFacet)
+		sh.admitAbsenceLocked(id, objectFacet, nil)
 		cell.links = sh.newHeadLocked(0)
 	}
 	if bucket.links == nil {
-		sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet)
 		bucket.links = sh.newHeadLocked(bucket.generation)
 	}
 	cell.reference = &child
@@ -58,6 +62,7 @@ func (s *Store) AddDeclaration(child Declaration) {
 	cell.policy = policy
 	sh.cells[id] = cell
 	if bucket.update(nameID{id.Namespace, id.Name}, true, true, bucket.generation) {
+		sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet, nil)
 		bucket.authority = sh.enqueueLocked(bucket.authority)
 		sh.byName[kindID{id.Group, id.Kind}] = bucket
 	}
@@ -104,7 +109,7 @@ func (sh *shard) policyLocked(id manifest.NamedResource) manifest.DeclarationPol
 
 // Policy derives execution roles from an incoming or captured declaration envelope.
 //
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
+//nolint:gocritic // The value receiver supports literal declarations before store admission.
 func (c Child) Policy(id manifest.NamedResource) manifest.DeclarationPolicy {
 	policy := c.Origin.Policy(id, c.Obj)
 	policy.Report = policy.Report && !c.Generated

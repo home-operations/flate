@@ -266,7 +266,7 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	ksPath := filepath.Join(dir, "ks.yaml")
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("app", "apps", "  {path: ./apps}\n"))
 	{
-		_, err := l.loadFile(t.Context(), ksPath)
+		_, err := l.loadFile(t.Context(), ksPath, &l.documents)
 		assert.NoError(t, err)
 	}
 	assert.Equal(t, len(l.documents.cache[ksPath].objects), 1)
@@ -279,7 +279,7 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 			"apiVersion: v1\nkind: "+kind+"\nmetadata: {name: data, namespace: apps}\n",
 		)
 		{
-			_, err := l.loadFile(t.Context(), file)
+			_, err := l.loadFile(t.Context(), file, &l.documents)
 			assert.NoError(t, err)
 		}
 		assert.Equal(t, len(l.documents.cache[file].objects), 1)

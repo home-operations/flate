@@ -12,6 +12,7 @@ type capture struct {
 	excluded    bool
 	accepted    bool
 	independent bool
+	classified  bool
 	bound       bool
 	binding     *Input
 	support     *Input
@@ -58,6 +59,7 @@ func (sh *shard) captureLocked(
 	cell := *cellValue
 	if view != nil {
 		*view = capture{
+			classified:  cell.classified && !cell.retired && cell.bound(),
 			independent: cell.independent,
 			accepted:    cell.rooted,
 			generation:  cell.generation,
@@ -215,8 +217,11 @@ func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegi
 	if !ok {
 		return true
 	}
-	if cell.retired && bootstrapSeed(r.Productions) {
+	if cell.retired && (bootstrapSeed(r.Productions) || cell.classified) {
 		return false
+	}
+	if cell.classified {
+		return true
 	}
 	return s.staticProductionLocked(id, support, &r)
 }
@@ -454,9 +459,7 @@ func (s *Store) captureRegionStateLocked(state *regionState, admissions *[shardC
 			admissions[kindShardIndex(id.Kind)]++
 		}
 	}
-	if sh.byName[kindID{id.Group, id.Kind}].links == nil {
-		admissions[kindShardIndex(id.Kind)]++
-	}
+	admissions[kindShardIndex(id.Kind)]++
 	state.bucketGeneration = sh.byName[kindID{id.Group, id.Kind}].generation
 	if slot := sh.slots[id]; slot != nil {
 		state.producerGeneration = slot.generation
@@ -585,7 +588,7 @@ func (s *Store) advanceRegionObjectLocked(stateValue *regionState, cell *objectC
 		cell.rooted != state.cell.rooted && state.cell.static == nil ||
 		!sameVisibility {
 		if cell.generation == 0 {
-			sh.admitAbsenceLocked(id, objectFacet)
+			sh.admitAbsenceLocked(id, objectFacet, nil)
 		}
 		cell.authority = sh.advanceLocked(cell.current())
 	}
@@ -610,10 +613,10 @@ func (sh *shard) updateRegionBucketLocked(stateValue *regionState, afterValue *C
 	key := kindID{id.Group, id.Kind}
 	bucket := sh.byName[key]
 	if bucket.links == nil && after.Obj != nil {
-		sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet)
 		bucket.links = sh.newHeadLocked(bucket.generation)
 	}
 	if bucket.update(nameID{id.Namespace, id.Name}, after.Obj != nil, state.direct, state.bucketGeneration) {
+		sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet, nil)
 		bucket.authority = sh.enqueueLocked(bucket.authority)
 		sh.byName[key] = bucket
 	}

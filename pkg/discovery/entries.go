@@ -39,7 +39,12 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Entry admission provides a source artifact.
 	l.SourceRoot = input.LocalPath
 	l.IgnoreFile = cfg.KRMIgnoreFile
-	if _, err := l.Load(ctx, d.cfg.Path, cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)); err != nil {
+	if _, err := l.Load(
+		ctx,
+		d.cfg.Path,
+		manifest.NamedResource{},
+		cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path),
+	); err != nil {
 		return nil, err
 	}
 	l.IgnoreFile = ""

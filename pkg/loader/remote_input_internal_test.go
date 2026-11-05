@@ -57,7 +57,7 @@ func TestFinalizeIndex_RemoteCancellation(t *testing.T) {
 	admitForTest(st, root)
 	l.mountSources()
 	{
-		_, err := l.Load(t.Context(), root, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	network := new(source.Network)

@@ -341,9 +341,12 @@ func testSelectEntryDocumentsCase3(t *testing.T, testCaseInput *bool,
 			selected = []manifest.NamedResource{release.Named()}
 		}
 		_, retry := run.filter.AddEmitted(
-			[]manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()},
-			selected,
-			nil,
+			change.MembershipUpdate{
+				Needed:   []manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()},
+				Selected: selected,
+				Dirty:    nil,
+				Ordinary: []manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()},
+			},
 			0,
 		)
 		assert.Equal(t, retry, false)
@@ -507,7 +510,15 @@ func testSelectEntryDocumentsProofOnlyBatch(t *testing.T) {
 			run := selectedRun(&Result{})
 			run.filter = change.NewFilter()
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
-			_, retry := run.filter.AddEmitted([]manifest.NamedResource{entry.Named()}, nil, nil, 0)
+			_, retry := run.filter.AddEmitted(
+				change.MembershipUpdate{
+					Needed:   []manifest.NamedResource{entry.Named()},
+					Selected: nil,
+					Dirty:    nil,
+					Ordinary: []manifest.NamedResource{entry.Named()},
+				},
+				0,
+			)
 			assert.Equal(t, retry, false)
 			doc := map[string]any{
 				"apiVersion": "v1",

@@ -117,7 +117,9 @@ func keepFixtureChildren(
 ) (bool, error) {
 	children := next.Children
 	cloned := false
-	for i, child := range children {
+	childValues := children
+	for i := range childValues {
+		child := childValues[i]
 		if child.Obj == nil || child.Obj.Named() == id {
 			continue
 		}

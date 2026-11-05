@@ -28,7 +28,6 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		return nil
 	}
 	l.resetDerivedProductions()
-	l.projectTemplates()
 	l.refreshIndexParents(repoRoot)
 	emittedFiles := map[string][]manifest.NamedResource{}
 	if err := l.buildProductions(ctx, repoRoot, emittedFiles); err != nil {
@@ -52,6 +51,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		return nil
 	}
 	l.Store.SetDiscoveryIndex(l.Index)
+	if freeze {
+		l.frozen = true
+	}
 	l.scopes = nil
 	return nil
 }
@@ -81,6 +83,16 @@ func (l *Loader) freezeConstruction() {
 
 // Retire releases admission readers while preserving completed owners' read tracking.
 func (l *Loader) Retire() {
+	l.constructionPurpose.Store(nil)
+	for root := range l.documents.cache {
+		doc := l.documents.cache[root]
+		if doc.builtInput == nil {
+			continue
+		}
+		l.Store.Retire(doc.builtInput.Support)
+		doc.built, doc.builtInput = nil, nil
+		l.documents.cache[root] = doc
+	}
 	l.InputContent = nil
 	l.Options.HistoryOwners = nil
 	l.inputReaders, l.inputObjects = nil, nil
@@ -89,7 +101,7 @@ func (l *Loader) Retire() {
 	if !l.Options.Filter.Enabled() {
 		l.documents = documentReader{}
 		l.facts, l.scopes, l.Options.ParsedInputs = nil, nil, nil
-		l.candidates, l.admitted, l.locations, l.roots = nil, nil, nil, nil
+		l.candidates, l.admitted, l.locations = nil, nil, nil
 		l.bindings.Store(nil)
 		l.projections.Clear()
 		return
@@ -119,7 +131,8 @@ func (l *Loader) publishFrozenRecords() {
 		key.Name = ""
 		l.inputObjects[key] = append(l.inputObjects[key], id)
 	}
-	for id, child := range l.candidates {
+	for id := range l.candidates {
+		child := l.candidates[id]
 		if _, located := l.locations[id]; located {
 			continue
 		}
@@ -185,14 +198,17 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 			rel, _ := filepath.Rel(repoRoot, origin)
 			r.File = filepath.ToSlash(rel)
 		}
-		if kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
+		if l.roots[id].independent {
+			r.Parent = manifest.NamedResource{}
+		} else if kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
 			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
 				r.Parent = parent
 			}
 		}
 		if kind.Structural {
-			if ks, ok := l.Store.Get[*manifest.Kustomization](id); ok {
-				r.Pinned = SourceView(l.Store, ks.SourceID(), repoRoot).Pinned
+			if object := l.CatalogObject(id); object != nil {
+				source, _, _ := object.SourcePath()
+				r.Pinned = SourceView(l.Store, source, repoRoot).Pinned
 			}
 		}
 		l.Index.Records[id] = r

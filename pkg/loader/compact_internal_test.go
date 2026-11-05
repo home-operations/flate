@@ -40,10 +40,10 @@ func TestLoader_CompactOwnedDataAuthority(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.PreferExisting = true
-	_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"), nil)
+	_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data"}
@@ -71,7 +71,7 @@ func TestLoader_ConstructionReplacesDerivedRecords(t *testing.T) {
 				Data: []byte("namespace: apps\nconfigMapGenerator: [{name: " + name + ", literals: ['KEY=value']}]\n"),
 			},
 		}})
-		_, err := l.Load(t.Context(), root, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 		_, found := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name})
@@ -99,7 +99,7 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	var first manifest.BaseManifest
@@ -121,7 +121,7 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 			),
 		},
 	}})
-	_, err = l.Load(t.Context(), root, nil)
+	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	for child, err := range l.Sources(t.Context()) {
@@ -169,7 +169,7 @@ items:
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	facts := l.documents.cache[file].objects
 	assert.Equal(t, len(facts), 3)
@@ -212,7 +212,7 @@ spec:
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	facts := l.documents.cache[file].objects
 	assert.Equal(t, len(facts), 1)
@@ -282,14 +282,14 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			l := New(st)
 			l.SourceRoot = root
 			l.Options.Selection = manifest.Selection{Changed: true}
-			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(root)
 			owners := l.Kustomizations()
 			assert.Equal(t, len(owners), 1)
 			assert.Equal(t, owners[0].Obj.(*manifest.Kustomization).TargetNamespace, tc.namespace)
 			l.PreferExisting = true
-			_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"), nil)
+			_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			id := manifest.NamedResource{
@@ -317,7 +317,7 @@ func TestLoader_FreezeIncludesLateProducer(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
@@ -327,4 +327,27 @@ func TestLoader_FreezeIncludesLateProducer(t *testing.T) {
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	owners := l.Index.OwnersOfFile("cm.yaml").Owners
 	assert.Diff(t, owners, []manifest.NamedResource{owner.Named()})
+}
+
+func TestLoader_CompactPinnedDeclaration(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "owner.yaml", testutil.KustomizationYAML("owner", "apps",
+		"  path: ./apps\n  sourceRef: {kind: GitRepository, name: pin, namespace: apps}\n"))
+	st := store.New()
+	admitForTest(st, root)
+	source := &manifest.GitRepository{Name: "pin", Namespace: "apps"}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), &store.SourceArtifact{
+		LocalPath: filepath.Join(root, "pin"), LocalRoot: root, Content: "pin", FS: fstest.MapFS{},
+	})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Selection.Changed = true
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	id := testutil.KustomizationID("apps", "owner")
+	assert.Equal(t, st.GetObject(id), nil)
+	l.refreshIndexParents(root)
+	assert.Equal(t, l.Index.Records[id].Pinned, true)
 }

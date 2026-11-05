@@ -100,7 +100,7 @@ func testGetDeclarationIndependenceLifecycleCase(
 		var reads ReadSet
 		reads.Init(st, owner.Named(), nil)
 		defer reads.Retire()
-		reads.Admit(raw, manifest.BootstrapSourceID, manifest.NamedResource{})
+		reads.Admit(Child{Obj: raw}, manifest.BootstrapSourceID, manifest.NamedResource{})
 	case "readmit":
 		st.AddObject(raw)
 		assert.FatalIf(t, !st.DeleteObject(raw.Named()), "%s", "fixture did not delete its first admission")

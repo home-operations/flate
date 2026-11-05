@@ -140,6 +140,7 @@ type graphContext struct {
 	checkMetadata                  bool
 	deferDecode                    bool
 	entryResources                 bool
+	requiresBuild                  bool
 }
 
 type graphVisit struct {
@@ -199,18 +200,21 @@ func (b *selfProduceBuilder) recordProduced(
 	record := func(child parsedObject, version string) {
 		pr.record(b, l, new(child), version)
 	}
-	objects := b.reader.cache[pr.visit.file].objects
-	if objects == nil {
-		var err error
-		if b.reader.compact {
-			objects, err = b.reader.censusFile(ctx, pr.visit.file, manifest.ParseDocOptions{})
-		} else {
-			objects, err = b.reader.fileObjects(pr.visit.file, manifest.ParseDocOptions{})
-		}
-		if err != nil {
-			return pr.declarations, err
-		}
+	reader := b.reader
+	if cached := reader.cache[pr.visit.file]; cached.objects != nil {
+		reader.intent = cached.coverage
 	}
+	var objects []parsedObject
+	var err error
+	if reader.compact {
+		objects, err = reader.censusFile(ctx, pr.visit.file, manifest.ParseDocOptions{})
+	} else {
+		objects, err = reader.fileObjects(pr.visit.file, manifest.ParseDocOptions{})
+	}
+	if err != nil {
+		return pr.declarations, err
+	}
+
 	{
 		objValues := objects
 		for objIndex := range objValues {
@@ -237,9 +241,13 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 				continue
 			}
 			record := func(child store.Child) {
-				b.collectProducerReferences(child, &v, &candidates)
+				b.collectProducerReferences(&child, &v, &candidates)
 			}
-			objects, err := b.reader.fileObjects(v.file, manifest.ParseDocOptions{})
+			reader := b.reader
+			if cached := reader.cache[v.file]; cached.objects != nil {
+				reader.intent = cached.coverage
+			}
+			objects, err := reader.fileObjects(v.file, manifest.ParseDocOptions{})
 			if err != nil {
 				if b.err == nil {
 					b.err = err
@@ -323,9 +331,8 @@ func appendUniqueProducer[T comparable](dst []T, v T) []T {
 	return append(dst, v)
 }
 
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (b *selfProduceBuilder) collectProducerReferences(
-	child store.Child,
+	child *store.Child,
 	v *graphVisit,
 	candidates *[]manifest.NamedResource,
 ) {

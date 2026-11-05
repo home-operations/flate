@@ -111,7 +111,7 @@ func (w *traversal) admitFile(ctx context.Context, root, file string, component 
 		if w.files != nil {
 			*w.files = append(*w.files, fileAdmission{file: file, kind: admissionData})
 		}
-		if err := w.loader.recordDataFile(ctx, file); err != nil {
+		if err := w.loader.recordDataFile(ctx, file, &w.documents); err != nil {
 			w.loader.Store.AddWarning(manifest.Warning{
 				Category: manifest.WarnInputParseFailed,
 				Message:  "component data file failed to parse",
@@ -123,7 +123,7 @@ func (w *traversal) admitFile(ctx context.Context, root, file string, component 
 	if w.files != nil {
 		*w.files = append(*w.files, fileAdmission{file: file, kind: admissionResource})
 	}
-	n, err := w.loader.loadFile(ctx, file)
+	n, err := w.loader.loadFile(ctx, file, &w.documents)
 	w.count += n
 	if err != nil {
 		w.err = fmt.Errorf("loader: %w", err)

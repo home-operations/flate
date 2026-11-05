@@ -31,7 +31,8 @@ func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence
 		if known {
 			return Occurrence{Identity: cached.identity, Authored: object.Named(), facts: cached.facts}
 		}
-		occurrence := compactOccurrence(object, manifest.ProjectProducer(object))
+		projection := manifest.ProjectProducer(object)
+		occurrence := compactOccurrence(object, projection)
 		if next == nil {
 			if previous == nil {
 				capacity := c.producerFactCapacity(objects, isMaterializerObject)
@@ -99,10 +100,10 @@ func (c *admissionClosure) materializers(
 			continue
 		}
 		pending = pending || !output2.complete
-		c.add(id, admissionRole{needed: true, dirty: c.states[id].changed})
+		c.add(id, admissionRole{needed: true, ordinary: demand.application == "", dirty: c.states[id].changed})
 	}
 	if !pending {
-		pending = c.admitOpaqueMaterializers(consumer, target, opaque)
+		pending = c.admitOpaqueMaterializers(consumer, &demand, opaque)
 	}
 	c.searched[demand] = pending
 	return pending
@@ -171,7 +172,8 @@ func (c *admissionClosure) producerFactCapacity(
 			capacity++
 		}
 	}
-	for _, child := range c.loader.candidates {
+	for id := range c.loader.candidates {
+		child := c.loader.candidates[id]
 		if isProducer(child.Obj) {
 			capacity++
 		}
@@ -206,7 +208,8 @@ func (c *admissionClosure) collectIndexedMaterializers(
 		}
 		candidates[0] = append(candidates[0], occurrence)
 	}
-	for id, child := range c.loader.candidates {
+	for id := range c.loader.candidates {
+		child := c.loader.candidates[id]
 		if _, located := c.loader.locations[id]; located || c.loader.Index.Records[id].Builder == "" {
 			continue
 		}
@@ -346,7 +349,7 @@ func (c *admissionClosure) materializerOwnerPending(
 			continue
 		}
 		if demand.application != "" {
-			c.add(owner, admissionRole{needed: true, dirty: c.states[owner].changed})
+			c.add(owner, admissionRole{needed: true, ordinary: true, dirty: c.states[owner].changed})
 		}
 		status, _ := c.objects.GetStatus(owner)
 		if status.Outcome() == store.OutcomeFailed {
@@ -382,7 +385,11 @@ func (c *admissionClosure) yieldMaterializerCandidates(
 	c.yieldObjectMaterializerCandidates(&demand, snapshot[1], yield)
 }
 
-func (c *admissionClosure) admitOpaqueMaterializers(consumer, target manifest.NamedResource, opaque []Occurrence) bool {
+func (c *admissionClosure) admitOpaqueMaterializers(
+	consumer manifest.NamedResource,
+	demand *materializerDemand,
+	opaque []Occurrence,
+) bool {
 	if len(opaque) == 0 {
 		return false
 	}
@@ -411,7 +418,7 @@ func (c *admissionClosure) admitOpaqueMaterializers(consumer, target manifest.Na
 				if !c.role(id).needed {
 					admitted = append(admitted, id)
 				}
-				c.add(id, admissionRole{needed: true, dirty: c.states[id].changed})
+				c.add(id, admissionRole{needed: true, ordinary: demand.application == "", dirty: c.states[id].changed})
 				pending = true
 			}
 		}
@@ -421,7 +428,7 @@ func (c *admissionClosure) admitOpaqueMaterializers(consumer, target manifest.Na
 				"consumer",
 				consumer,
 				"input",
-				target,
+				demand.target,
 				"tier",
 				tier+1,
 				"producers",
@@ -525,7 +532,7 @@ func (c *admissionClosure) opaqueMaterializerPending(
 ) bool {
 	demand := *demandValue
 	templates := c.loader.templateProjections[id].Targets
-	if demand.application != "" {
+	if demand.application != "" || demand.consumer == (manifest.NamedResource{}) {
 		templates = nil
 	}
 	if !demand.required || target.Name == "" || !facts.opaque(templates) || c.replace[id] {

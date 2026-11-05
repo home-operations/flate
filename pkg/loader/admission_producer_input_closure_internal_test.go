@@ -136,7 +136,7 @@ func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 	}
 	assert.Diff(t, f.productionOwners(target), []manifest.NamedResource{producer.Named()})
 	sentinel := &manifest.Kustomization{Name: "sentinel", Namespace: "apps"}
-	f.AddEmitted(producer.Named(), store.Child{Obj: sentinel}, objects)
+	f.AddEmitted(producer.Named(), new(store.Child{Obj: sentinel}), objects)
 	assert.FatalIf(
 		t,
 		f.ShouldReconcile(sentinel.Named()),
@@ -144,7 +144,7 @@ func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 		"dependency-only materializer included unrelated output",
 	)
 	child := &manifest.Kustomization{Name: "runtime", Namespace: "apps", SourceRef: consumer.SourceRef}
-	f.AddEmitted(consumer.Named(), store.Child{Obj: child}, objects)
+	f.AddEmitted(consumer.Named(), new(store.Child{Obj: child}), objects)
 	assert.FatalIf(
 		t,
 		!f.ShouldReconcile(child.Named()) || !f.ShouldReconcile(producer.Named()),

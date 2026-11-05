@@ -89,6 +89,8 @@ type BuiltInput struct {
 	Root          string
 	Owner, Source manifest.NamedResource
 	Reads         map[string]bool
+	// RegisterBuilt owns Support on every call, including rejection.
+	Support *store.ReadSet
 }
 
 // RegisterBuilt replaces package resource evidence with authoritative producer-bound documents.
@@ -97,6 +99,15 @@ func (l *Loader) RegisterBuilt(
 	input BuiltInput, //nolint:gocritic // The SDK requires an independent input value for each registration.
 	docs []store.Child,
 ) {
+	retained := false
+	defer func() {
+		if !retained {
+			l.Store.Retire(input.Support)
+		}
+	}()
+	if l.frozen || input.Support == nil || !input.Support.Valid() {
+		return
+	}
 	root := input.Root
 	var sourceRoot string
 	{
@@ -107,57 +118,33 @@ func (l *Loader) RegisterBuilt(
 		}
 	}
 	rel, _ := filepath.Rel(sourceRoot, root)
-	var inputs, shared []string
 	selected := map[string]bool{}
-	built2 := l.selectBuiltInputs(sourceRoot, rel, new(input), selected)
-	inputs, shared = built2.inputs, built2.shared
-
-	slices.Sort(inputs)
-	inputs = slices.Compact(inputs)
-	slices.Sort(shared)
-	shared = slices.Compact(shared)
+	inputs := l.selectBuiltInputs(sourceRoot, rel, &input, selected)
+	slices.Sort(inputs.inputs)
+	inputs.inputs = slices.Compact(inputs.inputs)
+	slices.Sort(inputs.shared)
+	inputs.shared = slices.Compact(inputs.shared)
 	builder := l.documents.read(root).file
 	builder = l.fileCoordinate(cmp.Or(builder, root))
 	records := make([]manifest.DiscoveryRecord, len(docs))
+	locations := make([]Occurrence, len(docs))
 	authored := map[manifest.NamedResource]store.Child{}
-	for i, child := range docs {
-		obj := child.Obj
-		id := obj.Named()
-		record := manifest.DiscoveryRecord{
-			Declaration:  obj,
-			File:         builder,
-			Builder:      builder,
-			BuilderOwner: input.Owner,
-			Inputs:       inputs,
-		}
-		if raw, ok := l.Index.Lookup(id); ok {
-			original := l.IndexedObject(id, raw)
-			if raw.Authored != (manifest.NamedResource{}) && original.Obj != nil {
-				authored[id] = original
-				l.retainBuiltDeclaration(&record, new(raw), id)
-			}
-			same := manifest.Equal(obj, original.Obj)
-			if l.canCompareBuiltInputs(same, &raw) {
-				evidence := admissionClosure{loader: l, objects: l.Store}
-				delta, _, _ := evidence.delta(input.Source)
-				same = delta != nil && !evidence.fileChanged(input.Source, raw.File) &&
-					!slices.ContainsFunc(
-						shared,
-						func(file string) bool { return evidence.fileChanged(input.Source, file) },
-					)
-			}
-			if !same && original.Doc != nil {
-				same = l.stampedBuiltEqual(obj, new(original), new(input))
-			}
-			if same {
-				record.File, record.Inputs = raw.File, shared
-			}
-		}
-		setBuiltProduction(&record, obj, id, new(input))
+	for i := range docs {
+		record, original := l.builtRecord(&input, docs[i].Obj, &inputs, builder)
 		records[i] = record
+		locations[i], _ = l.catalogOccurrence(docs[i].Obj.Named())
+		if original.Obj != nil {
+			authored[docs[i].Obj.Named()] = original
+		}
 	}
 	l.removeReplacedRecords(new(input), authored, selected)
+	for i := range docs {
+		if locations[i].Declaration != (OccurrenceID{}) {
+			l.locations[docs[i].Obj.Named()] = locations[i]
+		}
+	}
 	cached := l.documents.cache[root]
+	previous := cached.builtInput
 	cached.built = append([]store.Child{}, docs...)
 	input.Reads = maps.Clone(input.Reads)
 	cached.builtInput = &input
@@ -168,6 +155,95 @@ func (l *Loader) RegisterBuilt(
 	l.publishBuiltRecords(&input, docs, records, authored)
 	l.scopes.complete = false
 	l.admit(sourceRoot)
+	retained = input.Support.Valid()
+	if previous != nil && previous.Support != input.Support {
+		l.Store.Retire(previous.Support)
+	}
+}
+
+func (l *Loader) builtRecord(
+	input *BuiltInput,
+	obj manifest.BaseManifest,
+	inputs *builtInputs,
+	builder string,
+) (manifest.DiscoveryRecord, store.Child) {
+	id := obj.Named()
+	record := manifest.DiscoveryRecord{
+		Declaration: obj, File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs.inputs,
+	}
+	var authored store.Child
+	evidence := admissionClosure{loader: l, objects: l.Store}
+	raw := evidence.record(id)
+	if raw.File != "" {
+		original := l.IndexedObject(id, raw)
+		if raw.Authored != (manifest.NamedResource{}) && original.Obj != nil {
+			authored = original
+			l.retainBuiltDeclaration(&record, &raw, id)
+		}
+		same := manifest.Equal(obj, original.Obj)
+		if l.canCompareBuiltInputs(same, &raw) {
+			evidence := admissionClosure{loader: l, objects: l.Store}
+			delta, _, _ := evidence.delta(input.Source)
+			same = delta != nil && !evidence.fileChanged(input.Source, raw.File) &&
+				!slices.ContainsFunc(
+					inputs.shared,
+					func(file string) bool { return evidence.fileChanged(input.Source, file) },
+				)
+		}
+		if !same && original.Doc != nil {
+			same = l.stampedBuiltEqual(obj, &original, input)
+		}
+		if same {
+			record.File, record.Inputs = raw.File, inputs.shared
+		}
+	}
+	if raw.Authored == id {
+		record.Authored = id
+	}
+	l.setBuiltProduction(&record, obj, id, input)
+	return record, authored
+}
+
+// BuiltChildren requires current construction membership and the original preparation capture.
+func (l *Loader) BuiltChildren(root string, owner manifest.NamedResource, reads *store.ReadSet) ([]store.Child, bool) {
+	cached := l.documents.cache[root]
+	input := cached.builtInput
+	if l.frozen || reads == nil || input == nil || input.Root != root || input.Owner != owner ||
+		input.Support == nil || !input.Support.Valid() || !reads.Matches(input.Support) || !input.Support.Valid() {
+		return nil, false
+	}
+	builder := l.fileCoordinate(cmp.Or(cached.file, root))
+	children := make([]store.Child, 0, len(cached.built))
+	for i := range cached.built {
+		child := cached.built[i]
+		id := child.Obj.Named()
+		if id == owner {
+			continue
+		}
+		record, ok := l.Index.Lookup(id)
+		if !ok || record.Declaration != child.Obj || record.Builder != builder || record.BuilderOwner != owner ||
+			!l.roots[id].independent &&
+				!slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
+					return production.Owner == owner && production.Source == input.Source &&
+						production.File == record.File && production.Path == "" &&
+						production.Declaration == (manifest.NamedResource{})
+				}) {
+			return nil, false
+		}
+		if current, policy := reads.Lookup(id); current != nil && policy.Origin == manifest.SuppliedDeclaration &&
+			reads.GetDeclaration(id) == current && current != record.Declaration {
+			continue
+		}
+		if !reads.SourceAdmission(id, input.Source) {
+			return nil, false
+		}
+		child.Obj, child.Productions, child.SourceSupport = record.Declaration, record.Productions, input.Source
+		children = append(children, child)
+	}
+	if !input.Support.Valid() || !reads.Valid() {
+		return nil, false
+	}
+	return children, true
 }
 
 // PromotionDocuments returns the immutable indexed batch used to promote id.
@@ -184,13 +260,20 @@ func (l *Loader) PromotionDocuments(id manifest.NamedResource) []store.Child {
 		}
 		return nil
 	}
+	return l.documents.cache[l.registeredRoot(&r)].built
+}
+
+func (l *Loader) registeredRoot(record *manifest.DiscoveryRecord) string {
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for root, doc := range l.documents.cache {
-		if doc.built != nil && (l.fileCoordinate(root) == r.Builder || l.fileCoordinate(doc.file) == r.Builder) {
-			return doc.built
+		if doc.builtInput != nil && doc.builtInput.Support != nil && doc.builtInput.Support.Valid() &&
+			doc.builtInput.Owner == record.BuilderOwner &&
+			(l.fileCoordinate(root) == record.Builder || l.fileCoordinate(doc.file) == record.Builder) &&
+			slices.ContainsFunc(doc.built, func(child store.Child) bool { return child.Obj == record.Declaration }) {
+			return root
 		}
 	}
-	return nil
+	return ""
 }
 
 func (l *Loader) preparedObject(id manifest.NamedResource) store.Child {
@@ -199,9 +282,11 @@ func (l *Loader) preparedObject(id manifest.NamedResource) store.Child {
 		if child := l.candidates[id]; child.Obj == r.Declaration {
 			return child
 		}
-		for _, child := range l.PromotionDocuments(id) {
+		children := l.PromotionDocuments(id)
+		for i := range children {
+			child := &children[i]
 			if child.Obj == r.Declaration {
-				return child
+				return *child
 			}
 		}
 	}
@@ -221,7 +306,8 @@ func (o *PromoteOptions) admitDocuments(
 	if o.Reads != nil {
 		addWarning = o.Reads.AddWarning
 	}
-	for _, child := range objs {
+	for i := range objs {
+		child := objs[i]
 		obj := child.Obj
 		switch {
 		case o.Documents == nil && obj.Named() == id && authored != id:
@@ -251,7 +337,8 @@ func (o *PromoteOptions) admitDocuments(
 			st.AddObject(obj, child.Doc)
 			continue
 		}
-		o.Reads.Admit(obj, source, record.Owner, child.Doc)
+		child.Obj = obj
+		o.Reads.Admit(child, source, record.Owner)
 	}
 	return nil
 }
@@ -306,12 +393,23 @@ func (l *Loader) removeReplacedRecords(
 	selected map[string]bool,
 ) {
 	input := *inputValue
+	l.removeBuiltBatch(&input, authored)
 	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for id, record := range l.Index.Files() {
 		if id == input.Owner {
 			continue
 		}
+		if record.Builder != "" && record.BuilderOwner != input.Owner {
+			continue
+		}
 		if _, retained := authored[id]; retained {
+			continue
+		}
+		if record.Builder == "" && slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
+			return production.Owner != (manifest.NamedResource{}) && production.Owner != input.Owner
+		}) && !slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
+			return production.Owner == input.Owner
+		}) {
 			continue
 		}
 		if record.Path == "" || !selected[record.Path] {
@@ -321,6 +419,30 @@ func (l *Loader) removeReplacedRecords(
 			id,
 		); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
 			(existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
+			l.Store.DeleteObject(id)
+		}
+		delete(l.Index.Records, id)
+		delete(l.locations, id)
+		delete(l.candidates, id)
+		delete(l.admitted, id)
+	}
+}
+
+func (l *Loader) removeBuiltBatch(input *BuiltInput, authored map[manifest.NamedResource]store.Child) {
+	batch := l.documents.cache[input.Root].built
+	for i := range batch {
+		child := &batch[i]
+		id := child.Obj.Named()
+		record, ok := l.Index.Lookup(id)
+		if !ok || id == input.Owner || record.Declaration != child.Obj || record.BuilderOwner != input.Owner {
+			continue
+		}
+		if _, retained := authored[id]; retained {
+			continue
+		}
+		if existing := l.Store.GetObject(id); existing != nil &&
+			l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
+			(existing == l.candidates[id].Obj || existing == l.admitted[id]) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.Index.Records, id)
@@ -363,7 +485,7 @@ func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, originalValue *sto
 	return same
 }
 
-func setBuiltProduction(
+func (l *Loader) setBuiltProduction(
 	record *manifest.DiscoveryRecord,
 	obj manifest.BaseManifest,
 	id manifest.NamedResource,
@@ -372,6 +494,13 @@ func setBuiltProduction(
 	builder := record.Builder
 	input := *inputValue
 	record.Refs = discoveryReferences(nil, obj)
+	if l.roots[id].independent {
+		record.Parent = manifest.NamedResource{}
+		record.Productions = slices.DeleteFunc(record.Productions, func(production manifest.Production) bool {
+			return production.Owner != (manifest.NamedResource{}) && production.Owner != id
+		})
+		return
+	}
 	if id != input.Owner {
 		record.Parent = input.Owner
 		production := manifest.Production{Owner: input.Owner, Source: input.Source, File: record.File}
@@ -393,19 +522,23 @@ func (l *Loader) publishBuiltRecords(
 	records []manifest.DiscoveryRecord,
 	authored map[manifest.NamedResource]store.Child,
 ) {
-	for i, child := range docs {
+	for i := range docs {
+		child := docs[i]
 		obj := child.Obj
 		id := obj.Named()
 		if id == input.Owner {
 			continue
 		}
+		independent := l.roots[id].independent
 		if existing := l.Store.GetObject(
 			id,
-		); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
+		); !independent && existing != nil && !manifest.Equal(existing, obj) && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
 			(existing == l.candidates[id].Obj || existing == l.admitted[id]) {
 			l.Store.DeleteObject(id)
 		}
-		delete(l.admitted, id)
+		if !independent {
+			delete(l.admitted, id)
+		}
 		l.Index.Records[id] = records[i]
 		if original, retained := authored[id]; retained {
 			child = original

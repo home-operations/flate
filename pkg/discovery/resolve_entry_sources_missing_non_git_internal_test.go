@@ -273,7 +273,7 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 	}
 
 	{
-		_, err := l.Load(t.Context(), cfg.Path, nil)
+		_, err := l.Load(t.Context(), cfg.Path, manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 

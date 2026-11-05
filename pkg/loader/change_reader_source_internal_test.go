@@ -433,7 +433,7 @@ spec:
 		)
 		l := New(st)
 		l.SourceRoot = root
-		_, err := l.Load(t.Context(), root, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		indexes[side] = l.Index

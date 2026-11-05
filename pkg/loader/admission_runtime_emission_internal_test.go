@@ -18,7 +18,7 @@ import (
 // KS in the keep set may render and emit a child KS that wasn't
 // discoverable at filter-build time (kustomize component +
 // replacement patterns generate per-app Kustomizations on the fly).
-// The KS controller calls admissionFixture.AddEmitted(parent, child) before
+// The KS controller calls admissionFixture.AddEmitted(parent, new(child)) before
 // AddObject so the listener's PreGate filter check sees the
 // extended keep set. This test uses addUngated directly (skipping
 // the primacy gate) to seed the runtime keep without simulating
@@ -66,7 +66,7 @@ func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
 			for range workers {
 				assert.Equal(t, <-captured, false)
 			}
-			added := f.AddEmitted(parent, store.Child{Obj: child}, f.objs)
+			added := f.AddEmitted(parent, new(store.Child{Obj: child}), f.objs)
 			assert.Diff(t, added, []manifest.NamedResource{child.Named()})
 			close(published)
 			tasks.BlockTillDone()
@@ -158,7 +158,7 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 
 	// Simulate cluster-apps rendering and emitting the file-loaded
 	// sibling. AddEmitted must NOT keep-add it.
-	f.AddEmitted(clusterApps, store.Child{Obj: refObj(siblingApp)}, f.objs)
+	f.AddEmitted(clusterApps, new(store.Child{Obj: refObj(siblingApp)}), f.objs)
 	if f.ShouldReconcile(siblingApp) {
 		t.Errorf(
 			"AddEmitted(ancestor, sibling) over-extended keep set; sibling should remain SKIPPED; keep=%v",
@@ -170,7 +170,7 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 	// still rejected because the emitter (ancestor) is not primary
 	// and an unchanged emitter wouldn't produce a different child.
 	renderOnly := testutil.KustomizationID("rendered", "from-replacement")
-	f.AddEmitted(clusterApps, store.Child{Obj: refObj(renderOnly)}, f.objs)
+	f.AddEmitted(clusterApps, new(store.Child{Obj: refObj(renderOnly)}), f.objs)
 	if f.ShouldReconcile(renderOnly) {
 		t.Errorf("AddEmitted(ancestor, render-only) should reject when ancestor is not primary; keep=%v", f.KeepNames())
 	}
@@ -270,12 +270,12 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 	// its children — including the unrelated siblings. Walking
 	// the chain top-down so we cover the worst case where a
 	// primary could theoretically leak through an upper ancestor.
-	f.AddEmitted(clusterApps, store.Child{Obj: refObj(kubeSystem)}, f.objs)
-	f.AddEmitted(clusterApps, store.Child{Obj: refObj(mediaSibling)}, f.objs)
-	f.AddEmitted(kubeSystem, store.Child{Obj: refObj(reloader)}, f.objs)
-	f.AddEmitted(kubeSystem, store.Child{Obj: refObj(spegelSibling)}, f.objs)
-	f.AddEmitted(reloader, store.Child{Obj: refObj(reloaderApp)}, f.objs)
-	f.AddEmitted(reloader, store.Child{Obj: refObj(reloaderSibling)}, f.objs)
+	f.AddEmitted(clusterApps, new(store.Child{Obj: refObj(kubeSystem)}), f.objs)
+	f.AddEmitted(clusterApps, new(store.Child{Obj: refObj(mediaSibling)}), f.objs)
+	f.AddEmitted(kubeSystem, new(store.Child{Obj: refObj(reloader)}), f.objs)
+	f.AddEmitted(kubeSystem, new(store.Child{Obj: refObj(spegelSibling)}), f.objs)
+	f.AddEmitted(reloader, new(store.Child{Obj: refObj(reloaderApp)}), f.objs)
+	f.AddEmitted(reloader, new(store.Child{Obj: refObj(reloaderSibling)}), f.objs)
 
 	// Each ancestor (clusterApps, kubeSystem, reloader) is in
 	// keep only as ancestor-only — none of their AddEmitted calls
@@ -320,7 +320,7 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
 	}
 
-	f.AddEmitted(parent, store.Child{Obj: refObj(child)}, f.objs)
+	f.AddEmitted(parent, new(store.Child{Obj: refObj(child)}), f.objs)
 	if !f.ShouldReconcile(child) {
 		t.Errorf("AddEmitted(primary parent, child) should keep-add child; keep=%v", f.KeepNames())
 	}

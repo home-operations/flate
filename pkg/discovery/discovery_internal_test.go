@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -229,7 +230,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesProjectedOwner(t *testing.
 	d := Session{cfg: Config{Store: st}, loader: loader.New(st)}
 	d.loader.SourceRoot = root
 	{
-		_, err := d.loader.Load(t.Context(), root, nil)
+		_, err := d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	d.discardPinnedWorkingTreeFiles(root)
@@ -352,7 +353,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: other}}
 `)
 	d.loader.PreferExisting = true
 	{
-		_, err := d.loader.Load(t.Context(), artifact.LocalPath, nil)
+		_, err := d.loader.Load(t.Context(), artifact.LocalPath, manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	assert.FatalIf(t, st.GetObject(repository.Named()) != repository ||
@@ -470,7 +471,7 @@ func testLoadAtIgnoreFileAndMissingDirectoryCase(
 		)
 	}
 	total := 0
-	err := d.loadAt(t.Context(), target, &total, nil)
+	_, err := d.loadAt(t.Context(), target, &total, sourceLoad{})
 	if (*testCaseInput.scenario) == "missing-ignore" {
 		assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "missing explicit ignore error = %v", err)
 	} else {
@@ -670,4 +671,93 @@ type testRunSelectedEntryAdmissionCaseTailInputs struct {
 
 	authored **manifest.
 			Kustomization
+}
+
+func TestBegin_OrdinarySupplierCensus(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/consumer.yaml",
+		testutil.KustomizationYAML(
+			"consumer",
+			"apps",
+			"  path: ./consumer\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: hello}]}\n",
+		),
+	)
+	testutil.WriteFile(
+		t,
+		root,
+		"flux/supplier.yaml",
+		testutil.KustomizationYAML("supplier", "apps", "  path: ./supplier\n"),
+	)
+	testutil.WriteFile(t, root, "flux/unused.yaml", testutil.KustomizationYAML("unused", "apps", "  path: ./unused\n"))
+	testutil.WriteFile(t, root, "supplier/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"supplier/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: supplied}\n",
+	)
+	testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"consumer/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result, namespace: apps}\ndata: {value: '${value}'}\n",
+	)
+	testutil.WriteFile(t, root, "unused/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(
+		t,
+		root,
+		"unused/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unused, namespace: apps}\n",
+	)
+	st := store.New()
+	l := loader.New(st)
+	l.Options.Filter = change.NewFilter()
+	consumer := testutil.KustomizationID("apps", "consumer")
+	supplier := testutil.KustomizationID("apps", "supplier")
+	unused := testutil.KustomizationID("apps", "unused")
+	data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}
+	_, err := Begin(
+		t.Context(),
+		Config{
+			Path:      filepath.Join(root, "flux"),
+			RepoRoot:  root,
+			Store:     st,
+			Loader:    l,
+			Trees:     testTrees(t),
+			Selection: manifest.Selection{Roots: []manifest.NamedResource{consumer}},
+		},
+	)
+	assert.NoError(t, err)
+	record, ok := l.Index.Lookup(data)
+	assert.Equal(t, ok, true)
+	assert.Equal(t, record.File, "supplier/cm.yaml")
+	assert.Equal(
+		t,
+		slices.ContainsFunc(
+			record.Productions,
+			func(p manifest.Production) bool { return p.Materializer(data) == supplier },
+		),
+		true,
+	)
+	assert.Equal(t, st.GetObject(data), nil)
+	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
+	proposal, err := l.Prepare(t.Context(), loader.PrepareRequest{Invocation: true})
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(proposal.Needed, supplier), true)
+	assert.Equal(t, slices.Contains(proposal.Ordinary, supplier), true)
+	assert.Equal(t, slices.Contains(proposal.Needed, unused), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, supplier), false)
+	committed, err := l.Commit(t.Context(), proposal, loader.Construction)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
+	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
+	assert.Equal(t, l.Options.Filter.OrdinaryDemand(supplier), false)
+	assert.Equal(t, st.GetObject(unused), nil)
+	assert.Equal(t, st.GetArtifact(unused, store.ArtifactContent), nil)
 }

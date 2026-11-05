@@ -37,7 +37,7 @@ func testRecordEmittedInvocationSourceWithdrawal(t *testing.T, tc invocationWith
 	var construction ReadSet
 	construction.Init(s, manifest.BootstrapSourceID, nil)
 	defer construction.Retire()
-	construction.Admit(seed, manifest.BootstrapSourceID, manifest.NamedResource{})
+	construction.Admit(Child{Obj: seed}, manifest.BootstrapSourceID, manifest.NamedResource{})
 	productions := []manifest.Production{{Source: manifest.BootstrapSourceID}}
 	if tc.mixed {
 		productions = append(

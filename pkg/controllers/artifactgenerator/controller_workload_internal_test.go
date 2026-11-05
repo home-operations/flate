@@ -72,7 +72,9 @@ func testArtifactGeneratorGeneratedWorkloadsCase(
 		if !emission.Complete || len(emission.Children) != (*testCaseInput.count) {
 			t.Fatalf("%s inventory = %d, complete=%t", phase, len(emission.Children), emission.Complete)
 		}
-		for i, child := range emission.Children {
+		childValues := emission.Children
+		for i := range childValues {
+			child := childValues[i]
 			artifact := st.GetArtifact(child.Obj.Named(), store.ArtifactContent).(*store.SourceArtifact)
 			data, err := fs.ReadFile(artifact.FS, "input")
 			assert.FatalIf(

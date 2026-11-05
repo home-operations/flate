@@ -493,9 +493,12 @@ func testSelectComparedRootFailureOutsideLocalNamespaceCase(
 		map[manifest.NamedResource]manifest.NamedResource{child.Named(): owner},
 	)
 	_, retry := other.filter.AddEmitted(
-		[]manifest.NamedResource{child.Named(), owner},
-		[]manifest.NamedResource{child.Named()},
-		nil,
+		change.MembershipUpdate{
+			Needed:   []manifest.NamedResource{child.Named(), owner},
+			Selected: []manifest.NamedResource{child.Named()},
+			Dirty:    nil,
+			Ordinary: []manifest.NamedResource{child.Named(), owner},
+		},
 		0,
 	)
 	assert.Equal(t, retry, false)
@@ -546,9 +549,12 @@ func testSelectComparedRootFailureOutsideLocalNamespaceCase2(
 			run.Err = &FailuresError{Message: "required chart unavailable"}
 		}
 		_, retry := run.filter.AddEmitted(
-			[]manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()},
-			[]manifest.NamedResource{selected},
-			nil,
+			change.MembershipUpdate{
+				Needed:   []manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()},
+				Selected: []manifest.NamedResource{selected},
+				Dirty:    nil,
+				Ordinary: []manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()},
+			},
 			0,
 		)
 		assert.Equal(t, retry, false)

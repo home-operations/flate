@@ -606,20 +606,18 @@ spec:
 			candidate.Index = result.Index
 			candidate.Options.Filter, candidate.Options.Selection = filter, manifest.Selection{Changed: true}
 			candidate.Options.Changes = change.NewSet([]string{"config/prod.yaml"})
-			proposal, err := candidate.Prepare(
-				t.Context(),
-				store.Child{
-					Obj:         &manifest.HelmRelease{Name: "sibling", Namespace: "apps"},
-					Productions: []manifest.Production{{Owner: owner}},
-				},
-				nil,
-				nil,
-			)
+			proposal, err := candidate.Prepare(t.Context(), loader.PrepareRequest{Incoming: store.Child{
+				Obj:         &manifest.HelmRelease{Name: "sibling", Namespace: "apps"},
+				Productions: []manifest.Production{{Owner: owner}},
+			}, Reads: nil, History: nil, Invocation: true})
 			assert.NoError(t, err)
 			added, retry := filter.AddEmitted(
-				proposal.Needed,
-				proposal.Selected,
-				proposal.Dirty,
+				change.MembershipUpdate{
+					Needed:   proposal.Needed,
+					Selected: proposal.Selected,
+					Dirty:    proposal.Dirty,
+					Ordinary: proposal.Needed,
+				},
 				proposal.Revision,
 			)
 			assert.Equal(t, retry, false)

@@ -410,7 +410,9 @@ func (e *Execution) generatedChildren(children []store.Child) []store.Child {
 		return children
 	}
 	current := make([]store.Child, 0, len(children)+len(e.generated))
-	for _, child := range children {
+	childValues := children
+	for childIndex := range childValues {
+		child := childValues[childIndex]
 		if !child.Generated {
 			current = append(current, child)
 		}

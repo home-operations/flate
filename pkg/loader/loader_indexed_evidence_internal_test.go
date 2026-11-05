@@ -20,7 +20,7 @@ func TestLoader_PreferExistingIndexedObject(t *testing.T) {
 	l := New(store.New())
 	l.SourceRoot, l.PreferExisting = root, true
 	for _, dir := range []string{"first", "second"} {
-		_, err := l.Load(t.Context(), filepath.Join(root, dir), nil)
+		_, err := l.Load(t.Context(), filepath.Join(root, dir), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	l.Admit(root)
@@ -49,7 +49,7 @@ func TestLoader_ProjectedEvidence(t *testing.T) {
 	l := New(store.New())
 	l.SourceRoot = root
 	l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."})
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	for _, cached := range []bool{true, false} {

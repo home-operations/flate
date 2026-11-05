@@ -289,7 +289,9 @@ func (o *Orchestrator) selectCollectionChildren(
 	children []store.Child,
 	selected map[manifest.NamedResource]bool,
 ) {
-	for _, child := range children {
+	childValues := children
+	for childIndex := range childValues {
+		child := childValues[childIndex]
 		if child.Doc != nil {
 			target := child.Obj.Named()
 			selected[target] = (!parentAttributed || !manifest.KindOf(child.Obj).Render) &&

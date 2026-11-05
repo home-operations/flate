@@ -78,9 +78,9 @@ func TestFilter_SelectorProviderScope(t *testing.T) {
 						},
 					)
 					selected.loader.locations = map[manifest.NamedResource]Occurrence{
-						provider.Named(): compactOccurrence(provider, manifest.ProjectProducer(provider)),
+						provider.Named(): compactOccurrence(provider, projectedProducerForTest(provider)),
 					}
-					selected.prepare(store.Child{}, nil, false)
+					selected.prepare(new(store.Child{}), nil, false)
 					assert.Equal(t, selected.ShouldReconcile(provider.Named()), true)
 					assert.Equal(t, selected.ShouldReconcile(set.Named()), true)
 				})
@@ -161,7 +161,7 @@ func testSelectionSelectorCandidatesCase(t *testing.T, testCaseInput *testSelect
 	l.Index = index
 	occurrence := compactOccurrence(
 		testCaseInput.tc.declaration,
-		manifest.ProjectProducer(testCaseInput.tc.declaration),
+		projectedProducerForTest(testCaseInput.tc.declaration),
 	)
 	occurrence.Identity = (*testCaseInput.provider).Named()
 	l.locations = map[manifest.NamedResource]Occurrence{(*testCaseInput.provider).Named(): occurrence}

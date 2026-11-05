@@ -176,7 +176,7 @@ func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
 	l.SourceRoot = root
 	for _, scan := range []string{filepath.Join(root, "entry"), view} {
 		{
-			_, err := l.Load(t.Context(), scan, nil)
+			_, err := l.Load(t.Context(), scan, manifest.NamedResource{}, nil)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
@@ -321,7 +321,7 @@ func testFinalizeIndexArtifactGeneratorsCase(
 	admitForFilter(s, root)
 
 	{
-		_, err := l.Load(t.Context(), filepath.Join(root, testCaseInput.scan), nil)
+		_, err := l.Load(t.Context(), filepath.Join(root, testCaseInput.scan), manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 

@@ -91,10 +91,11 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 type objectCell struct {
 	authority
 
-	reference *Declaration
-	policy    manifest.DeclarationPolicy
-	static    manifest.BaseManifest
-	document  map[string]any
+	reference  *Declaration
+	policy     manifest.DeclarationPolicy
+	classified bool
+	static     manifest.BaseManifest
+	document   map[string]any
 	// Direct writes use this revision; emitted values use the immutable producer record.
 	publication                                              uint64
 	binding                                                  *Input
@@ -275,6 +276,7 @@ func (s *Store) rUnlockAll() {
 }
 
 type objectUpdate struct {
+	target, collection          *registration
 	obj                         manifest.BaseManifest
 	policy                      manifest.DeclarationPolicy
 	document                    map[string]any
@@ -287,6 +289,8 @@ type objectUpdate struct {
 	membershipEqual             bool
 	needsRoot                   bool
 	independent                 bool
+	classified                  bool
+	reads                       *ReadSet
 }
 
 func (u *objectUpdate) compare() {
@@ -301,7 +305,17 @@ func (u *objectUpdate) compare() {
 			u.document = u.cell.document
 		}
 	}
-	u.staticEqual = u.cell.binding == u.binding && u.cell.support == u.support && equal
+	bindingEqual := u.cell.binding == u.binding
+	if !bindingEqual && u.cell.binding != nil && u.binding != nil {
+		bindingEqual = u.cell.binding.Ref.NamedResource == u.binding.Ref.NamedResource &&
+			u.cell.binding.sourceCurrent() && u.binding.sourceCurrent()
+	}
+	supportEqual := u.cell.support == u.support
+	if !supportEqual && u.cell.support != nil && u.support != nil {
+		supportEqual = u.cell.support.Ref.NamedResource == u.support.Ref.NamedResource &&
+			u.cell.support.productionCurrent() && u.support.productionCurrent()
+	}
+	u.staticEqual = bindingEqual && supportEqual && u.cell.classified == u.classified && equal
 	u.membershipEqual = u.staticEqual ||
 		u.cell.static != nil && manifest.LabelsEqual(u.cell.static, u.obj, [2]map[string]any{}, nil)
 	u.effectiveEqual = equal
@@ -337,36 +351,39 @@ func (u *objectUpdate) currentLocked(sh *shard) bool {
 
 // AddObject inserts a manifest. Equal content with unchanged authority is a no-op.
 func (s *Store) AddObject(obj manifest.BaseManifest, docs ...map[string]any) {
-	s.addObject(obj, nil, nil, docs...)
-}
-
-func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, docs ...map[string]any) {
 	if len(docs) > 1 {
 		panic("multiple authoritative documents")
 	}
+	update := objectUpdate{obj: obj, explicit: len(docs) != 0}
+	if update.explicit {
+		update.document = docs[0]
+	}
+	s.addObject(&update)
+}
+
+func (s *Store) addObject(update *objectUpdate) {
+	obj, binding, support := update.obj, update.binding, update.support
 	id := obj.Named()
 	sh := s.shardFor(id)
 	for {
+		if !update.reads.Valid() {
+			return
+		}
 		sh.mu.RLock()
 		cell := sh.cells[id]
+		supplied := binding != nil && cell.reference != nil && cell.reference.Obj == obj &&
+			cell.reference.Origin == manifest.SuppliedDeclaration
 		needsRoot := !cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
-		if len(docs) == 0 && cell.static == obj && cell.binding == binding && cell.support == support && !cell.hidden &&
+		if supplied || !update.explicit && cell.static == obj && cell.binding == binding && cell.support == support &&
+			cell.classified == update.classified &&
+			!cell.hidden &&
 			!cell.retired &&
 			!needsRoot {
 			sh.mu.RUnlock()
 			return
 		}
-		u := objectUpdate{
-			obj:       obj,
-			binding:   binding,
-			support:   support,
-			cell:      cell,
-			needsRoot: needsRoot,
-			explicit:  len(docs) != 0,
-		}
-		if u.explicit {
-			u.document = docs[0]
-		}
+		u := *update
+		u.cell, u.needsRoot = cell, needsRoot
 		if sh.derived {
 			sh.captureLocked(id, new(cell), &u.effective)
 		} else {
@@ -404,7 +421,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 		admissions++
 	}
 	var bucket objectBucket
-	if !u.membershipEqual && sh.byName[kindID{id.Group, id.Kind}].links == nil {
+	if !u.membershipEqual {
 		admissions++
 	}
 	if !sh.canAdmit(admissions) {
@@ -414,15 +431,17 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 	if !u.membershipEqual {
 		bucket = sh.byName[kindID{id.Group, id.Kind}]
 		if bucket.links == nil {
-			sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet)
 			bucket.links = sh.newHeadLocked(bucket.generation)
 		}
 	}
 	if cell.generation == ^uint64(0) || bucket.generation == ^uint64(0) {
 		sh.requireCapacityLocked(cell.authority, bucket.authority)
 	}
+	if u.target != nil {
+		u.target.consumed.Store(true)
+	}
 	if cell.generation == 0 {
-		sh.admitAbsenceLocked(id, objectFacet)
+		sh.admitAbsenceLocked(id, objectFacet, u.reads)
 		cell.links = sh.newHeadLocked(0)
 	}
 	cell.authority = cell.current().nextGeneration()
@@ -435,9 +454,14 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 		cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 	}
 	cell.document = u.document
-	cell.retired, cell.independent, cell.policy = false, u.independent, u.policy
+	cell.retired, cell.independent, cell.policy, cell.classified = false, u.independent, u.policy, u.classified
 	sh.cells[id] = cell
 	if !u.membershipEqual && bucket.update(nameID{id.Namespace, id.Name}, cell.static != nil, true, bucket.generation) {
+		sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet, u.reads)
+		if captured := u.collection; captured != nil && captured.head != nil && captured.absent == nil &&
+			captured.generation.Load()+1 == bucket.generation {
+			captured.generation.Store(bucket.generation)
+		}
 		bucket.authority = sh.enqueueLocked(bucket.authority)
 		sh.byName[kindID{id.Group, id.Kind}] = bucket
 	}
@@ -532,6 +556,10 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 		return false
 	}
 	bucket := sh.byName[kindID{id.Group, id.Kind}]
+	if !sh.canAdmit(1) {
+		sh.mu.Unlock()
+		panic("store: authority generation exhausted")
+	}
 	if sh.artifacts[id].value != nil && sh.artifacts[id].publication == ^uint64(0) {
 		sh.mu.Unlock()
 		panic("store: publication revision exhausted")
@@ -553,6 +581,7 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 	sh.cells[id] = cell
 	sh.clearFacetsLocked(id)
 	if bucket.update(nameID{id.Namespace, id.Name}, cell.reference != nil, true, bucket.generation) {
+		sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet, nil)
 		bucket.authority = sh.enqueueLocked(bucket.authority)
 		sh.byName[kindID{id.Group, id.Kind}] = bucket
 	}
@@ -699,8 +728,16 @@ func (s *Store) addAnchor(uValue *objectUpdate) bool {
 	sh := s.shardFor(id)
 	var storage [4]regionState
 	changed := newObjectRegion(1, storage[:])
-	changed = changed.add(id, !u.effectiveEqual || u.cell.static == nil, u.independent)
+	changed = changed.add(
+		id,
+		!u.effectiveEqual || u.cell.static == nil || u.classified != u.cell.classified,
+		u.independent,
+	)
 	s.lockAll()
+	if !u.reads.Valid() {
+		s.unlockAll()
+		return true
+	}
 	if !new(u).currentLocked(sh) || u.binding != nil && !u.binding.sourceCurrent() ||
 		u.support != nil && !u.support.productionCurrent() {
 		s.unlockAll()
@@ -713,7 +750,7 @@ func (s *Store) addAnchor(uValue *objectUpdate) bool {
 	}
 	cell := sh.cells[id]
 	u.retainSupport()
-	cell.rooted, cell.static, cell.binding, cell.support, cell.document = true, obj, u.binding, u.support, u.document
+	cell.rooted, cell.static, cell.binding, cell.support, cell.document, cell.classified = u.binding == nil, obj, u.binding, u.support, u.document, u.classified
 	cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 	cell.publication++
 	sh.cells[id] = cell
@@ -798,7 +835,8 @@ func artifactReadEqual(a, b Artifact, read ArtifactRead) bool {
 func (s *Store) commitObjectUpdate(sh *shard, id manifest.NamedResource, update *objectUpdate) publicationResult {
 	u := *update
 	sh.mu.Lock()
-	if u.binding != nil && !u.binding.sourceCurrent() || u.support != nil && !u.support.productionCurrent() {
+	if !u.reads.Valid() || u.binding != nil && !u.binding.sourceCurrent() ||
+		u.support != nil && !u.support.productionCurrent() {
 		sh.mu.Unlock()
 		return publicationRejected
 	}
@@ -922,7 +960,11 @@ func extendObjectAnchorRegion(anchors []objectUpdate, changed objectRegion) obje
 		uValues3 := anchors
 		for uIndex2 := range uValues3 {
 			u := uValues3[uIndex2]
-			changed = changed.add(u.obj.Named(), !u.effectiveEqual || u.cell.static == nil, u.independent)
+			changed = changed.add(
+				u.obj.Named(),
+				!u.effectiveEqual || u.cell.static == nil || u.classified != u.cell.classified,
+				u.independent,
+			)
 		}
 	}
 	return changed

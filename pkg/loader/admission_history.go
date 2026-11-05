@@ -36,13 +36,16 @@ func (c *admissionClosure) readHistory() {
 func (c *admissionClosure) record(id manifest.NamedResource) manifest.DiscoveryRecord {
 	record, indexed := c.loader.Index.Lookup(id)
 	if !indexed && id.Namespace != "" {
-		if occurrence, ok := c.loader.occurrence(id); ok && occurrence.Authored.Namespace == "" {
+		if occurrence, ok := c.loader.catalogOccurrence(id); ok && occurrence.Authored.Namespace == "" {
 			bare := id
 			bare.Namespace = ""
 			record, _ = c.loader.Index.Lookup(bare)
 		}
 	}
-	if occurrence, ok := c.loader.occurrence(id); record.ContentRoots == nil && ok && len(occurrence.facts.roots) != 0 {
+	if occurrence, ok := c.loader.catalogOccurrence(
+		id,
+	); record.ContentRoots == nil && ok &&
+		len(occurrence.facts.roots) != 0 {
 		source, _, _ := occurrence.SourcePath()
 		if source.Name == "" || source.Kind == "" {
 			source = manifest.BootstrapSourceID

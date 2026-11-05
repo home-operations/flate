@@ -64,12 +64,21 @@ func Commit(tb testing.TB, l *loader.Loader, proposal *loader.Admission) {
 	tb.Helper()
 	var err error
 	if proposal == nil {
-		proposal, err = l.Prepare(tb.Context(), store.Child{}, nil, nil)
+		proposal, err = l.Prepare(tb.Context(), loader.PrepareRequest{Invocation: true})
 	}
 	if err != nil {
 		tb.Fatal(err)
 	}
-	_, retry := l.Options.Filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+	defer proposal.Retire()
+	_, retry := l.Options.Filter.AddEmitted(
+		change.MembershipUpdate{
+			Needed:   proposal.Needed,
+			Selected: proposal.Selected,
+			Dirty:    proposal.Dirty,
+			Ordinary: proposal.Ordinary,
+		},
+		proposal.Revision,
+	)
 	if retry {
 		tb.Fatal("fixture membership changed during initial admission")
 	}

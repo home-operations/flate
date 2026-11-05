@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/chartinput"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func (l *Loader) recordReader(file, local string, readerValue *manifest.FileReader) {
@@ -72,6 +73,7 @@ func (l *Loader) finalizeRecords(
 	rf.templateWalks = map[[2]string]bool{}
 	rf.visited = map[manifest.NamedResource]struct{}{}
 
+	rf.loader.projectTemplates()
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for id, r := range rf.loader.Index.Records {
 		occurrence, located := rf.loader.locations[id]
@@ -272,32 +274,48 @@ func (rf *readerFinalizer) admitRecord(id manifest.NamedResource, r *manifest.Di
 			return
 		}
 		if rf.loader.roots == nil {
-			rf.loader.roots = map[manifest.NamedResource]bool{}
+			rf.loader.roots = map[manifest.NamedResource]rootEvidence{}
 		}
-		rf.loader.roots[id] = rf.loader.rootAdmission(r.Path, r.File, kind.Structural).admits(rf.loader, id, new(*r))
+		rf.loader.roots[id] = rf.loader.rootAdmission(r.Path, r.File, kind.Structural).evidence(rf.loader, id, r)
 		return
 	}
 	doc := rf.loader.documents.cache[r.Path]
 	if r.Authored == (manifest.NamedResource{}) || doc.rootKnown {
 		return
 	}
-	doc.rootAdmitted = rf.loader.rootAdmission(r.Path, r.File, false).admits(rf.loader, id, new(*r))
+	doc.rootAdmitted = rf.loader.rootAdmission(r.Path, r.File, false).admits(rf.loader, id, r)
 	doc.rootKnown = true
 	rf.loader.documents.cache[r.Path] = doc
 }
 
 func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	if r.File == "" {
+		return
+	}
 	kind := id.KindInfo()
-	if r.File != "" {
-		if parents := rf.emittedFiles[r.File]; kind.Structural && r.Parent == (manifest.NamedResource{}) &&
-			len(parents) == 1 &&
-			parents[0] != id {
-			r.Parent = parents[0]
-		}
-		if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
-			r.Productions = []manifest.Production{
-				{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID},
+	if parents := rf.emittedFiles[r.File]; kind.Structural && !rf.loader.roots[id].independent &&
+		r.Parent == (manifest.NamedResource{}) && len(parents) == 1 && parents[0] != id {
+		r.Parent = parents[0]
+	}
+	if rf.loader.roots[id].independent {
+		input := rf.loader.documents.artifacts[new(rf.loader.documents).mountedRoot(r.Path)]
+		for i := range r.Productions {
+			p := &r.Productions[i]
+			bound, _ := rf.loader.Store.GetArtifact(p.Source, store.ArtifactContent).(*store.SourceArtifact)
+			if p.Source != manifest.BootstrapSourceID && input != nil && bound == input && p.Owner != id &&
+				(p.File == r.File || p.Path != "" && p.Path == r.Path) {
+				p.Owner, p.Declaration = manifest.NamedResource{}, manifest.NamedResource{}
+				p.Authored, p.Path, p.File = r.Authored, r.Path, r.File
 			}
+		}
+		r.Productions = slices.DeleteFunc(r.Productions, func(p manifest.Production) bool {
+			return p.Owner != (manifest.NamedResource{}) && p.Owner != id &&
+				(p.File == r.File || p.Path != "" && p.Path == r.Path)
+		})
+	}
+	if len(r.Productions) == 0 && r.Authored != (manifest.NamedResource{}) {
+		r.Productions = []manifest.Production{
+			{Authored: r.Authored, Path: r.Path, File: r.File, Source: manifest.BootstrapSourceID},
 		}
 	}
 }
@@ -339,8 +357,8 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 		r.Declaration = rf.loader.IndexedObject(id, *r).Obj
 	}
 	r.StaticOutput = kind.Structural || len(rf.loader.templateProjections[id].Targets) != 0
-	if len(rf.loader.locations) != 0 {
-		if occurrence, known := rf.loader.occurrence(id); known {
+	if r.Builder == "" && len(rf.loader.locations) != 0 {
+		if occurrence, known := rf.loader.catalogOccurrence(id); known {
 			r.StaticOutput = !occurrence.facts.opaque(rf.loader.templateProjections[id].Targets)
 		}
 	}
@@ -349,7 +367,8 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 
 func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
 	kind := id.KindInfo()
-	if rf.loader.documents.compact && kind.Parent && r.Parent == (manifest.NamedResource{}) &&
+	if rf.loader.documents.compact && kind.Parent && !rf.loader.roots[id].independent &&
+		r.Parent == (manifest.NamedResource{}) &&
 		!rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), r.Path) {
 		var owner manifest.NamedResource
 		multiple := false

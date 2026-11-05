@@ -67,7 +67,7 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 	for owner := range session.prepared {
 		assert.FatalIf(
 			t,
-			owner.Named() == parent,
+			owner == parent,
 			"%v",
 			"producer with unresolved substitutions supplied prepared declarations",
 		)

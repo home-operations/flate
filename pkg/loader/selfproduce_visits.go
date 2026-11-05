@@ -15,7 +15,8 @@ func (l *Loader) recordPreparedProductions(
 	children []store.Child,
 	preparedOwners map[manifest.NamedResource]manifest.NamedResource,
 ) {
-	for _, child := range children {
+	for i := range children {
+		child := &children[i]
 		id := child.Obj.Named()
 		r := l.Index.Records[id]
 		if v.owner == (manifest.NamedResource{}) || v.owner == id || v.owner == r.Parent {
@@ -81,10 +82,9 @@ func (l *Loader) recordProductionInput(
 	incomplete map[manifest.NamedResource][]string,
 ) bool {
 	if file := cmp.Or(v.origin, v.file); len(pinned) != 0 && !pinned[v.owner] && safepath.Contains(repoRoot, file) {
-		owners := l.Index.OwnersOfFile(l.fileCoordinate(file)).Owners
-		if slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool {
-			return pinned[owner]
-		}) {
+		ownership := l.Index.OwnersOfFile(l.fileCoordinate(file))
+		pinnedOwner := func(owner manifest.NamedResource) bool { return pinned[owner] }
+		if slices.ContainsFunc(ownership.Owners, pinnedOwner) || slices.ContainsFunc(ownership.Ancestors, pinnedOwner) {
 			return false
 		}
 	}

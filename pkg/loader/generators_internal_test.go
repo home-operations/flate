@@ -160,7 +160,7 @@ func testFinalizeIndexGeneratorDataCase1(t *testing.T, tc *struct {
 			"resources: [release.yaml]\nconfigMapGenerator:\n- name: input\n  namespace: inner\n  literals: [VALUE=fixture]\n",
 		)
 		l.documents.read(filepath.Join(root, "apps", "a"))
-	} else if _, err := l.Load(t.Context(), filepath.Join(root, "apps", "a"), nil); err != nil {
+	} else if _, err := l.Load(t.Context(), filepath.Join(root, "apps", "a"), manifest.NamedResource{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	testFinalizeIndexGeneratorDataCase1Tail(

@@ -108,7 +108,7 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 	// The producer is ancestor-only: AddEmitted from cluster-vars
 	// to a sentinel child must reject (producer is NOT primary).
 	sentinel := testutil.KustomizationID("unrelated", "sentinel")
-	f.AddEmitted(clusterVars, store.Child{Obj: refObj(sentinel)}, f.objs)
+	f.AddEmitted(clusterVars, new(store.Child{Obj: refObj(sentinel)}), f.objs)
 	if f.ShouldReconcile(sentinel) {
 		t.Errorf(
 			"producer cluster-vars must be ancestor-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v",
@@ -165,7 +165,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 		t.Fatalf("precondition: producer must NOT be in keep before AddEmitted runs; keep=%v", f.KeepNames())
 	}
 
-	added := f.AddEmitted(parent, store.Child{Obj: childObj}, f.objs)
+	added := f.AddEmitted(parent, new(store.Child{Obj: childObj}), f.objs)
 
 	data := cmID
 	data.Namespace = child.Namespace
@@ -178,7 +178,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	// Producer is dependency-only: AddEmitted from producer to a
 	// sentinel child must reject because producer is not primary.
 	sentinel := testutil.KustomizationID("unrelated", "sentinel")
-	f.AddEmitted(producer, store.Child{Obj: refObj(sentinel)}, f.objs)
+	f.AddEmitted(producer, new(store.Child{Obj: refObj(sentinel)}), f.objs)
 	if f.ShouldReconcile(sentinel) {
 		t.Errorf(
 			"producer must be dependency-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v",
@@ -221,7 +221,7 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 		},
 	)
 
-	added := f.AddEmitted(parent, store.Child{Obj: childObj}, f.objs)
+	added := f.AddEmitted(parent, new(store.Child{Obj: childObj}), f.objs)
 
 	data := dataID
 	data.Namespace = child.Namespace
@@ -234,7 +234,7 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 	sentinel := testutil.KustomizationID("unrelated", "sentinel")
 	if added := f.AddEmitted(
 		producer,
-		store.Child{Obj: refObj(sentinel)},
+		new(store.Child{Obj: refObj(sentinel)}),
 		f.objs,
 	); len(added) != 0 ||
 		f.ShouldReconcile(sentinel) {
@@ -489,7 +489,7 @@ func testFilterSubstitutionGeneratorProducersCase(
 	sentinel := testutil.KustomizationID("apps", "unrelated")
 	if added := f.AddEmitted(
 		producer.Named(),
-		store.Child{Obj: refObj(sentinel)},
+		new(store.Child{Obj: refObj(sentinel)}),
 		f.objs,
 	); len(added) != 0 ||
 		f.ShouldReconcile(sentinel) {
@@ -550,7 +550,7 @@ func testFilterSubstitutionGeneratorProducersQualifiedDeclarations(t *testing.T)
 		)
 		l := New(st)
 		l.SourceRoot = roots[i]
-		_, err := l.Load(t.Context(), filepath.Join(mounted, "data"), nil)
+		_, err := l.Load(t.Context(), filepath.Join(mounted, "data"), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		l.FinalizeIndex(t.Context(), roots[i], true)
 		indexes[i] = l.Index

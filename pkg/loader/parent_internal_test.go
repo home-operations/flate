@@ -25,7 +25,7 @@ func TestClaims_RefreshDoesNotPublish(t *testing.T) {
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [owner.yaml]\n")
 	testutil.WriteFile(t, root, "owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./leaf\n"))
 	l := New(st)
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("apps", "owner")
 	l.Claims(root)
@@ -109,8 +109,7 @@ func TestClaims_ReadinessViews(t *testing.T) {
 		"%s",
 		"owner insertion discarded unchanged claim derivation",
 	)
-
-	_, err := l.Load(t.Context(), filepath.Join(root, "apps"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Claims(root)
 	assert.Diff(t, l.Index.Claims["apps/"], []manifest.NamedResource{earlier.Named(), ks.Named()})

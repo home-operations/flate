@@ -653,7 +653,9 @@ func (q *entryQualification) advance(st *store.Store) {
 	if !complete {
 		return
 	}
-	for _, child := range output.Children {
+	childValues2 := output.Children
+	for childIndex2 := range childValues2 {
+		child := childValues2[childIndex2]
 		if _, producer := child.Obj.(interface {
 			EmissionPolicy() manifest.EmissionPolicy
 		}); !producer || q.visited[child.Obj.Named()] {

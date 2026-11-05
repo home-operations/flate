@@ -296,10 +296,29 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	assert.NoError(t, err)
 	input.statErr = fs.ErrPermission
 	leaf := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
-	advanced, err := session.Advance(t.Context(), &loader.Admission{Objects: []store.Child{{Obj: leaf}}})
+	proposal, err := l.Prepare(
+		t.Context(),
+		loader.PrepareRequest{Incoming: store.Child{Obj: leaf, Entry: &manifest.EntryApplication{}}},
+	)
+	assert.NoError(t, err)
+	advanced, err := session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, true)
 	assert.Equal(t, st.GetObject(leaf.Named()), manifest.BaseManifest(leaf))
+	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
+	var reads store.ReadSet
+	reads.Init(st, manifest.NamedResource{}, nil)
+	defer reads.Retire()
+	reads.RequireData(leaf.Named())
+	proposal, err = l.Prepare(t.Context(), loader.PrepareRequest{Incoming: store.Child{Obj: leaf}, Reads: &reads})
+	assert.NoError(t, err)
+	committed, err := l.Commit(t.Context(), proposal, loader.Execution)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
+	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Needed, true)
+	assert.Equal(t, l.Options.Filter.OrdinaryDemand(leaf.Named()), true)
+	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Selected, false)
+	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Dirty, false)
 }
 
 func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCase) {

@@ -514,7 +514,8 @@ func buildEmissionParentLoader(t *testing.T, scenario *emissionParentCase, fixtu
 	l.mountSources()
 	objects, err := l.documents.parseFile(t.Context(), fixture.path, manifest.ParseDocOptions{})
 	assert.NoError(t, err)
-	for _, child := range objects {
+	for i := range objects {
+		child := &objects[i]
 		obj := child.Obj
 		if _, ok := obj.(*manifest.Kustomization); ok && st.GetObject(obj.Named()) == nil {
 			st.AddObject(obj, child.Doc)

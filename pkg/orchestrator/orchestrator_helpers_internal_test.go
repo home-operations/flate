@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -136,7 +137,10 @@ func (o *Orchestrator) prepareBootstrap(ctx context.Context) error {
 		if err := o.lookupHistory(ctx); err != nil {
 			return err
 		}
-		proposal, err := o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+		proposal, err := o.loader.Prepare(
+			ctx,
+			loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: o.history, Invocation: true},
+		)
 		if err != nil {
 			return err
 		}

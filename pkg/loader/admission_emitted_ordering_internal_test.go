@@ -85,7 +85,7 @@ func testAdmissionOrderingEmittedPathProofCase(
 	}
 	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
 	l.Options.Filter = change.NewFilter()
-	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	parent := &manifest.Kustomization{Name: "infra-parent", Namespace: "flux-system"}
@@ -126,7 +126,7 @@ func testAdmissionOrderingEmittedPathProofCase(
 		st.RecordEmitted(parent.Named(), &empty, nil)
 		st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 	}
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, parent.Named()), testCaseInput.want)
 	assert.Equal(t, slices.Contains(proposal.Selected, parent.Named()), false)
@@ -153,7 +153,7 @@ func testAdmissionOrderingEmittedTemplateProofCase(
 	l.Options.Filter = change.NewFilter()
 	consumer := (&manifest.Kustomization{Name: "consumer", Namespace: "apps"}).Named()
 	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
-	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
@@ -191,7 +191,7 @@ func testAdmissionOrderingEmittedTemplateProofCase(
 		output.Finish()
 		st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
 	}
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), (*testCaseInput) == "known_target")
 	assert.Equal(t, slices.Contains(proposal.Selected, producer.Named()), false)

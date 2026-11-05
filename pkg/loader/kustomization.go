@@ -21,6 +21,8 @@ import (
 type document struct {
 	body          *types.Kustomization
 	file          string
+	coverage      manifest.DocumentRole
+	possible      bool
 	objects       []parsedObject
 	decodeErr     error
 	built         []store.Child
@@ -35,6 +37,7 @@ type document struct {
 	loaded        bool
 	scanExcluded  bool
 	bootstrap     bool
+	initial       bool
 	traversed     bool
 	adHoc         bool
 	buildExcluded bool
@@ -75,6 +78,7 @@ type documentReader struct {
 	artifacts  map[string]*store.SourceArtifact
 	parsed     *ParsedInputs
 	compact    bool
+	intent     manifest.DocumentRole
 	coordinate *OccurrenceID
 	regular    bool
 	changed    []string
@@ -242,6 +246,7 @@ func (l *Loader) mountSources() {
 			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {
 				delete(l.Index.Records, id)
 				delete(l.candidates, id)
+				delete(l.locations, id)
 				l.Store.DeleteObject(id)
 			}
 		}

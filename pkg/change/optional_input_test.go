@@ -507,9 +507,7 @@ func testFilterOptionalInputChangesCase(t *testing.T, testCaseInput *struct {
 	child := &manifest.Kustomization{Name: "emitted", Namespace: "flux-system"}
 	proposal, err := l.Prepare(
 		t.Context(),
-		store.Child{Obj: child, Productions: []manifest.Production{{Owner: app}}},
-		nil,
-		nil,
+		loader.PrepareRequest{Incoming: store.Child{Obj: child, Productions: []manifest.Production{{Owner: app}}}},
 	)
 	assert.NoError(t, err)
 	admissiontest.Commit(t, l, proposal)

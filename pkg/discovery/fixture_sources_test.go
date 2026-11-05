@@ -76,7 +76,7 @@ func TestDiscovery_FixturePinnedConsumerReplacement(t *testing.T) {
 			)
 			l := loader.New(store.New())
 			l.SourceRoot = fixture.Repo
-			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "apps", "broken"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "apps", "broken"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(fixture.Repo)
 			held := l.EntryFailure(t.Context(), fixture.Repo)

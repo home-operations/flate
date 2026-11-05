@@ -362,7 +362,7 @@ func (r *renderInvocation) prepareSession(ctx context.Context, i int) {
 	failure := o.lookupHistory(ctx)
 	var proposal *loader.Admission
 	if failure == nil {
-		proposal, failure = o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+		proposal, failure = o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
 	}
 	advanced := false
 	if failure == nil {
@@ -468,7 +468,9 @@ func (o *Orchestrator) promotionChildren() map[manifest.NamedResource]store.Chil
 			continue
 		}
 		builders[record.Builder] = true
-		for _, child := range o.loader.PromotionDocuments(id) {
+		childValues := o.loader.PromotionDocuments(id)
+		for childIndex := range childValues {
+			child := childValues[childIndex]
 			fact, _ := o.index.Lookup(child.Obj.Named())
 			if fact.Builder != record.Builder || fact.BuilderOwner != record.BuilderOwner {
 				continue

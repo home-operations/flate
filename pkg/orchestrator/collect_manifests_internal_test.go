@@ -44,9 +44,12 @@ func TestCollectManifests_SupportDeclarations(t *testing.T) {
 	)
 	filter := change.NewFilter()
 	_, retry := filter.AddEmitted(
-		[]manifest.NamedResource{owner.Named(), children[1].Obj.Named()},
-		[]manifest.NamedResource{children[0].Obj.Named()},
-		nil,
+		change.MembershipUpdate{
+			Needed:   []manifest.NamedResource{owner.Named(), children[1].Obj.Named()},
+			Selected: []manifest.NamedResource{children[0].Obj.Named()},
+			Dirty:    nil,
+			Ordinary: []manifest.NamedResource{owner.Named(), children[1].Obj.Named()},
+		},
 		0,
 	)
 	assert.Equal(t, retry, false)

@@ -101,7 +101,7 @@ spec:
 	l.SourceRoot = root
 	for _, dir := range []string{entry, filepath.Join(entry, "independent")} {
 		{
-			_, err := l.Load(t.Context(), dir, nil)
+			_, err := l.Load(t.Context(), dir, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
 	}
@@ -133,7 +133,14 @@ spec:
 	assert.NoError(t, err)
 	docs := builtObjectsForTest(t, string(data))
 	l.RegisterBuilt(
-		BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
+		supportedBuiltInputForTest(
+			l,
+			&BuiltInput{
+				Root:   entry,
+				Source: manifest.BootstrapSourceID,
+				Owner:  testutil.KustomizationID("apps", "entry"),
+			},
+		),
 		docs,
 	)
 	{
@@ -189,7 +196,7 @@ spec:
 		},
 	}})
 	{
-		_, err := l.Load(t.Context(), view, nil)
+		_, err := l.Load(t.Context(), view, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	assert.FatalIf(
@@ -210,7 +217,7 @@ spec:
 	admitForTest(st, root)
 	for _, dir := range []string{entry, filepath.Join(entry, "independent")} {
 		{
-			_, err := l.Load(t.Context(), dir, nil)
+			_, err := l.Load(t.Context(), dir, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
 	}
@@ -266,7 +273,7 @@ spec:
 		l := New(st)
 		l.SourceRoot = root
 		{
-			_, err := l.Load(t.Context(), root, nil)
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
 		docs := builtObjectsForTest(
@@ -274,11 +281,11 @@ spec:
 			release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n",
 		)
 		l.RegisterBuilt(
-			BuiltInput{
+			supportedBuiltInputForTest(l, &BuiltInput{
 				Root:   root,
 				Source: manifest.BootstrapSourceID,
 				Owner:  testutil.KustomizationID("apps", "entry"),
-			},
+			}),
 			docs,
 		)
 		hr, _ := l.Index.Lookup(docs[0].Obj.Named())
@@ -327,7 +334,7 @@ spec:
 			l := New(st)
 			l.SourceRoot = root
 			{
-				_, err := l.Load(t.Context(), root, nil)
+				_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 			}
 			docs := builtObjectsForTest(
@@ -336,11 +343,11 @@ spec:
 			)
 			raw := docs[0].Obj.(*manifest.RawObject)
 			l.RegisterBuilt(
-				BuiltInput{
+				supportedBuiltInputForTest(l, &BuiltInput{
 					Root:   root,
 					Source: manifest.BootstrapSourceID,
 					Owner:  testutil.KustomizationID("apps", "entry"),
-				},
+				}),
 				docs,
 			)
 			record, ok := l.Index.Lookup(raw.Named())
@@ -363,14 +370,21 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	{
-		_, err := l.Load(t.Context(), root, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	docs := []store.Child{
 		{Obj: &manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}},
 	}
 	l.RegisterBuilt(
-		BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
+		supportedBuiltInputForTest(
+			l,
+			&BuiltInput{
+				Root:   root,
+				Source: manifest.BootstrapSourceID,
+				Owner:  testutil.KustomizationID("apps", "entry"),
+			},
+		),
 		docs,
 	)
 	l.Admit(root)
@@ -413,7 +427,7 @@ spec:
 	admitForTest(st, root)
 	l := New(st)
 	{
-		_, err := l.Load(t.Context(), root, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	selectedFile := filepath.ToSlash(filepath.Join(root, "selected.yaml"))
@@ -440,7 +454,14 @@ spec:
 	assert.FatalIf(t, len(docs) != 1 ||
 		docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}), "deletion patch did not leave only the retained ConfigMap: %v", docs)
 	l.RegisterBuilt(
-		BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
+		supportedBuiltInputForTest(
+			l,
+			&BuiltInput{
+				Root:   root,
+				Source: manifest.BootstrapSourceID,
+				Owner:  testutil.KustomizationID("apps", "entry"),
+			},
+		),
 		docs,
 	)
 	{
@@ -500,17 +521,24 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 	l.SourceRoot = root
 	entry := filepath.Join(root, "entry")
 	{
-		_, err := l.Load(t.Context(), entry, nil)
+		_, err := l.Load(t.Context(), entry, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	for _, dir := range []string{"entry/independent", "component", "configuration"} {
 		{
-			_, err := l.Load(t.Context(), filepath.Join(root, dir), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, dir), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
 	}
 	l.RegisterBuilt(
-		BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")},
+		supportedBuiltInputForTest(
+			l,
+			&BuiltInput{
+				Root:   entry,
+				Source: manifest.BootstrapSourceID,
+				Owner:  testutil.KustomizationID("apps", "entry"),
+			},
+		),
 		nil,
 	)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "shared"}
@@ -519,11 +547,11 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 		assert.FatalIf(t, ok || l.PromotionDocuments(id) != nil, "%s", "empty output retained raw resource evidence")
 	}
 	l.RegisterBuilt(
-		BuiltInput{
+		supportedBuiltInputForTest(l, &BuiltInput{
 			Root:   filepath.Join(root, "entry", "independent"),
 			Source: manifest.BootstrapSourceID,
 			Owner:  testutil.KustomizationID("apps", "entry"),
-		},
+		}),
 		nil,
 	)
 	assert.FatalIf(t, l.documents.cache[entry].built == nil ||
@@ -626,7 +654,8 @@ func testRegisterBuiltTransformedEvidenceCompletion(
 ) {
 	t.Helper()
 	var generated manifest.NamedResource
-	for _, child := range *scope.docs {
+	for i := range *scope.docs {
+		child := &(*scope.docs)[i]
 		obj := child.Obj
 		id := obj.Named()
 		record, exists := (*scope.l).Index.Lookup(id)
@@ -703,4 +732,12 @@ func testRegisterBuiltTransformedEvidenceCompletion(
 		sources,
 		func(child store.Child) bool { return child.Obj.Named().Name == "source-dev" && child.Doc != nil },
 	), "%s", "built source is unavailable to discovery")
+}
+
+func supportedBuiltInputForTest(l *Loader, input *BuiltInput) BuiltInput {
+	input.Support = new(store.ReadSet)
+	input.Support.Init(l.Store, input.Owner, nil)
+	input.Support.GetDeclaration(input.Owner)
+	input.Support.GetArtifact(input.Source, store.ArtifactContent)
+	return *input
 }

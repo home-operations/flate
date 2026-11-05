@@ -296,7 +296,7 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 		l.SourceRoot, l.PreferExisting = root, true
 
 		{
-			_, err := l.Load(t.Context(), filepath.Join(root, "authored"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, "authored"), manifest.NamedResource{}, nil)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 

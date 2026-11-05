@@ -46,7 +46,8 @@ func (c *admissionClosure) productionRole(id manifest.NamedResource, role admiss
 			inherited := parent.selected && parent.dirty && c.selectsChild(id)
 			inherited = inherited && (!production.Owner.ReportHidden() || !c.loader.IsFileIndexed(id))
 			selected := inherited || c.changedProduction(production) && eligible
-			if selected && !c.unchangedDeclaration(id, production.Owner, c.incoming.Obj) {
+			if selected &&
+				(!c.loader.Options.Selection.Changed || !c.unchangedDeclaration(id, production.Owner, c.incoming.Obj)) {
 				role.needed, role.selected, role.dirty = true, true, true
 			}
 		}
@@ -102,7 +103,7 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 	//nolint:gocritic // The iterator supplies immutable value snapshots.
 	for target, record := range c.loader.Index.Files() {
 		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
-		needed := c.loader.Options.Filter.Membership(target).Needed
+		needed := c.role(target).needed
 		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
 			!c.coversDeclaration(c.incoming.Obj, target) {
 			continue

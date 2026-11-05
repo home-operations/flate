@@ -69,7 +69,7 @@ func testLoaderIndependentRootsCase(t *testing.T, testCaseInput *string,
 		second = "plain"
 	}
 	for _, dir := range []string{(*testCaseInput), second} {
-		_, err := l.Load(t.Context(), filepath.Join(root, dir), nil)
+		_, err := l.Load(t.Context(), filepath.Join(root, dir), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	l.Admit(root)
@@ -87,7 +87,7 @@ func testLoaderIndependentRootsCase(t *testing.T, testCaseInput *string,
 	independent := New(store.New())
 	independent.SourceRoot = root
 	independent.Store.AddObject(l.Store.GetObject(testutil.KustomizationID("apps", "owner")))
-	_, err := independent.Load(t.Context(), filepath.Join(root, "builder"), nil)
+	_, err := independent.Load(t.Context(), filepath.Join(root, "builder"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	independent.Admit(root)
 	assert.FatalIf(
@@ -157,7 +157,7 @@ func testLoaderIndependentRootsRetainedNativeViews(t *testing.T) {
 		assert.FatalIf(t, !errors.Is(statErr, fs.ErrNotExist), "load discarded the retained miss: %v", statErr)
 	}
 	other := New(s)
-	_, err = other.Load(t.Context(), filepath.Join(root, "second"), nil)
+	_, err = other.Load(t.Context(), filepath.Join(root, "second"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.FatalIf(
 		t,

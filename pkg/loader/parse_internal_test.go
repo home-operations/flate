@@ -297,7 +297,8 @@ metadata: {namespace: apps}
 	assertNames := func(objects []store.Child, names []string) {
 		t.Helper()
 		got := make([]string, 0, len(objects))
-		for _, child := range objects {
+		for i := range objects {
+			child := &objects[i]
 			obj := child.Obj
 			assert.FatalIf(t, obj == nil, "%s", "nil object in parse result")
 			got = append(got, obj.Named().Name)

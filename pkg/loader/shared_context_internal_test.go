@@ -45,10 +45,10 @@ spec: {path: ./sibling, targetNamespace: sibling, components: [../shared]}
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"selected/payload.yaml"})
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	selected := manifest.NamedResource{
 		Group:     manifest.FluxKustomizeDomain,
@@ -110,7 +110,7 @@ func TestAdmission_DeclaredChartSourceNamespace(t *testing.T) {
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"app/release.yaml"})
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	id := manifest.NamedResource{
@@ -124,7 +124,7 @@ func TestAdmission_DeclaredChartSourceNamespace(t *testing.T) {
 		t.Fatalf("declared chart source is missing: index=%+v", l.Index.Records)
 	}
 	assert.Equal(t, record.Authored.Namespace, "")
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, id), true)
 	assert.Equal(t, slices.Contains(proposal.Needed, opaque.Named()), false)
@@ -199,10 +199,10 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 			Source: manifest.BootstrapSourceID, Authored: bare, File: "missing.yaml", Path: "missing.yaml",
 		}}}
 	}
-	occurrence := compactOccurrence(opaque, manifest.ProjectProducer(opaque))
+	occurrence := compactOccurrence(opaque, projectedProducerForTest(opaque))
 	occurrence.Declaration.Source = root
 	l.locations = map[manifest.NamedResource]Occurrence{opaque.Named(): occurrence}
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), true)
 	assert.Equal(
@@ -215,7 +215,7 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 			testCaseInput.production != "self",
 	)
 	assert.Equal(t, slices.Contains(proposal.Selected, opaque.Named()), false)
-	plain, err := l.Prepare(t.Context(), store.Child{Obj: consumer}, nil, nil)
+	plain, err := l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: consumer}})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(plain.Needed, owner.Named()), true)
 	wantOpaque := testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated &&
@@ -231,7 +231,7 @@ func assertAdmissionCapturedMembership(t *testing.T, l *Loader, consumer manifes
 	reads.Init(l.Store, owner, nil)
 	defer reads.Close()
 	for range 2 {
-		captured, err := l.Prepare(t.Context(), store.Child{Obj: consumer}, &reads, nil)
+		captured, err := l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: consumer}, Reads: &reads})
 		assert.NoError(t, err)
 		assert.Diff(t, captured.Needed, plain.Needed)
 		assert.Diff(t, captured.Selected, plain.Selected)

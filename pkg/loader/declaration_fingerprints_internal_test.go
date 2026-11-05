@@ -36,7 +36,7 @@ func TestParsedInputs_DeclarationFingerprints(t *testing.T) {
 			l := New(st)
 			l.SourceRoot = root
 			l.Options.Selection.Changed = true
-			_, err = l.Load(t.Context(), root, nil)
+			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data", Namespace: "apps"}

@@ -110,3 +110,35 @@ func TestExpandDocuments_CollectionPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestOccurrenceObject_CompleteFileCollectionCoordinate(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	file := filepath.Join(root, "input.yaml")
+	reader := documentReader{compact: true, cache: map[string]document{}}
+	reader.setSources(map[string]*store.SourceArtifact{
+		root: {LocalPath: root, FS: fstest.MapFS{"input.yaml": {Data: []byte(`{}
+---
+apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata: {name: same, namespace: apps}
+  data: {VALUE: first}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata: {name: same, namespace: apps}
+  data: {VALUE: second}
+`)}}},
+	})
+	complete, err := reader.fileObjects(file, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	assert.Equal(t, len(complete), 2)
+	reader.coordinate = &OccurrenceID{Document: 1, item: 1}
+	children, err := reader.parseFile(t.Context(), file, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	assert.FatalIf(t, len(children) != 1, "exact children=%d, want 1", len(children))
+	assert.Equal(t, children[0].Obj.(*manifest.ConfigMap).Data["VALUE"], "second")
+	assert.Equal(t, len(reader.cache[file].objects), 2)
+}

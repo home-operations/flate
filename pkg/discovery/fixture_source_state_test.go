@@ -65,7 +65,7 @@ func TestDiscovery_FixtureHeldErrorsAcrossNamespaces(t *testing.T) {
 			fixture := testfixture.Materialize(t, "source-errors", "source-ref--held-error-across-namespaces-"+variant)
 			l := loader.New(store.New())
 			l.SourceRoot = fixture.Repo
-			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "broken"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "broken"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(fixture.Repo)
 			assert.FatalIf(
@@ -151,7 +151,7 @@ func TestDiscovery_FixtureInheritedHeldErrors(t *testing.T) {
 			)
 			l := loader.New(store.New())
 			l.SourceRoot = fixture.Repo
-			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "held"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "held"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(fixture.Repo)
 			assert.FatalIf(

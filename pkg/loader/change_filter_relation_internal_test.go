@@ -111,7 +111,7 @@ func TestAddEmitted_IncomingEvidence(t *testing.T) {
 					},
 				}
 			}
-			f.AddEmitted(testutil.KustomizationID("apps", "dependency"), child, f.objs)
+			f.AddEmitted(testutil.KustomizationID("apps", "dependency"), new(child), f.objs)
 			assert.Equal(t, f.ShouldReconcile(incoming.Named()), mode != "unrelated")
 			assert.Equal(t, f.ShouldReconcile(stale.SourceID()), mode == "contribution")
 			assert.Equal(t, st.GetObject(incoming.Named()), manifest.BaseManifest(stale))
@@ -135,7 +135,7 @@ func TestIntegration_ResourceEscapeSelection(t *testing.T) {
 	st.AddObject(owner)
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.FinalizeIndex(t.Context(), root, true)
 	f := newAdmission(
@@ -242,7 +242,7 @@ func TestAddEmitted_PrimaryAdmissionReadsRelationOnce(t *testing.T) {
 				f.keep[child.SourceID()] = primary
 				parent = testutil.KustomizationID("apps", "dependency")
 			}
-			f.AddEmitted(parent, store.Child{Obj: child}, st)
+			f.AddEmitted(parent, new(store.Child{Obj: child}), st)
 			assert.Equal(t, f.ShouldReconcile(child.Named()), true)
 			assert.Equal(t, f.ShouldReconcile(child.SourceID()), true)
 			assert.Equal(t, st.reads, 1)
@@ -299,10 +299,14 @@ func TestAddEmitted_PromotionDuringEvaluation(t *testing.T) {
 	assert.Equal(t, f.ShouldReconcile(dependency), true)
 	assert.Equal(t, f.keep[target.Named()], kept)
 	slots := task.NewBounded(2)
-	slots.Go(t.Context(), "admit", func(context.Context) { f.AddEmitted(dependency, store.Child{Obj: child}, f.objs) })
+	slots.Go(
+		t.Context(),
+		"admit",
+		func(context.Context) { f.AddEmitted(dependency, new(store.Child{Obj: child}), f.objs) },
+	)
 	slots.Go(t.Context(), "promote", func(context.Context) {
 		<-objects.read
-		f.AddEmitted(primary.Named(), store.Child{Obj: target}, f.objs)
+		f.AddEmitted(primary.Named(), new(store.Child{Obj: target}), f.objs)
 		close(objects.release)
 	})
 	slots.BlockTillDone()
@@ -432,7 +436,7 @@ func testAddEmittedCrossSourceOptionalInputEvidenceCase(
 	var reads store.ReadSet
 	reads.Init(st, child.Obj.Named(), nil)
 	defer reads.Close()
-	filter.AddEmitted(emitter.Named(), child, &reads)
+	filter.AddEmitted(emitter.Named(), new(child), &reads)
 	assert.Equal(t, filter.ShouldReconcile(child.Obj.Named()), (*testCaseInput) != "nonmatch")
 	assert.Equal(t, st.GetObject(child.Obj.Named()) == nil, true)
 	assert.Equal(t, reads.Valid(), true)
@@ -453,7 +457,7 @@ func testAddEmittedCrossSourceOptionalInputEvidenceCase(
 	var current store.ReadSet
 	current.Init(st, child.Obj.Named(), nil)
 	defer current.Close()
-	fresh.AddEmitted(emitter.Named(), child, &current)
+	fresh.AddEmitted(emitter.Named(), new(child), &current)
 	assert.Equal(t, fresh.ShouldReconcile(child.Obj.Named()), false)
 	assert.Equal(t, current.Valid(), true)
 }
@@ -617,7 +621,7 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 		assert.NoError(t, err)
 	}
 	f := newAdmission(t, admissionConfig{changes: changes, index: nil, inventory: st, root: root})
-	f.AddEmitted(testutil.KustomizationID("apps", "dependency"), store.Child{Obj: child}, f.objs)
+	f.AddEmitted(testutil.KustomizationID("apps", "dependency"), new(store.Child{Obj: child}), f.objs)
 	assert.Equal(
 		t,
 		f.ShouldReconcile(child.Named()), (*testCaseInput) ==
@@ -627,7 +631,7 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 	sibling := *child
 	sibling.Name, sibling.Path = "unrelated", "elsewhere"
 	sibling.Components = nil
-	f.AddEmitted(testutil.KustomizationID("apps", "dependency"), store.Child{Obj: &sibling}, f.objs)
+	f.AddEmitted(testutil.KustomizationID("apps", "dependency"), new(store.Child{Obj: &sibling}), f.objs)
 	assert.Equal(t, f.ShouldReconcile(sibling.Named()), false)
 }
 

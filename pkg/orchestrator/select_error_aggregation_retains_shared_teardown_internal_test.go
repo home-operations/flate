@@ -197,7 +197,15 @@ func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
 			if tc.selected {
 				selected = append(selected, child.Named())
 			}
-			_, retry := run.filter.AddEmitted([]manifest.NamedResource{child.Named()}, selected, nil, 0)
+			_, retry := run.filter.AddEmitted(
+				change.MembershipUpdate{
+					Needed:   []manifest.NamedResource{child.Named()},
+					Selected: selected,
+					Dirty:    nil,
+					Ordinary: []manifest.NamedResource{child.Named()},
+				},
+				0,
+			)
 			assert.Equal(t, retry, false)
 			name := ""
 			if tc.named {
@@ -225,7 +233,15 @@ func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
 		run.store.AddObjects([]manifest.BaseManifest{parent, child})
 		publishFixture(t, run.store, parent.Named(), []manifest.NamedResource{child.Named()})
 		run.filter = change.NewFilter()
-		_, retry := run.filter.AddEmitted(nil, []manifest.NamedResource{parent.Named(), child.Named()}, nil, 0)
+		_, retry := run.filter.AddEmitted(
+			change.MembershipUpdate{
+				Needed:   nil,
+				Selected: []manifest.NamedResource{parent.Named(), child.Named()},
+				Dirty:    nil,
+				Ordinary: nil,
+			},
+			0,
+		)
 		assert.Equal(t, retry, false)
 		roots := []manifest.NamedResource{testutil.KustomizationID("apps", "")}
 		assert.Equal(t, (manifest.Selection{Roots: roots}).Matches(child.Named()), false)
@@ -589,7 +605,15 @@ func testSelectRequiredFailureOutsideOutputNamespaceCase(
 	}
 	if !testCaseInput.full {
 		run.filter = change.NewFilter()
-		_, retry := run.filter.AddEmitted(needed, []manifest.NamedResource{child}, nil, 0)
+		_, retry := run.filter.AddEmitted(
+			change.MembershipUpdate{
+				Needed:   needed,
+				Selected: []manifest.NamedResource{child},
+				Dirty:    nil,
+				Ordinary: needed,
+			},
+			0,
+		)
 		assert.Equal(t, retry, false)
 	}
 	run.Err = &FailuresError{Message: "parent failed"}
@@ -598,9 +622,12 @@ func testSelectRequiredFailureOutsideOutputNamespaceCase(
 		other := selectedRun(&Result{})
 		other.filter = change.NewFilter()
 		_, retry := other.filter.AddEmitted(
-			nil,
-			[]manifest.NamedResource{testutil.HelmReleaseID(parent.Namespace, "other")},
-			nil,
+			change.MembershipUpdate{
+				Needed:   nil,
+				Selected: []manifest.NamedResource{testutil.HelmReleaseID(parent.Namespace, "other")},
+				Dirty:    nil,
+				Ordinary: nil,
+			},
 			0,
 		)
 		assert.Equal(t, retry, false)
@@ -651,9 +678,12 @@ func testSelectRequiredFailureOutsideOutputNamespaceUnscopedRequiredDescendant(t
 	assert.Equal(t, slices.Contains(slices.Collect(run.store.RequiredInputs(parent.Named())), child.Named()), true)
 	run.filter = change.NewFilter()
 	_, retry := run.filter.AddEmitted(
-		[]manifest.NamedResource{parent.Named(), child.Named()},
-		[]manifest.NamedResource{parent.Named()},
-		nil,
+		change.MembershipUpdate{
+			Needed:   []manifest.NamedResource{parent.Named(), child.Named()},
+			Selected: []manifest.NamedResource{parent.Named()},
+			Dirty:    nil,
+			Ordinary: []manifest.NamedResource{parent.Named(), child.Named()},
+		},
 		0,
 	)
 	assert.Equal(t, retry, false)

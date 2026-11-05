@@ -170,7 +170,7 @@ spec: {url: https://example.test/excluded.git}
 	idx.SourceRoot = dir
 	idx.Options.Filter, idx.Options.Changes = filter, change.NewSet([]string{"consumer.yaml"})
 	idx.Options.Selection.Changed = true
-	_, err = idx.Load(t.Context(), dir, nil)
+	_, err = idx.Load(t.Context(), dir, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, idx.FinalizeIndex(t.Context(), dir, true))
 	controller := base.New(st, nil)

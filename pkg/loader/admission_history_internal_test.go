@@ -52,14 +52,17 @@ func TestAdmission_EffectiveProviderHistory(t *testing.T) {
 				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 				Complete bool
 			}{owner: {Records: records, Complete: tc.complete}}
-			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, history)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{History: history, Invocation: true})
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner), tc.needed)
 			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), false)
 			_, retry := l.Options.Filter.AddEmitted(
-				proposal.Needed,
-				proposal.Selected,
-				proposal.Dirty,
+				change.MembershipUpdate{
+					Needed:   proposal.Needed,
+					Selected: proposal.Selected,
+					Dirty:    proposal.Dirty,
+					Ordinary: proposal.Ordinary,
+				},
 				proposal.Revision,
 			)
 			assert.Equal(t, retry, false)
@@ -93,19 +96,22 @@ func TestAdmission_EffectiveProviderHistory(t *testing.T) {
 		lookedUp, invalidated := make(chan struct{}), make(chan struct{})
 		tasks := task.NewBounded(2)
 		tasks.Go(t.Context(), "lookup", func(ctx context.Context) {
-			proposal, err := l.Prepare(ctx, store.Child{}, &reads, history)
+			proposal, err := l.Prepare(ctx, PrepareRequest{Reads: &reads, History: history})
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner), false)
 			close(lookedUp)
 			<-invalidated
 			assert.Equal(t, reads.Valid(), false)
 			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), false)
-			proposal, err = l.Prepare(ctx, store.Child{}, nil, nil)
+			proposal, err = l.Prepare(ctx, PrepareRequest{Invocation: true})
 			assert.NoError(t, err)
 			_, retry := l.Options.Filter.AddEmitted(
-				proposal.Needed,
-				proposal.Selected,
-				proposal.Dirty,
+				change.MembershipUpdate{
+					Needed:   proposal.Needed,
+					Selected: proposal.Selected,
+					Dirty:    proposal.Dirty,
+					Ordinary: proposal.Ordinary,
+				},
 				proposal.Revision,
 			)
 			assert.Equal(t, retry, false)
@@ -164,7 +170,7 @@ func effectiveProviderHistoryLoader(t *testing.T) (*Loader, manifest.NamedResour
 	l.Options.Selection = manifest.Selection{
 		Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")},
 	}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	owner := testutil.HelmReleaseID("apps", "producer")

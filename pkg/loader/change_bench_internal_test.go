@@ -146,13 +146,14 @@ func BenchmarkAddEmitted_PrimaryFanOut(b *testing.B) {
 			for b.Loop() {
 				if next == fanOut {
 					b.StopTimer()
-					for _, child := range children {
+					for i := range children {
+						child := &children[i]
 						delete(filter.keep, child.Obj.Named())
 					}
 					next = 0
 					b.StartTimer()
 				}
-				filter.AddEmitted(parent, children[next], filter.objs)
+				filter.AddEmitted(parent, new(children[next]), filter.objs)
 				next++
 			}
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N), "ns/child")
@@ -407,7 +408,7 @@ func benchmarkSupplierEmission(b *testing.B, suppliers int, match bool) {
 		child := children[next]
 		var reads store.ReadSet
 		reads.Init(st, child.Obj.Named(), nil)
-		filter.AddEmitted(emitter.Named(), child, &reads)
+		filter.AddEmitted(emitter.Named(), new(child), &reads)
 		reads.Close()
 		if filter.ShouldReconcile(child.Obj.Named()) {
 			selected++

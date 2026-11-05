@@ -10,7 +10,11 @@ import (
 )
 
 func (l *Loader) resetAdmissions() {
-	clear(l.roots)
+	for id := range l.roots {
+		if !l.roots[id].independent {
+			delete(l.roots, id)
+		}
+	}
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for file, doc := range l.documents.cache {
 		doc.eligible, doc.rootKnown, doc.rootAdmitted, doc.terminal = fileUnknown, false, false, false

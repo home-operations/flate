@@ -506,8 +506,7 @@ func TestAdmit_UnloadedAncestorNamespace(t *testing.T) {
 	)
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), filepath.Join(root, "apps", "outside", "selected"), nil)
-
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps", "outside", "selected"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 
 	l.Admit(root)
@@ -711,7 +710,12 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
 			)
 		}
 		{
-			_, err := (*scope.l).Load(t.Context(), filepath.Join((*scope.local), "apps", "gpu-operator"), nil)
+			_, err := (*scope.l).Load(
+				t.Context(),
+				filepath.Join((*scope.local), "apps", "gpu-operator"),
+				manifest.NamedResource{},
+				nil,
+			)
 			assert.NoError(t, err)
 		}
 		if (*scope.testCaseInput).mounted {

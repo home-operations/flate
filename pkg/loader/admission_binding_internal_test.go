@@ -23,7 +23,7 @@ func TestAdmission_EmittedChildKeepsUnrelatedInventoryClosed(t *testing.T) {
 	parent := testutil.KustomizationID("flux-system", "app-0")
 	assert.Equal(t, filter.ShouldReconcile(parent), true)
 	child := store.Child{Obj: &manifest.ConfigMap{Name: "child", Namespace: "apps"}}
-	filter.AddEmitted(parent, child, st)
+	filter.AddEmitted(parent, &child, st)
 	assert.Equal(t, filter.ShouldReconcile(child.Obj.Named()), true)
 	if len(filter.last.states) > 4 {
 		t.Fatalf("one emitted child prepared %d objects; want at most 4", len(filter.last.states))
@@ -47,14 +47,14 @@ func publishedAdmissionDeclarations(t *testing.T, count int) *Loader {
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes = change.NewSet(paths)
 	l.Options.Filter = change.NewFilter()
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	for _, published := range []bool{false, true} {
 		reads := &admissionArtifactReads{admissionReader: st}
 		c := admissionClosure{loader: l, objects: reads}
 		c.proposal = &c.result
-		proposal, err := c.evaluate(t.Context(), nil)
+		proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 		assert.NoError(t, err)
 		assert.Equal(t, len(proposal.Selected), count)
 		wantObjects := count
@@ -78,7 +78,8 @@ func publishedAdmissionDeclarations(t *testing.T, count int) *Loader {
 			)
 		}
 		assert.Equal(t, reads.lists, 1)
-		for _, child := range proposal.Objects {
+		for i := range proposal.Objects {
+			child := &proposal.Objects[i]
 			st.AddObject(child.Obj, child.Doc)
 		}
 	}

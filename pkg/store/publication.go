@@ -14,6 +14,7 @@ func (s *Store) RecordEmitted(
 	payloads map[manifest.NamedResource]*SourceArtifact,
 ) {
 	next.accepted = false
+	defer next.retainRender()
 	if len(payloads) != 0 && next.Reads == nil {
 		reads := new(ReadSet)
 		reads.Init(s, id, nil)
@@ -57,7 +58,6 @@ func (s *Store) RecordEmitted(
 		} else {
 			proposal.revision = generation + 1
 		}
-		retainEmissionCache(proposal, prev)
 		s.prepareSourcePaths(proposal, prev)
 		var result publicationResult
 		if state.stable {
@@ -67,14 +67,14 @@ func (s *Store) RecordEmitted(
 		}
 		switch result {
 		case publicationAccepted:
+			proposal.acceptRender(prev)
 		case publicationRetry:
 			continue
 		case publicationRejected:
 			s.Retire(next.Reads)
 			return
 		}
-		acceptEmission(next, proposal, &candidate)
-		s.retirePreviousEmission(proposal, prev)
+		s.acceptEmission(next, proposal, &candidate, prev)
 		return
 	}
 }
@@ -83,17 +83,28 @@ func entriesMatch(children []Child, entries []admission) bool {
 	if len(children) != len(entries) {
 		return false
 	}
-	for i, child := range children {
-		if !child.equal(entries[i].child) {
+	for i := range children {
+		child := children[i]
+		if child.Entry != nil || child.SourceSupport != (manifest.NamedResource{}) ||
+			!child.equal(entries[i].child) {
 			return false
 		}
 	}
 	return true
 }
 
-func (s *Store) prepareChildren(children []Child, index *manifest.DiscoveryIndex) []admission {
-	prepared := make([]admission, 0, len(children))
-	for _, child := range children {
+func (s *Store) prepareChildren(children *[]Child, index *manifest.DiscoveryIndex) []admission {
+	if slices.ContainsFunc(*children, func(child Child) bool {
+		return child.Entry != nil || child.SourceSupport != (manifest.NamedResource{})
+	}) {
+		*children = slices.Clone(*children)
+		for i := range *children {
+			(*children)[i].Entry, (*children)[i].SourceSupport = nil, manifest.NamedResource{}
+		}
+	}
+	prepared := make([]admission, 0, len(*children))
+	for childIndex := range *children {
+		child := (*children)[childIndex]
 		if child.Obj != nil {
 			child.policy = child.Policy(child.Obj.Named())
 			prepared = append(
@@ -234,7 +245,9 @@ func (s *Store) bindCandidatePayloads(
 	candidate, next, prev *Emission,
 	payloads map[manifest.NamedResource]*SourceArtifact,
 ) {
-	for i, child := range candidate.Children {
+	childValues := candidate.Children
+	for i := range childValues {
+		child := childValues[i]
 		if child.Obj == nil {
 			continue
 		}
@@ -277,7 +290,9 @@ func candidateAdmissionsUnchanged(candidate, next, prev *Emission) bool {
 
 func incomingAdmissionsUnchanged(candidate, next, prev *Emission) bool {
 	unchanged := true
-	for i, child := range candidate.Children {
+	childValues2 := candidate.Children
+	for i := range childValues2 {
+		child := childValues2[i]
 		incoming := admission{child: child, binding: next.binding}
 		equal := i < len(prev.entries) && admissionEqual(incoming, prev.entries[i])
 		if !equal && !next.Complete {
@@ -382,20 +397,7 @@ func rebindAcceptedEmission(next, prev, candidate *Emission) *Emission {
 	return proposal
 }
 
-func retainEmissionCache(proposal, prev *Emission) {
-	if proposal != prev {
-		proposal.cached = nil
-		if !proposal.Complete && len(proposal.Failures) == 0 && prev != nil {
-			proposal.cached = prev.cached
-			if prev.Complete && prev.Fingerprint != "" {
-				output := prev.renderedOutput()
-				proposal.cached = &output
-			}
-		}
-	}
-}
-
-func acceptEmission(next, proposal, candidate *Emission) {
+func (s *Store) acceptEmission(next, proposal, candidate, previous *Emission) {
 	if next.Complete && proposal.Complete {
 		*next = *proposal
 		next.Reads = candidate.Reads
@@ -403,6 +405,7 @@ func acceptEmission(next, proposal, candidate *Emission) {
 		next.binding, next.previous = candidate.binding, candidate.previous
 		next.accepted = true
 	}
+	s.retirePreviousEmission(proposal, previous)
 }
 
 func (s *Store) retirePreviousEmission(proposal, prev *Emission) {
@@ -467,7 +470,7 @@ func (s *Store) compactAdmissions(
 	var projections []ArtifactInput
 	prepared := next.entries
 	if !next.entriesOwned || !entriesMatch(next.Children, prepared) {
-		prepared = s.prepareChildren(next.Children, next.family)
+		prepared = s.prepareChildren(&next.Children, next.family)
 	}
 	dynamic := false
 	compacted := prepared[:0]
@@ -505,7 +508,9 @@ func (s *Store) compactAdmissions(
 }
 
 func collectCurrentReferences(next *Emission, refs []manifest.NamedResource) []manifest.NamedResource {
-	for _, child := range next.Children {
+	childValues3 := next.Children
+	for childIndex2 := range childValues3 {
+		child := childValues3[childIndex2]
 		if child.Obj != nil {
 			for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
 				refs = append(refs, ref.NamedResource)

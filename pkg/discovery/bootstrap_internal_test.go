@@ -61,7 +61,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	}
 
 	{
-		_, err := l.Load(t.Context(), d.cfg.Path, nil)
+		_, err := l.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
@@ -384,7 +384,7 @@ spec:
 	}
 
 	{
-		_, err := l.Load(t.Context(), d.cfg.Path, nil)
+		_, err := l.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 

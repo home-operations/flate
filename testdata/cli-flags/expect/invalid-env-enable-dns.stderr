@@ -1,0 +1,1 @@
+flate error: invalid FLATE_ENABLE_DNS "bad-value": strconv.ParseBool: parsing "bad-value": invalid syntax

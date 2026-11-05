@@ -1,0 +1,55 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "apps",
+        "name": "app",
+        "path": ""
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "workloads",
+      "name": "installed",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "api": "false",
+          "kube": "v1.37.2",
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "app",
+            "helm.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "installed",
+          "namespace": "workloads"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "api": "false",
+          "kube": "v1.37.2",
+          "value": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "app",
+            "helm.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "installed",
+          "namespace": "workloads"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

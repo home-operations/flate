@@ -1,0 +1,13 @@
+
+= data.value
+= v1/ConfigMap/apps/app
+# ± value change
+- before
++ after
+
+= metadata.annotations.fixture.example/change
+= v1/ConfigMap/apps/app
+# ± value change
+- before
++ after
+

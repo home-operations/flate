@@ -1,0 +1,11 @@
+--- ConfigMap workloads/installed
++++ ConfigMap workloads/installed
+@@ -2,7 +2,7 @@
+ data:
+   api: "false"
+   kube: v1.37.2
+-  value: before
++  value: after
+ kind: ConfigMap
+ metadata:
+   labels:

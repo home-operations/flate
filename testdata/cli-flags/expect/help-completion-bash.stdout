@@ -1,0 +1,31 @@
+Generate the autocompletion script for the bash shell.
+
+This script depends on the 'bash-completion' package.
+If it is not installed already, you can install it via your OS's package manager.
+
+To load completions in your current shell session:
+
+	source <(flate completion bash)
+
+To load completions for every new session, execute once:
+
+#### Linux:
+
+	flate completion bash > /etc/bash_completion.d/flate
+
+#### macOS:
+
+	flate completion bash > $(brew --prefix)/etc/bash_completion.d/flate
+
+You will need to start a new shell for this setup to take effect.
+
+Usage:
+  flate completion bash
+
+Flags:
+  -h, --help              help for bash
+      --no-descriptions   disable completion descriptions
+
+Global Flags:
+      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]

@@ -1,0 +1,20 @@
+Generate the autocompletion script for flate for the specified shell.
+See each sub-command's help for details on how to use the generated script.
+
+Usage:
+  flate completion [command]
+
+Available Commands:
+  bash        Generate the autocompletion script for bash
+  fish        Generate the autocompletion script for fish
+  powershell  Generate the autocompletion script for powershell
+  zsh         Generate the autocompletion script for zsh
+
+Flags:
+  -h, --help   help for completion
+
+Global Flags:
+      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]
+
+Use "flate completion [command] --help" for more information about a command.

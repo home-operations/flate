@@ -112,19 +112,3 @@ func TestOutputFlags_CommandFormats(t *testing.T) {
 		})
 	}
 }
-
-//nolint:paralleltest // CLI execution changes process-wide logging.
-func TestOutputFlags_TestRejectsBeforeRender(t *testing.T) {
-	for _, command := range []string{"test", "test all", "test ks", "test hr"} {
-		t.Run(command, func(t *testing.T) {
-			args := append(strings.Fields(command), "--path", t.TempDir()+"/missing", "-o", "yaml")
-			cli := runCLI(t, args...)
-			out, diagnostic, code := cli.stdout, cli.stderr, cli.code
-			assert.FatalIf(t, code != 1 || out != "" || !strings.Contains(diagnostic, "unknown shorthand flag: 'o'") ||
-				strings.Contains(
-					diagnostic,
-					"does not exist",
-				), "output rejection happened after render: exit=%d stdout=%s stderr=%s", code, out, diagnostic)
-		})
-	}
-}

@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  apps/app  kustomization path is not a directory: ./missing: resolve ./missing: stat missing: file does not exist
+
+  ✗ 1 failed

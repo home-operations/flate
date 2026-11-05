@@ -1,0 +1,6736 @@
+{
+  "source": {
+    "repository": "bjw-s-labs/home-ops",
+    "revision": "656b3515052fcdb0450ca56151809852e383200d",
+    "paths": [
+      "kubernetes/flux/cluster/ks.yaml"
+    ],
+    "reductions": "Authored CLI presentation controls. Retain the source and app path shape. Replace workloads with a ConfigMap, Pod, synthetic Secret, CRD, and local chart."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base",
+        "refs/remotes/origin/main"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "strip-base",
+      "overlay": "strip-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:01:00Z",
+      "parents": [
+        "base"
+      ],
+      "refs": [
+        "refs/heads/strip-base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "changed",
+      "directory": "overlays/changed"
+    },
+    {
+      "name": "strip-before",
+      "directory": "overlays/strip-before"
+    },
+    {
+      "name": "strip-after",
+      "directory": "overlays/strip-after"
+    },
+    {
+      "name": "supplied",
+      "directory": "overlays/supplied"
+    },
+    {
+      "name": "omitted-path",
+      "directory": "overlays/omitted-path"
+    },
+    {
+      "name": "restricted-source",
+      "directory": "overlays/restricted-source"
+    }
+  ],
+  "cases": [
+    {
+      "name": "render-flags-1",
+      "description": "Ordered render flags with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "default-working-directory",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/default-working-directory.stdout",
+              "stderr": "expect/default-working-directory.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "concurrency-unbounded",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--concurrency",
+              "0"
+            ],
+            "expect": {
+              "stdout": "expect/concurrency-unbounded.stdout",
+              "stderr": "expect/concurrency-unbounded.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "concurrency-negative",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--concurrency",
+              "-1"
+            ],
+            "expect": {
+              "stdout": "expect/concurrency-negative.stdout",
+              "stderr": "expect/concurrency-negative.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "log-error",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/log-error.stdout",
+              "stderr": "expect/log-error.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "log-info",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "info"
+            ],
+            "expect": {
+              "stdout": "expect/log-info.stdout",
+              "stderr": "expect/log-info.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "log-warn",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "warn"
+            ],
+            "expect": {
+              "stdout": "expect/log-warn.stdout",
+              "stderr": "expect/log-warn.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "progress-absent",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/progress-absent.stdout",
+              "stderr": "expect/progress-absent.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-git-depth",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "expect": {
+              "stdout": "expect/flag-git-depth.stdout",
+              "stderr": "expect/flag-git-depth.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-restrict-egress",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--restrict-egress"
+            ],
+            "expect": {
+              "stdout": "expect/flag-restrict-egress.stdout",
+              "stderr": "expect/flag-restrict-egress.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-strict-substitutions",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--strict-substitutions"
+            ],
+            "expect": {
+              "stdout": "expect/flag-strict-substitutions.stdout",
+              "stderr": "expect/flag-strict-substitutions.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-enable-dns",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--enable-dns"
+            ],
+            "expect": {
+              "stdout": "expect/flag-enable-dns.stdout",
+              "stderr": "expect/flag-enable-dns.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-disable-chart-digest-tracking",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--disable-chart-digest-tracking"
+            ],
+            "expect": {
+              "stdout": "expect/flag-disable-chart-digest-tracking.stdout",
+              "stderr": "expect/flag-disable-chart-digest-tracking.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-allow-missing-kinds",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret,ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/flag-allow-missing-kinds.stdout",
+              "stderr": "expect/flag-allow-missing-kinds.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-registry-config",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--registry-config",
+              "@@inputs@@/registry.json"
+            ],
+            "expect": {
+              "stdout": "expect/flag-registry-config.stdout",
+              "stderr": "expect/flag-registry-config.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "long-common-flags",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "--path",
+              "@@repo@@/cluster",
+              "--namespace",
+              "apps",
+              "--output",
+              "yaml",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/long-common-flags.stdout",
+              "stderr": "expect/long-common-flags.stderr",
+              "code": 0
+            }
+          }
+        }
+      ],
+      "directory": "@@repo@@/cluster"
+    },
+    {
+      "name": "environment-bindings-2",
+      "description": "Ordered environment bindings with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "environment-path",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/environment-path.stdout",
+              "stderr": "expect/environment-path.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_PATH": "@@repo@@/cluster"
+            }
+          }
+        },
+        {
+          "id": "environment-namespace",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/environment-namespace.stdout",
+              "stderr": "expect/environment-namespace.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_NAMESPACE": "apps"
+            }
+          }
+        },
+        {
+          "id": "env-git-depth",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-git-depth.stdout",
+              "stderr": "expect/env-git-depth.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_GIT_DEPTH": "0"
+            }
+          }
+        },
+        {
+          "id": "env-concurrency",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-concurrency.stdout",
+              "stderr": "expect/env-concurrency.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_CONCURRENCY": "2"
+            }
+          }
+        },
+        {
+          "id": "env-restrict-egress",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-restrict-egress.stdout",
+              "stderr": "expect/env-restrict-egress.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_RESTRICT_EGRESS": "true"
+            }
+          }
+        },
+        {
+          "id": "env-strict-substitutions",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-strict-substitutions.stdout",
+              "stderr": "expect/env-strict-substitutions.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_STRICT_SUBSTITUTIONS": "true"
+            }
+          }
+        },
+        {
+          "id": "env-enable-dns",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-enable-dns.stdout",
+              "stderr": "expect/env-enable-dns.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_ENABLE_DNS": "true"
+            }
+          }
+        },
+        {
+          "id": "env-disable-chart-digest-tracking",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-disable-chart-digest-tracking.stdout",
+              "stderr": "expect/env-disable-chart-digest-tracking.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_DISABLE_CHART_DIGEST_TRACKING": "true"
+            }
+          }
+        },
+        {
+          "id": "env-allow-missing-kinds",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-allow-missing-kinds.stdout",
+              "stderr": "expect/env-allow-missing-kinds.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_ALLOW_MISSING_KINDS": "Secret,ConfigMap"
+            }
+          }
+        },
+        {
+          "id": "env-registry-config",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-registry-config.stdout",
+              "stderr": "expect/env-registry-config.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_REGISTRY_CONFIG": "@@inputs@@/registry.json"
+            }
+          }
+        },
+        {
+          "id": "env-no-progress",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/env-no-progress.stdout",
+              "stderr": "expect/env-no-progress.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_NO_PROGRESS": "true"
+            }
+          }
+        },
+        {
+          "id": "env-log-level",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-log-level.stdout",
+              "stderr": "expect/env-log-level.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_LOG_LEVEL": "warn"
+            }
+          }
+        },
+        {
+          "id": "help-version-env-ignored",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/help-version-env-ignored.stdout",
+              "stderr": "expect/help-version-env-ignored.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_HELP": "true",
+              "FLATE_VERSION": "true"
+            }
+          }
+        },
+        {
+          "id": "environment-output",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/environment-output.stdout",
+              "stderr": "expect/environment-output.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_OUTPUT": "json"
+            }
+          }
+        }
+      ],
+      "directory": "@@inputs@@"
+    },
+    {
+      "name": "argv-precedence-3",
+      "description": "Ordered argv precedence with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "argv-path-precedence",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/argv-path-precedence.stdout",
+              "stderr": "expect/argv-path-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_PATH": "@@repo@@/missing"
+            }
+          }
+        },
+        {
+          "id": "argv-namespace-precedence",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-n",
+              "apps"
+            ],
+            "expect": {
+              "stdout": "expect/argv-namespace-precedence.stdout",
+              "stderr": "expect/argv-namespace-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_NAMESPACE": "missing"
+            }
+          }
+        },
+        {
+          "id": "precedence-git-depth",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--git-depth",
+              "0"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-git-depth.stdout",
+              "stderr": "expect/precedence-git-depth.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_GIT_DEPTH": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-concurrency",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-concurrency.stdout",
+              "stderr": "expect/precedence-concurrency.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_CONCURRENCY": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-restrict-egress",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--restrict-egress"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-restrict-egress.stdout",
+              "stderr": "expect/precedence-restrict-egress.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_RESTRICT_EGRESS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-strict-substitutions",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--strict-substitutions"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-strict-substitutions.stdout",
+              "stderr": "expect/precedence-strict-substitutions.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_STRICT_SUBSTITUTIONS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-enable-dns",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--enable-dns"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-enable-dns.stdout",
+              "stderr": "expect/precedence-enable-dns.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_ENABLE_DNS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-disable-chart-digest-tracking",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--disable-chart-digest-tracking"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-disable-chart-digest-tracking.stdout",
+              "stderr": "expect/precedence-disable-chart-digest-tracking.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_DISABLE_CHART_DIGEST_TRACKING": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-allow-missing-kinds",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret,ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-allow-missing-kinds.stdout",
+              "stderr": "expect/precedence-allow-missing-kinds.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_ALLOW_MISSING_KINDS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-registry-config",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--registry-config",
+              "@@inputs@@/registry.json"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-registry-config.stdout",
+              "stderr": "expect/precedence-registry-config.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_REGISTRY_CONFIG": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-no-progress",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-no-progress.stdout",
+              "stderr": "expect/precedence-no-progress.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_NO_PROGRESS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-log-level",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "warn"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-log-level.stdout",
+              "stderr": "expect/precedence-log-level.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_LOG_LEVEL": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "argv-output-precedence",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "yaml"
+            ],
+            "expect": {
+              "stdout": "expect/argv-output-precedence.stdout",
+              "stderr": "expect/argv-output-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_OUTPUT": "bad"
+            }
+          }
+        }
+      ],
+      "directory": "@@repo@@/cluster"
+    },
+    {
+      "name": "parser-errors-4",
+      "description": "Ordered parser errors with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test-rejects-output",
+          "invoke": {
+            "argv": [
+              "test",
+              "-p",
+              "@@repo@@/missing",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/test-rejects-output.stdout",
+              "stderr": "expect/test-rejects-output.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test-all-rejects-output",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "-p",
+              "@@repo@@/missing",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/test-all-rejects-output.stdout",
+              "stderr": "expect/test-all-rejects-output.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test-ks-rejects-output",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "-p",
+              "@@repo@@/missing",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/test-ks-rejects-output.stdout",
+              "stderr": "expect/test-ks-rejects-output.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test-hr-rejects-output",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "-p",
+              "@@repo@@/missing",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/test-hr-rejects-output.stdout",
+              "stderr": "expect/test-hr-rejects-output.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "unknown-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "frobnicate"
+            ],
+            "expect": {
+              "stdout": "expect/unknown-build.stdout",
+              "stderr": "expect/unknown-build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "extra-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "extra"
+            ],
+            "expect": {
+              "stdout": "expect/extra-build.stdout",
+              "stderr": "expect/extra-build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "unknown-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "frobnicate"
+            ],
+            "expect": {
+              "stdout": "expect/unknown-get.stdout",
+              "stderr": "expect/unknown-get.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "extra-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "app",
+              "extra"
+            ],
+            "expect": {
+              "stdout": "expect/extra-get.stdout",
+              "stderr": "expect/extra-get.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "unknown-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "frobnicate"
+            ],
+            "expect": {
+              "stdout": "expect/unknown-test.stdout",
+              "stderr": "expect/unknown-test.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "extra-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "app",
+              "extra"
+            ],
+            "expect": {
+              "stdout": "expect/extra-test.stdout",
+              "stderr": "expect/extra-test.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "unknown-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "frobnicate"
+            ],
+            "expect": {
+              "stdout": "expect/unknown-diff.stdout",
+              "stderr": "expect/unknown-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "extra-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "extra"
+            ],
+            "expect": {
+              "stdout": "expect/extra-diff.stdout",
+              "stderr": "expect/extra-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "unknown-root",
+          "invoke": {
+            "argv": [
+              "frobnicate"
+            ],
+            "expect": {
+              "stdout": "expect/unknown-root.stdout",
+              "stderr": "expect/unknown-root.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "invalid-log",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "invalid"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-log.stdout",
+              "stderr": "expect/invalid-log.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "invalid-env-log",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-log.stdout",
+              "stderr": "expect/invalid-env-log.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_LOG_LEVEL": "invalid"
+            }
+          }
+        },
+        {
+          "id": "missing-path",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/missing",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/missing-path.stdout",
+              "stderr": "expect/missing-path.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "file-path",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/app/configmap.yaml",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/file-path.stdout",
+              "stderr": "expect/file-path.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "empty-path",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/empty-path.stdout",
+              "stderr": "expect/empty-path.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "exclusive-baselines",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "base",
+              "-P",
+              "@@repo@@/cluster"
+            ],
+            "expect": {
+              "stdout": "expect/exclusive-baselines.stdout",
+              "stderr": "expect/exclusive-baselines.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "invalid-output-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "unsupported"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-output-build.stdout",
+              "stderr": "expect/invalid-output-build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "invalid-env-output-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-output-build.stdout",
+              "stderr": "expect/invalid-env-output-build.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_OUTPUT": "unsupported"
+            }
+          }
+        },
+        {
+          "id": "invalid-output-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "-o",
+              "unsupported"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-output-get.stdout",
+              "stderr": "expect/invalid-output-get.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "invalid-env-output-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-output-get.stdout",
+              "stderr": "expect/invalid-env-output-get.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_OUTPUT": "unsupported"
+            }
+          }
+        },
+        {
+          "id": "invalid-output-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "unsupported"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-output-diff.stdout",
+              "stderr": "expect/invalid-output-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "invalid-env-output-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-output-diff.stdout",
+              "stderr": "expect/invalid-env-output-diff.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_OUTPUT": "unsupported"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-strict-substitutions",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-strict-substitutions.stdout",
+              "stderr": "expect/invalid-env-strict-substitutions.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_STRICT_SUBSTITUTIONS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-restrict-egress",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-restrict-egress.stdout",
+              "stderr": "expect/invalid-env-restrict-egress.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_RESTRICT_EGRESS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-enable-dns",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-enable-dns.stdout",
+              "stderr": "expect/invalid-env-enable-dns.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_ENABLE_DNS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-disable-chart-digest-tracking",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-disable-chart-digest-tracking.stdout",
+              "stderr": "expect/invalid-env-disable-chart-digest-tracking.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_DISABLE_CHART_DIGEST_TRACKING": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-no-progress",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-no-progress.stdout",
+              "stderr": "expect/invalid-env-no-progress.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_NO_PROGRESS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-concurrency",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-concurrency.stdout",
+              "stderr": "expect/invalid-env-concurrency.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_CONCURRENCY": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-git-depth",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-git-depth.stdout",
+              "stderr": "expect/invalid-env-git-depth.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_GIT_DEPTH": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-include-removed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "base"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-include-removed.stdout",
+              "stderr": "expect/invalid-env-include-removed.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_INCLUDE_REMOVED": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "missing-get-ks",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "missing",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/missing-get-ks.stdout",
+              "stderr": "expect/missing-get-ks.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-get-hr",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "missing",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/missing-get-hr.stdout",
+              "stderr": "expect/missing-get-hr.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-build-ks",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "missing",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/missing-build-ks.stdout",
+              "stderr": "expect/missing-build-ks.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-build-hr",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "missing",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/missing-build-hr.stdout",
+              "stderr": "expect/missing-build-hr.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-test-ks",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "missing",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/missing-test-ks.stdout",
+              "stderr": "expect/missing-test-ks.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-test-hr",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "missing",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/missing-test-hr.stdout",
+              "stderr": "expect/missing-test-hr.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "selector-invalid-env",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/selector-invalid-env.stdout",
+              "stderr": "expect/selector-invalid-env.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_SELECTOR": "missing-equals"
+            }
+          }
+        },
+        {
+          "id": "all-selector-rejected",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "-l",
+              "app=selected"
+            ],
+            "expect": {
+              "stdout": "expect/all-selector-rejected.stdout",
+              "stderr": "expect/all-selector-rejected.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "list-not-command",
+          "invoke": {
+            "argv": [
+              "list"
+            ],
+            "expect": {
+              "stdout": "expect/list-not-command.stdout",
+              "stderr": "expect/list-not-command.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "unsupported-missing-kind",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "RuntimeClass"
+            ],
+            "expect": {
+              "stdout": "expect/unsupported-missing-kind.stdout",
+              "stderr": "expect/unsupported-missing-kind.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "unsupported-env-missing-kind",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/unsupported-env-missing-kind.stdout",
+              "stderr": "expect/unsupported-env-missing-kind.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_ALLOW_MISSING_KINDS": "RuntimeClass"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-supply",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-supply.stdout",
+              "stderr": "expect/invalid-env-supply.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_SUPPLY": "@@inputs@@/first.yaml::@@inputs@@/second.yaml"
+            }
+          }
+        },
+        {
+          "id": "invalid-env-csv-skip-kinds",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2"
+            ],
+            "env": {
+              "FLATE_SKIP_KINDS": "\""
+            },
+            "expect": {
+              "stdout": "expect/invalid-env-csv-skip-kinds.stdout",
+              "stderr": "expect/invalid-env-csv-skip-kinds.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "invalid-env-csv-only-kinds",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2"
+            ],
+            "env": {
+              "FLATE_ONLY_KINDS": "\""
+            },
+            "expect": {
+              "stdout": "expect/invalid-env-csv-only-kinds.stdout",
+              "stderr": "expect/invalid-env-csv-only-kinds.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "invalid-env-csv-allow-missing-kinds",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2"
+            ],
+            "env": {
+              "FLATE_ALLOW_MISSING_KINDS": "\""
+            },
+            "expect": {
+              "stdout": "expect/invalid-env-csv-allow-missing-kinds.stdout",
+              "stderr": "expect/invalid-env-csv-allow-missing-kinds.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "help-and-version",
+      "description": "help and version.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "help-root",
+          "invoke": {
+            "argv": [
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-root.stdout",
+              "stderr": "expect/help-root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-build.stdout",
+              "stderr": "expect/help-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-build-all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-build-all.stdout",
+              "stderr": "expect/help-build-all.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-build-ks",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-build-ks.stdout",
+              "stderr": "expect/help-build-ks.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-build-hr",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-build-hr.stdout",
+              "stderr": "expect/help-build-hr.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-get.stdout",
+              "stderr": "expect/help-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-get-all",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-get-all.stdout",
+              "stderr": "expect/help-get-all.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-get-ks",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-get-ks.stdout",
+              "stderr": "expect/help-get-ks.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-get-hr",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-get-hr.stdout",
+              "stderr": "expect/help-get-hr.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-get-images",
+          "invoke": {
+            "argv": [
+              "get",
+              "images",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-get-images.stdout",
+              "stderr": "expect/help-get-images.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-test.stdout",
+              "stderr": "expect/help-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-test-all",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-test-all.stdout",
+              "stderr": "expect/help-test-all.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-test-ks",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-test-ks.stdout",
+              "stderr": "expect/help-test-ks.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-test-hr",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-test-hr.stdout",
+              "stderr": "expect/help-test-hr.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-diff.stdout",
+              "stderr": "expect/help-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-diff-all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-diff-all.stdout",
+              "stderr": "expect/help-diff-all.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-diff-ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-diff-ks.stdout",
+              "stderr": "expect/help-diff-ks.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-diff-hr",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-diff-hr.stdout",
+              "stderr": "expect/help-diff-hr.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-diff-images",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-diff-images.stdout",
+              "stderr": "expect/help-diff-images.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-cache",
+          "invoke": {
+            "argv": [
+              "cache",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-cache.stdout",
+              "stderr": "expect/help-cache.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-cache-gc",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-cache-gc.stdout",
+              "stderr": "expect/help-cache-gc.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-short",
+          "invoke": {
+            "argv": [
+              "-h"
+            ],
+            "expect": {
+              "stdout": "expect/help-short.stdout",
+              "stderr": "expect/help-short.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "version-long",
+          "invoke": {
+            "argv": [
+              "--version"
+            ],
+            "expect": {
+              "stdout": "expect/version-long.stdout",
+              "stderr": "expect/version-long.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "version-short",
+          "invoke": {
+            "argv": [
+              "-v"
+            ],
+            "expect": {
+              "stdout": "expect/version-short.stdout",
+              "stderr": "expect/version-short.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-completion",
+          "invoke": {
+            "argv": [
+              "completion",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-completion.stdout",
+              "stderr": "expect/help-completion.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-completion-bash",
+          "invoke": {
+            "argv": [
+              "completion",
+              "bash",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-completion-bash.stdout",
+              "stderr": "expect/help-completion-bash.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-completion-fish",
+          "invoke": {
+            "argv": [
+              "completion",
+              "fish",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-completion-fish.stdout",
+              "stderr": "expect/help-completion-fish.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-completion-powershell",
+          "invoke": {
+            "argv": [
+              "completion",
+              "powershell",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-completion-powershell.stdout",
+              "stderr": "expect/help-completion-powershell.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-completion-zsh",
+          "invoke": {
+            "argv": [
+              "completion",
+              "zsh",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-completion-zsh.stdout",
+              "stderr": "expect/help-completion-zsh.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "help-help",
+          "invoke": {
+            "argv": [
+              "help",
+              "--help"
+            ],
+            "expect": {
+              "stdout": "expect/help-help.stdout",
+              "stderr": "expect/help-help.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "render-flags-5",
+      "description": "Ordered render flags with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selector-match",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "-l",
+              "app=selected"
+            ],
+            "expect": {
+              "stdout": "expect/selector-match.stdout",
+              "stderr": "expect/selector-match.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selector-no-match",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--selector",
+              "app=missing"
+            ],
+            "expect": {
+              "stdout": "expect/selector-no-match.stdout",
+              "stderr": "expect/selector-no-match.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selector-no-match-named",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "-l",
+              "app=missing"
+            ],
+            "expect": {
+              "stdout": "expect/selector-no-match-named.stdout",
+              "stderr": "expect/selector-no-match-named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "path-orig-short",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-P",
+              "@@baseline@@/cluster"
+            ],
+            "expect": {
+              "stdout": "expect/path-orig-short.stdout",
+              "stderr": "expect/path-orig-short.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-kube-version",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--kube-version",
+              "1.31.2"
+            ],
+            "expect": {
+              "stdout": "expect/flag-kube-version.stdout",
+              "stderr": "expect/flag-kube-version.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-api-versions",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-a",
+              "fixture.example/v1"
+            ],
+            "expect": {
+              "stdout": "expect/flag-api-versions.stdout",
+              "stderr": "expect/flag-api-versions.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "environment-bindings-6",
+      "description": "Ordered environment bindings with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selector-env",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/selector-env.stdout",
+              "stderr": "expect/selector-env.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_SELECTOR": "app=selected"
+            }
+          }
+        },
+        {
+          "id": "env-path-orig",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-path-orig.stdout",
+              "stderr": "expect/env-path-orig.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_PATH_ORIG": "@@baseline@@/cluster"
+            }
+          }
+        },
+        {
+          "id": "env-kube-version",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-kube-version.stdout",
+              "stderr": "expect/env-kube-version.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_KUBE_VERSION": "1.31.2"
+            }
+          }
+        },
+        {
+          "id": "env-api-versions",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-api-versions.stdout",
+              "stderr": "expect/env-api-versions.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_API_VERSIONS": "fixture.example/v1"
+            }
+          }
+        },
+        {
+          "id": "env-cache-memory",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/env-cache-memory.stdout",
+              "stderr": "expect/env-cache-memory.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_CACHE_DIR": ""
+            }
+          }
+        },
+        {
+          "id": "env-cache-directory",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc"
+            ],
+            "env": {
+              "FLATE_CACHE_DIR": "@@cache@@"
+            },
+            "expect": {
+              "stdout": "expect/env-cache-directory.stdout",
+              "stderr": "expect/env-cache-directory.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "argv-precedence-7",
+      "description": "Ordered argv precedence with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selector-precedence",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "-l",
+              "app=selected"
+            ],
+            "expect": {
+              "stdout": "expect/selector-precedence.stdout",
+              "stderr": "expect/selector-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_SELECTOR": "app=missing"
+            }
+          }
+        },
+        {
+          "id": "path-orig-precedence",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path-orig",
+              "@@baseline@@/cluster"
+            ],
+            "expect": {
+              "stdout": "expect/path-orig-precedence.stdout",
+              "stderr": "expect/path-orig-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_PATH_ORIG": "@@repo@@/missing"
+            }
+          }
+        },
+        {
+          "id": "precedence-kube-version",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--kube-version",
+              "1.31.2"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-kube-version.stdout",
+              "stderr": "expect/precedence-kube-version.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_KUBE_VERSION": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "precedence-api-versions",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--api-versions",
+              "fixture.example/v1"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-api-versions.stdout",
+              "stderr": "expect/precedence-api-versions.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_API_VERSIONS": "bad-value"
+            }
+          }
+        },
+        {
+          "id": "cache-memory-precedence",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/cache-memory-precedence.stdout",
+              "stderr": "expect/cache-memory-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_CACHE_DIR": "@@repo@@/missing"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "parser-errors-8",
+      "description": "Ordered parser errors with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-diff-ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "missing",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "base"
+            ],
+            "expect": {
+              "stdout": "expect/missing-diff-ks.stdout",
+              "stderr": "expect/missing-diff-ks.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-diff-hr",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "missing",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "base"
+            ],
+            "expect": {
+              "stdout": "expect/missing-diff-hr.stdout",
+              "stderr": "expect/missing-diff-hr.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "environment-bindings-9",
+      "description": "Ordered environment bindings with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "env-base",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/env-base.stdout",
+              "stderr": "expect/env-base.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_BASE": "base"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "argv-precedence-10",
+      "description": "Ordered argv precedence with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "base-precedence",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "base",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/base-precedence.stdout",
+              "stderr": "expect/base-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_BASE": "missing"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "render-flags-11",
+      "description": "Ordered render flags with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "strip-base"
+        },
+        {
+          "overlay": "strip-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "flag-strip-attr",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "strip-base",
+              "-o",
+              "json",
+              "--strip-attr",
+              "fixture.example/change"
+            ],
+            "expect": {
+              "stdout": "expect/flag-strip-attr.stdout",
+              "stderr": "expect/flag-strip-attr.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flag-strip-field",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "strip-base",
+              "-o",
+              "json",
+              "--strip-field",
+              "spec.replicas"
+            ],
+            "expect": {
+              "stdout": "expect/flag-strip-field.stdout",
+              "stderr": "expect/flag-strip-field.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "environment-bindings-12",
+      "description": "Ordered environment bindings with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "strip-base"
+        },
+        {
+          "overlay": "strip-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "env-strip-attr",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "strip-base",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/env-strip-attr.stdout",
+              "stderr": "expect/env-strip-attr.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_STRIP_ATTR": "fixture.example/change"
+            }
+          }
+        },
+        {
+          "id": "env-strip-field",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "strip-base",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/env-strip-field.stdout",
+              "stderr": "expect/env-strip-field.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_STRIP_FIELD": "spec.replicas"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "argv-precedence-13",
+      "description": "Ordered argv precedence with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "strip-base"
+        },
+        {
+          "overlay": "strip-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "precedence-strip-attr",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "strip-base",
+              "-o",
+              "json",
+              "--strip-attr",
+              "fixture.example/change"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-strip-attr.stdout",
+              "stderr": "expect/precedence-strip-attr.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_STRIP_ATTR": "unrelated"
+            }
+          }
+        },
+        {
+          "id": "precedence-strip-field",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "strip-base",
+              "-o",
+              "json",
+              "--strip-field",
+              "spec.replicas"
+            ],
+            "expect": {
+              "stdout": "expect/precedence-strip-field.stdout",
+              "stderr": "expect/precedence-strip-field.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_STRIP_FIELD": "unrelated"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "render-flags-14",
+      "description": "Ordered render flags with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "supplied"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "supply-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--supply",
+              "@@inputs@@/first.yaml",
+              "--supply",
+              "@@inputs@@/second.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/supply-repeat.stdout",
+              "stderr": "expect/supply-repeat.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "supply-duplicate",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--supply",
+              "@@inputs@@/first.yaml",
+              "--supply",
+              "@@inputs@@/second.yaml",
+              "--supply",
+              "@@inputs@@/duplicate.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/supply-duplicate.stdout",
+              "stderr": "expect/supply-duplicate.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "environment-bindings-15",
+      "description": "Ordered environment bindings with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "supplied"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "supply-env",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/supply-env.stdout",
+              "stderr": "expect/supply-env.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_SUPPLY": "@@inputs@@/first.yaml:@@inputs@@/second.yaml"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "argv-precedence-16",
+      "description": "Ordered argv precedence with isolated invocation environments.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "supplied"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "supply-precedence",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--supply",
+              "@@inputs@@/first.yaml",
+              "--supply",
+              "@@inputs@@/second.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/supply-precedence.stdout",
+              "stderr": "expect/supply-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_SUPPLY": "@@inputs@@/missing.yaml"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "omitted-kustomization-path",
+      "description": "omitted kustomization path.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "omitted-path"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "omitted-path-table",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "table"
+            ],
+            "expect": {
+              "stdout": "expect/omitted-path-table.stdout",
+              "stderr": "expect/omitted-path-table.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-path-yaml",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "yaml"
+            ],
+            "expect": {
+              "stdout": "expect/omitted-path-yaml.stdout",
+              "stderr": "expect/omitted-path-yaml.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-path-json",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/omitted-path-json.stdout",
+              "stderr": "expect/omitted-path-json.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "omitted-path-name",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "name"
+            ],
+            "expect": {
+              "stdout": "expect/omitted-path-name.stdout",
+              "stderr": "expect/omitted-path-name.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "restricted-local-source",
+      "description": "The CLI rejects a selected local Git source under the egress guard.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "restricted-source"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "restricted-local-source",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-p",
+              "@@repo@@/cluster",
+              "--concurrency",
+              "2",
+              "--restrict-egress"
+            ],
+            "expect": {
+              "stdout": "expect/restricted-local-source.stdout",
+              "stderr": "expect/restricted-local-source.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/app/configmap.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "baseline/app/crd.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "baseline/app/kustomization.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "baseline/app/pod.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "baseline/app/secret.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "baseline/charts/app/Chart.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "baseline/charts/app/templates/cm.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "baseline/cluster/flux.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "expect/all-selector-rejected.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/all-selector-rejected.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/argv-namespace-precedence.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/argv-namespace-precedence.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/argv-output-precedence.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/argv-output-precedence.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/argv-path-precedence.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/argv-path-precedence.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/base-precedence.stderr",
+      "cases": [
+        "argv-precedence-10"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/base-precedence.stdout",
+      "cases": [
+        "argv-precedence-10"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/cache-memory-precedence.stderr",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/cache-memory-precedence.stdout",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/concurrency-negative.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/concurrency-negative.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/concurrency-unbounded.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/concurrency-unbounded.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/default-working-directory.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/default-working-directory.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/empty-path.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/empty-path.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-allow-missing-kinds.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-allow-missing-kinds.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-api-versions.stderr",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-api-versions.stdout",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-base.stderr",
+      "cases": [
+        "environment-bindings-9"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-base.stdout",
+      "cases": [
+        "environment-bindings-9"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-cache-directory.stderr",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-cache-directory.stdout",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-cache-memory.stderr",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-cache-memory.stdout",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-concurrency.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-concurrency.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-disable-chart-digest-tracking.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-disable-chart-digest-tracking.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-enable-dns.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-enable-dns.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-git-depth.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-git-depth.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-kube-version.stderr",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-kube-version.stdout",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-log-level.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-log-level.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-no-progress.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-no-progress.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-path-orig.stderr",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-path-orig.stdout",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-registry-config.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-registry-config.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-restrict-egress.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-restrict-egress.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-strict-substitutions.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-strict-substitutions.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-strip-attr.stderr",
+      "cases": [
+        "environment-bindings-12"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-strip-attr.stdout",
+      "cases": [
+        "environment-bindings-12"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-strip-field.stderr",
+      "cases": [
+        "environment-bindings-12"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/env-strip-field.stdout",
+      "cases": [
+        "environment-bindings-12"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/environment-namespace.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/environment-namespace.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/environment-output.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/environment-output.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/environment-path.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/environment-path.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/exclusive-baselines.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/exclusive-baselines.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/extra-build.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/extra-build.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/extra-diff.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/extra-diff.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/extra-get.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/extra-get.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/extra-test.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/extra-test.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/file-path.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/file-path.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-allow-missing-kinds.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-allow-missing-kinds.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-api-versions.stderr",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-api-versions.stdout",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-disable-chart-digest-tracking.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-disable-chart-digest-tracking.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-enable-dns.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-enable-dns.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-git-depth.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-git-depth.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-kube-version.stderr",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-kube-version.stdout",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-registry-config.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-registry-config.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-restrict-egress.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-restrict-egress.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-strict-substitutions.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-strict-substitutions.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-strip-attr.stderr",
+      "cases": [
+        "render-flags-11"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-strip-attr.stdout",
+      "cases": [
+        "render-flags-11"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-strip-field.stderr",
+      "cases": [
+        "render-flags-11"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/flag-strip-field.stdout",
+      "cases": [
+        "render-flags-11"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-build-all.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-build-all.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-build-hr.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-build-hr.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-build-ks.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-build-ks.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-build.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-build.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-cache-gc.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-cache-gc.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-cache.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-cache.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion-bash.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion-bash.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion-fish.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion-fish.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion-powershell.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion-powershell.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion-zsh.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion-zsh.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-completion.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff-all.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff-all.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff-hr.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff-hr.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff-images.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff-images.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff-ks.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff-ks.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-diff.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get-all.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get-all.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get-hr.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get-hr.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get-images.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get-images.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get-ks.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get-ks.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-get.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-help.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-help.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-root.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-root.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-short.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-short.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-test-all.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-test-all.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-test-hr.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-test-hr.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-test-ks.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-test-ks.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-test.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-test.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-version-env-ignored.stderr",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/help-version-env-ignored.stdout",
+      "cases": [
+        "environment-bindings-2"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-concurrency.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-concurrency.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-csv-allow-missing-kinds.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-csv-allow-missing-kinds.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-csv-only-kinds.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-csv-only-kinds.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-csv-skip-kinds.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-csv-skip-kinds.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-disable-chart-digest-tracking.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-disable-chart-digest-tracking.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-enable-dns.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-enable-dns.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-git-depth.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-git-depth.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-include-removed.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-include-removed.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-log.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-log.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-no-progress.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-no-progress.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-output-build.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-output-build.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-output-diff.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-output-diff.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-output-get.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-output-get.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-restrict-egress.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-restrict-egress.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-strict-substitutions.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-strict-substitutions.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-supply.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-supply.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-log.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-log.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-output-build.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-output-build.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-output-diff.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-output-diff.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-output-get.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-output-get.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/list-not-command.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/list-not-command.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/log-error.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/log-error.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/log-info.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/log-info.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/log-warn.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/log-warn.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/long-common-flags.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/long-common-flags.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-build-hr.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-build-hr.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-build-ks.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-build-ks.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-diff-hr.stderr",
+      "cases": [
+        "parser-errors-8"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-diff-hr.stdout",
+      "cases": [
+        "parser-errors-8"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-diff-ks.stderr",
+      "cases": [
+        "parser-errors-8"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-diff-ks.stdout",
+      "cases": [
+        "parser-errors-8"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-get-hr.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-get-hr.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-get-ks.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-get-ks.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-path.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-path.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-test-hr.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-test-hr.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-test-ks.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-test-ks.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/omitted-path-json.stderr",
+      "cases": [
+        "omitted-kustomization-path"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/omitted-path-json.stdout",
+      "cases": [
+        "omitted-kustomization-path"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/omitted-path-name.stderr",
+      "cases": [
+        "omitted-kustomization-path"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/omitted-path-name.stdout",
+      "cases": [
+        "omitted-kustomization-path"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/omitted-path-table.stderr",
+      "cases": [
+        "omitted-kustomization-path"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/omitted-path-table.stdout",
+      "cases": [
+        "omitted-kustomization-path"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/omitted-path-yaml.stderr",
+      "cases": [
+        "omitted-kustomization-path"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/omitted-path-yaml.stdout",
+      "cases": [
+        "omitted-kustomization-path"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/path-orig-precedence.stderr",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/path-orig-precedence.stdout",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/path-orig-short.stderr",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/path-orig-short.stdout",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-allow-missing-kinds.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-allow-missing-kinds.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-api-versions.stderr",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-api-versions.stdout",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-concurrency.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-concurrency.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-disable-chart-digest-tracking.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-disable-chart-digest-tracking.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-enable-dns.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-enable-dns.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-git-depth.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-git-depth.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-kube-version.stderr",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-kube-version.stdout",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-log-level.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-log-level.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-no-progress.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-no-progress.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-registry-config.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-registry-config.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-restrict-egress.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-restrict-egress.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-strict-substitutions.stderr",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-strict-substitutions.stdout",
+      "cases": [
+        "argv-precedence-3"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-strip-attr.stderr",
+      "cases": [
+        "argv-precedence-13"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-strip-attr.stdout",
+      "cases": [
+        "argv-precedence-13"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-strip-field.stderr",
+      "cases": [
+        "argv-precedence-13"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/precedence-strip-field.stdout",
+      "cases": [
+        "argv-precedence-13"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/progress-absent.stderr",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/progress-absent.stdout",
+      "cases": [
+        "render-flags-1"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/restricted-local-source.stderr",
+      "cases": [
+        "restricted-local-source"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/restricted-local-source.stdout",
+      "cases": [
+        "restricted-local-source"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-env.stderr",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-env.stdout",
+      "cases": [
+        "environment-bindings-6"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-invalid-env.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-invalid-env.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-match.stderr",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-match.stdout",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-no-match-named.stderr",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-no-match-named.stdout",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-no-match.stderr",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-no-match.stdout",
+      "cases": [
+        "render-flags-5"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-precedence.stderr",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/selector-precedence.stdout",
+      "cases": [
+        "argv-precedence-7"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/supply-duplicate.stderr",
+      "cases": [
+        "render-flags-14"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/supply-duplicate.stdout",
+      "cases": [
+        "render-flags-14"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/supply-env.stderr",
+      "cases": [
+        "environment-bindings-15"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/supply-env.stdout",
+      "cases": [
+        "environment-bindings-15"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/supply-precedence.stderr",
+      "cases": [
+        "argv-precedence-16"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/supply-precedence.stdout",
+      "cases": [
+        "argv-precedence-16"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/supply-repeat.stderr",
+      "cases": [
+        "render-flags-14"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/supply-repeat.stdout",
+      "cases": [
+        "render-flags-14"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/test-all-rejects-output.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/test-all-rejects-output.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/test-hr-rejects-output.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/test-hr-rejects-output.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/test-ks-rejects-output.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/test-ks-rejects-output.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/test-rejects-output.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/test-rejects-output.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-build.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-build.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-diff.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-diff.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-get.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-get.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-root.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-root.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-test.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unknown-test.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unsupported-env-missing-kind.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unsupported-env-missing-kind.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unsupported-missing-kind.stderr",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/unsupported-missing-kind.stdout",
+      "cases": [
+        "parser-errors-4"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/version-long.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/version-long.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/version-short.stderr",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/version-short.stdout",
+      "cases": [
+        "help-and-version"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "inputs/duplicate.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "inputs/first.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "inputs/registry.json",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "inputs/second.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/changed/repo/app/configmap.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/changed/repo/cluster/flux.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/omitted-path/repo/cluster/flux.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/restricted-source/repo/cluster/flux.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-after/repo/app/configmap.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-after/repo/app/crd.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-after/repo/app/deployment.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-after/repo/app/kustomization.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-after/repo/app/pod.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-after/repo/app/secret.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-before/repo/app/configmap.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-before/repo/app/crd.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-before/repo/app/deployment.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-before/repo/app/kustomization.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-before/repo/app/pod.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/strip-before/repo/app/secret.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/supplied/repo/app/configmap.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "overlays/supplied/repo/cluster/flux.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/configmap.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/crd.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/kustomization.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/pod.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/secret.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/charts/app/Chart.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/cluster/flux.yaml",
+      "cases": [
+        "render-flags-1",
+        "environment-bindings-2",
+        "argv-precedence-3",
+        "parser-errors-4",
+        "help-and-version",
+        "render-flags-5",
+        "environment-bindings-6",
+        "argv-precedence-7",
+        "parser-errors-8",
+        "environment-bindings-9",
+        "argv-precedence-10",
+        "render-flags-11",
+        "environment-bindings-12",
+        "argv-precedence-13",
+        "render-flags-14",
+        "environment-bindings-15",
+        "argv-precedence-16",
+        "omitted-kustomization-path",
+        "restricted-local-source"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    }
+  ],
+  "inputs": "inputs"
+}

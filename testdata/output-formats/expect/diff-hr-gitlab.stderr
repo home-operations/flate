@@ -1,0 +1,4 @@
+
+  ⚠ warnings (2)
+    [PathConfig] orig snapshot: no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots
+    [PathConfig] current snapshot: no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots

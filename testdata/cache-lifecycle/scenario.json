@@ -1,0 +1,539 @@
+{
+  "source": {
+    "repository": "bjw-s-labs/home-ops",
+    "revision": "656b3515052fcdb0450ca56151809852e383200d",
+    "paths": [
+      "kubernetes/flux/cluster/ks.yaml"
+    ],
+    "reductions": "Authored CLI presentation controls. Retain the source and app path shape. Replace workloads with a ConfigMap, Pod, synthetic Secret, CRD, and local chart."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base",
+        "refs/remotes/origin/main"
+      ]
+    }
+  ],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "empty-cache",
+      "description": "empty cache.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "gc",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/gc.stdout",
+              "stderr": "expect/gc.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "gc-dry",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc",
+              "--dry-run",
+              "--max-age",
+              "0",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/gc-dry.stdout",
+              "stderr": "expect/gc-dry.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "gc-absent",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc",
+              "--cache-dir",
+              "@@cache@@/absent"
+            ],
+            "expect": {
+              "stdout": "expect/gc-absent.stdout",
+              "stderr": "expect/gc-absent.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "gc-env",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc"
+            ],
+            "expect": {
+              "stdout": "expect/gc-env.stdout",
+              "stderr": "expect/gc-env.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_CACHE_DIR": "@@cache@@",
+              "FLATE_MAX_AGE": "0",
+              "FLATE_DRY_RUN": "true"
+            }
+          }
+        },
+        {
+          "id": "gc-precedence",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc",
+              "--cache-dir",
+              "@@cache@@",
+              "--max-age",
+              "0",
+              "--dry-run=false"
+            ],
+            "expect": {
+              "stdout": "expect/gc-precedence.stdout",
+              "stderr": "expect/gc-precedence.stderr",
+              "code": 0
+            },
+            "env": {
+              "FLATE_CACHE_DIR": "bad-path",
+              "FLATE_MAX_AGE": "invalid",
+              "FLATE_DRY_RUN": "bad"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "negative-age",
+      "description": "negative age.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "negative-age",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc",
+              "--max-age=-1s",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/negative-age.stdout",
+              "stderr": "expect/negative-age.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-cache",
+      "description": "missing cache.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-cache",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc"
+            ],
+            "expect": {
+              "stdout": "expect/missing-cache.stdout",
+              "stderr": "expect/missing-cache.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid-env-age",
+      "description": "invalid env age.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invalid-env-age",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-age.stdout",
+              "stderr": "expect/invalid-env-age.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_MAX_AGE": "bad-value"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid-env-dry",
+      "description": "invalid env dry.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invalid-env-dry",
+          "invoke": {
+            "argv": [
+              "cache",
+              "gc"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-env-dry.stdout",
+              "stderr": "expect/invalid-env-dry.stderr",
+              "code": 1
+            },
+            "env": {
+              "FLATE_DRY_RUN": "bad-value"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "cache-command",
+      "description": "cache command.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "cache-command",
+          "invoke": {
+            "argv": [
+              "cache"
+            ],
+            "expect": {
+              "stdout": "expect/cache-command.stdout",
+              "stderr": "expect/cache-command.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/cache-command.stderr",
+      "cases": [
+        "cache-command"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/cache-command.stdout",
+      "cases": [
+        "cache-command"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc-absent.stderr",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc-absent.stdout",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc-dry.stderr",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc-dry.stdout",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc-env.stderr",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc-env.stdout",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc-precedence.stderr",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc-precedence.stdout",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc.stderr",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/gc.stdout",
+      "cases": [
+        "empty-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-age.stderr",
+      "cases": [
+        "invalid-env-age"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-age.stdout",
+      "cases": [
+        "invalid-env-age"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-dry.stderr",
+      "cases": [
+        "invalid-env-dry"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/invalid-env-dry.stdout",
+      "cases": [
+        "invalid-env-dry"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-cache.stderr",
+      "cases": [
+        "missing-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/missing-cache.stdout",
+      "cases": [
+        "missing-cache"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/negative-age.stderr",
+      "cases": [
+        "negative-age"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "expect/negative-age.stdout",
+      "cases": [
+        "negative-age"
+      ],
+      "purpose": "Complete stream expectation."
+    },
+    {
+      "path": "repo/app/configmap.yaml",
+      "cases": [
+        "empty-cache",
+        "negative-age",
+        "missing-cache",
+        "invalid-env-age",
+        "invalid-env-dry",
+        "cache-command"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/crd.yaml",
+      "cases": [
+        "empty-cache",
+        "negative-age",
+        "missing-cache",
+        "invalid-env-age",
+        "invalid-env-dry",
+        "cache-command"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/kustomization.yaml",
+      "cases": [
+        "empty-cache",
+        "negative-age",
+        "missing-cache",
+        "invalid-env-age",
+        "invalid-env-dry",
+        "cache-command"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/pod.yaml",
+      "cases": [
+        "empty-cache",
+        "negative-age",
+        "missing-cache",
+        "invalid-env-age",
+        "invalid-env-dry",
+        "cache-command"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/app/secret.yaml",
+      "cases": [
+        "empty-cache",
+        "negative-age",
+        "missing-cache",
+        "invalid-env-age",
+        "invalid-env-dry",
+        "cache-command"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/charts/app/Chart.yaml",
+      "cases": [
+        "empty-cache",
+        "negative-age",
+        "missing-cache",
+        "invalid-env-age",
+        "invalid-env-dry",
+        "cache-command"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "empty-cache",
+        "negative-age",
+        "missing-cache",
+        "invalid-env-age",
+        "invalid-env-dry",
+        "cache-command"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "repo/cluster/flux.yaml",
+      "cases": [
+        "empty-cache",
+        "negative-age",
+        "missing-cache",
+        "invalid-env-age",
+        "invalid-env-dry",
+        "cache-command"
+      ],
+      "purpose": "Declared materialized repository, overlay, or input."
+    }
+  ]
+}

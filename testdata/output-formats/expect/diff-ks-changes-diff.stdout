@@ -1,0 +1,15 @@
+--- ConfigMap apps/app (app)
++++ ConfigMap apps/app (app)
+@@ -1,10 +1,10 @@
+ apiVersion: v1
+ data:
+-  value: before
++  value: after
+ kind: ConfigMap
+ metadata:
+   annotations:
+-    fixture.example/change: before
++    fixture.example/change: after
+   labels:
+     kustomize.toolkit.fluxcd.io/name: app
+     kustomize.toolkit.fluxcd.io/namespace: apps

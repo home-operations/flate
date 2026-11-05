@@ -95,19 +95,6 @@ data:
 	return k8s
 }
 
-// TestRun_HelpExits0 covers the "no subcommand" path — cobra prints
-// help and exits 0.
-//
-//nolint:paralleltest // CLI execution changes process-wide logging.
-func TestRun_HelpExits0(t *testing.T) {
-	runCLIResult := runCLI(t, "--help")
-	stdout, code := runCLIResult.stdout, runCLIResult.code
-	assert.FatalIf(t, code != 0, "--help exited %d", code)
-	for _, want := range []string{"build", "diff", "test", "get"} {
-		assert.ErrorIf(t, !strings.Contains(stdout, want), "--help output missing verb %q: %s", want, stdout)
-	}
-}
-
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_GroupDefaultsToAll(t *testing.T) {
 	elapsed := regexp.MustCompile(` {3}\d+\.\d+s\n$`)

@@ -1,0 +1,5 @@
+
+  ✓  Kustomization  apps/app
+  ✓  HelmRelease    apps/app
+
+  ✓ 2 passed   <DUR>

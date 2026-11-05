@@ -1,0 +1,1 @@
+flate error: invalid argument "unsupported" for "-o, --output" flag: must be one of: human, github, diff, html, brief, gitlab, gitea, json

@@ -1,0 +1,27 @@
+--- ConfigMap workloads/installed
++++ ConfigMap workloads/installed
+@@ -2,7 +2,7 @@
+ data:
+   api: "false"
+   kube: v1.37.2
+-  value: before
++  value: after
+ kind: ConfigMap
+ metadata:
+   labels:
+
+--- ConfigMap apps/app (app)
++++ ConfigMap apps/app (app)
+@@ -1,10 +1,10 @@
+ apiVersion: v1
+ data:
+-  value: before
++  value: after
+ kind: ConfigMap
+ metadata:
+   annotations:
+-    fixture.example/change: before
++    fixture.example/change: after
+   labels:
+     kustomize.toolkit.fluxcd.io/name: app
+     kustomize.toolkit.fluxcd.io/namespace: apps

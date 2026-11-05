@@ -1,0 +1,5 @@
+
+  ✗  Kustomization  apps/app  kustomization path is not a directory: ./missing: resolve ./missing: stat missing: file does not exist
+  ✓  HelmRelease    apps/app
+
+  ✗ 1 passed · 1 failed   <DUR>

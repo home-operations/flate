@@ -1,0 +1,19 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "api": "false",
+      "kube": "v1.37.2",
+      "value": "before"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "helm.toolkit.fluxcd.io/name": "app",
+        "helm.toolkit.fluxcd.io/namespace": "apps"
+      },
+      "name": "installed",
+      "namespace": "workloads"
+    }
+  }
+]

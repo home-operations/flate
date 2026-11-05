@@ -42,7 +42,6 @@ scope/selected_root_diff_test.go
 scope/selected_root_ownership_test.go
 scope/selection_auxiliary_test.go
 scope/selection_test.go
-scope/skip_kind_output_test.go
 scope/unclaimed_test.go
 scope/unowned_entry_authority_test.go
 scope/unreadable_manifest_scope_test.go

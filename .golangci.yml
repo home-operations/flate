@@ -492,7 +492,7 @@ linters:
         linters:
           - errcheck
           - unparam
-      - path: (_test\.go|^test/e2e/internal/harness/)
+      - path: (_test\.go|^test/e2e/internal/harness/|^internal/testfixture/)
         linters:
           - gosec
   default: standard

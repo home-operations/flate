@@ -1,0 +1,221 @@
+package testfixture
+
+import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+)
+
+const inputsDirectory = "inputs"
+
+// Fixture isolates materialized state from the immutable disk scenario.
+type Fixture struct {
+	Plan         Case
+	Repo         string
+	Inputs       string
+	Home         string
+	Responses    []Response
+	root         string
+	dir          string
+	schema       *scenario
+	commits      map[string]plumbing.Hash
+	repositories map[string]*git.Repository
+	runs         int
+}
+
+// Materialize locates scenarios independently of the current working directory.
+func Materialize(tb testing.TB, scenarioName, variant string) *Fixture {
+	tb.Helper()
+	if !local(scenarioName) {
+		tb.Fatal("scenario path escapes testdata")
+	}
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		tb.Fatal("cannot locate fixture source")
+	}
+	return materialize(tb, filepath.Join(filepath.Dir(file), "..", "..", "testdata", scenarioName), variant)
+}
+
+func materialize(tb testing.TB, dir, variant string) *Fixture {
+	tb.Helper()
+	s, err := load(dir)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	var plan *Case
+	for i := range s.Cases {
+		if s.Cases[i].Name == variant {
+			plan = &s.Cases[i]
+			break
+		}
+	}
+	if plan == nil {
+		tb.Fatalf("unknown case %q", variant)
+	}
+	root := tb.TempDir()
+	f := &Fixture{
+		Plan:      *plan,
+		root:      root,
+		dir:       dir,
+		schema:    s,
+		Repo:      filepath.Join(root, "repo"),
+		Inputs:    filepath.Join(root, inputsDirectory),
+		Home:      filepath.Join(root, "home"),
+		Responses: s.Transport,
+	}
+	f.restore(tb)
+	return f
+}
+
+// Restore preserves caches only when the case explicitly requests reuse.
+func (f *Fixture) Restore(tb testing.TB) {
+	tb.Helper()
+	f.restore(tb)
+	if f.runs == 0 || f.Plan.Cache.Repeat == "reset" {
+		for _, p := range []string{"caches", "home"} {
+			must(tb, os.RemoveAll(filepath.Join(f.root, p)))
+		}
+	}
+	must(tb, os.MkdirAll(f.Home, 0o700))
+	f.runs++
+}
+
+func (f *Fixture) restore(tb testing.TB) {
+	tb.Helper()
+	f.commits = make(map[string]plumbing.Hash)
+	f.repositories = make(map[string]*git.Repository)
+	for _, r := range f.schema.Repositories {
+		target := filepath.Join(f.root, r.Name)
+		must(tb, os.RemoveAll(target))
+		must(tb, copyTree(filepath.Join(f.dir, r.Directory), target))
+		repo, err := git.PlainInit(target, false)
+		must(tb, err)
+		f.repositories[r.Name] = repo
+		for _, remote := range r.Remotes {
+			_, err := repo.CreateRemote(
+				&config.RemoteConfig{Name: remote.Name, URLs: []string{f.Resolve(tb, remote.URL, "")}},
+			)
+			must(tb, err)
+		}
+	}
+	must(tb, os.RemoveAll(f.Inputs))
+	must(tb, os.MkdirAll(f.Inputs, 0o700))
+	if f.schema.Inputs != "" {
+		must(tb, copyTree(filepath.Join(f.dir, f.schema.Inputs), f.Inputs))
+	}
+	for i := range f.schema.Commits {
+		f.createCommit(tb, &f.schema.Commits[i])
+	}
+	for _, op := range f.Plan.Setup {
+		f.apply(tb, &op)
+	}
+}
+
+// Edit permits only the operation declared by an edit step.
+func (f *Fixture) Edit(tb testing.TB, step Step) {
+	tb.Helper()
+	if step.Edit == nil {
+		tb.Fatal("step is not an edit")
+	}
+	f.apply(tb, step.Edit)
+}
+
+// CachePath must not reset or create caches while resolving expectations.
+func (f *Fixture) CachePath(name string) string {
+	return filepath.Join(f.root, "caches", name)
+}
+
+// Cache resets only the cache selected by the invocation.
+func (f *Fixture) Cache(tb testing.TB, inv *Invocation) string {
+	tb.Helper()
+	name := inv.Cache.Name
+	if name == "" {
+		name = "default"
+	}
+	target := f.CachePath(name)
+	if inv.Cache.Reset {
+		must(tb, os.RemoveAll(target))
+	}
+	must(tb, os.MkdirAll(target, 0o700))
+	return target
+}
+
+// Resolve rejects commit tokens that the scenario does not declare.
+func (f *Fixture) Resolve(tb testing.TB, value, cache string) string {
+	tb.Helper()
+	value = strings.NewReplacer("@@repo@@", f.Repo, "@@baseline@@", filepath.Join(f.root, "baseline"), "@@inputs@@", f.Inputs, "@@cache@@", cache).
+		Replace(value)
+	for strings.Contains(value, "@@commit:") {
+		start := strings.Index(value, "@@commit:")
+		end := strings.Index(value[start+len("@@commit:"):], "@@")
+		if end < 0 {
+			tb.Fatal("unterminated commit token")
+		}
+		end += start + len("@@commit:")
+		name := value[start+len("@@commit:") : end]
+		hash, ok := f.commits[name]
+		if !ok {
+			tb.Fatalf("unknown commit token %q", name)
+		}
+		value = value[:start] + hash.String() + value[end+2:]
+	}
+	return value
+}
+
+// Read rejects paths outside the disk scenario.
+func (f *Fixture) Read(tb testing.TB, path, cache string) string {
+	tb.Helper()
+	if !local(path) {
+		tb.Fatal("fixture read escapes scenario")
+	}
+	body, err := os.ReadFile(filepath.Join(f.dir, path))
+	must(tb, err)
+	return f.Resolve(tb, string(body), cache)
+}
+
+func copyTree(source, target string) error {
+	err := filepath.WalkDir(source, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("walk fixture: %w", err)
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil {
+			return fmt.Errorf("fixture path: %w", err)
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("fixture symlink %s is forbidden", path)
+		}
+		dest := filepath.Join(target, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dest, 0o700)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read fixture: %w", err)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("fixture mode: %w", err)
+		}
+		return os.WriteFile(dest, data, info.Mode().Perm())
+	})
+	if err != nil {
+		return fmt.Errorf("copy fixture: %w", err)
+	}
+	return nil
+}
+
+func must(tb testing.TB, err error) {
+	tb.Helper()
+	if err != nil {
+		tb.Fatal(err)
+	}
+}

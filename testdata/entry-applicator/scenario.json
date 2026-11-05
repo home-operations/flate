@@ -1,0 +1,910 @@
+{
+  "source": {
+    "repository": "buroa/home-ops",
+    "revision": "380ca7bc59d0e58e8d85bfcaa54d8bb7057e5f70",
+    "paths": [
+      "kubernetes/apps/media/plex/ks.yaml",
+      "kubernetes/apps/flux-system/flux-instance/app/helmrelease.yaml"
+    ],
+    "reductions": "Authored minimal reductions of the app source/path topology. Replace charts and workloads with local ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/entry/repo"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base-fluxinstance",
+      "overlay": "base-fluxinstance",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "base-kustomization",
+      "overlay": "base-kustomization",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "base-fluxinstance",
+      "directory": "overlays/base-fluxinstance"
+    },
+    {
+      "name": "application-elsewhere-fluxinstance",
+      "directory": "overlays/application-elsewhere-fluxinstance"
+    },
+    {
+      "name": "base-kustomization",
+      "directory": "overlays/base-kustomization"
+    },
+    {
+      "name": "application-elsewhere-kustomization",
+      "directory": "overlays/application-elsewhere-kustomization"
+    },
+    {
+      "name": "workload-after",
+      "directory": "overlays/workload-after"
+    },
+    {
+      "name": "interval-2h",
+      "directory": "overlays/interval-2h"
+    }
+  ],
+  "cases": [
+    {
+      "name": "entry-application-rendered-fluxinstance",
+      "description": "Three ordered edits retain workload changes, compare warm and cold intervals, and invalidate entry application evidence.",
+      "setup": [
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/main",
+            "commit": "base-fluxinstance"
+          }
+        },
+        {
+          "commit": "base-fluxinstance"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "prime",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-initial.stdout",
+              "stderr": "expect/fluxinstance-initial.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "prime-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-initial.stdout",
+              "stderr": "expect/fluxinstance-initial.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "workload-edit",
+          "edit": {
+            "overlay": "workload-after"
+          }
+        },
+        {
+          "id": "workload-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-workload.stdout",
+              "stderr": "expect/fluxinstance-workload.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "workload-diff-repeat",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-workload.stdout",
+              "stderr": "expect/fluxinstance-workload.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "interval-edit",
+          "edit": {
+            "overlay": "interval-2h"
+          }
+        },
+        {
+          "id": "interval-warm",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-interval.stdout",
+              "stderr": "expect/fluxinstance-interval.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "interval-warm-repeat",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-interval.stdout",
+              "stderr": "expect/fluxinstance-interval.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "interval-cold",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-interval.stdout",
+              "stderr": "expect/fluxinstance-interval.stderr",
+              "code": 0
+            },
+            "cache": {
+              "name": "interval-cold",
+              "reset": true
+            }
+          }
+        },
+        {
+          "id": "interval-cold-repeat",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-interval.stdout",
+              "stderr": "expect/fluxinstance-interval.stderr",
+              "code": 0
+            },
+            "cache": {
+              "name": "interval-cold",
+              "reset": false
+            }
+          }
+        },
+        {
+          "id": "application-path-edit",
+          "edit": {
+            "overlay": "application-elsewhere-fluxinstance"
+          }
+        },
+        {
+          "id": "invalidated",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/fluxinstance-invalidated.stdout",
+              "stderr": "expect/fluxinstance-invalidated.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "entry-application-rendered-kustomization",
+      "description": "Three ordered edits retain workload changes, compare warm and cold intervals, and invalidate entry application evidence.",
+      "setup": [
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/main",
+            "commit": "base-kustomization"
+          }
+        },
+        {
+          "commit": "base-kustomization"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "prime",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-initial.stdout",
+              "stderr": "expect/kustomization-initial.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "prime-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-initial.stdout",
+              "stderr": "expect/kustomization-initial.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "workload-edit",
+          "edit": {
+            "overlay": "workload-after"
+          }
+        },
+        {
+          "id": "workload-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-workload.stdout",
+              "stderr": "expect/kustomization-workload.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "workload-diff-repeat",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-workload.stdout",
+              "stderr": "expect/kustomization-workload.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "interval-edit",
+          "edit": {
+            "overlay": "interval-2h"
+          }
+        },
+        {
+          "id": "interval-warm",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-interval.stdout",
+              "stderr": "expect/kustomization-interval.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "interval-warm-repeat",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-interval.stdout",
+              "stderr": "expect/kustomization-interval.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "interval-cold",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-interval.stdout",
+              "stderr": "expect/kustomization-interval.stderr",
+              "code": 0
+            },
+            "cache": {
+              "name": "interval-cold",
+              "reset": true
+            }
+          }
+        },
+        {
+          "id": "interval-cold-repeat",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-o",
+              "json",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-interval.stdout",
+              "stderr": "expect/kustomization-interval.stderr",
+              "code": 0
+            },
+            "cache": {
+              "name": "interval-cold",
+              "reset": false
+            }
+          }
+        },
+        {
+          "id": "application-path-edit",
+          "edit": {
+            "overlay": "application-elsewhere-kustomization"
+          }
+        },
+        {
+          "id": "invalidated",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-p",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/kustomization-invalidated.stdout",
+              "stderr": "expect/kustomization-invalidated.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/fluxinstance-initial.stderr",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/fluxinstance-initial.stdout",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/fluxinstance-interval.stderr",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/fluxinstance-interval.stdout",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/fluxinstance-invalidated.stderr",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/fluxinstance-invalidated.stdout",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/fluxinstance-workload.stderr",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/fluxinstance-workload.stdout",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/kustomization-initial.stderr",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/kustomization-initial.stdout",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/kustomization-interval.stderr",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/kustomization-interval.stdout",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/kustomization-invalidated.stderr",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/kustomization-invalidated.stdout",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/kustomization-workload.stderr",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "expect/kustomization-workload.stdout",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "overlays/application-elsewhere-fluxinstance/repo/charts/bootstrap/templates/application.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "overlays/application-elsewhere-kustomization/repo/charts/bootstrap/templates/application.yaml",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "overlays/base-fluxinstance/repo/charts/bootstrap/templates/application.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "overlays/base-kustomization/repo/charts/bootstrap/templates/application.yaml",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "overlays/interval-2h/repo/kubernetes/apps/workload.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "overlays/workload-after/repo/workload/release.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/charts/bootstrap/Chart.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/charts/bootstrap/templates/application.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/charts/workload/Chart.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/charts/workload/templates/cm.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/elsewhere/cm.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/elsewhere/kustomization.yaml",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/kubernetes/apps/cm.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/kubernetes/apps/generator.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/kubernetes/apps/source.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/kubernetes/apps/unapplied/cm.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Unapplied sibling exclusion control."
+    },
+    {
+      "path": "repo/kubernetes/apps/unapplied/kustomization.yaml",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Unapplied sibling exclusion control."
+    },
+    {
+      "path": "repo/kubernetes/apps/workload.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/workload/kustomization.yaml",
+      "cases": [
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/workload/release.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Entry application sequence input or reviewed complete output."
+    },
+    {
+      "path": "repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "entry-application-rendered-fluxinstance",
+        "entry-application-rendered-kustomization"
+      ],
+      "purpose": "Explicit entry excludes the nested unapplied package in both application cases."
+    }
+  ]
+}

@@ -20,6 +20,20 @@ import (
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
+	for _, kind := range []string{"fluxinstance", "kustomization"} {
+		t.Run(kind, func(t *testing.T) {
+			if kind == "kustomization" {
+				t.Skip(
+					"not run: warm Kustomization admissions lose the application receipt; owner orchestrator receipts",
+				)
+			}
+			testEntryApplicationIntervalReceipt(t, kind)
+		})
+	}
+}
+
+func testEntryApplicationIntervalReceipt(t *testing.T, kind string) {
+	t.Helper()
 	root, original, cache := t.TempDir(), t.TempDir(), t.TempDir()
 	const url = "https://example.test/entry/repo"
 	for _, dir := range []string{root, original} {
@@ -41,7 +55,17 @@ func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 kind: FluxInstance
 metadata: {name: flux, namespace: apps}
 spec:
-  sync: {name: self, kind: GitRepository, url: ` + url + ", ref: main, path: {{ .Values.syncPath | default \"./entry\" }}}\n"
+  sync: {name: self, kind: GitRepository, url: ` + url + ", ref: refs/heads/main, path: {{ .Values.syncPath | default \"./entry\" }}}\n"
+		if kind == "kustomization" {
+			application = `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: sync, namespace: apps}
+spec:
+  interval: 1h
+  path: {{ .Values.syncPath | default "./entry" }}
+  sourceRef: {kind: GitRepository, name: self, namespace: apps}
+`
+		}
 		testutil.WriteFile(t, dir, "charts/bootstrap/templates/application.yaml", application)
 		testutil.WriteFile(
 			t,
@@ -56,6 +80,12 @@ spec:
 		testutil.WriteFile(t, dir, "workload/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, dir, "workload/cm.yaml",
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: before}\n")
+		testutil.WriteFile(t, dir, "unapplied/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, dir, "unapplied/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unapplied}\n")
+		testutil.WriteFile(t, dir, "elsewhere/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, dir, "elsewhere/cm.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: alternate-application}\n")
 	}
 	before := testDirectoryInput(t, original)
 	before.LocalPath, before.LocalRoot, before.URL = root, root, "file://"+root
@@ -261,15 +291,19 @@ func testEntryReceiptWorkload(t *testing.T, fixture *entryReceiptFixture) {
 		}, selected)
 		slog.SetDefault(previous)
 		assert.NoError(t, err)
-		literalBuilds := 0
+		literalBuilds, siblingBuilds := 0, 0
 		for line := range strings.SplitSeq(logs.String(), "\n") {
 			var event struct {
 				Msg  string `json:"msg"`
 				Path string `json:"path"`
 			}
-			if json.Unmarshal([]byte(line), &event) == nil && event.Msg == "kustomize: build" &&
-				manifest.NormalizeClaimBase(event.Path) == "entry" {
-				literalBuilds++
+			if json.Unmarshal([]byte(line), &event) == nil && event.Msg == "kustomize: build" {
+				switch manifest.NormalizeClaimBase(event.Path) {
+				case "entry":
+					literalBuilds++
+				case "unapplied":
+					siblingBuilds++
+				}
 			}
 		}
 		templates := strings.Count(logs.String(), `"msg":"helm: render"`)
@@ -277,6 +311,7 @@ func testEntryReceiptWorkload(t *testing.T, fixture *entryReceiptFixture) {
 		t.Logf("run=%d literal root builds=%d templates=%d admissions=%d/%d receipts reused=%d",
 			run, literalBuilds, templates, admissions[0].Load(), admissions[1].Load(), reused)
 		assert.Equal(t, literalBuilds, 0)
+		assert.Equal(t, siblingBuilds, 0)
 		assert.Equal(t, templates, 0)
 		assert.Equal(t, reused, 2)
 		assert.Equal(t, len(results), 2)
@@ -287,41 +322,18 @@ func testEntryReceiptWorkload(t *testing.T, fixture *entryReceiptFixture) {
 	}
 }
 
+type entryInvalidationCase struct{ name, file, old, next string }
+
 func testEntryReceiptInvalidation(t *testing.T, fixture *entryReceiptFixture) {
 	t.Helper()
 
-	for _, tc := range []struct{ name, file, old, next string }{
+	for _, tc := range []entryInvalidationCase{
 		{"chart", "charts/bootstrap/templates/application.yaml", "./entry", "./elsewhere"},
 		{"values", "entry/generator.yaml", "  interval: 10m\n", "  interval: 10m\n  values: {syncPath: ./elsewhere}\n"},
 		{"source", "entry/generator.yaml", "name: self, namespace: apps", "name: alternate, namespace: apps"},
 	} {
 		t.Run("invalidated/"+tc.name, func(t *testing.T) {
-			content, err := os.ReadFile(filepath.Join(fixture.root, tc.file))
-			if err != nil {
-				t.Fatal(err)
-			}
-			testutil.WriteFile(t, fixture.root, tc.file, strings.ReplaceAll(string(content), tc.old, tc.next))
-			t.Cleanup(func() { testutil.WriteFile(t, fixture.root, tc.file, string(content)) })
-			if tc.name == "source" {
-				testutil.WriteFile(t, fixture.root, "entry/alternate.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata: {name: alternate, namespace: apps}
-spec: {url: `+fixture.tree.SelfURLs[0]+"}\n")
-			}
-			current := fixture.tree
-			current.BaseInput, current.ExternalChanges = fixture.before, change.NewSet(
-				[]string{"entry/child.yaml", tc.file},
-			)
-			invalidated, err := newTestOrchestrator(t, current, fixture.cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := invalidated.bootstrap(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if invalidated.entryBinding.Producer != (manifest.NamedResource{}) {
-				t.Fatal("changed applier input retained stale application evidence")
-			}
+			testEntryReceiptInvalidationCase(t, fixture, tc)
 		})
 	}
 }
@@ -391,5 +403,77 @@ func assertEntryReceiptSuppliedInputs(
 				t.Fatalf("discovered application receipt valid = %t, want %t", got, want)
 			}
 		})
+	}
+}
+
+func entryReceiptTemplateCount(logs string, generator manifest.NamedResource) int {
+	templates := 0
+	for line := range strings.SplitSeq(logs, "\n") {
+		var event struct {
+			Msg     string `json:"msg"`
+			Release string `json:"release"`
+		}
+		if json.Unmarshal([]byte(line), &event) == nil && event.Msg == "helm: render" &&
+			event.Release == generator.String() {
+			templates++
+		}
+	}
+	return templates
+}
+
+func assertEntryReceiptInvalidatedRender(
+	t *testing.T,
+	invalidated *Orchestrator,
+	logs *bytes.Buffer,
+	admissions *atomic.Int64,
+) {
+	t.Helper()
+	assert.NoError(t, invalidated.run(t.Context()))
+	assert.Equal(t, entryReceiptTemplateCount(logs.String(), testutil.HelmReleaseID("apps", "generator")), 1)
+	assert.Equal(t, admissions.Load(), int64(1))
+}
+
+func testEntryReceiptInvalidationCase(t *testing.T, fixture *entryReceiptFixture, tc entryInvalidationCase) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(fixture.root, tc.file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, fixture.root, tc.file, strings.ReplaceAll(string(content), tc.old, tc.next))
+	t.Cleanup(func() { testutil.WriteFile(t, fixture.root, tc.file, string(content)) })
+	if tc.name == "source" {
+		testutil.WriteFile(t, fixture.root, "entry/alternate.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: alternate, namespace: apps}
+spec: {url: `+fixture.tree.SelfURLs[0]+"}\n")
+	}
+	current := fixture.tree
+	current.BaseInput, current.ExternalChanges = fixture.before, change.NewSet(
+		[]string{"entry/child.yaml", tc.file},
+	)
+	cfg := fixture.cfg
+	var admissions atomic.Int64
+	generator := testutil.HelmReleaseID("apps", "generator")
+	cfg.StatusListener = func(_ manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
+		if subject.ID == generator && info.String() == "rendering" {
+			admissions.Add(1)
+		}
+	}
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	invalidated, err := newTestOrchestrator(t, current, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := invalidated.bootstrap(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if invalidated.entryBinding.Producer != (manifest.NamedResource{}) {
+		t.Fatal("changed applier input retained stale application evidence")
+	}
+	if tc.name == "chart" {
+		assertEntryReceiptInvalidatedRender(t, invalidated, &logs, &admissions)
 	}
 }

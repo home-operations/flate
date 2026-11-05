@@ -194,7 +194,7 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 - `TestE2E_*` asserts only through `cli.Run`; anything else belongs in the package's tests.
 - Fixtures: `t.TempDir()` plus `testutil.WriteFile`; shared corpora live in `testdata/<scenario>/`
   and are documented in `testdata/TESTDATA.md`. Assert with `internal/assert` or `cmp.Diff`
-  (`-want +got`). No golden files.
+  (`-want +got`). No golden files, except reviewed `testdata/<scenario>/expect/*.stdout` and `*.stderr` for end-to-end fixture cases. Compare complete bytes and explicit exit codes. Only the trailing elapsed duration of a `test` summary becomes `<DUR>`, under the exact corpus duration grammar documented in `TESTDATA.md`. All other bytes remain unchanged. No automatic mechanism creates, regenerates or accepts expectations from actual test output. Every replacement expectation is an independently reviewed source change.
 - Every fix lands with a regression test for the reported symptom.
 - Test flate's own logic: nothing an upstream library already covers, nothing for trivial
   guards; adapt an existing test before adding one.

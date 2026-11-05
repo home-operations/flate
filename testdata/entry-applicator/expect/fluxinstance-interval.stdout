@@ -1,0 +1,171 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "apps",
+        "name": "workload",
+        "path": ""
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "workload",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "workload",
+            "helm.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "workload",
+          "namespace": "apps"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "workload",
+            "helm.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "workload",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "",
+        "kind": "",
+        "namespace": "",
+        "name": "",
+        "path": "kubernetes/apps"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "apps",
+      "name": "workload",
+      "status": "changed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "workload",
+          "namespace": "apps"
+        },
+        "spec": {
+          "interval": "1h",
+          "path": "./workload",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "self",
+            "namespace": "apps"
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "workload",
+          "namespace": "apps"
+        },
+        "spec": {
+          "interval": "2h",
+          "path": "./workload",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "self",
+            "namespace": "apps"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "workload",
+        "path": "workload"
+      },
+      "apiVersion": "helm.toolkit.fluxcd.io/v2",
+      "kind": "HelmRelease",
+      "namespace": "apps",
+      "name": "workload",
+      "status": "changed",
+      "old": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "workload",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "workload",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "charts/workload",
+              "sourceRef": {
+                "kind": "GitRepository",
+                "name": "self",
+                "namespace": "apps"
+              }
+            }
+          },
+          "values": {
+            "value": "before"
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "workload",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "workload",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "charts/workload",
+              "sourceRef": {
+                "kind": "GitRepository",
+                "name": "self",
+                "namespace": "apps"
+              }
+            }
+          },
+          "values": {
+            "value": "after"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

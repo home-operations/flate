@@ -1,0 +1,4 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: self, namespace: flux-system}
+spec: {url: https://example.test/entry/repo}

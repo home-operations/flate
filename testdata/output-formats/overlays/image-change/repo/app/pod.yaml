@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: app, namespace: apps}
+spec:
+  containers:
+    - {name: app, image: example.test/app:v2}
+    - {name: digest, image: example.test/digest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+    - {name: bare, image: busybox}
+  initContainers:
+    - {name: init, image: example.test/init:v1}

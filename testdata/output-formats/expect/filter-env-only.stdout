@@ -1,0 +1,12 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: app
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: app
+  namespace: apps
+stringData:
+  password: fixture-only
+type: Opaque

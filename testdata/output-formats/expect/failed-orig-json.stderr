@@ -1,0 +1,7 @@
+
+  ✗  orig snapshot: Kustomization  apps/app  kustomization path is not a directory: ./missing: resolve ./missing: stat missing: file does not exist
+
+  ⚠ warnings (1)
+    [DiffSuppressed] Kustomization apps/app: 2 objects not rendered on the orig side; diff suppressed (kustomization path is not a directory: ./missing: resolve ./missing: stat missing: file does not exist)
+
+  ✗ 1 failed

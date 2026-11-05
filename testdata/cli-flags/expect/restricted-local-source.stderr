@@ -1,0 +1,5 @@
+
+  ✗  GitRepository  flux-system/forbidden  url "file:///fixture-forbidden" uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)
+         blocks apps/app
+
+  ✗ 1 failed · 1 blocked

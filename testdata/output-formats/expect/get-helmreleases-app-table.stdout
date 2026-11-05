@@ -1,0 +1,2 @@
+NAMESPACE    NAME    CHART                                   VERSION    SOURCE
+apps         app     flux-system-flux-system/./charts/app    0.1.0      flux-system

@@ -1,0 +1,21 @@
+Render and compare Flux manifests offline
+
+Usage:
+  flate [command]
+
+Available Commands:
+  build       Render Flux objects to YAML (defaults to all)
+  cache       Prune flate's persistent cache
+  completion  Generate the autocompletion script for the specified shell
+  diff        Diff rendered output (defaults to all)
+  get         List Flux resources (defaults to all)
+  help        Help about any command
+  test        Report reconcile status (defaults to all)
+
+Flags:
+  -h, --help               help for flate
+      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]
+  -v, --version            version for flate
+
+Use "flate [command] --help" for more information about a command.

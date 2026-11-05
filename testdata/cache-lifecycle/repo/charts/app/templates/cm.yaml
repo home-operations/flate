@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: installed, namespace: workloads}
+data:
+  value: {{ .Values.value | default "before" | quote }}
+  kube: {{ .Capabilities.KubeVersion.Version | quote }}
+  api: {{ .Capabilities.APIVersions.Has "fixture.example/v1" | quote }}

@@ -1,0 +1,30 @@
+[
+  {
+    "kind": "Kustomization",
+    "name": "app",
+    "namespace": "apps",
+    "path": "./app",
+    "prune": false,
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "wait": false
+  },
+  {
+    "chart": "flux-system-flux-system/./charts/app",
+    "kind": "HelmRelease",
+    "name": "app",
+    "namespace": "apps",
+    "releaseName": "installed",
+    "source": "flux-system",
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "targetNamespace": "workloads",
+    "version": "0.1.0"
+  }
+]

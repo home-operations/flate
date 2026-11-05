@@ -1,0 +1,17 @@
+{
+  "changes": [],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "app",
+        "path": "app"
+      },
+      "side": "current",
+      "count": 2,
+      "reason": "kustomization path is not a directory: ./missing: resolve ./missing: stat missing: file does not exist"
+    }
+  ]
+}

@@ -4,12 +4,31 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testfixture"
 )
+
+func TestConcurrencyDefault_ExpectationToken(t *testing.T) {
+	t.Parallel()
+	fixture := &testfixture.Fixture{}
+	for _, input := range []string{"<CONCURRENCY_DEFAULT>", "default <CONCURRENCY_DEFAULT>\n", "<CONCURRENCY_DEFAULT> <CONCURRENCY_DEFAULT>"} {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+			want := strings.ReplaceAll(input, "<CONCURRENCY_DEFAULT>", strconv.Itoa(runtime.NumCPU()*4))
+			if got := fixture.Resolve(t, input, ""); got != want {
+				t.Fatalf("want %q, got %q", want, got)
+			}
+			if got := testDuration([]string{"build", "--help"}, input); got != input {
+				t.Fatalf("actual help changed: %q", got)
+			}
+		})
+	}
+}
 
 func TestTestDuration_Grammar(t *testing.T) {
 	t.Parallel()

@@ -1,0 +1,22 @@
+Generate the autocompletion script for the fish shell.
+
+To load completions in your current shell session:
+
+	flate completion fish | source
+
+To load completions for every new session, execute once:
+
+	flate completion fish > ~/.config/fish/completions/flate.fish
+
+You will need to start a new shell for this setup to take effect.
+
+Usage:
+  flate completion fish [flags]
+
+Flags:
+  -h, --help              help for fish
+      --no-descriptions   disable completion descriptions
+
+Global Flags:
+      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]

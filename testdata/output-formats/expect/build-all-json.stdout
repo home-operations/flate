@@ -1,0 +1,71 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "before"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "annotations": {
+        "fixture.example/change": "before"
+      },
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "app",
+        "kustomize.toolkit.fluxcd.io/namespace": "apps"
+      },
+      "name": "app",
+      "namespace": "apps"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "app",
+        "kustomize.toolkit.fluxcd.io/namespace": "apps"
+      },
+      "name": "app",
+      "namespace": "apps"
+    },
+    "spec": {
+      "containers": [
+        {
+          "image": "example.test/app:v1",
+          "name": "app"
+        },
+        {
+          "image": "example.test/digest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "digest"
+        },
+        {
+          "image": "busybox",
+          "name": "bare"
+        }
+      ],
+      "initContainers": [
+        {
+          "image": "example.test/init:v1",
+          "name": "init"
+        }
+      ]
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "api": "false",
+      "kube": "v1.37.2",
+      "value": "before"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "helm.toolkit.fluxcd.io/name": "app",
+        "helm.toolkit.fluxcd.io/namespace": "apps"
+      },
+      "name": "installed",
+      "namespace": "workloads"
+    }
+  }
+]

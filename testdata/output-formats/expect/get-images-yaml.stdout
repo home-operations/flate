@@ -1,0 +1,4 @@
+- busybox
+- example.test/app:v1
+- example.test/digest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+- example.test/init:v1

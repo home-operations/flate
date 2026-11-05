@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flate diff</title>
+<style>
+ 
+body.chroma.light {
+  --bg: #fff; --panel: #f6f8fa; --fg: #1f2328; --muted: #656d76; --border: #d0d7de; --accent: #0969da;
+  --add: #e6ffec; --add-gut: #aceebb; --add-fg: #1a7f37; --add-wd: #a6f0b5;
+  --del: #ffebe9; --del-gut: #ffc9c2; --del-fg: #cf222e; --del-wd: #ffb1b8;
+  --blank: #f6f8fa; --hunk: #ddf4ff; --hover: rgba(0, 0, 0, .05);
+  --changed-bg: #fff3cd; --changed-fg: #7d4e00; --added-bg: #dafbe1; --added-fg: #1a7f37; --removed-bg: #ffebe9; --removed-fg: #cf222e;
+}
+body.chroma.dark {
+  --bg: #0d1117; --panel: #161b22; --fg: #e6edf3; --muted: #8b949e; --border: #30363d; --accent: #2f81f7;
+  --add: #12261e; --add-gut: #1b4721; --add-fg: #3fb950; --add-wd: rgba(63, 185, 80, .4);
+  --del: #25171c; --del-gut: #542527; --del-fg: #f85149; --del-wd: rgba(248, 81, 73, .4);
+  --blank: #161b22; --hunk: #121d2f; --hover: rgba(255, 255, 255, .06);
+  --changed-bg: #3a2d00; --changed-fg: #e3b341; --added-bg: #0f2e16; --added-fg: #3fb950; --removed-bg: #3a0d12; --removed-fg: #f85149;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body.chroma {
+  margin: 0; background: var(--bg); color: var(--fg);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.hidden { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+ 
+.c-changed, .status-changed { background: var(--changed-bg); color: var(--changed-fg); }
+.c-added,   .status-added   { background: var(--added-bg);   color: var(--added-fg); }
+.c-removed, .status-removed { background: var(--removed-bg); color: var(--removed-fg); }
+
+ 
+.topbar {
+  display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 16px;
+  border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5;
+}
+.brand { font-weight: 600; font-size: 14px; }
+.spacer { flex: 1; }
+.btn {
+  font: inherit; font-size: 12px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--fg); cursor: pointer;
+}
+.btn:hover { border-color: var(--accent); }
+.menu-btn { display: inline-flex; align-items: center; }
+ 
+.counts { display: flex; gap: 6px; font-size: 12px; }
+.count { font: inherit; font-weight: 600; padding: 2px 8px; border: 0; border-radius: 10px; cursor: pointer; }
+.count:disabled { cursor: default; opacity: .45; }
+.count.off { opacity: .4; text-decoration: line-through; }
+
+ 
+.layout { display: flex; height: calc(100% - 49px); }
+.sidebar { width: var(--sb, 340px); flex: none; overflow: auto; background: var(--panel); padding: 0 0 8px; }
+.content { flex: 1; min-width: 0; overflow: auto; padding: 0 20px 20px; }
+.sidebar, .content { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+ 
+.splitter { flex: none; width: 6px; cursor: col-resize; background: var(--border); touch-action: none; }
+.splitter:hover, body.resizing .splitter { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
+.backdrop { display: none; }
+ 
+@media (min-width: 769px) {
+  body:not(.nav-open) .sidebar, body:not(.nav-open) .splitter { display: none; }
+}
+
+ 
+.filter { position: sticky; top: 0; z-index: 1; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.filter input {
+  width: 100%; font: inherit; font-size: 12px; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--fg);
+}
+.filter input:focus { outline: none; border-color: var(--accent); }
+.sidebar details { font-size: 13px; }
+.sidebar summary { cursor: pointer; padding: 3px 10px; white-space: nowrap; list-style: none; }
+.sidebar summary::-webkit-details-marker { display: none; }
+.sidebar summary::before { content: "\25B8"; display: inline-block; width: 1em; color: var(--muted); }
+.sidebar details[open] > summary::before { content: "\25BE"; }
+.tree-parent { padding-top: 6px; }
+.tree-parent > summary { font-family: var(--mono); font-weight: 600; font-size: 12px; }
+.tree-kind { margin-left: 14px; }
+.tree-kind > summary { color: var(--muted); font-size: 12px; }
+.tree-leaf {
+  display: flex; align-items: center; gap: 7px; margin-left: 30px; padding: 2px 10px 2px 2px;
+  text-decoration: none; color: var(--fg); font-family: var(--mono); font-size: 12px; border-radius: 4px;
+}
+.tree-leaf:hover { background: var(--hover); }
+.tree-leaf.current { background: var(--accent); color: #fff; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dot.changed { background: #bf8700; }
+.dot.added { background: #2da44e; }
+.dot.removed { background: #cf222e; }
+.leaf-name { overflow: hidden; text-overflow: ellipsis; }
+.leaf-stat { margin-left: auto; padding-left: 8px; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.tree-leaf.current .leaf-stat { color: #fff; }
+
+ 
+.placeholder { color: var(--muted); padding: 24px 4px; font-size: 14px; }
+.resource { display: none; }
+.resource.active { display: block; }
+ 
+.rtop { position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 16px 0 20px; }
+.rhead { font-family: var(--mono); font-size: 15px; margin: 0; }
+.status { font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 1px 7px; border-radius: 10px; margin-right: 8px; }
+.rparent { color: var(--muted); font-size: 12px; font-family: var(--mono); margin: 3px 0 0; }
+
+ 
+table.view {
+  width: 100%; border-collapse: collapse; table-layout: fixed; border: 1px solid var(--border); border-radius: 8px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 20px;
+}
+table.unified { display: none; }
+body.unified table.side { display: none; }
+body.unified table.unified { display: table; }
+ 
+.view col.cn { width: 48px; }
+ 
+.side col.cl { width: calc(var(--split, .5) * 100%); }
+.side col.cr { width: calc((1 - var(--split, .5)) * 100%); }
+.diff-lineno {
+  text-align: right; padding: 0 8px; color: var(--muted); user-select: none;
+  white-space: nowrap; border-right: 1px solid var(--border); vertical-align: top; font-variant-numeric: tabular-nums;
+}
+.diff-code { position: relative; padding: 0 10px 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+
+ 
+.side-wrap { position: relative; }
+.vsplit {
+  position: absolute; top: 0; bottom: 0; width: 9px; z-index: 1; cursor: col-resize; touch-action: none;
+  left: calc(48px + (100% - 96px) * var(--split, .5)); transform: translateX(-50%);
+}
+.vsplit::before { content: ""; position: absolute; inset: 0 4px; background: var(--accent); opacity: 0; }
+.vsplit:hover::before, body.vsplitting .vsplit::before { opacity: .6; }
+body.vsplitting { cursor: col-resize; user-select: none; }
+body.unified .vsplit { display: none; }
+
+ 
+td.diff-code.diff-add,   tr.row-add td.diff-code   { background: var(--add); }
+td.diff-lineno.diff-add, tr.row-add td.diff-lineno { background: var(--add-gut); }
+td.diff-code.diff-del,   tr.row-del td.diff-code   { background: var(--del); }
+td.diff-lineno.diff-del, tr.row-del td.diff-lineno { background: var(--del-gut); }
+td.diff-code.diff-blank, td.diff-lineno.diff-blank { background: var(--blank); }
+ 
+td.diff-code.diff-blank, td.diff-lineno.diff-blank {
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, var(--hover) 5px, var(--hover) 6px);
+}
+ 
+td.diff-code.diff-add::before, tr.row-add td.diff-code::before,
+td.diff-code.diff-del::before, tr.row-del td.diff-code::before { position: absolute; left: 7px; font-weight: 700; }
+td.diff-code.diff-add::before, tr.row-add td.diff-code::before { content: "+"; color: var(--add-fg); }
+td.diff-code.diff-del::before, tr.row-del td.diff-code::before { content: "-"; color: var(--del-fg); }
+ 
+.wd { border-radius: 2px; }
+td.diff-code.diff-add .wd, tr.row-add td.diff-code .wd { background: var(--add-wd); }
+td.diff-code.diff-del .wd, tr.row-del td.diff-code .wd { background: var(--del-wd); }
+
+tr.hunk td { background: var(--hunk); color: var(--muted); text-align: center; padding: 0; }
+tr.folded { display: none; }
+.expander {
+  font: inherit; font-size: 11px; font-family: var(--mono); color: var(--accent);
+  background: none; border: 0; cursor: pointer; padding: 3px 8px; width: 100%;
+  position: relative; z-index: 2;  
+}
+.expander:hover { background: var(--hover); text-decoration: underline; }
+
+ 
+@media (max-width: 768px) {
+  .topbar { gap: 8px; padding: 0 8px; }
+  .btn { padding: 5px 8px; font-size: 11px; }
+  .counts { display: none; }
+  .splitter, .vsplit { display: none; }
+  .sidebar {
+    position: fixed; top: 49px; bottom: 0; left: 0; z-index: 20; width: min(82vw, 320px);
+    transform: translateX(calc(-100% - 1px)); transition: transform .2s ease;
+  }
+  body.nav-open .sidebar { transform: none; box-shadow: 2px 0 14px rgba(0, 0, 0, .35); }
+  body.nav-open .backdrop { display: block; position: fixed; inset: 49px 0 0; z-index: 15; background: rgba(0, 0, 0, .45); }
+  .content { padding: 0 10px 20px; }
+  table.side { min-width: 560px; }
+}
+@media (max-width: 420px) { .brand { display: none; } }
+
+/* Background */ .bg.light { background-color: #f7f7f7; }
+/* PreWrapper */ .chroma.light { background-color: #f7f7f7; -webkit-text-size-adjust: none; }
+/* Error */ .chroma.light .err { color: #f6f8fa; background-color: #82071e }
+/* LineLink */ .chroma.light .lnlinks { outline: none; text-decoration: none; color: inherit }
+/* LineTableTD */ .chroma.light .lntd { vertical-align: top; padding: 0; margin: 0; border: 0; }
+/* LineTable */ .chroma.light .lntable { border-spacing: 0; padding: 0; margin: 0; border: 0; }
+/* LineHighlight */ .chroma.light .hl { background-color: #dedede }
+/* LineNumbersTable */ .chroma.light .lnt { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #7f7f7f }
+/* LineNumbers */ .chroma.light .ln { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #7f7f7f }
+/* Line */ .chroma.light .line { display: flex; }
+/* Keyword */ .chroma.light .k { color: #cf222e }
+/* KeywordConstant */ .chroma.light .kc { color: #cf222e }
+/* KeywordDeclaration */ .chroma.light .kd { color: #cf222e }
+/* KeywordNamespace */ .chroma.light .kn { color: #cf222e }
+/* KeywordPseudo */ .chroma.light .kp { color: #cf222e }
+/* KeywordReserved */ .chroma.light .kr { color: #cf222e }
+/* KeywordType */ .chroma.light .kt { color: #cf222e }
+/* NameAttribute */ .chroma.light .na { color: #1f2328 }
+/* NameClass */ .chroma.light .nc { color: #1f2328 }
+/* NameConstant */ .chroma.light .no { color: #0550ae }
+/* NameDecorator */ .chroma.light .nd { color: #0550ae }
+/* NameEntity */ .chroma.light .ni { color: #6639ba }
+/* NameLabel */ .chroma.light .nl { color: #990000; font-weight: bold }
+/* NameNamespace */ .chroma.light .nn { color: #24292e }
+/* NameOther */ .chroma.light .nx { color: #1f2328 }
+/* NameTag */ .chroma.light .nt { color: #0550ae }
+/* NameBuiltin */ .chroma.light .nb { color: #6639ba }
+/* NameBuiltinPseudo */ .chroma.light .bp { color: #6a737d }
+/* NameVariable */ .chroma.light .nv { color: #953800 }
+/* NameVariableClass */ .chroma.light .vc { color: #953800 }
+/* NameVariableGlobal */ .chroma.light .vg { color: #953800 }
+/* NameVariableInstance */ .chroma.light .vi { color: #953800 }
+/* NameVariableMagic */ .chroma.light .vm { color: #953800 }
+/* NameFunction */ .chroma.light .nf { color: #6639ba }
+/* NameFunctionMagic */ .chroma.light .fm { color: #6639ba }
+/* LiteralString */ .chroma.light .s { color: #0a3069 }
+/* LiteralStringAffix */ .chroma.light .sa { color: #0a3069 }
+/* LiteralStringBacktick */ .chroma.light .sb { color: #0a3069 }
+/* LiteralStringChar */ .chroma.light .sc { color: #0a3069 }
+/* LiteralStringDelimiter */ .chroma.light .dl { color: #0a3069 }
+/* LiteralStringDoc */ .chroma.light .sd { color: #0a3069 }
+/* LiteralStringDouble */ .chroma.light .s2 { color: #0a3069 }
+/* LiteralStringEscape */ .chroma.light .se { color: #0a3069 }
+/* LiteralStringHeredoc */ .chroma.light .sh { color: #0a3069 }
+/* LiteralStringInterpol */ .chroma.light .si { color: #0a3069 }
+/* LiteralStringOther */ .chroma.light .sx { color: #0a3069 }
+/* LiteralStringRegex */ .chroma.light .sr { color: #0a3069 }
+/* LiteralStringSingle */ .chroma.light .s1 { color: #0a3069 }
+/* LiteralStringSymbol */ .chroma.light .ss { color: #032f62 }
+/* LiteralNumber */ .chroma.light .m { color: #0550ae }
+/* LiteralNumberBin */ .chroma.light .mb { color: #0550ae }
+/* LiteralNumberFloat */ .chroma.light .mf { color: #0550ae }
+/* LiteralNumberHex */ .chroma.light .mh { color: #0550ae }
+/* LiteralNumberInteger */ .chroma.light .mi { color: #0550ae }
+/* LiteralNumberIntegerLong */ .chroma.light .il { color: #0550ae }
+/* LiteralNumberOct */ .chroma.light .mo { color: #0550ae }
+/* Operator */ .chroma.light .o { color: #0550ae }
+/* OperatorWord */ .chroma.light .ow { color: #0550ae }
+/* OperatorReserved */ .chroma.light .or { color: #0550ae }
+/* Punctuation */ .chroma.light .p { color: #1f2328 }
+/* Comment */ .chroma.light .c { color: #57606a }
+/* CommentHashbang */ .chroma.light .ch { color: #57606a }
+/* CommentMultiline */ .chroma.light .cm { color: #57606a }
+/* CommentSingle */ .chroma.light .c1 { color: #57606a }
+/* CommentSpecial */ .chroma.light .cs { color: #57606a }
+/* CommentPreproc */ .chroma.light .cp { color: #57606a }
+/* CommentPreprocFile */ .chroma.light .cpf { color: #57606a }
+/* GenericDeleted */ .chroma.light .gd { color: #82071e; background-color: #ffebe9 }
+/* GenericEmph */ .chroma.light .ge { color: #1f2328 }
+/* GenericInserted */ .chroma.light .gi { color: #116329; background-color: #dafbe1 }
+/* GenericOutput */ .chroma.light .go { color: #1f2328 }
+/* GenericUnderline */ .chroma.light .gl { text-decoration: underline }
+/* TextWhitespace */ .chroma.light .w { color: #ffffff }
+
+/* Background */ .bg.dark { color: #e6edf3; background-color: #0d1117; }
+/* PreWrapper */ .chroma.dark { color: #e6edf3; background-color: #0d1117; -webkit-text-size-adjust: none; }
+/* Error */ .chroma.dark .err { color: #f85149 }
+/* LineLink */ .chroma.dark .lnlinks { outline: none; text-decoration: none; color: inherit }
+/* LineTableTD */ .chroma.dark .lntd { vertical-align: top; padding: 0; margin: 0; border: 0; }
+/* LineTable */ .chroma.dark .lntable { border-spacing: 0; padding: 0; margin: 0; border: 0; }
+/* LineHighlight */ .chroma.dark .hl { background-color: #6e7681 }
+/* LineNumbersTable */ .chroma.dark .lnt { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #737679 }
+/* LineNumbers */ .chroma.dark .ln { white-space: pre; -webkit-user-select: none; user-select: none; margin-right: 0.4em; padding: 0 0.4em 0 0.4em;color: #6e7681 }
+/* Line */ .chroma.dark .line { display: flex; }
+/* Keyword */ .chroma.dark .k { color: #ff7b72 }
+/* KeywordConstant */ .chroma.dark .kc { color: #79c0ff }
+/* KeywordDeclaration */ .chroma.dark .kd { color: #ff7b72 }
+/* KeywordNamespace */ .chroma.dark .kn { color: #ff7b72 }
+/* KeywordPseudo */ .chroma.dark .kp { color: #79c0ff }
+/* KeywordReserved */ .chroma.dark .kr { color: #ff7b72 }
+/* KeywordType */ .chroma.dark .kt { color: #ff7b72 }
+/* NameClass */ .chroma.dark .nc { color: #f0883e; font-weight: bold }
+/* NameConstant */ .chroma.dark .no { color: #79c0ff; font-weight: bold }
+/* NameDecorator */ .chroma.dark .nd { color: #d2a8ff; font-weight: bold }
+/* NameEntity */ .chroma.dark .ni { color: #ffa657 }
+/* NameException */ .chroma.dark .ne { color: #f0883e; font-weight: bold }
+/* NameLabel */ .chroma.dark .nl { color: #79c0ff; font-weight: bold }
+/* NameNamespace */ .chroma.dark .nn { color: #ff7b72 }
+/* NameProperty */ .chroma.dark .py { color: #79c0ff }
+/* NameTag */ .chroma.dark .nt { color: #7ee787 }
+/* NameVariable */ .chroma.dark .nv { color: #79c0ff }
+/* NameVariableClass */ .chroma.dark .vc { color: #79c0ff }
+/* NameVariableGlobal */ .chroma.dark .vg { color: #79c0ff }
+/* NameVariableInstance */ .chroma.dark .vi { color: #79c0ff }
+/* NameVariableMagic */ .chroma.dark .vm { color: #79c0ff }
+/* NameFunction */ .chroma.dark .nf { color: #d2a8ff; font-weight: bold }
+/* NameFunctionMagic */ .chroma.dark .fm { color: #d2a8ff; font-weight: bold }
+/* Literal */ .chroma.dark .l { color: #a5d6ff }
+/* LiteralDate */ .chroma.dark .ld { color: #79c0ff }
+/* LiteralString */ .chroma.dark .s { color: #a5d6ff }
+/* LiteralStringAffix */ .chroma.dark .sa { color: #79c0ff }
+/* LiteralStringBacktick */ .chroma.dark .sb { color: #a5d6ff }
+/* LiteralStringChar */ .chroma.dark .sc { color: #a5d6ff }
+/* LiteralStringDelimiter */ .chroma.dark .dl { color: #79c0ff }
+/* LiteralStringDoc */ .chroma.dark .sd { color: #a5d6ff }
+/* LiteralStringDouble */ .chroma.dark .s2 { color: #a5d6ff }
+/* LiteralStringEscape */ .chroma.dark .se { color: #79c0ff }
+/* LiteralStringHeredoc */ .chroma.dark .sh { color: #79c0ff }
+/* LiteralStringInterpol */ .chroma.dark .si { color: #a5d6ff }
+/* LiteralStringOther */ .chroma.dark .sx { color: #a5d6ff }
+/* LiteralStringRegex */ .chroma.dark .sr { color: #79c0ff }
+/* LiteralStringSingle */ .chroma.dark .s1 { color: #a5d6ff }
+/* LiteralStringSymbol */ .chroma.dark .ss { color: #a5d6ff }
+/* LiteralNumber */ .chroma.dark .m { color: #a5d6ff }
+/* LiteralNumberBin */ .chroma.dark .mb { color: #a5d6ff }
+/* LiteralNumberFloat */ .chroma.dark .mf { color: #a5d6ff }
+/* LiteralNumberHex */ .chroma.dark .mh { color: #a5d6ff }
+/* LiteralNumberInteger */ .chroma.dark .mi { color: #a5d6ff }
+/* LiteralNumberIntegerLong */ .chroma.dark .il { color: #a5d6ff }
+/* LiteralNumberOct */ .chroma.dark .mo { color: #a5d6ff }
+/* Operator */ .chroma.dark .o { color: #ff7b72; font-weight: bold }
+/* OperatorWord */ .chroma.dark .ow { color: #ff7b72; font-weight: bold }
+/* OperatorReserved */ .chroma.dark .or { color: #ff7b72; font-weight: bold }
+/* Comment */ .chroma.dark .c { color: #8b949e; font-style: italic }
+/* CommentHashbang */ .chroma.dark .ch { color: #8b949e; font-style: italic }
+/* CommentMultiline */ .chroma.dark .cm { color: #8b949e; font-style: italic }
+/* CommentSingle */ .chroma.dark .c1 { color: #8b949e; font-style: italic }
+/* CommentSpecial */ .chroma.dark .cs { color: #8b949e; font-weight: bold; font-style: italic }
+/* CommentPreproc */ .chroma.dark .cp { color: #8b949e; font-weight: bold; font-style: italic }
+/* CommentPreprocFile */ .chroma.dark .cpf { color: #8b949e; font-weight: bold; font-style: italic }
+/* GenericDeleted */ .chroma.dark .gd { color: #ffa198; background-color: #490202 }
+/* GenericEmph */ .chroma.dark .ge { font-style: italic }
+/* GenericError */ .chroma.dark .gr { color: #ffa198 }
+/* GenericHeading */ .chroma.dark .gh { color: #79c0ff; font-weight: bold }
+/* GenericInserted */ .chroma.dark .gi { color: #56d364; background-color: #0f5323 }
+/* GenericOutput */ .chroma.dark .go { color: #8b949e }
+/* GenericPrompt */ .chroma.dark .gp { color: #8b949e }
+/* GenericStrong */ .chroma.dark .gs { font-weight: bold }
+/* GenericSubheading */ .chroma.dark .gu { color: #79c0ff }
+/* GenericTraceback */ .chroma.dark .gt { color: #ff7b72 }
+/* GenericUnderline */ .chroma.dark .gl { text-decoration: underline }
+/* TextWhitespace */ .chroma.dark .w { color: #6e7681 }
+
+</style>
+</head>
+<body class="chroma light">
+<header class="topbar">
+  <button class="btn menu-btn" id="menu-btn" type="button" aria-label="Toggle resource list">&#9776;</button>
+  <span class="brand">flate diff</span>
+  <span class="counts">
+    <button type="button" class="count c-changed" data-status="changed" aria-pressed="true">1 changed</button>
+    <button type="button" class="count c-added" data-status="added" aria-pressed="true" disabled>0 added</button>
+    <button type="button" class="count c-removed" data-status="removed" aria-pressed="true" disabled>0 removed</button>
+  </span>
+  <span class="spacer"></span>
+  <button class="btn" id="expand-btn" type="button">Expand all</button>
+  <button class="btn" id="view-btn" type="button">Unified</button>
+  <button class="btn" id="theme-btn" type="button">🌙 Dark</button>
+</header>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="filter"><input id="filter" type="search" placeholder="Filter resources…  ( / )" autocomplete="off" spellcheck="false"></div>
+    
+    <details class="tree-parent" open>
+      <summary>Kustomization apps/app (app)</summary>
+      
+      <details class="tree-kind" open>
+        <summary>ConfigMap <span class="leaf-stat">1</span></summary>
+        
+        <a class="tree-leaf" href="#r0" data-id="r0" data-status="changed"><span class="dot changed"></span><span class="leaf-name">apps/app</span><span class="leaf-stat">+2 -2</span></a>
+        
+      </details>
+      
+    </details>
+    
+  </nav>
+  <div class="splitter" id="splitter"></div>
+  <main class="content">
+    <div class="placeholder" id="placeholder">Select a resource from the tree to view its diff.</div>
+    
+    <section class="resource" id="r0">
+      <div class="rtop">
+        <h2 class="rhead"><span class="status status-changed">changed</span>ConfigMap apps/app</h2>
+        <div class="rparent">Kustomization apps/app (app)</div>
+      </div>
+      <div class="side-wrap">
+        <table class="view side"><colgroup><col class="cn"><col class="cl"><col class="cn"><col class="cr"></colgroup><tbody><tr>
+            <td class="diff-lineno diff-ctx">1</td>
+            <td class="diff-code diff-ctx"><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l">v1</span></td>
+            <td class="diff-lineno diff-ctx">1</td>
+            <td class="diff-code diff-ctx"><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l">v1</span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-ctx">2</td>
+            <td class="diff-code diff-ctx"><span class="l">data:</span></td>
+            <td class="diff-lineno diff-ctx">2</td>
+            <td class="diff-code diff-ctx"><span class="l">data:</span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-del">3</td>
+            <td class="diff-code diff-del"><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">before</span></span></td>
+            <td class="diff-lineno diff-add">3</td>
+            <td class="diff-code diff-add"><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">after</span></span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-ctx">4</td>
+            <td class="diff-code diff-ctx"><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l">ConfigMap</span></td>
+            <td class="diff-lineno diff-ctx">4</td>
+            <td class="diff-code diff-ctx"><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l">ConfigMap</span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-ctx">5</td>
+            <td class="diff-code diff-ctx"><span class="l">metadata:</span></td>
+            <td class="diff-lineno diff-ctx">5</td>
+            <td class="diff-code diff-ctx"><span class="l">metadata:</span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-ctx">6</td>
+            <td class="diff-code diff-ctx"><span class="w">  </span><span class="l">annotations:</span></td>
+            <td class="diff-lineno diff-ctx">6</td>
+            <td class="diff-code diff-ctx"><span class="w">  </span><span class="l">annotations:</span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-del">7</td>
+            <td class="diff-code diff-del"><span class="w">    </span><span class="nt">fixture.example/change</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">before</span></span></td>
+            <td class="diff-lineno diff-add">7</td>
+            <td class="diff-code diff-add"><span class="w">    </span><span class="nt">fixture.example/change</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">after</span></span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-ctx">8</td>
+            <td class="diff-code diff-ctx"><span class="w">  </span><span class="l">labels:</span></td>
+            <td class="diff-lineno diff-ctx">8</td>
+            <td class="diff-code diff-ctx"><span class="w">  </span><span class="l">labels:</span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-ctx">9</td>
+            <td class="diff-code diff-ctx"><span class="w">    </span><span class="nt">kustomize.toolkit.fluxcd.io/name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+            <td class="diff-lineno diff-ctx">9</td>
+            <td class="diff-code diff-ctx"><span class="w">    </span><span class="nt">kustomize.toolkit.fluxcd.io/name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+          </tr><tr>
+            <td class="diff-lineno diff-ctx">10</td>
+            <td class="diff-code diff-ctx"><span class="w">    </span><span class="nt">kustomize.toolkit.fluxcd.io/namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+            <td class="diff-lineno diff-ctx">10</td>
+            <td class="diff-code diff-ctx"><span class="w">    </span><span class="nt">kustomize.toolkit.fluxcd.io/namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+          </tr><tr class="hunk" data-fold="r0-g1"><td colspan="4"><button type="button" class="expander">&#8597; Expand 3 lines</button></td></tr><tr class="folded" data-fold="r0-g1">
+            <td class="diff-lineno diff-ctx">11</td>
+            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+            <td class="diff-lineno diff-ctx">11</td>
+            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+          </tr><tr class="folded" data-fold="r0-g1">
+            <td class="diff-lineno diff-ctx">12</td>
+            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+            <td class="diff-lineno diff-ctx">12</td>
+            <td class="diff-code diff-ctx"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+          </tr><tr class="folded" data-fold="r0-g1">
+            <td class="diff-lineno diff-ctx">13</td>
+            <td class="diff-code diff-ctx"></td>
+            <td class="diff-lineno diff-ctx">13</td>
+            <td class="diff-code diff-ctx"></td>
+          </tr>
+        </tbody></table>
+        <div class="vsplit" aria-hidden="true"></div>
+      </div>
+      <table class="view unified"><colgroup><col class="cn"><col class="cn"><col></colgroup><tbody><tr class="row-ctx">
+          <td class="diff-lineno">1</td>
+          <td class="diff-lineno">1</td>
+          <td class="diff-code"><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l">v1</span></td>
+        </tr><tr class="row-ctx">
+          <td class="diff-lineno">2</td>
+          <td class="diff-lineno">2</td>
+          <td class="diff-code"><span class="l">data:</span></td>
+        </tr><tr class="row-del">
+          <td class="diff-lineno">3</td>
+          <td class="diff-lineno"></td>
+          <td class="diff-code"><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">before</span></span></td>
+        </tr><tr class="row-add">
+          <td class="diff-lineno"></td>
+          <td class="diff-lineno">3</td>
+          <td class="diff-code"><span class="w">  </span><span class="nt">value</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">after</span></span></td>
+        </tr><tr class="row-ctx">
+          <td class="diff-lineno">4</td>
+          <td class="diff-lineno">4</td>
+          <td class="diff-code"><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l">ConfigMap</span></td>
+        </tr><tr class="row-ctx">
+          <td class="diff-lineno">5</td>
+          <td class="diff-lineno">5</td>
+          <td class="diff-code"><span class="l">metadata:</span></td>
+        </tr><tr class="row-ctx">
+          <td class="diff-lineno">6</td>
+          <td class="diff-lineno">6</td>
+          <td class="diff-code"><span class="w">  </span><span class="l">annotations:</span></td>
+        </tr><tr class="row-del">
+          <td class="diff-lineno">7</td>
+          <td class="diff-lineno"></td>
+          <td class="diff-code"><span class="w">    </span><span class="nt">fixture.example/change</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">before</span></span></td>
+        </tr><tr class="row-add">
+          <td class="diff-lineno"></td>
+          <td class="diff-lineno">7</td>
+          <td class="diff-code"><span class="w">    </span><span class="nt">fixture.example/change</span><span class="p">:</span><span class="w"> </span><span class="l"><span class="wd">after</span></span></td>
+        </tr><tr class="row-ctx">
+          <td class="diff-lineno">8</td>
+          <td class="diff-lineno">8</td>
+          <td class="diff-code"><span class="w">  </span><span class="l">labels:</span></td>
+        </tr><tr class="row-ctx">
+          <td class="diff-lineno">9</td>
+          <td class="diff-lineno">9</td>
+          <td class="diff-code"><span class="w">    </span><span class="nt">kustomize.toolkit.fluxcd.io/name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+        </tr><tr class="row-ctx">
+          <td class="diff-lineno">10</td>
+          <td class="diff-lineno">10</td>
+          <td class="diff-code"><span class="w">    </span><span class="nt">kustomize.toolkit.fluxcd.io/namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+        </tr><tr class="hunk" data-fold="r0-g1"><td colspan="3"><button type="button" class="expander">&#8597; Expand 3 lines</button></td></tr><tr class="row-ctx folded" data-fold="r0-g1">
+          <td class="diff-lineno">11</td>
+          <td class="diff-lineno">11</td>
+          <td class="diff-code"><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l">app</span></td>
+        </tr><tr class="row-ctx folded" data-fold="r0-g1">
+          <td class="diff-lineno">12</td>
+          <td class="diff-lineno">12</td>
+          <td class="diff-code"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="l">apps</span></td>
+        </tr><tr class="row-ctx folded" data-fold="r0-g1">
+          <td class="diff-lineno">13</td>
+          <td class="diff-lineno">13</td>
+          <td class="diff-code"></td>
+        </tr>
+      </tbody></table>
+    </section>
+    
+  </main>
+  <div class="backdrop" id="backdrop"></div>
+</div>
+<script>
+(() => {
+  const body = document.body;
+  const root = document.documentElement;
+  const $ = (id) => document.getElementById(id);
+  const all = (sel, ctx = document) => ctx.querySelectorAll(sel);
+  
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  
+  const setTheme = (theme) => {
+    body.classList.remove('light', 'dark');
+    body.classList.add(theme);
+    store.set('flate-theme', theme);
+    const btn = $('theme-btn');
+    if (btn) btn.textContent = theme === 'dark' ? '☀ Light' : '🌙 Dark';
+  };
+  setTheme(store.get('flate-theme') ?? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+  $('theme-btn')?.addEventListener('click', () => setTheme(body.classList.contains('dark') ? 'light' : 'dark'));
+
+  
+  const mq = window.matchMedia('(max-width: 768px)');
+  const viewBtn = $('view-btn');
+  const syncView = () => { if (viewBtn) viewBtn.textContent = body.classList.contains('unified') ? 'Side-by-side' : 'Unified'; };
+  if (mq.matches) body.classList.add('unified');
+  syncView();
+  viewBtn?.addEventListener('click', () => { body.classList.toggle('unified'); syncView(); });
+
+  
+  
+  const setNav = (open) => body.classList.toggle('nav-open', open);
+  setNav(!mq.matches);
+  mq.addEventListener?.('change', () => setNav(!mq.matches));
+  $('menu-btn')?.addEventListener('click', () => setNav(!body.classList.contains('nav-open')));
+  $('backdrop')?.addEventListener('click', () => setNav(false));
+
+  
+  const sections = all('.resource');
+  const leaves = all('a.tree-leaf');
+  const placeholder = $('placeholder');
+  const content = document.querySelector('.content');
+  const select = (id) => {
+    let found = false;
+    sections.forEach((section) => { const on = section.id === id; section.classList.toggle('active', on); found ||= on; });
+    leaves.forEach((leaf) => leaf.classList.toggle('current', leaf.dataset.id === id));
+    if (placeholder) placeholder.style.display = found ? 'none' : '';
+    if (found && content) content.scrollTop = 0;
+  };
+  leaves.forEach((leaf) => leaf.addEventListener('click', (event) => {
+    event.preventDefault();
+    select(leaf.dataset.id);
+    if (mq.matches) setNav(false); 
+    history.replaceState?.(null, '', '#' + leaf.dataset.id);
+  }));
+  const hash = location.hash.slice(1);
+  select(hash && $(hash) ? hash : sections[0]?.id);
+
+  
+  
+  const reveal = (sel = '') => {
+    all('tr.folded' + sel).forEach((r) => r.classList.remove('folded'));
+    all('tr.hunk[data-fold]' + sel).forEach((r) => r.remove());
+  };
+  content?.addEventListener('click', (event) => {
+    const row = event.target.closest('tr.hunk[data-fold]');
+    if (row) reveal(`[data-fold="${row.dataset.fold}"]`);
+  });
+  $('expand-btn')?.addEventListener('click', () => reveal());
+
+  
+  
+  
+  const drag = (el, { hit, move, done, cls }) => {
+    if (!el) return;
+    let target = null;
+    el.addEventListener('pointerdown', (event) => {
+      target = hit(event);
+      if (!target) return;
+      try { target.setPointerCapture(event.pointerId); } catch {}
+      body.classList.add(cls);
+      event.preventDefault();
+    });
+    el.addEventListener('pointermove', (event) => { if (target) move(event); });
+    const end = (event) => {
+      if (!target) return;
+      try { target.releasePointerCapture(event.pointerId); } catch {}
+      target = null;
+      body.classList.remove(cls);
+      done();
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+  };
+
+  
+  
+  
+  const splitter = $('splitter');
+  const clampSB = (px) => Math.max(180, Math.min(Math.round(px), Math.min(Math.round(window.innerWidth * 0.6), window.innerWidth - 320)));
+  let sb = Number(store.get('flate-sb')) || 340;
+  const applySB = (persist) => { sb = clampSB(sb); root.style.setProperty('--sb', sb + 'px'); if (persist) store.set('flate-sb', sb); };
+  applySB(false);
+  drag(splitter, {
+    hit: () => splitter,
+    move: (event) => { sb = event.clientX - splitter.parentElement.getBoundingClientRect().left; applySB(false); },
+    done: () => applySB(true),
+    cls: 'resizing',
+  });
+  window.addEventListener('resize', () => applySB(false));
+
+  
+  
+  let split = Number(store.get('flate-split')) || 0.5;
+  const applySplit = (persist) => { split = Math.max(0.15, Math.min(0.85, split)); root.style.setProperty('--split', String(split)); if (persist) store.set('flate-split', split); };
+  applySplit(false);
+  drag(content, {
+    hit: (event) => event.target.closest('.vsplit'),
+    move: (event) => {
+      const tbl = document.querySelector('.resource.active table.side');
+      if (!tbl) return;
+      const r = tbl.getBoundingClientRect();
+      split = (event.clientX - r.left - 48) / (r.width - 96);
+      applySplit(false);
+    },
+    done: () => applySplit(true),
+    cls: 'vsplitting',
+  });
+
+  
+  
+  
+  
+  const filter = $('filter');
+  const offStatus = new Set();
+  const prune = (group, childSel) => {
+    const any = [...all(childSel, group)].some((c) => !c.classList.contains('hidden'));
+    group.classList.toggle('hidden', !any);
+    if (any) group.open = true;
+  };
+  const applyFilter = () => {
+    const q = filter?.value.trim().toLowerCase() ?? '';
+    leaves.forEach((leaf) => {
+      const name = leaf.querySelector('.leaf-name')?.textContent.toLowerCase() ?? '';
+      leaf.classList.toggle('hidden', (q !== '' && !name.includes(q)) || offStatus.has(leaf.dataset.status));
+    });
+    all('.tree-kind').forEach((k) => prune(k, '.tree-leaf'));
+    all('.tree-parent').forEach((p) => prune(p, '.tree-kind'));
+  };
+  filter?.addEventListener('input', applyFilter);
+  all('.count').forEach((chip) => chip.addEventListener('click', () => {
+    const s = chip.dataset.status;
+    if (offStatus.has(s)) offStatus.delete(s); else offStatus.add(s);
+    chip.classList.toggle('off', offStatus.has(s));
+    chip.setAttribute('aria-pressed', String(!offStatus.has(s)));
+    applyFilter();
+  }));
+
+  
+  
+  const move = (delta) => {
+    const visible = [...leaves].filter((leaf) => leaf.offsetParent !== null);
+    if (!visible.length) return;
+    const currentId = [...leaves].find((leaf) => leaf.classList.contains('current'))?.dataset.id;
+    const at = visible.findIndex((leaf) => leaf.dataset.id === currentId);
+    const target = visible[at < 0 ? (delta > 0 ? 0 : visible.length - 1) : Math.min(visible.length - 1, Math.max(0, at + delta))];
+    if (!target) return;
+    select(target.dataset.id);
+    target.scrollIntoView({ block: 'nearest' });
+    history.replaceState?.(null, '', '#' + target.dataset.id);
+  };
+  document.addEventListener('keydown', (event) => {
+    if (event.target === filter) {
+      if (event.key === 'Escape') { filter.value = ''; filter.dispatchEvent(new Event('input')); filter.blur(); }
+      return;
+    }
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === 'j' || event.key === 'ArrowDown') { event.preventDefault(); move(1); }
+    else if (event.key === 'k' || event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
+    else if (event.key === '/') { event.preventDefault(); filter?.focus(); }
+  });
+})();
+</script>
+</body>
+</html>

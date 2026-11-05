@@ -1,0 +1,141 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "app",
+        "path": "app"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "app",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "annotations": {
+            "fixture.example/change": "before"
+          },
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "app",
+          "namespace": "apps"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "annotations": {
+            "fixture.example/change": "after"
+          },
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "app",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "app",
+        "path": "app"
+      },
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "namespace": "apps",
+      "name": "app",
+      "status": "changed",
+      "old": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "app",
+          "namespace": "apps"
+        },
+        "spec": {
+          "selector": {
+            "matchLabels": {
+              "app": "app"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "app": "app"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "example.test/deploy:v1",
+                  "name": "app"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "app",
+          "namespace": "apps"
+        },
+        "spec": {
+          "selector": {
+            "matchLabels": {
+              "app": "app"
+            }
+          },
+          "template": {
+            "metadata": {
+              "labels": {
+                "app": "app"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "example.test/deploy:v2",
+                  "name": "app"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

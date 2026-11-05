@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -14,7 +15,10 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
-const inputsDirectory = "inputs"
+const (
+	inputsDirectory          = "inputs"
+	defaultConcurrencyPerCPU = 4
+)
 
 // Fixture isolates materialized state from the immutable disk scenario.
 type Fixture struct {
@@ -151,7 +155,8 @@ func (f *Fixture) Cache(tb testing.TB, inv *Invocation) string {
 // Resolve rejects commit tokens that the scenario does not declare.
 func (f *Fixture) Resolve(tb testing.TB, value, cache string) string {
 	tb.Helper()
-	value = strings.NewReplacer("@@repo@@", f.Repo, "@@baseline@@", filepath.Join(f.root, "baseline"), "@@inputs@@", f.Inputs, "@@cache@@", cache).
+	value = strings.NewReplacer("@@repo@@", f.Repo, "@@baseline@@", filepath.Join(f.root, "baseline"), "@@inputs@@", f.Inputs, "@@cache@@", cache,
+		"<CONCURRENCY_DEFAULT>", strconv.Itoa(runtime.NumCPU()*defaultConcurrencyPerCPU)).
 		Replace(value)
 	for strings.Contains(value, "@@commit:") {
 		start := strings.Index(value, "@@commit:")

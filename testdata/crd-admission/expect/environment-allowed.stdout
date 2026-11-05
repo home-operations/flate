@@ -1,0 +1,6 @@
+
+  ✓  Kustomization  flux-system/apps
+  ‒  HelmRelease    flux-system/flux-operator  suspended
+  ‒  OCIRepository  flux-system/flux-operator  suspended
+
+  ✓ 1 passed · 2 skipped   <DUR>

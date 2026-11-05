@@ -1,0 +1,41 @@
+[
+  {
+    "kind": "Kustomization",
+    "name": "apps-backend",
+    "namespace": "backend",
+    "path": "./tenants/backend",
+    "prune": true,
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "wait": false
+  },
+  {
+    "kind": "Kustomization",
+    "name": "cluster-tenants",
+    "namespace": "flux-system",
+    "path": "./tenants",
+    "prune": true,
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "wait": false
+  },
+  {
+    "kind": "Kustomization",
+    "name": "apps-frontend",
+    "namespace": "frontend",
+    "path": "./tenants/frontend",
+    "prune": true,
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "wait": false
+  }
+]

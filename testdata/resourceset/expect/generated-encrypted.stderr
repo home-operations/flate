@@ -1,0 +1,6 @@
+
+  ⚠ warnings (2)
+    [SOPSUnreadable] ConfigMap default/cm-one: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      encrypted
+    [SOPSUnreadable] Secret default/secret-one: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      encoded, encrypted

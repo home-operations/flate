@@ -1,0 +1,4 @@
+
+  ✗  ResourceSet  flux-system/documents  spec.resourcesTemplate: read rendered list: items member is not an object: map[string]interface {}
+
+  ✗ 1 failed

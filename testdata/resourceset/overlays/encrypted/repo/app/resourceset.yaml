@@ -1,0 +1,33 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: demo
+  namespace: flux-system
+spec:
+  inputs:
+  - name: one
+  resources:
+  - apiVersion: v1
+    data:
+      encrypted: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]
+      key: value
+    kind: ConfigMap
+    metadata:
+      name: cm-<< inputs.name >>
+      namespace: default
+  - apiVersion: v1
+    data:
+      encoded: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]
+      plain: dmFsdWU=
+    kind: Secret
+    metadata:
+      name: secret-<< inputs.name >>
+      namespace: default
+    stringData:
+      encrypted: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]
+      key: value
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: sa-<< inputs.name >>
+      namespace: default

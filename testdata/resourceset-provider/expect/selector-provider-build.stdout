@@ -1,0 +1,17 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "color": "blue"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "resourceset.fluxcd.controlplane.io/name": "apps",
+        "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+      },
+      "name": "alpha",
+      "namespace": "default"
+    }
+  }
+]

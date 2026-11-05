@@ -1,0 +1,631 @@
+{
+  "source": {
+    "repository": "angelnu/k8s-gitops",
+    "revision": "872f8a1baebedfdcce40c580b509e038d0242ec1",
+    "paths": [
+      "apps/paperless/app/resourceSet.yaml"
+    ],
+    "reductions": "Authored static tenant expansion and generated-data controls. Keep the static input/template topology; replace workloads with ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "generated-data",
+      "directory": "overlays/generated-data"
+    },
+    {
+      "name": "encrypted",
+      "directory": "overlays/encrypted"
+    }
+  ],
+  "cases": [
+    {
+      "name": "resource-set-expands-into-child-kustomizations",
+      "description": "resource set expands into child kustomizations.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "static-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/static-get.stdout",
+              "stderr": "expect/static-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "static-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/static-build.stdout",
+              "stderr": "expect/static-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "static-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/static-test.stdout",
+              "stderr": "expect/static-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resource-set-generated-data-all",
+      "description": "resource set generated data all.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "generated-data"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "generated-all",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--skip-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/generated-all.stdout",
+              "stderr": "expect/generated-all.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resource-set-generated-data-only-explicit-skips",
+      "description": "resource set generated data only explicit skips.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "generated-data"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "generated-only-explicit-skips",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--skip-kinds=",
+              "--only-kinds=ConfigMap,Secret"
+            ],
+            "expect": {
+              "stdout": "expect/generated-only-explicit-skips.stdout",
+              "stderr": "expect/generated-only-explicit-skips.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resource-set-generated-data-only-implicit-skips",
+      "description": "resource set generated data only implicit skips.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "generated-data"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "generated-only-implicit-skips",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap,Secret"
+            ],
+            "expect": {
+              "stdout": "expect/generated-only-implicit-skips.stdout",
+              "stderr": "expect/generated-only-implicit-skips.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resource-set-generated-data-defaults",
+      "description": "resource set generated data defaults.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "generated-data"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "generated-defaults",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/generated-defaults.stdout",
+              "stderr": "expect/generated-defaults.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resource-set-generated-data-skip-data",
+      "description": "resource set generated data skip data.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "generated-data"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "generated-skip-data",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--skip-kinds=ConfigMap,Secret"
+            ],
+            "expect": {
+              "stdout": "expect/generated-skip-data.stdout",
+              "stderr": "expect/generated-skip-data.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resource-set-generated-data-encrypted",
+      "description": "resource set generated data encrypted.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "generated-data"
+        },
+        {
+          "overlay": "encrypted"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "generated-encrypted",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--skip-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/generated-encrypted.stdout",
+              "stderr": "expect/generated-encrypted.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/generated-all.stderr",
+      "cases": [
+        "resource-set-generated-data-all"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-all.stdout",
+      "cases": [
+        "resource-set-generated-data-all"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-defaults.stderr",
+      "cases": [
+        "resource-set-generated-data-defaults"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-defaults.stdout",
+      "cases": [
+        "resource-set-generated-data-defaults"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-encrypted.stderr",
+      "cases": [
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-encrypted.stdout",
+      "cases": [
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-only-explicit-skips.stderr",
+      "cases": [
+        "resource-set-generated-data-only-explicit-skips"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-only-explicit-skips.stdout",
+      "cases": [
+        "resource-set-generated-data-only-explicit-skips"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-only-implicit-skips.stderr",
+      "cases": [
+        "resource-set-generated-data-only-implicit-skips"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-only-implicit-skips.stdout",
+      "cases": [
+        "resource-set-generated-data-only-implicit-skips"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-skip-data.stderr",
+      "cases": [
+        "resource-set-generated-data-skip-data"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/generated-skip-data.stdout",
+      "cases": [
+        "resource-set-generated-data-skip-data"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/static-build.stderr",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/static-build.stdout",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/static-get.stderr",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/static-get.stdout",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/static-test.stderr",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/static-test.stdout",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "overlays/encrypted/repo/app/resourceset.yaml",
+      "cases": [
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/generated-data/repo/app/kustomization.yaml",
+      "cases": [
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/generated-data/repo/app/resourceset.yaml",
+      "cases": [
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/generated-data/repo/entry/kustomization.yaml",
+      "cases": [
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/generated-data/repo/entry/root.yaml",
+      "cases": [
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/cluster/flux-system.yaml",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations",
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/apps.yaml",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations",
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/backend/cm.yaml",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations",
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/backend/kustomization.yaml",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations",
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/frontend/cm.yaml",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations",
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/frontend/kustomization.yaml",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations",
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/kustomization.yaml",
+      "cases": [
+        "resource-set-expands-into-child-kustomizations",
+        "resource-set-generated-data-all",
+        "resource-set-generated-data-only-explicit-skips",
+        "resource-set-generated-data-only-implicit-skips",
+        "resource-set-generated-data-defaults",
+        "resource-set-generated-data-skip-data",
+        "resource-set-generated-data-encrypted"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    }
+  ]
+}

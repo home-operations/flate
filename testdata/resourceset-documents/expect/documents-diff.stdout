@@ -1,0 +1,293 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "apps",
+        "path": "apps"
+      },
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "namespace": "",
+      "name": "duplicate",
+      "status": "changed",
+      "old": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "annotations": {
+            "fluxcd.controlplane.io/reconcile": "disabled"
+          },
+          "labels": {
+            "resourceset.fluxcd.controlplane.io/name": "documents",
+            "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+          },
+          "name": "duplicate"
+        }
+      },
+      "new": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+          "annotations": {
+            "fluxcd.controlplane.io/reconcile": "disabled"
+          },
+          "labels": {
+            "resourceset.fluxcd.controlplane.io/name": "documents",
+            "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+          },
+          "name": "duplicate"
+        },
+        "spec": {
+          "replicas": 2
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "apps",
+        "path": "apps"
+      },
+      "apiVersion": "fluxcd.controlplane.io/v1",
+      "kind": "ResourceSet",
+      "namespace": "flux-system",
+      "name": "documents",
+      "status": "changed",
+      "old": {
+        "apiVersion": "fluxcd.controlplane.io/v1",
+        "kind": "ResourceSet",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "documents",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "resources": [
+            {
+              "apiVersion": "v1",
+              "items": [
+                {
+                  "apiVersion": "v1",
+                  "kind": "ConfigMap",
+                  "metadata": {
+                    "name": "wrapped"
+                  }
+                }
+              ],
+              "kind": "List"
+            },
+            {
+              "apiVersion": "v1",
+              "data": {
+                "value": "nameless-json"
+              },
+              "kind": "ConfigMap"
+            },
+            {
+              "apiVersion": "kustomize.config.k8s.io/v1beta1",
+              "kind": "Kustomization",
+              "resources": [
+                "json-directive"
+              ]
+            },
+            {
+              "apiVersion": "apps/v1",
+              "kind": "Deployment",
+              "metadata": {
+                "name": "raw"
+              }
+            },
+            {
+              "apiVersion": "apps/v1",
+              "kind": "Deployment",
+              "metadata": {
+                "name": "explicit",
+                "namespace": "other"
+              }
+            },
+            {
+              "apiVersion": "v1",
+              "data": {
+                "encrypted": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
+              },
+              "kind": "ConfigMap",
+              "metadata": {
+                "name": "sanitized"
+              }
+            },
+            {
+              "apiVersion": "apps/v1",
+              "kind": "Deployment",
+              "metadata": {
+                "annotations": {
+                  "fluxcd.controlplane.io/reconcile": "disabled"
+                },
+                "name": "duplicate"
+              }
+            },
+            {
+              "apiVersion": "apps/v1",
+              "kind": "Deployment",
+              "metadata": {
+                "annotations": {
+                  "fluxcd.controlplane.io/reconcile": "disabled"
+                },
+                "name": "duplicate"
+              }
+            },
+            {
+              "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+              "kind": "Kustomization",
+              "metadata": {
+                "name": "child"
+              },
+              "spec": {
+                "path": "./child",
+                "sourceRef": {
+                  "kind": "GitRepository",
+                  "name": "flux-system"
+                }
+              }
+            }
+          ],
+          "resourcesTemplate": "items:\n- apiVersion: apps/v1\n  kind: Deployment\n  spec: {value: nameless-list}\n- metadata: {name: kindless-list}\n- kind: List\n  metadata: {name: nested-wrapper}\n  items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: nested}}]\n- apiVersion: kustomize.config.k8s.io/v1beta1\n  kind: Kustomization\n  metadata: {name: item-directive}\n---\napiVersion: v1\nkind: ConfigMap\ndata: {value: rejected-yaml}\n---\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: kUsToMiZaTiOn\nmetadata: {name: rejected-directive}\n"
+        }
+      },
+      "new": {
+        "apiVersion": "fluxcd.controlplane.io/v1",
+        "kind": "ResourceSet",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "documents",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "resources": [
+            {
+              "apiVersion": "v1",
+              "items": [
+                {
+                  "apiVersion": "v1",
+                  "kind": "ConfigMap",
+                  "metadata": {
+                    "name": "wrapped"
+                  }
+                }
+              ],
+              "kind": "List"
+            },
+            {
+              "apiVersion": "v1",
+              "data": {
+                "value": "nameless-json"
+              },
+              "kind": "ConfigMap"
+            },
+            {
+              "apiVersion": "kustomize.config.k8s.io/v1beta1",
+              "kind": "Kustomization",
+              "resources": [
+                "json-directive"
+              ]
+            },
+            {
+              "apiVersion": "apps/v1",
+              "kind": "Deployment",
+              "metadata": {
+                "name": "raw"
+              }
+            },
+            {
+              "apiVersion": "apps/v1",
+              "kind": "Deployment",
+              "metadata": {
+                "name": "explicit",
+                "namespace": "other"
+              }
+            },
+            {
+              "apiVersion": "v1",
+              "data": {
+                "encrypted": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
+              },
+              "kind": "ConfigMap",
+              "metadata": {
+                "name": "sanitized"
+              }
+            },
+            {
+              "apiVersion": "apps/v1",
+              "kind": "Deployment",
+              "metadata": {
+                "annotations": {
+                  "fluxcd.controlplane.io/reconcile": "disabled"
+                },
+                "name": "duplicate"
+              },
+              "spec": {
+                "replicas": 2
+              }
+            },
+            {
+              "apiVersion": "apps/v1",
+              "kind": "Deployment",
+              "metadata": {
+                "annotations": {
+                  "fluxcd.controlplane.io/reconcile": "disabled"
+                },
+                "name": "duplicate"
+              },
+              "spec": {
+                "replicas": 2
+              }
+            },
+            {
+              "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+              "kind": "Kustomization",
+              "metadata": {
+                "name": "child"
+              },
+              "spec": {
+                "path": "./child",
+                "sourceRef": {
+                  "kind": "GitRepository",
+                  "name": "flux-system"
+                }
+              }
+            }
+          ],
+          "resourcesTemplate": "items:\n- apiVersion: apps/v1\n  kind: Deployment\n  spec: {value: nameless-list}\n- metadata: {name: kindless-list}\n- kind: List\n  metadata: {name: nested-wrapper}\n  items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: nested}}]\n- apiVersion: kustomize.config.k8s.io/v1beta1\n  kind: Kustomization\n  metadata: {name: item-directive}\n---\napiVersion: v1\nkind: ConfigMap\ndata: {value: rejected-yaml}\n---\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: kUsToMiZaTiOn\nmetadata: {name: rejected-directive}\n"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "child",
+        "path": "child"
+      },
+      "side": "both",
+      "count": 2,
+      "reason": "failed on both sides: orig: document 1: missing metadata.name for List; current: document 1: missing metadata.name for List"
+    }
+  ]
+}

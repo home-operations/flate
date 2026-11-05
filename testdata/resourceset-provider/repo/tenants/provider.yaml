@@ -1,0 +1,8 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: branches
+  namespace: flux-system
+spec:
+  type: GitHubBranch
+  url: https://example.invalid/branches

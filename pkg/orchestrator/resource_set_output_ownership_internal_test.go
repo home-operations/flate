@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -35,10 +35,8 @@ func TestOrchestrator_Render_ResourceSetEffectiveOwnership(t *testing.T) {
 
 func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 	t.Parallel()
-	source, err := filepath.Abs("../../testdata/resourceset-documents")
-	assert.NoError(t, err)
-	path := t.TempDir()
-	testutil.CopyTree(t, source, path)
+	fixture := testfixture.Materialize(t, "resourceset-documents", "resource-set-document-boundary")
+	path := fixture.Repo
 	testOrchestratorRenderResourceSetDocumentBoundarySegment(t, &path)
 }
 

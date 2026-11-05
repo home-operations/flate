@@ -1,0 +1,17 @@
+[
+  {
+    "chart": "flux-system-flux-operator/",
+    "kind": "HelmRelease",
+    "name": "flux-operator",
+    "namespace": "flux-system",
+    "releaseName": "flux-operator",
+    "source": "flux-operator",
+    "sourceRef": {
+      "kind": "OCIRepository",
+      "name": "flux-operator",
+      "namespace": "flux-system"
+    },
+    "suspend": true,
+    "version": "*"
+  }
+]

@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [UnrelatedFailure] CustomResourceDefinition helmreleases.helm.toolkit.fluxcd.io: not found; required by
+      ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator

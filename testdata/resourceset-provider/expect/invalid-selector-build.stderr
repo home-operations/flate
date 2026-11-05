@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/cluster-tenants  invalid reference selector: "invalid" is not a valid label selector operator
+
+  ✗ 1 failed

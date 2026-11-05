@@ -1,0 +1,25 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  labels:
+    role: selected
+  name: foreign
+  namespace: other
+spec:
+  defaultValues:
+    color: blue
+    tenant: foreign
+  type: Static
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  labels:
+    role: selected
+  name: branches
+  namespace: flux-system
+spec:
+  defaultValues:
+    color: blue
+    tenant: alpha
+  type: Static

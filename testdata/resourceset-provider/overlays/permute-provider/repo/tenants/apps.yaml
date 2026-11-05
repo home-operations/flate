@@ -1,0 +1,19 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  inputStrategy:
+    name: Permute
+  inputsFrom:
+  - name: branches
+  - name: regions
+  resources:
+  - apiVersion: v1
+    data:
+      color: << inputs.branches.color >>
+    kind: ConfigMap
+    metadata:
+      name: << inputs.branches.tenant >>-<< inputs.regions.region >>
+      namespace: default

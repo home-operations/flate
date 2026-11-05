@@ -1,0 +1,9 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  inputsFrom:
+  - name: branches
+  resourcesTemplate: << undefined >>

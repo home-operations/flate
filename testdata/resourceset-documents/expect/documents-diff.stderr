@@ -1,0 +1,17 @@
+
+  ✗  orig snapshot: ResourceSet  flux-system/documents  document 1: missing metadata.name for List
+
+  ✗  current snapshot: ResourceSet  flux-system/documents  document 1: missing metadata.name for List
+
+  ⚠ warnings (5)
+    [SOPSUnreadable] orig snapshot: ConfigMap flux-system/sanitized: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      encrypted
+    [SOPSUnreadable] current snapshot: ConfigMap flux-system/sanitized: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      encrypted
+    [DiffSuppressed] Kustomization flux-system/child: 2 objects withheld; diff suppressed (failed on both sides: orig: document 1: missing metadata.name for List; current: document 1: missing metadata.name for List)
+    [DuplicateDocument] Deployment duplicate: duplicate document shadows an earlier document
+      side: current, parent: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps, parent path: apps, apiVersion: apps/v1
+    [DuplicateDocument] Deployment duplicate: duplicate document shadows an earlier document
+      side: orig, parent: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps, parent path: apps, apiVersion: apps/v1
+
+  ✗ 2 failed

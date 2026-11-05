@@ -466,3 +466,121 @@ The emitted-generator case keeps a declared shallow boundary on the baseline rep
 The package tests under `pkg/controllers/artifactgenerator` retain parser, archive, partial publication, and synchronized convergence proofs.
 U6 removes both ArtifactGenerator files from the migration allowlist.
 The shared CLI and fixture helpers remain for the unmigrated U1 through U5 and U7 consumers until U9 removes their last callers.
+
+### ResourceSet and CRD scenarios
+
+`resourceset` follows `angelnu/k8s-gitops` at `872f8a1baebedfdcce40c580b509e038d0242ec1`.
+The source paths are `apps/paperless/app/resourceSet.yaml`.
+Authored static tenant expansion and generated-data controls. Keep the static input/template topology; replace workloads with ConfigMaps.
+
+`resourceset/resource-set-expands-into-child-kustomizations` covers resource set expands into child kustomizations.
+Its declared commands are `get ks -o`, `build all -o`, `test all --path`.
+`resourceset/resource-set-generated-data-all` covers resource set generated data all.
+Its declared commands are `build ks app`.
+`resourceset/resource-set-generated-data-only-explicit-skips` covers resource set generated data only explicit skips.
+Its declared commands are `build ks app`.
+`resourceset/resource-set-generated-data-only-implicit-skips` covers resource set generated data only implicit skips.
+Its declared commands are `build ks app`.
+`resourceset/resource-set-generated-data-defaults` covers resource set generated data defaults.
+Its declared commands are `build ks app`.
+`resourceset/resource-set-generated-data-skip-data` covers resource set generated data skip data.
+Its declared commands are `build ks app`.
+`resourceset/resource-set-generated-data-encrypted` covers resource set generated data encrypted.
+Its declared commands are `build ks app`.
+
+`resourceset-documents` follows `billimek/k8s-gitops` at `127e039d8c739d748e20415dd3fdcaff91b4cb2d`.
+The source paths are `kubernetes/kube-system/nfs-scalers/resourceset-nfs-scalers.yaml`.
+Copy the static app input and templated output shape with two ConfigMaps in place of HPAs. Document, metadata and malformed-member variants are authored controls, not copied upstream content.
+
+`resourceset-documents/resource-set-document-boundary` covers resource set document boundary.
+Its declared commands are `build all -o`, `diff all -o`.
+`resourceset-documents/controller-metadata-ownership` covers controller metadata ownership.
+Its declared commands are `build all -o`.
+`resourceset-documents/billimek-scalers` covers billimek scalers.
+Its declared commands are `build all -o`.
+
+`resourceset-provider` follows `xunholy/k8s-gitops` at `2f2e6edc730457a3f45d7a73aad536afc683b5eb`.
+The source paths are `kubernetes/apps/base/preview-system/app/resourcesetinputprovider.yaml`.
+Authored offline provider variant of the static fan-out. Keep the provider reference and replace the remote payload with two static tenant inputs.
+
+`resourceset-provider/provider-warnings` covers provider warnings.
+Its declared commands are `get ks -o`, `build all -o`, `test all --path`.
+
+`crd-admission` follows `toboshii/home-ops` at `b16119e828316df78f73d378bf7c386bad9dac12`.
+The source paths are `cluster/apps/database/cloudnative-pg/helm-release.yaml`, `cluster/apps/default/hajimari/helm-release.yaml`.
+Authored CRD admission controls around the existing flux-operator ResourceSet. Retain suspended chart/source children. No upstream chart or CRD distribution is copied.
+
+`crd-admission/missing-crds-strict-issue` covers missing crds strict issue.
+Its declared commands are `test all --path`.
+`crd-admission/resource-set-runtime-class-dependency` covers resource set runtime class dependency.
+Its declared commands are `test all --path`.
+`crd-admission/policy-reference-crd` covers policy reference crd.
+Its declared commands are `test all --path`, `get hr -o`, `build all -o`.
+`crd-admission/policy-reference-crd-opt-in` covers policy reference crd opt in.
+Its declared commands are `test all --path`, `get hr -o`, `build all -o`.
+`crd-admission/policy-strict-absent` covers policy strict absent.
+Its declared commands are `test all --path`.
+`crd-admission/policy-allowed-absent` covers policy allowed absent.
+Its declared commands are `test all --path`, `get hr -o`, `build all -o`.
+`crd-admission/policy-supplied-crd` covers policy supplied crd.
+Its declared commands are `test all --path`, `get hr -o`, `build all -o`.
+`crd-admission/policy-supplied-crd-opt-in` covers policy supplied crd opt in.
+Its declared commands are `test all --path`, `get hr -o`, `build all -o`.
+`crd-admission/policy-strict-absent-explicit-crd` covers policy strict absent explicit crd.
+Its declared commands are `test all --path`.
+`crd-admission/policy-allowed-absent-explicit-crd` covers policy allowed absent explicit crd.
+Its declared commands are `test all --path`, `get hr -o`, `build all -o`.
+`crd-admission/policy-missing-configmap` covers policy missing configmap.
+Its declared commands are `test all --path`.
+`crd-admission/policy-missing-secret` covers policy missing secret.
+Its declared commands are `test all --path`.
+`crd-admission/policy-missing-widget` covers policy missing widget.
+Its declared commands are `test all --path`.
+`crd-admission/policy-supplied-configmap` covers policy supplied configmap.
+Its declared commands are `test all --path`, `get hr -o`, `build all -o`.
+`crd-admission/missing-crds-environment` covers missing crds environment.
+Its declared commands are `test all --path`.
+`crd-admission/missing-crds-deterministic-warnings` covers missing crds deterministic warnings.
+Its declared commands are `test all --path`, `build all -o`, `get hr -o`.
+`crd-admission/missing-crds-diff-sides` covers missing crds diff sides.
+Its declared commands are `diff all -o`.
+`crd-admission/selection-strict-absent` covers selection strict absent.
+Its declared commands are `get hr -o`.
+`crd-admission/selection-allowed-absent` covers selection allowed absent.
+Its declared commands are `get hr -o`, `build all -o`.
+`crd-admission/selection-present` covers selection present.
+Its declared commands are `get hr -o`, `build all -o`.
+`crd-admission/selection-foreign-group` covers selection foreign group.
+Its declared commands are `get hr -o`.
+
+Each sequence runs twice at concurrency two or greater.
+Cases restore their inputs and reset their isolated caches before each replay.
+These cases omit `--cache-dir` and claim no disk render persistence.
+Expected manifests follow Flux ownership and namespace rules.
+Diagnostics and command selection follow flate policy.
+The document sequence retains malformed lists, duplicate identities, child suppression, and both diff sides.
+The orchestrator package proof reads the same materialized document scenario and retains its effective identity assertions.
+
+`resourceset-provider/static-provider` covers static provider.
+Its declared command is `build ks cluster-tenants`.
+
+`resourceset-provider/selector-provider` covers selector provider.
+Its declared command is `build ks cluster-tenants`.
+
+`resourceset-provider/flatten-provider` covers flatten provider.
+Its declared command is `build ks cluster-tenants`.
+
+`resourceset-provider/permute-provider` covers permute provider.
+Its declared command is `build ks cluster-tenants`.
+
+`resourceset-provider/supplied-provider` covers supplied provider.
+Its declared command is `build ks cluster-tenants`.
+
+`resourceset-provider/oci-tags` covers oci tags.
+Its declared command is `build ks cluster-tenants`.
+
+`resourceset-provider/invalid-template` covers invalid template.
+Its declared command is `build ks cluster-tenants`.
+
+`resourceset-provider/invalid-selector` covers invalid selector.
+Its declared command is `build ks cluster-tenants`.

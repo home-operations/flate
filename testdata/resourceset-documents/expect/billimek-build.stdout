@@ -1,0 +1,68 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "deployment": "audiobookshelf"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "resourceset.fluxcd.controlplane.io/name": "nfs-scalers",
+        "resourceset.fluxcd.controlplane.io/namespace": "kube-system"
+      },
+      "name": "audiobookshelf-nfs-scaler",
+      "namespace": "default"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "deployment": "frigate"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "resourceset.fluxcd.controlplane.io/name": "nfs-scalers",
+        "resourceset.fluxcd.controlplane.io/namespace": "kube-system"
+      },
+      "name": "frigate-nfs-scaler",
+      "namespace": "default"
+    }
+  },
+  {
+    "apiVersion": "fluxcd.controlplane.io/v1",
+    "kind": "ResourceSet",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "apps",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "nfs-scalers",
+      "namespace": "kube-system"
+    },
+    "spec": {
+      "inputs": [
+        {
+          "app": "audiobookshelf"
+        },
+        {
+          "app": "frigate"
+        }
+      ],
+      "resources": [
+        {
+          "apiVersion": "v1",
+          "data": {
+            "deployment": "\u003c\u003c inputs.app \u003e\u003e"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "name": "\u003c\u003c inputs.app \u003e\u003e-nfs-scaler",
+            "namespace": "default"
+          }
+        }
+      ],
+      "wait": true
+    }
+  }
+]

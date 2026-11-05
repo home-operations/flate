@@ -1,0 +1,9 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: documents
+  namespace: flux-system
+spec:
+  resourcesTemplate: 'items: [null]
+
+    '

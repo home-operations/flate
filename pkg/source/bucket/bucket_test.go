@@ -1,20 +1,24 @@
 package bucket_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/pkg/source/bucket"
@@ -103,14 +107,13 @@ func TestFetcher_TimeoutRecovery(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // The fixture replaces the process HTTP transport and proxy environment.
 func TestFetcher_TerminalStatusReplay(t *testing.T) {
-	t.Parallel()
-
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			t.Parallel()
-
-			testFetcherTerminalStatusReplayCase(t, &status)
+			synctest.Test(t, func(t *testing.T) {
+				testFetcherTerminalStatusReplayCase(t, &status)
+			})
 		},
 		)
 	}
@@ -262,26 +265,57 @@ func testFetcherTimeoutRecoveryCase(t *testing.T, reopen *bool,
 func testFetcherTerminalStatusReplayCase(t *testing.T, status *int,
 ) {
 	t.Helper()
+	previous := http.DefaultTransport
+	transport := previous.(*http.Transport).Clone()
+	t.Cleanup(func() {
+		http.DefaultTransport = previous //nolint:reassign // The process transport must be restored after all fixture workers finish.
+	})
+	t.Setenv("NO_PROXY", "*")
+	t.Setenv("no_proxy", "*")
 	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls.Add(1)
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader((*status))
-		_, _ = io.WriteString(
-			w,
-			`<Error><Code>SlowDown</Code><Message>temporary failure fixture-secret</Message></Error>`,
-		)
-	}))
-	t.Cleanup(srv.Close)
+	var workers sync.WaitGroup
+	var network source.Network
+	t.Cleanup(func() { network.Close(); workers.Wait() })
+	transport.DialTLSContext = func(context.Context, string, string) (net.Conn, error) {
+		client, server := net.Pipe()
+		t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+		workers.Go(func() {
+			defer server.Close()
+			req, err := http.ReadRequest(bufio.NewReader(server))
+			if err != nil {
+				t.Errorf("read bucket request: %v", err)
+				return
+			}
+			defer req.Body.Close()
+			calls.Add(1)
+			body := `<Error><Code>SlowDown</Code><Message>temporary failure fixture-secret</Message></Error>`
+			response := http.Response{
+				StatusCode:    *status,
+				ProtoMajor:    1,
+				ProtoMinor:    1,
+				Header:        http.Header{"Content-Type": {"application/xml"}},
+				Body:          io.NopCloser(strings.NewReader(body)),
+				ContentLength: int64(len(body)),
+				Close:         true,
+				Request:       req,
+			}
+			defer response.Body.Close()
+			if err := response.Write(server); err != nil {
+				t.Errorf("write bucket response: %v", err)
+			}
+		})
+		return client, nil
+	}
+	http.DefaultTransport = transport //nolint:reassign // Acquisition must use the in-memory connection within this synctest bubble.
 	root := t.TempDir()
 	c, err := cache.New(t.Context(), root)
 	assert.NoError(t, err)
 
 	t.Cleanup(func() { _ = c.Close() })
-	f := &bucket.Fetcher{Cache: c, Network: newTestNetwork(t)}
+	f := &bucket.Fetcher{Cache: c, Network: &network}
 	b := &manifest.Bucket{
 		Name: "terminal", Namespace: "test", BucketName: "data",
-		Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
+		Endpoint: "https://bucket.invalid", Insecure: true, Region: "us-east-1",
 	}
 	retry := cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}
 	_, err = f.Fetch(

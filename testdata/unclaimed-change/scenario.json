@@ -1,0 +1,179 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "testdata/unclaimed-change",
+      "test/e2e/scope/unclaimed_test.go"
+    ],
+    "reductions": "Retain the authored offline chart, its emitted child, and the unowned text-file edit."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "notes",
+      "directory": "overlays/notes"
+    }
+  ],
+  "cases": [
+    {
+      "name": "unclaimed-path-without-history",
+      "description": "An unowned text edit selects no producer, including a child emitted from unchanged chart content.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "notes"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "first",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-p",
+              "@@repo@@/flux",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "first",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "second",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "HEAD",
+              "-p",
+              "@@repo@@/flux",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "second",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/notes/repo/unclaimed/notes.txt",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "Unowned edit witness and unchanged producer exclusion control."
+    },
+    {
+      "path": "repo/apps/unrelated/cm.yaml",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "Unowned edit witness and unchanged producer exclusion control."
+    },
+    {
+      "path": "repo/apps/unrelated/kustomization.yaml",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "Unowned edit witness and unchanged producer exclusion control."
+    },
+    {
+      "path": "repo/charts/demo/Chart.yaml",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "Unowned edit witness and unchanged producer exclusion control."
+    },
+    {
+      "path": "repo/charts/demo/templates/child.yaml",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "Unowned edit witness and unchanged producer exclusion control."
+    },
+    {
+      "path": "repo/flux/release.yaml",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "Unowned edit witness and unchanged producer exclusion control."
+    },
+    {
+      "path": "repo/unclaimed/notes.txt",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "Unowned edit witness and unchanged producer exclusion control."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "unclaimed-path-without-history"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

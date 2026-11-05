@@ -1,0 +1,11 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "value": "main-new"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "shared",
+    "namespace": "apps"
+  }
+}

@@ -43,39 +43,10 @@ func RequireCLIOK(t *testing.T, args ...string) cliOutput {
 	return cliOutput{Stdout: stdout, Stderr: stderr}
 }
 
-// RunCLI requires a successful CLI exit and returns stdout followed by stderr.
-func RunCLI(t *testing.T, args ...string) string {
-	t.Helper()
-	requireCLIOKResult2 := RequireCLIOK(t, args...)
-	stdout, stderr := requireCLIOKResult2.Stdout, requireCLIOKResult2.Stderr
-	return stdout + stderr
-}
-
-// RunCLIOutputOnly returns stdout followed by stderr regardless of exit status.
-func RunCLIOutputOnly(t *testing.T, args ...string) string {
-	t.Helper()
-	runCLIBuffersResult3 := RunCLIBuffers(args...)
-	stdout, stderr, _ := runCLIBuffersResult3.Stdout, runCLIBuffersResult3.Stderr, runCLIBuffersResult3.Code
-	return stdout + stderr
-}
-
 // RunCLIStdout requires a successful CLI exit and returns only stdout.
 func RunCLIStdout(t *testing.T, args ...string) string {
 	t.Helper()
 	requireCLIOKResult4 := RequireCLIOK(t, args...)
 	stdout, _ := requireCLIOKResult4.Stdout, requireCLIOKResult4.Stderr
 	return stdout
-}
-
-type cliError struct {
-	Output string
-	Code   int
-}
-
-// RunCLIExpectErr returns stdout followed by stderr and the CLI exit status.
-func RunCLIExpectErr(t *testing.T, args ...string) cliError {
-	t.Helper()
-	runCLIBuffersResult5 := RunCLIBuffers(args...)
-	stdout, stderr, code := runCLIBuffersResult5.Stdout, runCLIBuffersResult5.Stderr, runCLIBuffersResult5.Code
-	return cliError{Output: stdout + stderr, Code: code}
 }

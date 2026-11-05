@@ -1,0 +1,98 @@
+[
+  {
+    "changes": [
+      {
+        "parent": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "shared",
+          "path": "main/app"
+        },
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "namespace": "apps",
+        "name": "shared",
+        "status": "changed",
+        "old": {
+          "apiVersion": "v1",
+          "data": {
+            "value": "main"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "shared",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "shared",
+            "namespace": "apps"
+          }
+        },
+        "new": {
+          "apiVersion": "v1",
+          "data": {
+            "value": "main-new"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "shared",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "shared",
+            "namespace": "apps"
+          }
+        },
+        "oldChart": "",
+        "newChart": ""
+      }
+    ],
+    "cluster": "main",
+    "suppressed": []
+  },
+  {
+    "changes": [],
+    "cluster": "test",
+    "suppressed": []
+  },
+  {
+    "changes": [
+      {
+        "parent": {
+          "group": "kustomize.toolkit.fluxcd.io",
+          "kind": "Kustomization",
+          "namespace": "flux-system",
+          "name": "shared",
+          "path": "utility/app"
+        },
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "namespace": "apps",
+        "name": "shared",
+        "status": "removed",
+        "old": {
+          "apiVersion": "v1",
+          "data": {
+            "value": "utility"
+          },
+          "kind": "ConfigMap",
+          "metadata": {
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "shared",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "shared",
+            "namespace": "apps"
+          }
+        },
+        "new": null,
+        "oldChart": "",
+        "newChart": ""
+      }
+    ],
+    "cluster": "utility",
+    "removed": true,
+    "suppressed": []
+  }
+]

@@ -1,0 +1,219 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "secret-material-password-allowed-base",
+      "repository": "repo",
+      "overlay": "secret-material-password-allowed-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/secret-material-password-allowed-base"
+      ]
+    },
+    {
+      "name": "secret-material-password-allowed-baseline",
+      "repository": "baseline",
+      "overlay": "secret-material-password-allowed-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/secret-material-password-allowed-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "secret-material-password-allowed-base",
+      "directory": "overlays/secret-material-password-allowed-base",
+      "operations": []
+    },
+    {
+      "name": "secret-material-password-allowed-baseline",
+      "directory": "overlays/secret-material-password-allowed-baseline",
+      "operations": []
+    },
+    {
+      "name": "secret-material-password-allowed-after",
+      "directory": "overlays/secret-material-password-allowed-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "secret-material-password-allowed",
+      "description": "secret material password allowed.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "secret-material-password-allowed-baseline"
+        },
+        {
+          "commit": "secret-material-password-allowed-base"
+        },
+        {
+          "overlay": "secret-material-password-allowed-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/secret-material-username-required-build.stdout",
+              "stderr": "expect/secret-material-password-allowed-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/secret-material-password-allowed-build.stderr",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/secret-material-username-required-build.stdout",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/secret-material-password-allowed-base/repo/apps/cm.yaml",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/secret-material-password-allowed-base/repo/apps/kustomization.yaml",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/secret-material-password-allowed-base/repo/apps/secret.yaml",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/secret-material-password-allowed-base/repo/flux/root.yaml",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/secret-material-password-allowed-baseline/baseline/apps/cm.yaml",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/secret-material-password-allowed-baseline/baseline/apps/kustomization.yaml",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/secret-material-password-allowed-baseline/baseline/apps/secret.yaml",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/secret-material-password-allowed-baseline/baseline/flux/root.yaml",
+      "cases": [
+        "secret-material-password-allowed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    }
+  ],
+  "inputs": ""
+}

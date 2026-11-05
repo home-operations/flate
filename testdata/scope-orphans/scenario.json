@@ -1,0 +1,2048 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/namespace_orphans_test.go",
+      "test/e2e/scope/namespace_orphan_authority_test.go",
+      "test/e2e/scope/orphan_selection_test.go",
+      "test/e2e/scope/orphan_order_test.go"
+    ],
+    "reductions": "Preserve the existing namespace, raw identity, cache replay and orphan authority witnesses as disk scenarios."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "namespace-sibling",
+      "directory": "overlays/namespace-sibling",
+      "operations": []
+    },
+    {
+      "name": "namespace-explicit",
+      "directory": "overlays/namespace-explicit",
+      "operations": []
+    },
+    {
+      "name": "namespace-standalone",
+      "directory": "overlays/namespace-standalone",
+      "operations": []
+    },
+    {
+      "name": "namespace-shared",
+      "directory": "overlays/namespace-shared",
+      "operations": []
+    },
+    {
+      "name": "namespace-terminal-replay",
+      "directory": "overlays/namespace-terminal-replay",
+      "operations": []
+    },
+    {
+      "name": "namespace-terminal-replay-failure",
+      "operations": [
+        {
+          "cacheFailure": {
+            "cache": "default",
+            "repository": "https://charts.example.invalid",
+            "chart": "demo",
+            "version": "0.1.0",
+            "attempts": 12
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-failing-owner-2",
+      "directory": "overlays/namespace-failing-owner-2",
+      "operations": []
+    },
+    {
+      "name": "namespace-failing-owner-4",
+      "directory": "overlays/namespace-failing-owner-4",
+      "operations": []
+    },
+    {
+      "name": "parent-local",
+      "directory": "overlays/parent-local",
+      "operations": []
+    },
+    {
+      "name": "parent-external",
+      "directory": "overlays/parent-external",
+      "operations": []
+    },
+    {
+      "name": "excluded-siblings",
+      "directory": "overlays/excluded-siblings",
+      "operations": []
+    },
+    {
+      "name": "undiscovered-kustomization",
+      "directory": "overlays/undiscovered-kustomization",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "namespace-sibling",
+      "description": "namespace sibling",
+      "setup": [
+        {
+          "overlay": "namespace-sibling"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-sibling-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-sibling-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-sibling-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-explicit",
+      "description": "namespace explicit",
+      "setup": [
+        {
+          "overlay": "namespace-explicit"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-explicit-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-explicit-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-explicit-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-standalone",
+      "description": "namespace standalone",
+      "setup": [
+        {
+          "overlay": "namespace-standalone"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-standalone-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-standalone-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-standalone-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-shared",
+      "description": "namespace shared",
+      "setup": [
+        {
+          "overlay": "namespace-shared"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-a-all-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--namespace",
+              "demo-a"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-a-all-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-a-all-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--namespace",
+              "demo-a"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-a-all-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-a-hr-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--namespace",
+              "demo-a"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-a-hr-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-a-hr-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--namespace",
+              "demo-a"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-a-hr-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-a-named-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "demo",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--namespace",
+              "demo-a"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-a-named-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-a-named-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "demo",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--namespace",
+              "demo-a"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-a-named-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-b-all-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--namespace",
+              "demo-b"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-b-all-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-b-all-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--namespace",
+              "demo-b"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-b-all-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-b-hr-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--namespace",
+              "demo-b"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-b-hr-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-b-hr-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--namespace",
+              "demo-b"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-b-hr-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-b-named-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "demo",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--namespace",
+              "demo-b"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-b-named-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "demo-b-named-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "demo",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--namespace",
+              "demo-b"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-demo-b-named-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "absent-all-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--namespace",
+              "absent"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-absent-all-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "absent-all-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--namespace",
+              "absent"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-absent-all-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "absent-hr-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--namespace",
+              "absent"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-absent-hr-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "absent-hr-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--namespace",
+              "absent"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-shared-absent-hr-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-terminal-replay",
+      "description": "namespace terminal replay",
+      "setup": [
+        {
+          "overlay": "namespace-terminal-replay"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "prime",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-terminal-replay-prime.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "terminal-failure",
+          "edit": {
+            "overlay": "namespace-terminal-replay-failure"
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-terminal-replay-build.stdout",
+              "stderr": "expect/namespace-terminal-replay-build.stderr",
+              "code": 1
+            },
+            "transport": [
+              {
+                "host": "charts.example.invalid",
+                "method": "GET",
+                "path": "/index.yaml",
+                "error": "connection-reset"
+              },
+              {
+                "host": "charts.example.invalid",
+                "method": "GET",
+                "path": "/demo-0.1.0.tgz",
+                "error": "connection-reset"
+              }
+            ]
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-terminal-replay-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-failing-owner-2",
+      "description": "namespace failing owner 2",
+      "setup": [
+        {
+          "overlay": "namespace-failing-owner-2"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-failing-owner-2-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-failing-owner-2-get.stdout",
+              "stderr": "expect/namespace-failing-owner-2-get.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "namespace-failing-owner-4",
+      "description": "namespace failing owner 4",
+      "setup": [
+        {
+          "overlay": "namespace-failing-owner-4"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "4",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-failing-owner-4-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "4",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/namespace-failing-owner-4-get.stdout",
+              "stderr": "expect/namespace-failing-owner-4-get.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "parent-local",
+      "description": "parent local",
+      "setup": [
+        {
+          "overlay": "parent-local"
+        },
+        {
+          "noGit": "repo"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--allow-missing-kinds=Secret,ConfigMap"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/parent-local-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "parent-external",
+      "description": "parent external",
+      "setup": [
+        {
+          "overlay": "parent-external"
+        },
+        {
+          "noGit": "repo"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--allow-missing-kinds=Secret,ConfigMap"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/parent-external-build.stdout",
+              "stderr": "expect/parent-external-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "excluded-siblings",
+      "description": "excluded siblings",
+      "setup": [
+        {
+          "overlay": "excluded-siblings"
+        },
+        {
+          "noGit": "repo"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/excluded-siblings-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/excluded-siblings-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "undiscovered-kustomization",
+      "description": "undiscovered kustomization",
+      "setup": [
+        {
+          "overlay": "undiscovered-kustomization"
+        },
+        {
+          "noGit": "repo"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/undiscovered-kustomization-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/excluded-siblings-build.stdout",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/excluded-siblings-test.stdout",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-explicit-build.stdout",
+      "cases": [
+        "namespace-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-explicit-get.stdout",
+      "cases": [
+        "namespace-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-explicit-test.stdout",
+      "cases": [
+        "namespace-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-failing-owner-2-get.stderr",
+      "cases": [
+        "namespace-failing-owner-2"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-failing-owner-2-get.stdout",
+      "cases": [
+        "namespace-failing-owner-2"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-failing-owner-2-test.stdout",
+      "cases": [
+        "namespace-failing-owner-2"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-failing-owner-4-get.stderr",
+      "cases": [
+        "namespace-failing-owner-4"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-failing-owner-4-get.stdout",
+      "cases": [
+        "namespace-failing-owner-4"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-failing-owner-4-test.stdout",
+      "cases": [
+        "namespace-failing-owner-4"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-absent-all-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-absent-all-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-absent-hr-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-absent-hr-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-a-all-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-a-all-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-a-hr-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-a-hr-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-a-named-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-a-named-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-b-all-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-b-all-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-b-hr-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-b-hr-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-b-named-build.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-demo-b-named-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-get.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-shared-test.stdout",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-sibling-build.stdout",
+      "cases": [
+        "namespace-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-sibling-get.stdout",
+      "cases": [
+        "namespace-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-sibling-test.stdout",
+      "cases": [
+        "namespace-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-standalone-build.stdout",
+      "cases": [
+        "namespace-standalone"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-standalone-get.stdout",
+      "cases": [
+        "namespace-standalone"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-standalone-test.stdout",
+      "cases": [
+        "namespace-standalone"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-terminal-replay-build.stderr",
+      "cases": [
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-terminal-replay-build.stdout",
+      "cases": [
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-terminal-replay-prime.stdout",
+      "cases": [
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/namespace-terminal-replay-test.stdout",
+      "cases": [
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/parent-external-build.stderr",
+      "cases": [
+        "parent-external"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/parent-external-build.stdout",
+      "cases": [
+        "parent-external"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/parent-local-build.stdout",
+      "cases": [
+        "parent-local"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/undiscovered-kustomization-test.stdout",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/cm.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/kustomization.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/stray-a.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/stray-b.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/stray-c.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/stray-d.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/stray-e.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/stray-f.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/stray-g.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/apps/stray-h.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/excluded-siblings/repo/flux.yaml",
+      "cases": [
+        "excluded-siblings"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-explicit/repo/cluster/per-cluster/kustomization.yaml",
+      "cases": [
+        "namespace-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-explicit/repo/cluster/shared/demo/bundle.yaml",
+      "cases": [
+        "namespace-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-explicit/repo/cluster/shared/demo/kustomization.yaml",
+      "cases": [
+        "namespace-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-explicit/repo/flux/owner.yaml",
+      "cases": [
+        "namespace-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-failing-owner-2/repo/cluster/per-cluster/kustomization.yaml",
+      "cases": [
+        "namespace-failing-owner-2"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/namespace-failing-owner-2/repo/cluster/shared/demo/bundle.yaml",
+      "cases": [
+        "namespace-failing-owner-2"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-failing-owner-2/repo/cluster/shared/demo/kustomization.yaml",
+      "cases": [
+        "namespace-failing-owner-2"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/namespace-failing-owner-2/repo/flux/owner.yaml",
+      "cases": [
+        "namespace-failing-owner-2"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-failing-owner-4/repo/cluster/per-cluster/kustomization.yaml",
+      "cases": [
+        "namespace-failing-owner-4"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/namespace-failing-owner-4/repo/cluster/shared/demo/bundle.yaml",
+      "cases": [
+        "namespace-failing-owner-4"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-failing-owner-4/repo/cluster/shared/demo/kustomization.yaml",
+      "cases": [
+        "namespace-failing-owner-4"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/namespace-failing-owner-4/repo/flux/owner.yaml",
+      "cases": [
+        "namespace-failing-owner-4"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-shared/repo/cluster/per-cluster-demo-a/kustomization.yaml",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-shared/repo/cluster/per-cluster-demo-b/kustomization.yaml",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-shared/repo/cluster/shared/demo/bundle.yaml",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-shared/repo/cluster/shared/demo/kustomization.yaml",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-shared/repo/flux/owner-demo-a.yaml",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-shared/repo/flux/owner-demo-b.yaml",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-shared/repo/flux/repo.yaml",
+      "cases": [
+        "namespace-shared"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-sibling/repo/cluster/per-cluster/kustomization.yaml",
+      "cases": [
+        "namespace-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-sibling/repo/cluster/shared/demo/bundle.yaml",
+      "cases": [
+        "namespace-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-sibling/repo/cluster/shared/demo/kustomization.yaml",
+      "cases": [
+        "namespace-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-sibling/repo/flux/owner.yaml",
+      "cases": [
+        "namespace-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-standalone/repo/cluster/shared/demo/bundle.yaml",
+      "cases": [
+        "namespace-standalone"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-standalone/repo/cluster/shared/demo/kustomization.yaml",
+      "cases": [
+        "namespace-standalone"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-standalone/repo/flux/kustomization.yaml",
+      "cases": [
+        "namespace-standalone"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-terminal-replay/repo/cluster/per-cluster/kustomization.yaml",
+      "cases": [
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-terminal-replay/repo/cluster/shared/demo/bundle.yaml",
+      "cases": [
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-terminal-replay/repo/cluster/shared/demo/kustomization.yaml",
+      "cases": [
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/namespace-terminal-replay/repo/flux/owner.yaml",
+      "cases": [
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-external/repo/kubernetes/apps/configmap.yaml",
+      "cases": [
+        "parent-external"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-external/repo/kubernetes/apps/external.yaml",
+      "cases": [
+        "parent-external"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-external/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "parent-external"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-external/repo/kubernetes/apps/orphan/ks.yaml",
+      "cases": [
+        "parent-external"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-external/repo/kubernetes/flux/ks.yaml",
+      "cases": [
+        "parent-external"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-local/repo/kubernetes/apps/configmap.yaml",
+      "cases": [
+        "parent-local"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-local/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "parent-local"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-local/repo/kubernetes/apps/orphan/ks.yaml",
+      "cases": [
+        "parent-local"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/parent-local/repo/kubernetes/flux/ks.yaml",
+      "cases": [
+        "parent-local"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/undiscovered-kustomization/repo/apps/kustomization.yaml",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/undiscovered-kustomization/repo/apps/orphan/app/cm.yaml",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/undiscovered-kustomization/repo/apps/orphan/app/kustomization.yaml",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/undiscovered-kustomization/repo/apps/orphan/ks.yaml",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/undiscovered-kustomization/repo/apps/wired/app/cm.yaml",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/undiscovered-kustomization/repo/apps/wired/app/kustomization.yaml",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/undiscovered-kustomization/repo/apps/wired/ks.yaml",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/undiscovered-kustomization/repo/cluster/flux-system.yaml",
+      "cases": [
+        "undiscovered-kustomization"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "transport/demo-0.1.0.tgz",
+      "cases": [
+        "namespace-explicit",
+        "namespace-failing-owner-2",
+        "namespace-failing-owner-4",
+        "namespace-shared",
+        "namespace-sibling",
+        "namespace-standalone",
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "transport/index.yaml",
+      "cases": [
+        "namespace-explicit",
+        "namespace-failing-owner-2",
+        "namespace-failing-owner-4",
+        "namespace-shared",
+        "namespace-sibling",
+        "namespace-standalone",
+        "namespace-terminal-replay"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "excluded-siblings",
+        "namespace-explicit",
+        "namespace-failing-owner-2",
+        "namespace-failing-owner-4",
+        "namespace-shared",
+        "namespace-sibling",
+        "namespace-standalone",
+        "namespace-terminal-replay",
+        "parent-local",
+        "undiscovered-kustomization"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "transport": [
+    {
+      "host": "charts.example.invalid",
+      "method": "GET",
+      "path": "/index.yaml",
+      "status": 200,
+      "body": "transport/index.yaml"
+    },
+    {
+      "host": "charts.example.invalid",
+      "method": "GET",
+      "path": "/demo-0.1.0.tgz",
+      "status": 200,
+      "body": "transport/demo-0.1.0.tgz"
+    }
+  ]
+}

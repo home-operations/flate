@@ -1,0 +1,3 @@
+resources: [cm.yaml]
+nameSuffix: -prod
+patches: [{path: patch.yaml}]

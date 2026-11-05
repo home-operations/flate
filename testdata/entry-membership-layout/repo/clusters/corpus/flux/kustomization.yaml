@@ -1,0 +1,1 @@
+resources: [namespace.yaml, ../_disabled/project-zomboid/ks.yaml]

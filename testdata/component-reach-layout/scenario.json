@@ -1,0 +1,269 @@
+{
+  "source": {
+    "repository": "bjw-s-labs/home-ops",
+    "revision": "656b3515052fcdb0450ca56151809852e383200d",
+    "paths": [
+      "kubernetes/flux/cluster/ks.yaml",
+      "kubernetes/apps/ai/hermes/ks.yaml",
+      "kubernetes/components/kopiur/backup/kustomization.yaml"
+    ],
+    "reductions": "Retain the pinned cluster-apps to kubernetes/apps relationship and the exact Hermes app path, relative kopiur/backup Component edge, targetNamespace ai, sourceRef and substitution constants. The linked pinned Component remains a Component; snapshot/PVC resources become one authored ConfigMap. Omit unrelated external readiness and HelmRelease defaults. Add one explicitly authored hermes-peer consumer in ai-peer and a backup-policy edit to prove shared reach; neither is claimed as copied upstream behavior. Independent baseline/current trees preserve both sides."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline"
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "backup-policy",
+      "directory": "overlays/backup-policy"
+    }
+  ],
+  "cases": [
+    {
+      "name": "pinned-backup-component",
+      "description": "Retain the pinned cluster-apps to kubernetes/apps relationship and the exact Hermes app path, relative kopiur/backup Component edge, targetNamespace ai, sourceRef and substitution constants. The linked pinned Component remains a Component; snapshot/PVC resources become one authored ConfigMap. Omit unrelated external readiness and HelmRelease defaults. Add one explicitly authored hermes-peer consumer in ai-peer and a backup-policy edit to prove shared reach; neither is claimed as copied upstream behavior. Independent baseline/current trees preserve both sides.",
+      "setup": [
+        {
+          "overlay": "backup-policy"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "shared-backup-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--path-orig",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/shared-backup-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/kubernetes/flux/cluster/ks.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Pinned cluster-apps identity, application root and sourceRef retain the real ancestor topology; unrelated HelmRelease defaults are omitted."
+    },
+    {
+      "path": "repo/kubernetes/flux/cluster/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Authored entry package selects the pinned cluster declaration."
+    },
+    {
+      "path": "repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Authored namespace wrapper retains the real Hermes declaration and one explicit comparative peer."
+    },
+    {
+      "path": "repo/kubernetes/apps/ai/hermes/ks.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Pinned Hermes retains the exact relative backup Component edge, application path, substitution constants and targetNamespace."
+    },
+    {
+      "path": "repo/kubernetes/apps/ai/hermes-peer/ks.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Authored second consumer preserves the same relative Component edge in a distinct target namespace."
+    },
+    {
+      "path": "repo/kubernetes/components/kopiur/backup/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Pinned Component kind and directory are retained; snapshot/PVC payloads become a tiny settings ConfigMap.",
+      "package": "component",
+      "consumer": "repo/kubernetes/components/kopiur/backup-validation"
+    },
+    {
+      "path": "repo/kubernetes/components/kopiur/backup/configmap.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Meaningful backup settings preserve the source capacity substitution and expose the shared edit."
+    },
+    {
+      "path": "repo/kubernetes/components/kopiur/backup-validation/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Validation consumer builds the real reduced Component payload without duplicating or synthesizing objects."
+    },
+    {
+      "path": "repo/kubernetes/apps/ai/hermes/app/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Tiny chart replacement at this consumer application path."
+    },
+    {
+      "path": "repo/kubernetes/apps/ai/hermes/app/configmap.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Unchanged application output is the local exclusion control for the shared Component edit."
+    },
+    {
+      "path": "repo/kubernetes/apps/ai/hermes-peer/app/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Tiny chart replacement at this consumer application path."
+    },
+    {
+      "path": "repo/kubernetes/apps/ai/hermes-peer/app/configmap.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Unchanged application output is the local exclusion control for the shared Component edit."
+    },
+    {
+      "path": "baseline/kubernetes/flux/cluster/ks.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Pinned cluster-apps identity, application root and sourceRef retain the real ancestor topology; unrelated HelmRelease defaults are omitted."
+    },
+    {
+      "path": "baseline/kubernetes/flux/cluster/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Authored entry package selects the pinned cluster declaration."
+    },
+    {
+      "path": "baseline/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Authored namespace wrapper retains the real Hermes declaration and one explicit comparative peer."
+    },
+    {
+      "path": "baseline/kubernetes/apps/ai/hermes/ks.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Pinned Hermes retains the exact relative backup Component edge, application path, substitution constants and targetNamespace."
+    },
+    {
+      "path": "baseline/kubernetes/apps/ai/hermes-peer/ks.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Authored second consumer preserves the same relative Component edge in a distinct target namespace."
+    },
+    {
+      "path": "baseline/kubernetes/components/kopiur/backup/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Pinned Component kind and directory are retained; snapshot/PVC payloads become a tiny settings ConfigMap.",
+      "package": "component",
+      "consumer": "baseline/kubernetes/components/kopiur/backup-validation"
+    },
+    {
+      "path": "baseline/kubernetes/components/kopiur/backup/configmap.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Meaningful backup settings preserve the source capacity substitution and expose the shared edit."
+    },
+    {
+      "path": "baseline/kubernetes/components/kopiur/backup-validation/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Validation consumer builds the real reduced Component payload without duplicating or synthesizing objects."
+    },
+    {
+      "path": "baseline/kubernetes/apps/ai/hermes/app/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Tiny chart replacement at this consumer application path."
+    },
+    {
+      "path": "baseline/kubernetes/apps/ai/hermes/app/configmap.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Unchanged application output is the local exclusion control for the shared Component edit."
+    },
+    {
+      "path": "baseline/kubernetes/apps/ai/hermes-peer/app/kustomization.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Tiny chart replacement at this consumer application path."
+    },
+    {
+      "path": "baseline/kubernetes/apps/ai/hermes-peer/app/configmap.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Unchanged application output is the local exclusion control for the shared Component edit."
+    },
+    {
+      "path": "overlays/backup-policy/repo/kubernetes/components/kopiur/backup/configmap.yaml",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Authored one-field Component edit must reach both consumers."
+    },
+    {
+      "path": "expect/shared-backup-diff.stdout",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "Independently authored complete stdout for shared-backup-diff."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "pinned-backup-component"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

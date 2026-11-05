@@ -1,0 +1,58 @@
+[
+  {
+    "apiVersion": "helm.toolkit.fluxcd.io/v2",
+    "kind": "HelmRelease",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "owner",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "demo",
+      "namespace": "demo"
+    },
+    "spec": {
+      "chart": {
+        "spec": {
+          "chart": "demo",
+          "sourceRef": {
+            "kind": "HelmRepository",
+            "name": "demo"
+          },
+          "version": "0.1.0"
+        }
+      },
+      "interval": "10m"
+    }
+  },
+  {
+    "apiVersion": "source.toolkit.fluxcd.io/v1",
+    "kind": "HelmRepository",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "owner",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "demo",
+      "namespace": "demo"
+    },
+    "spec": {
+      "interval": "24h",
+      "url": "https://charts.example.invalid"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "fixture"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "helm.toolkit.fluxcd.io/name": "demo",
+        "helm.toolkit.fluxcd.io/namespace": "demo"
+      },
+      "name": "demo-chart",
+      "namespace": "demo"
+    }
+  }
+]

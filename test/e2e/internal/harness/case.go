@@ -23,7 +23,8 @@ type Result struct {
 
 // Case shares one materialization across its ordered invocation steps.
 type Case struct {
-	fixture *testfixture.Fixture
+	fixture   *testfixture.Fixture
+	transport *fixtureTransport
 }
 
 // Open isolates process state before any fixture invokes the CLI.
@@ -31,8 +32,8 @@ func Open(t *testing.T, scenario, caseName string) *Case {
 	t.Helper()
 	f := testfixture.Materialize(t, scenario, caseName)
 	isolate(t, f)
-	serve(t, f)
-	return &Case{fixture: f}
+	transport := serve(t, f)
+	return &Case{fixture: f, transport: transport}
 }
 
 // Run restores fixture trees and applies the declared cache policy on every replay.
@@ -40,6 +41,7 @@ func (c *Case) Run(t *testing.T) []Result {
 	t.Helper()
 	f := c.fixture
 	f.Restore(t)
+	c.transport.update(t, nil)
 	results := make([]Result, 0, len(f.Plan.Steps))
 	for _, step := range f.Plan.Steps {
 		if step.Edit != nil {
@@ -48,6 +50,9 @@ func (c *Case) Run(t *testing.T) []Result {
 		}
 		t.Run(step.ID, func(t *testing.T) {
 			inv := step.Invoke
+			if len(inv.Transport) > 0 {
+				c.transport.update(t, inv.Transport)
+			}
 			cache := f.Cache(t, inv)
 			if f.Plan.Directory != "" {
 				t.Chdir(f.Resolve(t, f.Plan.Directory, cache))

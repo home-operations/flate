@@ -1,0 +1,16 @@
+[
+  {
+    "chart": "flux-system-flux-system/charts/demo",
+    "kind": "HelmRelease",
+    "name": "demo",
+    "namespace": "apps",
+    "releaseName": "demo",
+    "source": "flux-system",
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "version": "*"
+  }
+]

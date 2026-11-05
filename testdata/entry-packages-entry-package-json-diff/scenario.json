@@ -1,0 +1,154 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/entry_packages_test.go",
+      "test/e2e/scope/literal_root_layers_test.go",
+      "test/e2e/scope/entry_prerequisite_sides_test.go"
+    ],
+    "reductions": "Authored from the scope witnesses. Preserve every dynamic shape, independent negative control, transformed identity and complete CLI result."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "repository": "repo",
+      "name": "entry-diff-base",
+      "overlay": "entry-package-json-diff",
+      "author": "t",
+      "email": "t@example",
+      "time": "1970-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/entry-diff"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "entry-package-json-diff",
+      "directory": "overlays/entry-package-json-diff"
+    },
+    {
+      "name": "entry-package-json-diff-entry-package-json-diff-after",
+      "directory": "overlays/entry-package-json-diff-entry-package-json-diff-after"
+    }
+  ],
+  "cases": [
+    {
+      "name": "entry-package-json-diff",
+      "description": "entry package json diff.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "entry-diff-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "entry-package-json-diff-entry-package-json-diff-after",
+          "edit": {
+            "overlay": "entry-package-json-diff-entry-package-json-diff-after"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "--path",
+              ".",
+              "-o",
+              "json",
+              "--base",
+              "HEAD",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/entry-package-json-diff-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ],
+      "directory": "@@repo@@"
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/entry-package-json-diff/repo/kustomization.yaml",
+      "cases": [
+        "entry-package-json-diff"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-package-json-diff/repo/cm.yaml",
+      "cases": [
+        "entry-package-json-diff"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-package-json-diff-entry-package-json-diff-after/repo/cm.yaml",
+      "cases": [
+        "entry-package-json-diff"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/entry-package-json-diff-diff.stdout",
+      "cases": [
+        "entry-package-json-diff"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "entry-package-json-diff"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

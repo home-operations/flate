@@ -1,0 +1,22 @@
+{
+  "apiVersion": "example.test/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "child"
+  },
+  "spec": {
+    "value": "first"
+  }
+}
+
+---
+{
+  "apiVersion": "other.test/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "child"
+  },
+  "spec": {
+    "value": "second"
+  }
+}

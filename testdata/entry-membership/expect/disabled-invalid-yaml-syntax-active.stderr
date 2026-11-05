@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  games/disabled  kustomize build ./targets/game: accumulating resources: accumulating resources from 'cm.yaml': MalformedYAMLError: yaml: line 1: did not find expected node content in File: cm.yaml
+
+  ✗ 1 failed

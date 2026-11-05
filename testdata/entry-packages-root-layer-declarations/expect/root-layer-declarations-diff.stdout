@@ -1,0 +1,43 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "apps"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "apps",
+      "name": "first",
+      "status": "changed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "first",
+          "namespace": "apps"
+        },
+        "spec": {
+          "interval": "1m",
+          "path": "./workloads/first"
+        }
+      },
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "first",
+          "namespace": "apps"
+        },
+        "spec": {
+          "interval": "2m",
+          "path": "./workloads/first"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

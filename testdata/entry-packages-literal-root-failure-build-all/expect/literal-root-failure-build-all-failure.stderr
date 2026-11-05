@@ -1,0 +1,6 @@
+
+  ✗  entry  path "."  kustomize build .: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve missing.yaml: stat missing.yaml: file does not exist': must build at directory: not a valid directory: resolve missing.yaml: stat missing.yaml: file does not exist
+  ✗  ConfigMap  apps/unavailable-input  not found
+         required by apps/child
+
+  ✗ 2 failed · 1 blocked

@@ -1,0 +1,8 @@
+--- Kustomization flux-system/apps (flux)
++++ Kustomization flux-system/apps (flux)
+@@ -10,4 +10,5 @@
+     kind: GitRepository
+     name: cluster
+     namespace: flux-system
++  suspend: true
+ 

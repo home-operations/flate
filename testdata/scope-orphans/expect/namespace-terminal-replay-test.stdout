@@ -1,0 +1,6 @@
+
+  ✓  Kustomization   flux-system/owner
+  ✓  HelmRepository  demo/demo
+  ⊘  HelmRelease     demo/demo  blocked by demo/demo: connection reset by peer
+
+  ✗ 2 passed · 1 blocked   <DUR>

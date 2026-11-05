@@ -1,0 +1,228 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/entry_packages_test.go",
+      "test/e2e/scope/literal_root_layers_test.go",
+      "test/e2e/scope/entry_prerequisite_sides_test.go"
+    ],
+    "reductions": "Authored from the scope witnesses. Preserve every dynamic shape, independent negative control, transformed identity and complete CLI result."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "entry-prerequisite-forward",
+      "directory": "overlays/entry-prerequisite-forward"
+    }
+  ],
+  "cases": [
+    {
+      "name": "entry-prerequisite-forward",
+      "description": "entry prerequisite forward.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "overlay": "entry-prerequisite-forward"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--path-orig",
+              "@@baseline@@/entry",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/entry-prerequisite-forward-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--path-orig",
+              "@@baseline@@/entry",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/entry-prerequisite-forward-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/entry-prerequisite-forward/repo/entry/kustomization.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/repo/entry/owner.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/repo/entry/sibling.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/repo/entry/cm.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/repo/prerequisite/kustomization.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/repo/prerequisite/cm.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/baseline/entry/kustomization.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/baseline/entry/owner.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/baseline/entry/sibling.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/baseline/entry/cm.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/baseline/prerequisite/kustomization.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-prerequisite-forward/baseline/prerequisite/cm.yaml",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/entry-prerequisite-forward-build.stdout",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/entry-prerequisite-forward-diff.stdout",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "entry-prerequisite-forward"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

@@ -1,0 +1,179 @@
+{
+  "source": {
+    "repository": "jfroy/flatops",
+    "revision": "a2e1cbf6cae6742b624ea66db20ce064f9a2f014",
+    "paths": [
+      "kubernetes/apps/actions-runner-system/arc/ks.yaml"
+    ],
+    "reductions": "Preserve both pinned arc/arc-runners declarations, their exact app/runners paths, explicit GitRepository sourceRef and runners dependsOn arc. Omit external-secrets readiness and HelmRelease health checks; replace chart payloads with tiny ConfigMaps. A namespace wrapper, ancestor env file, generator and one-value edit are authored input-boundary variants, not source-copied features. Baseline and current use independent repositories."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline"
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "runner-group",
+      "directory": "overlays/runner-group"
+    }
+  ],
+  "cases": [
+    {
+      "name": "pinned-runner-escaped-input",
+      "description": "Preserve both pinned arc/arc-runners declarations, their exact app/runners paths, explicit GitRepository sourceRef and runners dependsOn arc. Omit external-secrets readiness and HelmRelease health checks; replace chart payloads with tiny ConfigMaps. A namespace wrapper, ancestor env file, generator and one-value edit are authored input-boundary variants, not source-copied features. Baseline and current use independent repositories.",
+      "setup": [
+        {
+          "overlay": "runner-group"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "runner-input-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/kubernetes/apps/actions-runner-system/arc",
+              "--path-orig",
+              "@@baseline@@/kubernetes/apps/actions-runner-system/arc",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/runner-input-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/kubernetes/apps/actions-runner-system/arc/ks.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Retain both pinned producer names, exact target paths, GitRepository refs and the runners-to-arc readiness edge."
+    },
+    {
+      "path": "repo/kubernetes/apps/actions-runner-system/arc/kustomization.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Authored bootstrap package gives the source namespace-less declarations their shared Flux namespace."
+    },
+    {
+      "path": "repo/kubernetes/apps/actions-runner-system/arc/app/kustomization.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Tiny replacement for the controller chart at its original path."
+    },
+    {
+      "path": "repo/kubernetes/apps/actions-runner-system/arc/app/configmap.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Unchanged controller output is the independent exclusion control."
+    },
+    {
+      "path": "repo/kubernetes/apps/actions-runner-system/arc/runners/kustomization.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Authored escaped-input generator keeps the original runners producer path and a stable resource identity."
+    },
+    {
+      "path": "repo/kubernetes/shared/runner.env",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Authored ancestor input is consumed only by the runners producer."
+    },
+    {
+      "path": "baseline/kubernetes/apps/actions-runner-system/arc/ks.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Retain both pinned producer names, exact target paths, GitRepository refs and the runners-to-arc readiness edge."
+    },
+    {
+      "path": "baseline/kubernetes/apps/actions-runner-system/arc/kustomization.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Authored bootstrap package gives the source namespace-less declarations their shared Flux namespace."
+    },
+    {
+      "path": "baseline/kubernetes/apps/actions-runner-system/arc/app/kustomization.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Tiny replacement for the controller chart at its original path."
+    },
+    {
+      "path": "baseline/kubernetes/apps/actions-runner-system/arc/app/configmap.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Unchanged controller output is the independent exclusion control."
+    },
+    {
+      "path": "baseline/kubernetes/apps/actions-runner-system/arc/runners/kustomization.yaml",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Authored escaped-input generator keeps the original runners producer path and a stable resource identity."
+    },
+    {
+      "path": "baseline/kubernetes/shared/runner.env",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Authored ancestor input is consumed only by the runners producer."
+    },
+    {
+      "path": "overlays/runner-group/repo/kubernetes/shared/runner.env",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Change only the runners ancestor input; the controller stays unchanged."
+    },
+    {
+      "path": "expect/runner-input-diff.stdout",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "Independently authored complete stdout for runner-input-diff."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "pinned-runner-escaped-input"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

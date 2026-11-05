@@ -1,0 +1,12 @@
+
+  ✗  entry  path "."  kustomize build .: accumulating resources: accumulation err='accumulating resources from 'staging': readfile staging: invalid argument': recursed merging from path '@@repo@@/staging': may not add resource with an already registered id: ConfigMap.v1.[noGrp]/collision.apps
+         duplicate resource(s) produced by multiple accumulated paths:
+         ConfigMap.v1.[noGrp]/collision.apps
+         - ./production
+         - ./staging
+         select an individual overlay with -p
+
+  ⚠ warnings (1)
+    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct
+
+  ✗ 1 failed

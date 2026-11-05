@@ -1,0 +1,48 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: first
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: first
+  namespace: apps
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: second
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: second
+  namespace: apps
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: first
+  namespace: apps
+spec:
+  interval: 1m
+  path: ./workloads/first
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: second
+  namespace: apps
+spec:
+  interval: 1m
+  path: ./workloads/second
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: first
+  namespace: apps
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: second
+  namespace: apps

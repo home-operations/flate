@@ -1,0 +1,28 @@
+[
+  {
+    "kind": "Kustomization",
+    "name": "child",
+    "namespace": "",
+    "path": "./apps/child",
+    "prune": false,
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": ""
+    },
+    "wait": false
+  },
+  {
+    "kind": "Kustomization",
+    "name": "parent",
+    "namespace": "flux-system",
+    "path": "./apps",
+    "prune": false,
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "wait": false
+  }
+]

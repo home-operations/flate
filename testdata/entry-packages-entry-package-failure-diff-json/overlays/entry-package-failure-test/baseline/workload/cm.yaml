@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: blocked-by-entry
+kind: ConfigMap
+metadata:
+  name: child-output
+  namespace: apps

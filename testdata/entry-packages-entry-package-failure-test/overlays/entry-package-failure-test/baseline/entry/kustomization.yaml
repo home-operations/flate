@@ -1,0 +1,2 @@
+resources: [child.yaml]
+configMapGenerator: [{name: settings, envs: [.cluster-vars.env]}]

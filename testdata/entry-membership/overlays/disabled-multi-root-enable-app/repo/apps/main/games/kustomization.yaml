@@ -1,0 +1,2 @@
+namespace: games
+resources: [admission-control.yaml, disabled.yaml]

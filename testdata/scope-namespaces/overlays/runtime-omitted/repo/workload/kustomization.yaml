@@ -1,0 +1,2 @@
+namespace: apps
+resources: [hr.yaml]

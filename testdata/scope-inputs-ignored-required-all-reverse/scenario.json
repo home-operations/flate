@@ -1,0 +1,317 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "ignored-required-all-reverse-base",
+      "repository": "repo",
+      "overlay": "ignored-required-all-reverse-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/ignored-required-all-reverse-base"
+      ]
+    },
+    {
+      "name": "ignored-required-all-reverse-baseline",
+      "repository": "baseline",
+      "overlay": "ignored-required-all-reverse-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/ignored-required-all-reverse-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "ignored-required-all-reverse-base",
+      "directory": "overlays/ignored-required-all-reverse-base",
+      "operations": []
+    },
+    {
+      "name": "ignored-required-all-reverse-baseline",
+      "directory": "overlays/ignored-required-all-reverse-baseline",
+      "operations": []
+    },
+    {
+      "name": "ignored-required-all-reverse-after",
+      "directory": "overlays/ignored-required-all-reverse-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "ignored-required-all-reverse",
+      "description": "ignored required all reverse.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "ignored-required-all-reverse-baseline"
+        },
+        {
+          "commit": "ignored-required-all-reverse-base"
+        },
+        {
+          "overlay": "ignored-required-all-reverse-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/ignored-required-all-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/ignored-required-all-full-after.stdout",
+              "stderr": "expect/ignored-required-all-full-after.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@repo@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/ignored-required-all-reverse-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/ignored-required-all-full-after.stderr",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/ignored-required-all-full-after.stdout",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/ignored-required-all-full-before.stdout",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/ignored-required-all-reverse-diff.stderr",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-after/repo/flux/.krmignore",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-base/repo/app/cm.yaml",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-base/repo/app/kustomization.yaml",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-base/repo/flux/.krmignore",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-base/repo/flux/consumer.yaml",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-base/repo/flux/vars.yaml",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-baseline/baseline/app/cm.yaml",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-baseline/baseline/app/kustomization.yaml",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-baseline/baseline/flux/.krmignore",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-baseline/baseline/flux/consumer.yaml",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ignored-required-all-reverse-baseline/baseline/flux/vars.yaml",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "ignored-required-all-reverse"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

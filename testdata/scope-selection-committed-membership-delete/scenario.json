@@ -1,0 +1,287 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "committed-membership-delete-base",
+      "repository": "repo",
+      "overlay": "committed-membership-delete-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/committed-membership-delete-base"
+      ]
+    },
+    {
+      "name": "committed-membership-delete-baseline",
+      "repository": "baseline",
+      "overlay": "committed-membership-delete-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/committed-membership-delete-baseline"
+      ]
+    },
+    {
+      "name": "committed-membership-delete-after",
+      "repository": "repo",
+      "overlay": "committed-membership-delete-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "committed-membership-delete-base"
+      ],
+      "refs": [
+        "refs/heads/committed-membership-delete-after"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "committed-membership-delete-base",
+      "directory": "overlays/committed-membership-delete-base",
+      "operations": []
+    },
+    {
+      "name": "committed-membership-delete-baseline",
+      "directory": "overlays/committed-membership-delete-baseline",
+      "operations": []
+    },
+    {
+      "name": "committed-membership-delete-after",
+      "directory": "overlays/committed-membership-delete-after",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cm.yaml"
+        }
+      ]
+    },
+    {
+      "name": "committed-membership-delete-dirty",
+      "directory": "overlays/committed-membership-delete-dirty",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "committed-membership-delete",
+      "description": "committed membership delete.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "committed-membership-delete-baseline"
+        },
+        {
+          "commit": "committed-membership-delete-after"
+        },
+        {
+          "overlay": "committed-membership-delete-dirty"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "apps",
+              "-n",
+              "flux-system",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:committed-membership-delete-base@@"
+            ],
+            "expect": {
+              "stdout": "expect/committed-membership-delete-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/committed-membership-delete-diff.stdout",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/committed-membership-delete-after/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-after/repo/kubernetes/flux/peer.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-after/repo/peer/cm.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-after/repo/peer/kustomization.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-base/repo/kubernetes/apps/cm.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-base/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-base/repo/kubernetes/apps/stable.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-base/repo/kubernetes/flux/cluster.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-baseline/baseline/kubernetes/apps/cm.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-baseline/baseline/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-baseline/baseline/kubernetes/apps/stable.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-baseline/baseline/kubernetes/flux/cluster.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-dirty/repo/kubernetes/apps/stray.yaml",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-delete-dirty/repo/notes/dirty.txt",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "committed-membership-delete"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "inputs": ""
+}

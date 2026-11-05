@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: fixture
+kind: ConfigMap
+metadata:
+  name: app
+  namespace: apps

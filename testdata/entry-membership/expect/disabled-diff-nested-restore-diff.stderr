@@ -1,0 +1,4 @@
+
+  ⚠ warnings (2)
+    [SourceCredentialsUnavailable] orig snapshot: GitRepository flux-system/external: secret flux-system/unavailable-auth not found
+    [SourceCredentialsUnavailable] current snapshot: GitRepository flux-system/external: secret flux-system/unavailable-auth not found

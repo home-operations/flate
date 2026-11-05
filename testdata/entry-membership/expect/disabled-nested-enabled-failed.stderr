@@ -1,0 +1,7 @@
+
+  ✗  Kustomization  flux-system/app  kustomize build ./payload: loading KV pairs: file sources: [missing.txt]: resolve payload/missing.txt: stat payload/missing.txt: file does not exist
+
+  ⚠ warnings (1)
+    [SourceCredentialsUnavailable] GitRepository flux-system/external: secret flux-system/unavailable-auth not found
+
+  ✗ 1 failed

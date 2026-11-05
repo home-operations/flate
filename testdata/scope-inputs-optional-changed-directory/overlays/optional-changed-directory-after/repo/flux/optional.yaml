@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  VALUE: available
+kind: ConfigMap
+metadata:
+  name: optional
+  namespace: flux-system

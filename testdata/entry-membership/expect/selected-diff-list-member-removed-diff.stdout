@@ -1,0 +1,30 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "app"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "",
+      "name": "config",
+      "status": "removed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "selected"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "config"
+        }
+      },
+      "new": null,
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

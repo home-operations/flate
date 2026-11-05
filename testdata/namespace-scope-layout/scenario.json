@@ -1,0 +1,153 @@
+{
+  "source": {
+    "repository": "JJGadgets/Biohazard",
+    "revision": "4e4bb6180d6417990dc5f195852730ed77a3142f",
+    "paths": [
+      "kube/deploy/apps/actual/ks.yaml",
+      "kube/deploy/apps/atuin/ks.yaml"
+    ],
+    "reductions": "Reduce the first Kustomization from each pinned actual/atuin ks.yaml. Preserve original declaration paths, application paths, metadata namespaces, targetNamespace and common metadata. Omit the storage Kustomizations, components, health checks and readiness edges. Replace each chart with an authored same-named ConfigMap; namespace-specific CLI invocations are authored selection witnesses, not a claim about upstream operational failures."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "pinned-application-namespaces",
+      "description": "Reduce the first Kustomization from each pinned actual/atuin ks.yaml. Preserve original declaration paths, application paths, metadata namespaces, targetNamespace and common metadata. Omit the storage Kustomizations, components, health checks and readiness edges. Replace each chart with an authored same-named ConfigMap; namespace-specific CLI invocations are authored selection witnesses, not a claim about upstream operational failures.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selected-actual",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--namespace",
+              "actual",
+              "--path",
+              "@@repo@@/kube/deploy/apps",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/selected-actual.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected-atuin",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--namespace",
+              "atuin",
+              "--path",
+              "@@repo@@/kube/deploy/apps",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/selected-atuin.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/kube/deploy/apps/actual/ks.yaml",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "Reduced pinned declaration keeps the original namespace and application target relationship."
+    },
+    {
+      "path": "repo/kube/deploy/apps/actual/app/kustomization.yaml",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "Minimal chart replacement at the original application path."
+    },
+    {
+      "path": "repo/kube/deploy/apps/actual/app/configmap.yaml",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "Same resource name in both applications makes namespace isolation observable."
+    },
+    {
+      "path": "repo/kube/deploy/apps/atuin/ks.yaml",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "Reduced pinned declaration keeps the original namespace and application target relationship."
+    },
+    {
+      "path": "repo/kube/deploy/apps/atuin/app/kustomization.yaml",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "Minimal chart replacement at the original application path."
+    },
+    {
+      "path": "repo/kube/deploy/apps/atuin/app/configmap.yaml",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "Same resource name in both applications makes namespace isolation observable."
+    },
+    {
+      "path": "expect/selected-actual.stdout",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "Independently authored complete stdout for selected-actual."
+    },
+    {
+      "path": "expect/selected-atuin.stdout",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "Independently authored complete stdout for selected-atuin."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "pinned-application-namespaces"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

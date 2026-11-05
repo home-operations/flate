@@ -26,19 +26,11 @@ with `go test -race ./test/e2e/...`.
     - `charts/mychart/` — a tiny local Helm chart referenced via
       `sourceRef.kind: GitRepository`.
 
-- `components/` — two consumer apps (`app-a`, `app-b`) referencing a shared
-  kustomize component (`components/shared`). Exists to test change-detection
-  propagation in `test/e2e/scope`: editing the shared component must surface in
-  both consumers' diff output (`TestE2E_ComponentChangePropagatesToAllConsumers`) and an
-  app-local edit must NOT propagate to the sibling
-  (`TestE2E_NonSharedChangeDoesNotPropagate`).
+- `component-reach/` preserves shared Component changes and app-local changes through two namespaced consumers.
 
-
-- `orphans/` — a parent kustomize tree that lists only one child
-  Kustomization (`wired`) while a second one (`orphan`) exists on disk but
-  is intentionally NOT referenced. Real Flux would never reconcile the
-  orphan; flate does not discover it. Used by
-  `test/e2e/scope` test `TestE2E_OrphanedKustomizationNotDiscovered`.
+- `scope-orphans/` preserves namespace admission and orphan ownership.
+  Its undiscovered-child case keeps one listed child and one unlisted declaration.
+  Only the listed child renders.
 
 - `resourceset-documents/` - ResourceSet JSON and YAML admission through SDK and CLI output: incomplete identities, nonrecursive list items, directives, duplicates, sanitized ciphertext with complete SOPS AES256_GCM framing, authored and explicit namespaces, and one tracked child render.
 
@@ -769,3 +761,547 @@ Its cluster-qualified streams and original assertions remain intact.
 The CLI corpus claims only the single-tree forms accepted by `cli.Run`.
 The private `decodeGetDocuments` helper remains for changed-only, partial-failure, empty-kind, and cluster tests.
 `writeGetRelease`, `writeFixture`, and the old harness entry points retain other consumers until their owning units migrate.
+
+## Scope migration
+
+`unclaimed-change/unclaimed-path-without-history` retains the authored fixture from flate revision `cf0821e638c7bcb146d6e5b784bef2509c1a1331`.
+The fixture changes one unowned text file and keeps the chart and its emitted child unchanged.
+Both invocations use `diff all --base HEAD -p @@repo@@/flux -o diff --no-progress --concurrency 2 --cache-dir @@cache@@`.
+Each invocation owns a separate cold cache.
+Both streams are empty, and the exit code is zero.
+Two complete replays require the same result sequence.
+
+An overlay operation can declare `symlink` with a `path` and a relative `target`.
+The target stays inside a declared fixture tree and can be absent.
+The materializer creates the link after restoration on every replay.
+Disk fixture trees still reject undeclared symlinks.
+
+An invocation can declare `transport` responses with the same host, method, and path fields as the scenario response table.
+A response replaces that request's prior response from that invocation onward.
+Each replay restores the scenario response table before its first invocation.
+A response with `"error": "connection-reset"` returns a classified connection reset instead of an HTTP response.
+Error responses omit the status, body, and headers.
+
+`namespace-scope` preserves `TestE2E_NamespaceDiff` from flate revision `cf0821e638c7bcb146d6e5b784bef2509c1a1331`.
+Each case keeps independent Git stores and changes the monitoring peer as an exclusion control.
+The expected changes follow the selected namespace and both authored ConfigMaps.
+The parent identity and labels follow the Flux Kustomization in `flux/selected.yaml`.
+Every invocation uses two workers and a cache that resets between complete replays.
+
+`namespace-scope/namespace-diff-changed` compares complete JSON changes, empty stderr, and exit zero.
+Its invocation sequence is declared in `namespace-scope/scenario.json`.
+
+`namespace-scope/namespace-diff-added` compares complete JSON changes, empty stderr, and exit zero.
+Its invocation sequence is declared in `namespace-scope/scenario.json`.
+
+`namespace-scope/namespace-diff-removed` compares complete JSON changes, empty stderr, and exit zero.
+Its invocation sequence is declared in `namespace-scope/scenario.json`.
+
+`namespace-scope/namespace-diff-renamed` compares complete JSON changes, empty stderr, and exit zero.
+Its invocation sequence is declared in `namespace-scope/scenario.json`.
+
+`namespace-scope/namespace-diff-empty` compares complete JSON changes, empty stderr, and exit zero.
+Its invocation sequence is declared in `namespace-scope/scenario.json`.
+
+`component-reach/component-change-propagates-to-all-consumers` retains the authored fixture from flate revision `cf0821e638c7bcb146d6e5b784bef2509c1a1331`.
+Its declared command compares independent current and baseline trees with two workers.
+Both replays reset the owned cache and compare both full streams with exit zero.
+
+`component-reach/non-shared-change-does-not-propagate` retains the authored fixture from flate revision `cf0821e638c7bcb146d6e5b784bef2509c1a1331`.
+Its declared command compares independent current and baseline trees with two workers.
+Both replays reset the owned cache and compare both full streams with exit zero.
+The expected dyff paths, identities, values, and whitespace follow the reviewed `output-formats` presentation contract.
+
+`scope-authority` preserves the authoritative parsing cases from flate revision `cf0821e638c7bcb146d6e5b784bef2509c1a1331`.
+The expected objects come from the authored documents and the pinned Kustomize renderer.
+Typed failure causes come from the pinned Flux API JSON decoder.
+Every case keeps the healthy sibling and compares two full sequences with two workers and replay-reset caches.
+
+`scope-authority/typed-release` declares complete build output, diagnostics, and exit status in `scope-authority/scenario.json`.
+
+`scope-authority/typed-kustomization` declares complete build output, diagnostics, and exit status in `scope-authority/scenario.json`.
+
+`scope-authority/generated-release` declares complete build output, diagnostics, and exit status in `scope-authority/scenario.json`.
+
+`scope-authority/patch-created-release` declares complete build output, diagnostics, and exit status in `scope-authority/scenario.json`.
+
+`scope-authority/required-syntax` declares complete build output, diagnostics, and exit status in `scope-authority/scenario.json`.
+
+`scope-authority/repaired-raw-release` declares complete build output, diagnostics, and exit status in `scope-authority/scenario.json`.
+
+`scope-authority/incidental-malformed-and-scalar` declares complete build output, diagnostics, and exit status in `scope-authority/scenario.json`.
+
+A repository with `directory: ""` starts empty.
+Declared overlays and commits supply its files through the existing materializer.
+It needs no placeholder file.
+
+The `cacheFailure` operation records attempted chart failures through the source cache API.
+It declares `cache`, `repository`, `chart`, `version`, and `attempts`.
+The attempt count must be between one and twelve.
+The operation derives the same transport identity as the chart fetcher.
+Synthetic timer receives advance the cache backoff without a real sleep.
+The cache closes before the next CLI invocation.
+CLI calls and transport workers stay outside the synthetic clock.
+The terminal replay case keeps its primed chart and requires twelve attempted failures.
+Its package proof reopens the CLI cache and requires a classified failure without another attempt.
+
+The `noGit` setup operation names one declared repository.
+The materializer removes only that repository's Git metadata after it restores the declared tree.
+Replays repeat this operation and retain the repository files.
+
+The catalog builds package states after setup and declared edits.
+A successful package must emit at least one object.
+A file use can declare `package: failure` for an intentional build failure with a named failing invocation.
+A file use can declare `package: excluded` for an intentionally broken package that a named successful invocation excludes.
+A Component declares `package: component` and its materialized `consumer` directory.
+The catalog builds that consumer and requires it to read the declared Component file.
+Historical source packages keep the same nonempty output requirement.
+Partial overlays must pass in a declared materialized state.
+Failure roles use only invocation results between adjacent edits.
+Named symlink operations supply their synthetic paths to the catalog without requiring regular files at those paths.
+
+### entry-membership
+
+`entry-membership/classification-yaml`: classification yaml.
+
+`entry-membership/classification-yml`: classification yml.
+
+`entry-membership/classification-capitalized`: classification capitalized.
+
+`entry-membership/classification-plain`: classification plain.
+
+`entry-membership/classification-malformed`: classification malformed.
+
+`entry-membership/classification-multiple`: classification multiple.
+
+`entry-membership/classification-component`: classification component.
+
+`entry-membership/selected-root`: selected root.
+
+`entry-membership/selected-root-nested-owner`: selected root nested owner.
+
+`entry-membership/selected-diff-referenced-patch`: selected diff referenced patch.
+
+`entry-membership/selected-diff-resource-removed`: selected diff resource removed.
+
+`entry-membership/selected-diff-resource-added`: selected diff resource added.
+
+`entry-membership/selected-diff-list-member-added`: selected diff list member added.
+
+`entry-membership/selected-diff-list-member-removed`: selected diff list member removed.
+
+`entry-membership/selected-diff-declaration-removed`: selected diff declaration removed.
+
+`entry-membership/selected-diff-declaration-added`: selected diff declaration added.
+
+`entry-membership/selected-diff-excluded-sibling`: selected diff excluded sibling.
+
+`entry-membership/selected-diff-plain-dependency`: selected diff plain dependency.
+
+`entry-membership/selected-diff-owner-added-forward`: selected diff owner added forward.
+
+`entry-membership/selected-diff-owner-added-reverse`: selected diff owner added reverse.
+
+`entry-membership/selected-diff-owner-removed-forward`: selected diff owner removed forward.
+
+`entry-membership/selected-diff-owner-removed-reverse`: selected diff owner removed reverse.
+
+`entry-membership/selected-diff-owner-renamed-forward`: selected diff owner renamed forward.
+
+`entry-membership/selected-diff-owner-renamed-reverse`: selected diff owner renamed reverse.
+
+`entry-membership/selected-diff-owner-winner-changed-forward`: selected diff owner winner changed forward.
+
+`entry-membership/selected-diff-owner-winner-changed-reverse`: selected diff owner winner changed reverse.
+
+`entry-membership/named-missing-child-owner-added-forward`: named missing child owner added forward.
+
+`entry-membership/named-missing-child-owner-added-reverse`: named missing child owner added reverse.
+
+`entry-membership/named-missing-child-owner-removed-forward`: named missing child owner removed forward.
+
+`entry-membership/named-missing-child-owner-removed-reverse`: named missing child owner removed reverse.
+
+`entry-membership/named-missing-child-owner-renamed-forward`: named missing child owner renamed forward.
+
+`entry-membership/named-missing-child-owner-renamed-reverse`: named missing child owner renamed reverse.
+
+`entry-membership/named-missing-child-owner-renamed-nested-forward`: named missing child owner renamed nested forward.
+
+`entry-membership/named-missing-child-owner-renamed-nested-reverse`: named missing child owner renamed nested reverse.
+
+`entry-membership/disabled-nested-enabled`: disabled nested enabled.
+
+`entry-membership/disabled-nested-absent`: disabled nested absent.
+
+`entry-membership/disabled-nested-commented`: disabled nested commented.
+
+`entry-membership/disabled-invalid-api-version`: disabled invalid api version.
+
+`entry-membership/disabled-invalid-yaml-syntax`: disabled invalid yaml syntax.
+
+`entry-membership/disabled-shared-active-target`: disabled shared active target.
+
+`entry-membership/disabled-cross-package-inclusion`: disabled cross package inclusion.
+
+`entry-membership/disabled-single-root`: disabled single root.
+
+`entry-membership/disabled-single-scoped`: disabled single scoped.
+
+`entry-membership/disabled-multi-root`: disabled multi root.
+
+`entry-membership/disabled-multi-scoped`: disabled multi scoped.
+
+`entry-membership/entry-self-ownership-selected-package`: entry self ownership selected package.
+
+`entry-membership/entry-self-ownership-plain-entry-ancestor`: entry self ownership plain entry ancestor.
+
+`entry-membership/entry-self-ownership-disabled-foreign-owner`: entry self ownership disabled foreign owner.
+
+`entry-membership/disabled-diff-nested-remove`: disabled diff nested remove.
+
+`entry-membership/disabled-diff-nested-restore`: disabled diff nested restore.
+
+`entry-membership/disabled-diff-nested-payload`: disabled diff nested payload.
+
+`entry-membership/disabled-diff-remove`: disabled diff remove.
+
+`entry-membership/disabled-diff-restore`: disabled diff restore.
+
+`entry-membership/membership-namespace-payload`: membership namespace payload.
+
+`entry-membership/membership-namespace-namespace-forward`: membership namespace namespace forward.
+
+`entry-membership/membership-namespace-namespace-reverse`: membership namespace namespace reverse.
+
+
+### entry-packages
+
+`entry-packages-entry-package-json-build/entry-package-json-build`: entry package json build.
+
+`entry-packages-entry-package-json-diff/entry-package-json-diff`: entry package json diff.
+
+`entry-packages-entry-package-failure-test/entry-package-failure-test`: entry package failure test.
+
+`entry-packages-entry-package-failure-diff/entry-package-failure-diff`: entry package failure diff.
+
+`entry-packages-entry-package-failure-diff-json/entry-package-failure-diff-json`: entry package failure diff json.
+
+`entry-packages-discovery-package-one/discovery-package-one`: discovery package one.
+
+`entry-packages-discovery-package-two/discovery-package-two`: discovery package two.
+
+`entry-packages-root-layer-declarations/root-layer-declarations`: root layer declarations.
+
+`entry-packages-literal-root-overlay-collision/literal-root-overlay-collision`: literal root overlay collision.
+
+`entry-packages-literal-root-failure-build-all/literal-root-failure-build-all`: literal root failure build all.
+
+`entry-packages-literal-root-failure-build-ks/literal-root-failure-build-ks`: literal root failure build ks.
+
+`entry-packages-literal-root-failure-test-all/literal-root-failure-test-all`: literal root failure test all.
+
+`entry-packages-literal-root-failure-test-ks/literal-root-failure-test-ks`: literal root failure test ks.
+
+`entry-packages-entry-prerequisite-forward/entry-prerequisite-forward`: entry prerequisite forward.
+
+`entry-packages-entry-prerequisite-reverse/entry-prerequisite-reverse`: entry prerequisite reverse.
+
+
+### scope-namespaces
+
+`scope-namespaces/child-bare`: child bare
+
+`scope-namespaces/child-target`: child target
+
+`scope-namespaces/child-authored`: child authored
+
+`scope-namespaces/child-authored-insert01-remove0`: child authored insert01 remove0
+
+`scope-namespaces/child-authored-insert01-remove1`: child authored insert01 remove1
+
+`scope-namespaces/child-authored-insert10-remove0`: child authored insert10 remove0
+
+`scope-namespaces/child-authored-insert10-remove1`: child authored insert10 remove1
+
+`scope-namespaces/runtime-omitted`: runtime omitted
+
+`scope-namespaces/runtime-explicit`: runtime explicit
+
+`scope-namespaces/runtime-chart-value-forward`: runtime chart value forward
+
+`scope-namespaces/runtime-chart-value-reverse`: runtime chart value reverse
+
+`scope-namespaces/runtime-authored-namespace-forward`: runtime authored namespace forward
+
+`scope-namespaces/runtime-authored-namespace-reverse`: runtime authored namespace reverse
+
+`scope-namespaces/bootstrap-sibling-projection`: bootstrap sibling projection
+
+
+### scope-orphans
+
+`scope-orphans/namespace-sibling`: namespace sibling
+
+`scope-orphans/namespace-explicit`: namespace explicit
+
+`scope-orphans/namespace-standalone`: namespace standalone
+
+`scope-orphans/namespace-shared`: namespace shared
+
+`scope-orphans/namespace-terminal-replay`: namespace terminal replay
+
+`scope-orphans/namespace-failing-owner-2`: namespace failing owner 2
+
+`scope-orphans/namespace-failing-owner-4`: namespace failing owner 4
+
+`scope-orphans/parent-local`: parent local
+
+`scope-orphans/parent-external`: parent external
+
+`scope-orphans/excluded-siblings`: excluded siblings
+
+`scope-orphans/undiscovered-kustomization`: undiscovered kustomization
+
+
+### scope-malformed
+
+`scope-malformed/owned-graph`: owned graph
+
+`scope-malformed/shared-graph`: shared graph
+
+`scope-malformed/owned-ad-hoc`: owned ad hoc
+
+`scope-malformed/owned-ad-hoc-wide`: owned ad hoc wide
+
+`scope-malformed/suspended-owner`: suspended owner
+
+`scope-malformed/changed-unselected-owner`: changed unselected owner
+
+`scope-malformed/generated-owner`: generated owner
+
+`scope-malformed/suspended-generated-owner`: suspended generated owner
+
+`scope-malformed/external-source-owner`: external source owner
+
+`scope-malformed/unowned-graph`: unowned graph
+
+`scope-malformed/unowned-ad-hoc`: unowned ad hoc
+
+
+### scope-malformed-transitions
+
+`scope-malformed-transitions/malformed-to-valid`: malformed to valid
+
+`scope-malformed-transitions/valid-to-malformed`: valid to malformed
+
+
+### scope-unowned
+
+`scope-unowned/malformed`: malformed
+
+`scope-unowned/unreadable`: unreadable
+
+
+### scope-unreadable
+
+`scope-unreadable/owned-independent-sibling`: owned independent sibling
+
+`scope-unreadable/unowned-nested-census`: unowned nested census
+
+
+### scope-inputs
+
+`scope-inputs-escaped-implicit-shallow/escaped-implicit-shallow`: escaped implicit shallow.
+
+`scope-inputs-escaped-implicit-deep/escaped-implicit-deep`: escaped implicit deep.
+
+`scope-inputs-escaped-mixed/escaped-mixed`: escaped mixed.
+
+`scope-inputs-escaped-explicit/escaped-explicit`: escaped explicit.
+
+`scope-inputs-escaped-patch-only/escaped-patch-only`: escaped patch only.
+
+`scope-inputs-input-lifecycle-add/input-lifecycle-add`: input lifecycle add.
+
+`scope-inputs-input-lifecycle-delete/input-lifecycle-delete`: input lifecycle delete.
+
+`scope-inputs-input-lifecycle-dangling/input-lifecycle-dangling`: input lifecycle dangling.
+
+`scope-inputs-selected-input-builder/selected-input-builder`: selected input builder.
+
+`scope-inputs-selected-input-patch/selected-input-patch`: selected input patch.
+
+`scope-inputs-selected-input-unrelated/selected-input-unrelated`: selected input unrelated.
+
+`scope-inputs-chart-input-template-committed/chart-input-template-committed`: chart input template committed.
+
+`scope-inputs-chart-input-template-directories/chart-input-template-directories`: chart input template directories.
+
+`scope-inputs-chart-input-template-added-directories/chart-input-template-added-directories`: chart input template added directories.
+
+`scope-inputs-chart-input-template-added-committed/chart-input-template-added-committed`: chart input template added committed.
+
+`scope-inputs-chart-input-template-deleted-directories/chart-input-template-deleted-directories`: chart input template deleted directories.
+
+`scope-inputs-chart-input-template-deleted-committed/chart-input-template-deleted-committed`: chart input template deleted committed.
+
+`scope-inputs-chart-input-default-values/chart-input-default-values`: chart input default values.
+
+`scope-inputs-chart-input-packaged-subchart/chart-input-packaged-subchart`: chart input packaged subchart.
+
+`scope-inputs-chart-input-root-chart/chart-input-root-chart`: chart input root chart.
+
+`scope-inputs-chart-input-policy-admits-template/chart-input-policy-admits-template`: chart input policy admits template.
+
+`scope-inputs-chart-input-policy-removes-template/chart-input-policy-removes-template`: chart input policy removes template.
+
+`scope-inputs-chart-input-policy-created/chart-input-policy-created`: chart input policy created.
+
+`scope-inputs-chart-input-policy-deleted/chart-input-policy-deleted`: chart input policy deleted.
+
+`scope-inputs-chart-input-excluded-payload/chart-input-excluded-payload`: chart input excluded payload.
+
+`scope-inputs-chart-input-unchanged/chart-input-unchanged`: chart input unchanged.
+
+`scope-inputs-chart-input-remote-chart-excludes-local-payload/chart-input-remote-chart-excludes-local-payload`: chart input remote chart excludes local payload.
+
+`scope-inputs-chart-changed-directories/chart-changed-directories`: chart changed directories.
+
+`scope-inputs-chart-changed-directories-invalid/chart-changed-directories-invalid`: chart changed directories invalid.
+
+`scope-inputs-chart-changed-committed/chart-changed-committed`: chart changed committed.
+
+`scope-inputs-chart-changed-committed-invalid/chart-changed-committed-invalid`: chart changed committed invalid.
+
+`scope-inputs-optional-changed-directory/optional-changed-directory`: optional changed directory.
+
+`scope-inputs-optional-changed-committed/optional-changed-committed`: optional changed committed.
+
+`scope-inputs-optional-sides-appear/optional-sides-appear`: optional sides appear.
+
+`scope-inputs-optional-sides-remove/optional-sides-remove`: optional sides remove.
+
+`scope-inputs-optional-sides-projected-appear/optional-sides-projected-appear`: optional sides projected appear.
+
+`scope-inputs-optional-sides-projected-remove/optional-sides-projected-remove`: optional sides projected remove.
+
+`scope-inputs-optional-sides-required-removal/optional-sides-required-removal`: optional sides required removal.
+
+`scope-inputs-cross-source-optional-removal/cross-source-optional-removal`: Identical bootstrap trees consume different selected supplier histories.
+
+`scope-inputs-ignored-required-all/ignored-required-all`: ignored required all.
+
+`scope-inputs-ignored-required-all-reverse/ignored-required-all-reverse`: ignored required all reverse.
+
+`scope-inputs-ignored-required-named/ignored-required-named`: ignored required named.
+
+`scope-inputs-ignored-required-named-reverse/ignored-required-named-reverse`: ignored required named reverse.
+
+
+### scope-selection
+
+`scope-selection-cache-implicit-unchanged-external/cache-implicit-unchanged-external`: cache implicit unchanged external.
+
+`scope-selection-cache-implicit-changed-external/cache-implicit-changed-external`: cache implicit changed external.
+
+`scope-selection-cache-implicit-suspended-current-external/cache-implicit-suspended-current-external`: cache implicit suspended current external.
+
+`scope-selection-cache-implicit-suspended-orig-external/cache-implicit-suspended-orig-external`: cache implicit suspended orig external.
+
+`scope-selection-cache-self-unchanged-external/cache-self-unchanged-external`: cache self unchanged external.
+
+`scope-selection-cache-self-changed-external/cache-self-changed-external`: cache self changed external.
+
+`scope-selection-cache-self-changed-relative/cache-self-changed-relative`: cache self changed relative.
+
+`scope-selection-cache-self-changed-absolute/cache-self-changed-absolute`: cache self changed absolute.
+
+`scope-selection-cache-self-suspended-current-external/cache-self-suspended-current-external`: cache self suspended current external.
+
+`scope-selection-cache-self-suspended-orig-external/cache-self-suspended-orig-external`: cache self suspended orig external.
+
+`scope-selection-baseline-explicit-base/baseline-explicit-base`: baseline explicit base.
+
+`scope-selection-baseline-self-ref/baseline-self-ref`: baseline self ref.
+
+`scope-selection-committed-membership-delete/committed-membership-delete`: committed membership delete.
+
+`scope-selection-committed-membership-rename/committed-membership-rename`: committed membership rename.
+
+`scope-selection-images-no-git-baseline/images-no-git-baseline`: images no git baseline.
+
+`scope-selection-get-projected-kustomization/get-projected-kustomization`: get projected kustomization.
+
+`scope-selection-missing-local-resource/missing-local-resource`: missing local resource.
+
+`scope-selection-missing-local-chart/missing-local-chart`: missing local chart.
+
+`scope-selection-auxiliary-supplied/auxiliary-supplied`: auxiliary supplied.
+
+`scope-selection-auxiliary-allow-configmap/auxiliary-allow-configmap`: auxiliary allow configmap.
+
+`scope-selection-auxiliary-allow-secret/auxiliary-allow-secret`: auxiliary allow secret.
+
+`scope-selection-same-directory-failure/same-directory-failure`: same directory failure.
+
+`scope-selection-ownership-cycle/ownership-cycle`: ownership cycle.
+
+`scope-selection-bootstrap-template-error/bootstrap-template-error`: bootstrap template error.
+
+`scope-selection-external-wide-source/external-wide-source`: external wide source.
+
+`scope-selection-secret-material-username-required/secret-material-username-required`: secret material username required.
+
+`scope-selection-secret-material-username-allowed/secret-material-username-allowed`: secret material username allowed.
+
+`scope-selection-secret-material-password-required/secret-material-password-required`: secret material password required.
+
+`scope-selection-secret-material-password-allowed/secret-material-password-allowed`: secret material password allowed.
+
+
+### multi-cluster
+
+`multi-cluster/root-partition`: Repository-root discovery retains three colliding Flux and workload identities, exact cluster framing, and named selection; each selected path has its own complete output.
+
+`multi-cluster/one-sided-diff`: The removed utility cluster has an unsuppressed removal, main has only its own change, and test stays unchanged; independent selected entries establish the corresponding payloads.
+
+
+## Source-backed scope layout companions
+
+These positive cases record the external repository layouts required by U1.
+The other migrated regressions retain their `home-operations/flate` behavior lineage.
+Each scenario records its source revision, original paths, reductions, and authored additions.
+Fetched source bodies and hashes remain build artifacts.
+
+`entry-membership-layout/pinned-disabled-declaration` uses `tyzbit/fleet-infra` at `87c199e34e96df4e475c5bb1a29b9aff035730e3`.
+It retains `clusters/corpus/_disabled/project-zomboid/ks.yaml` and its application target.
+A Namespace controls entry admission while the application is excluded.
+The declared sequence includes, excludes, and restores the application.
+Each invocation compares complete JSON output, diagnostics, and exit zero.
+
+`orphan-membership/pinned-namespaced-static-root` uses the same source declaration and target paths.
+Its selected directory gives the namespaced declaration no owning Kustomize package.
+This authored offline variant requires the complete ConfigMap and its original owner identity.
+Stderr is empty, and the exit code is zero.
+
+`namespace-scope-layout/pinned-application-namespaces` uses `JJGadgets/Biohazard` at `4e4bb6180d6417990dc5f195852730ed77a3142f`.
+It retains the actual and atuin declarations under `kube/deploy/apps`.
+Their application paths, namespaces, target namespaces, and common labels remain.
+Each namespace selection compares its complete ConfigMap, empty stderr, and exit zero.
+
+`input-boundary/pinned-runner-escaped-input` uses `jfroy/flatops` at `a2e1cbf6cae6742b624ea66db20ce064f9a2f014`.
+It retains both producers in `kubernetes/apps/actions-runner-system/arc/ks.yaml` and their dependency.
+An authored ancestor generator makes a consumed input change visible.
+The complete JSON diff changes only runner settings and retains the unchanged controller as an exclusion control.
+Stderr is empty, and the exit code is zero.
+
+`component-reach-layout/pinned-backup-component` uses `bjw-s-labs/home-ops` at `656b3515052fcdb0450ca56151809852e383200d`.
+It retains the cluster-to-apps relationship and the Hermes Component edge, `../../../../components/kopiur/backup`.
+The referenced source file declares a Component.
+An authored peer consumes the same Component in `ai-peer`.
+One Component edit produces exactly two JSON changes and leaves both application controls unchanged.
+Stderr is empty, and the exit code is zero.
+
+Every case uses two workers, declared caches, and two complete replays through `testScopeCase`.
+Each reduction lists the omitted dependencies and authored variants in its source metadata.

@@ -1,0 +1,2 @@
+resources: [admission-control.yaml]
+# - ks.yaml

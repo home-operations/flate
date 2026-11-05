@@ -1,125 +1,19 @@
 package scope_test
 
-import (
-	"strings"
-	"testing"
+import "testing"
 
-	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/test/e2e/internal/harness"
-)
-
-func e2EChildKustomizationIdentityNameCase(t *testing.T, flags *[]string, tc **struct {
-	name      string
-	target    string
-	authored  string
-	namespace string
-}, capturedInputs struct {
-	root        *string
-	rawBodies   *[]string
-	order       *[2]int
-	rawVersions *[]string
-	removed     *int
-},
-) {
-	t.Helper()
-
-	renderRaw := func() map[string]string {
-		t.Helper()
-		runCLIBuffersResult1 := harness.RunCLIBuffers(
-			append([]string{"build", "all", "-o", "yaml"}, (*flags)...)...)
-		out, stderr, code := runCLIBuffersResult1.Stdout, runCLIBuffersResult1.Stderr, runCLIBuffersResult1.Code
-		assert.FatalIf(t, code != 0, "build exit=%d stderr=%s", code, stderr)
-		raw := make(map[string]string)
-		for body := range strings.SplitSeq(out, "---\n") {
-			docs, err := testutil.SplitDocs([]byte(body))
-			assert.NoError(t, err)
-			for _, doc := range docs {
-				version := manifest.DocAPIVersion(doc)
-				metadata := manifest.DocMetadata(doc)
-				name, ns := metadata.Name, metadata.Namespace
-				if manifest.DocKind(doc) != manifest.KindKustomization || name != "child" ||
-					version == "kustomize.toolkit.fluxcd.io/v1" {
-					continue
-				}
-				{
-					_, duplicate := raw[version]
-					assert.FatalIf(
-						t,
-						duplicate || ns != (*tc).namespace,
-						"duplicate or wrong namespace for raw %s: %s",
-						version,
-						body,
-					)
-				}
-				raw[version] = body
-			}
-		}
-		return raw
+//nolint:paralleltest // CLI invocations replace process-wide state.
+func TestE2E_ChildKustomizationIdentity(t *testing.T) {
+	for _, scenario := range []string{"bare", "target", "authored"} {
+		t.Run(scenario, func(t *testing.T) {
+			testScopeCase(t, "scope-namespaces", "child-"+scenario)
+		})
 	}
-	testutil.WriteFile(
-		t,
-		(*capturedInputs.root),
-		"apps/raw.yaml",
-		(*capturedInputs.rawBodies)[capturedInputs.order[0]]+"---\n"+(*capturedInputs.rawBodies)[capturedInputs.order[1]],
-	)
-	before := renderRaw()
-	assert.FatalIf(
-		t,
-		len(before) != 2 || before[(*capturedInputs.rawVersions)[0]] == "" ||
-			before[(*capturedInputs.rawVersions)[1]] == "",
-		"raw groups did not coexist: %v",
-		before,
-	)
-	remaining := 1 - (*capturedInputs.removed)
-	version := (*capturedInputs.rawVersions)[remaining]
-	testutil.WriteFile(t, (*capturedInputs.root), "apps/raw.yaml", (*capturedInputs.rawBodies)[remaining])
-	after := renderRaw()
-	assert.FatalIf(
-		t,
-		len(after) != 1 || after[version] != before[version],
-		"withdrawal changed surviving bytes or retained stale output: before=%v after=%v",
-		before,
-		after,
-	)
-	nextVersion := strings.TrimSuffix(version, "/v1") + "/v2"
-	testutil.WriteFile(
-		t,
-		(*capturedInputs.root),
-		"apps/raw.yaml",
-		strings.Replace((*capturedInputs.rawBodies)[remaining], version, nextVersion, 1),
-	)
-	versioned := renderRaw()
-	assert.FatalIf(t, len(versioned) != 1 ||
-		versioned[nextVersion] != strings.Replace(
-			before[version],
-			version,
-			nextVersion,
-			1,
-		), "version-only change split identity or changed content: before=%v after=%v", before, versioned)
-}
-
-func e2EChildKustomizationIdentityNameCase2(t *testing.T, flags *[]string, tc **struct {
-	name      string
-	target    string
-	authored  string
-	namespace string
-}, capturedInputs struct {
-	root        *string
-	rawBodies   *[]string
-	order       *[2]int
-	rawVersions *[]string
-	removed     *int
-},
-) {
-	t.Helper()
-
-	e2EChildKustomizationIdentityNameCase(t, flags, tc, struct {
-		root        *string
-		rawBodies   *[]string
-		order       *[2]int
-		rawVersions *[]string
-		removed     *int
-	}{root: capturedInputs.root, rawBodies: capturedInputs.rawBodies, order: capturedInputs.order, rawVersions: capturedInputs.rawVersions, removed: capturedInputs.removed})
+	for _, scenario := range []string{
+		"insert01-remove0", "insert01-remove1", "insert10-remove0", "insert10-remove1",
+	} {
+		t.Run("authored/"+scenario, func(t *testing.T) {
+			testScopeCase(t, "scope-namespaces", "child-authored-"+scenario)
+		})
+	}
 }

@@ -1,0 +1,21 @@
+{
+  "apiVersion": "helm.toolkit.fluxcd.io/v2",
+  "kind": "HelmRelease",
+  "metadata": {
+    "name": "demo"
+  },
+  "spec": {
+    "chart": {
+      "spec": {
+        "chart": "demo",
+        "sourceRef": {
+          "kind": "HelmRepository",
+          "name": "demo",
+          "namespace": "charts"
+        },
+        "version": "0.1.0"
+      }
+    },
+    "interval": "10m"
+  }
+}

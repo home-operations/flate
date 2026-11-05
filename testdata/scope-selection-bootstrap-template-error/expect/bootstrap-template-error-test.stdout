@@ -1,0 +1,5 @@
+
+  ✗  Kustomization  flux-system/apps  kustomization path is not a directory: ./apps: resolve ./apps: stat apps: file does not exist
+  ✗  ResourceSet    flux-system/broken-rs  spec.resourcesTemplate: parse template: template: resourceset:3: function "nope" not defined
+
+  ✗ 0 passed · 2 failed   <DUR>

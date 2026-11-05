@@ -1,0 +1,5 @@
+
+  ✗  ConfigMap  apps/external  not found
+         required by apps/selected
+
+  ✗ 1 failed · 1 blocked

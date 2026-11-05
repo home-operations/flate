@@ -1,0 +1,11 @@
+{
+  "apiVersion": "other.test/v2",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "child",
+    "namespace": "flux-system"
+  },
+  "spec": {
+    "value": "second"
+  }
+}

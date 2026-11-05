@@ -1,0 +1,2 @@
+resources: [cm.yaml]
+patches: [{path: ../inputs/patch}]

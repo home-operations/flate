@@ -1,0 +1,294 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "committed-membership-rename-base",
+      "repository": "repo",
+      "overlay": "committed-membership-rename-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/committed-membership-rename-base"
+      ]
+    },
+    {
+      "name": "committed-membership-rename-baseline",
+      "repository": "baseline",
+      "overlay": "committed-membership-rename-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/committed-membership-rename-baseline"
+      ]
+    },
+    {
+      "name": "committed-membership-rename-after",
+      "repository": "repo",
+      "overlay": "committed-membership-rename-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "committed-membership-rename-base"
+      ],
+      "refs": [
+        "refs/heads/committed-membership-rename-after"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "committed-membership-rename-base",
+      "directory": "overlays/committed-membership-rename-base",
+      "operations": []
+    },
+    {
+      "name": "committed-membership-rename-baseline",
+      "directory": "overlays/committed-membership-rename-baseline",
+      "operations": []
+    },
+    {
+      "name": "committed-membership-rename-after",
+      "directory": "overlays/committed-membership-rename-after",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cm.yaml"
+        }
+      ]
+    },
+    {
+      "name": "committed-membership-rename-dirty",
+      "directory": "overlays/committed-membership-rename-dirty",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "committed-membership-rename",
+      "description": "committed membership rename.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "committed-membership-rename-baseline"
+        },
+        {
+          "commit": "committed-membership-rename-after"
+        },
+        {
+          "overlay": "committed-membership-rename-dirty"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "apps",
+              "-n",
+              "flux-system",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:committed-membership-rename-base@@"
+            ],
+            "expect": {
+              "stdout": "expect/committed-membership-rename-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/committed-membership-rename-diff.stdout",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/committed-membership-rename-after/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-after/repo/kubernetes/apps/renamed.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-after/repo/kubernetes/flux/peer.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-after/repo/peer/cm.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-after/repo/peer/kustomization.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-base/repo/kubernetes/apps/cm.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-base/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-base/repo/kubernetes/apps/stable.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-base/repo/kubernetes/flux/cluster.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-baseline/baseline/kubernetes/apps/cm.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-baseline/baseline/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-baseline/baseline/kubernetes/apps/stable.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-baseline/baseline/kubernetes/flux/cluster.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-dirty/repo/kubernetes/apps/stray.yaml",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/committed-membership-rename-dirty/repo/notes/dirty.txt",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "committed-membership-rename"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "inputs": ""
+}

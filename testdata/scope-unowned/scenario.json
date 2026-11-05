@@ -1,0 +1,438 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/unowned_entry_authority_test.go"
+    ],
+    "reductions": "Preserve the existing namespace, raw identity, cache replay and orphan authority witnesses as disk scenarios."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "malformed",
+      "directory": "overlays/malformed",
+      "operations": []
+    },
+    {
+      "name": "unreadable",
+      "directory": "overlays/unreadable",
+      "operations": [
+        {
+          "symlink": {
+            "path": "repo/pkgdir/bad.yaml",
+            "target": "missing.yaml"
+          }
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "malformed",
+      "description": "malformed",
+      "setup": [
+        {
+          "overlay": "malformed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "incidental-first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "incidental"
+            },
+            "expect": {
+              "stdout": "expect/malformed-incidental-first.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "incidental-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "incidental"
+            },
+            "expect": {
+              "stdout": "expect/malformed-incidental-repeat.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "explicit-first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/pkgdir",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "explicit"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/malformed-explicit-first.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "explicit-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/pkgdir",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "explicit"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/malformed-explicit-repeat.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unreadable",
+      "description": "unreadable",
+      "setup": [
+        {
+          "overlay": "unreadable"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "incidental-first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "incidental"
+            },
+            "expect": {
+              "stdout": "expect/unreadable-incidental-first.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "incidental-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "incidental"
+            },
+            "expect": {
+              "stdout": "expect/unreadable-incidental-repeat.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "explicit-first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/pkgdir",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "explicit"
+            },
+            "expect": {
+              "stdout": "expect/unreadable-explicit-first.stdout",
+              "stderr": "expect/unreadable-explicit-first.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "explicit-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/pkgdir",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "explicit"
+            },
+            "expect": {
+              "stdout": "expect/unreadable-explicit-repeat.stdout",
+              "stderr": "expect/unreadable-explicit-repeat.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/malformed-explicit-first.stderr",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/malformed-explicit-repeat.stderr",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/malformed-incidental-first.stdout",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/malformed-incidental-repeat.stdout",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unreadable-explicit-first.stderr",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unreadable-explicit-first.stdout",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unreadable-explicit-repeat.stderr",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unreadable-explicit-repeat.stdout",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unreadable-incidental-first.stdout",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unreadable-incidental-repeat.stdout",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed/repo/apps/cm.yaml",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed/repo/apps/kustomization.yaml",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed/repo/flux/ks.yaml",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed/repo/kustomization.yaml",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed/repo/pkgdir/bad.yaml",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unreadable/repo/apps/cm.yaml",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unreadable/repo/apps/kustomization.yaml",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unreadable/repo/flux/ks.yaml",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unreadable/repo/kustomization.yaml",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unreadable/repo/pkgdir/kustomization.yaml",
+      "cases": [
+        "unreadable"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "excluded"
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "malformed",
+        "unreadable"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "malformed"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+
+  ✓  Kustomization  flux-system/app
+  ‒  Kustomization  flux-system/external-sync  source GitRepository.source.toolkit.fluxcd.io/flux-system/external skipped: secret flux-system/unavailable-auth not found
+  ✓  Kustomization  flux-system/sync
+  ‒  GitRepository  flux-system/external  secret flux-system/unavailable-auth not found
+
+  ✓ 2 passed · 2 skipped   <DUR>

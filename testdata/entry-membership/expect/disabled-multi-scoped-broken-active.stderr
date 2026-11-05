@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  games/disabled  kustomize build ./targets/game: loading KV pairs: file sources: [missing.txt]: resolve targets/game/missing.txt: stat targets/game/missing.txt: file does not exist
+
+  ✗ 1 failed

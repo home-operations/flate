@@ -1,0 +1,277 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "input-lifecycle-dangling-base",
+      "repository": "repo",
+      "overlay": "input-lifecycle-dangling-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/input-lifecycle-dangling-base"
+      ]
+    },
+    {
+      "name": "input-lifecycle-dangling-baseline",
+      "repository": "baseline",
+      "overlay": "input-lifecycle-dangling-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/input-lifecycle-dangling-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "input-lifecycle-dangling-base",
+      "directory": "overlays/input-lifecycle-dangling-base",
+      "operations": []
+    },
+    {
+      "name": "input-lifecycle-dangling-baseline",
+      "directory": "overlays/input-lifecycle-dangling-baseline",
+      "operations": []
+    },
+    {
+      "name": "input-lifecycle-dangling-after",
+      "directory": "overlays/input-lifecycle-dangling-after",
+      "operations": [
+        {
+          "delete": "repo/inputs/patch"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "input-lifecycle-dangling",
+      "description": "input lifecycle dangling.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "input-lifecycle-dangling-baseline"
+        },
+        {
+          "commit": "input-lifecycle-dangling-base"
+        },
+        {
+          "overlay": "input-lifecycle-dangling-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/input-lifecycle-add-full-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/input-lifecycle-dangling-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/input-lifecycle-add-full-after.stdout",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/input-lifecycle-dangling-diff.stderr",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-base/repo/apps/cm.yaml",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-base/repo/apps/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-base/repo/flux/owner.yaml",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-base/repo/inputs/patch",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-baseline/baseline/apps/cm.yaml",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-baseline/baseline/apps/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-baseline/baseline/flux/owner.yaml",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-dangling-baseline/baseline/inputs/patch",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "input-lifecycle-dangling"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

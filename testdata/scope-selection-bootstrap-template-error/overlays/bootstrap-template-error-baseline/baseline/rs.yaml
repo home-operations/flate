@@ -1,0 +1,13 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: broken-rs
+  namespace: flux-system
+spec:
+  resourcesTemplate: 'apiVersion: v1
+
+    kind: ConfigMap
+
+    metadata: {name: << nope >>, namespace: ns}
+
+    '

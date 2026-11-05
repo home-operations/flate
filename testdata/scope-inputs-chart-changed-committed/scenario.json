@@ -1,0 +1,425 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "chart-changed-committed-base",
+      "repository": "repo",
+      "overlay": "chart-changed-committed-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/chart-changed-committed-base"
+      ]
+    },
+    {
+      "name": "chart-changed-committed-baseline",
+      "repository": "baseline",
+      "overlay": "chart-changed-committed-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/chart-changed-committed-baseline"
+      ]
+    },
+    {
+      "name": "chart-changed-committed-after",
+      "repository": "repo",
+      "overlay": "chart-changed-committed-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "chart-changed-committed-base"
+      ],
+      "refs": [
+        "refs/heads/chart-changed-committed-after"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "chart-changed-committed-base",
+      "directory": "overlays/chart-changed-committed-base",
+      "operations": []
+    },
+    {
+      "name": "chart-changed-committed-baseline",
+      "directory": "overlays/chart-changed-committed-baseline",
+      "operations": []
+    },
+    {
+      "name": "chart-changed-committed-after",
+      "directory": "overlays/chart-changed-committed-after",
+      "operations": [
+        {
+          "delete": "repo/charts/demo/templates/extra.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "chart-changed-committed",
+      "description": "chart changed committed.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "chart-changed-committed-baseline"
+        },
+        {
+          "commit": "chart-changed-committed-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:chart-changed-committed-base@@"
+            ],
+            "expect": {
+              "stdout": "expect/chart-changed-directories-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:chart-changed-committed-base@@"
+            ],
+            "expect": {
+              "stdout": "expect/chart-changed-directories-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "name",
+              "--base",
+              "@@commit:chart-changed-committed-base@@"
+            ],
+            "expect": {
+              "stdout": "expect/chart-changed-directories-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/chart-changed-directories-build.stdout",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/chart-changed-directories-get.stdout",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/chart-changed-directories-test.stdout",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/charts/control/Chart.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/charts/control/templates/cm.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/charts/control/values.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/charts/demo/templates/extra.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/charts/demo/values.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/flux/control.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/flux/hr.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/flux/unrelated.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/unrelated/cm.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-base/repo/unrelated/kustomization.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/charts/control/Chart.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/charts/control/templates/cm.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/charts/control/values.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/charts/demo/templates/extra.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/charts/demo/values.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/flux/control.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/flux/hr.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/flux/unrelated.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/unrelated/cm.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-changed-committed-baseline/baseline/unrelated/kustomization.yaml",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "chart-changed-committed"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

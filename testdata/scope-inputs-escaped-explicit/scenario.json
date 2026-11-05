@@ -1,0 +1,433 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "escaped-explicit-base",
+      "repository": "repo",
+      "overlay": "escaped-explicit-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/escaped-explicit-base"
+      ]
+    },
+    {
+      "name": "escaped-explicit-baseline",
+      "repository": "baseline",
+      "overlay": "escaped-explicit-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/escaped-explicit-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "escaped-explicit-base",
+      "directory": "overlays/escaped-explicit-base",
+      "operations": []
+    },
+    {
+      "name": "escaped-explicit-baseline",
+      "directory": "overlays/escaped-explicit-baseline",
+      "operations": []
+    },
+    {
+      "name": "escaped-explicit-after",
+      "directory": "overlays/escaped-explicit-after",
+      "operations": []
+    },
+    {
+      "name": "escaped-explicit-unrelated",
+      "directory": "overlays/escaped-explicit-unrelated",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "escaped-explicit",
+      "description": "escaped explicit.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "escaped-explicit-baseline"
+        },
+        {
+          "commit": "escaped-explicit-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/escaped-implicit-shallow-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "unrelated-edit",
+          "edit": {
+            "overlay": "escaped-explicit-unrelated"
+          }
+        },
+        {
+          "id": "unrelated-committed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--base",
+              "HEAD"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "unrelated-directories",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "consumed-edit",
+          "edit": {
+            "overlay": "escaped-explicit-after"
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/escaped-implicit-shallow-full-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "consumed-committed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--base",
+              "HEAD"
+            ],
+            "expect": {
+              "stdout": "expect/escaped-implicit-shallow-consumed-committed.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "consumed-directories",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/escaped-implicit-shallow-consumed-committed.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/escaped-implicit-shallow-consumed-committed.stdout",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/escaped-implicit-shallow-full-after.stdout",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/escaped-implicit-shallow-full-before.stdout",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/escaped-explicit-after/repo/inputs/unrelated",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-after/repo/shared/cm.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-base/repo/deploy/kustomization.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-base/repo/flux/owner.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-base/repo/inputs/unrelated",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-base/repo/shared/cm.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-base/repo/shared/kustomization.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-baseline/baseline/deploy/kustomization.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-baseline/baseline/flux/owner.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-baseline/baseline/inputs/unrelated",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-baseline/baseline/shared/cm.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-baseline/baseline/shared/kustomization.yaml",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/escaped-explicit-unrelated/repo/inputs/unrelated",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "escaped-explicit"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

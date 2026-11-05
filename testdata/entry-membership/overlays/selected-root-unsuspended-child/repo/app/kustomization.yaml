@@ -1,0 +1,8 @@
+resources: [release.yaml, repository.yaml, child.yaml, root.yaml]
+nameSuffix: -dev
+patches:
+- target: {kind: HelmRelease, name: podinfo}
+  patch: |-
+    - op: replace
+      path: /spec/chart/spec/version
+      value: 6.5.0

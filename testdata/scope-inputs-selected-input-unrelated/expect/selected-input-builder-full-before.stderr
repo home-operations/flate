@@ -1,0 +1,3 @@
+
+  ⚠ warnings (1)
+    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct

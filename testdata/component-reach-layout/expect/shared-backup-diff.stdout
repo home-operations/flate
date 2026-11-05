@@ -1,0 +1,101 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "hermes",
+        "path": "kubernetes/apps/ai/hermes/app"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "ai",
+      "name": "backup-settings",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "capacity": "10Gi",
+          "policy": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "hermes",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "backup-settings",
+          "namespace": "ai"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "capacity": "10Gi",
+          "policy": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "hermes",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "backup-settings",
+          "namespace": "ai"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "hermes-peer",
+        "path": "kubernetes/apps/ai/hermes-peer/app"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "ai-peer",
+      "name": "backup-settings",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "capacity": "10Gi",
+          "policy": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "hermes-peer",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "backup-settings",
+          "namespace": "ai-peer"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "capacity": "10Gi",
+          "policy": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "hermes-peer",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "backup-settings",
+          "namespace": "ai-peer"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

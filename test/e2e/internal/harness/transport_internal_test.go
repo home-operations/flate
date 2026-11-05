@@ -2,6 +2,7 @@ package harness
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log" //nolint:depguard // Restoring slog.SetDefault also requires restoring the standard logger writer.
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
@@ -120,5 +122,41 @@ func assertFixtureRequest(t *testing.T, transport *http.Transport, f *testfixtur
 	}
 	if string(body) != f.Read(t, "expect/literal-app.stdout", "") || response.StatusCode != http.StatusOK {
 		t.Fatalf("declared response changed: status=%d body=%q", response.StatusCode, body)
+	}
+}
+
+//nolint:paralleltest // The fixture replaces process-wide HTTP, DNS and Git transports.
+func TestTransport_ResponseOverrides(t *testing.T) {
+	f := testfixture.Materialize(t, "entry-root", "literal-app")
+	isolate(t, f)
+	f.Responses = []testfixture.Response{{
+		Host: "fixture.invalid", Method: "GET", Path: "/manifest",
+		Status: http.StatusOK, Body: "expect/literal-app.stdout",
+	}}
+	fixture := serve(t, f)
+	transport := source.NewHTTPTransport(source.TransportMaterial{})
+	defer transport.CloseIdleConnections()
+	for range 2 {
+		fixture.update(t, nil)
+		assertFixtureRequest(t, transport, f, "https://fixture.invalid/manifest")
+		fixture.update(t, []testfixture.Response{{
+			Host: "fixture.invalid", Method: "GET", Path: "/manifest", Error: "connection-reset",
+		}})
+		request, err := http.NewRequestWithContext(
+			t.Context(),
+			http.MethodGet,
+			"https://fixture.invalid/manifest",
+			http.NoBody,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := (&http.Client{Transport: transport}).Do(request)
+		if response != nil {
+			response.Body.Close()
+		}
+		if !errors.Is(err, syscall.ECONNRESET) {
+			t.Fatalf("declared reset lost its classification: %v", err)
+		}
 	}
 }

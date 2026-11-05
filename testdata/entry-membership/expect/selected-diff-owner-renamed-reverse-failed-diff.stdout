@@ -1,0 +1,17 @@
+{
+  "changes": [],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "old",
+        "path": ""
+      },
+      "side": "current",
+      "count": 2,
+      "reason": "kustomize build ./app: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve app/missing.yaml: stat app/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve app/missing.yaml: stat app/missing.yaml: file does not exist"
+    }
+  ]
+}

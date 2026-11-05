@@ -1,0 +1,4 @@
+
+  ✗  HelmRelease  apps/demo  helm template: execution error at (demo/templates/cm.yaml:1:3): surviving template is invalid
+
+  ✗ 0 passed · 1 failed   <DUR>

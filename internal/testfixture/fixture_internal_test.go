@@ -290,7 +290,7 @@ func TestCopyTree_RejectsSymlink(t *testing.T) {
 	t.Parallel()
 	source, target := t.TempDir(), t.TempDir()
 	assert.NoError(t, os.Symlink(t.TempDir(), filepath.Join(source, "escape")))
-	if err := copyTree(source, target); err == nil {
+	if err := copyTree(source, target, make(map[string]string)); err == nil {
 		t.Fatal("symlink accepted")
 	}
 }
@@ -311,4 +311,150 @@ func TestFixture_DeclaredGitStores(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = f.Load(endpoint)
 	assert.Equal(t, errors.Is(err, transport.ErrRepositoryNotFound), true)
+}
+
+func TestFixture_SymlinkReplay(t *testing.T) {
+	t.Parallel()
+	for _, target := range []string{"../value", "missing.yaml"} {
+		t.Run(target, func(t *testing.T) {
+			t.Parallel()
+			dir := fixtureSource(t, "reset")
+			s, err := load(dir)
+			assert.NoError(t, err)
+			s.Overlays[0].Operations = []operation{{Symlink: &symlink{Path: "repo/nested/link", Target: target}}}
+			data, err := json.Marshal(s)
+			assert.NoError(t, err)
+			testutil.WriteFile(t, dir, "scenario.json", string(data))
+			f := materialize(t, dir, "sequence")
+			for range 2 {
+				f.Restore(t)
+				_, err := os.Lstat(filepath.Join(f.Repo, "nested", "link"))
+				assert.Equal(t, os.IsNotExist(err), true)
+				f.Edit(t, f.Plan.Steps[0])
+				got, err := os.Readlink(filepath.Join(f.Repo, "nested", "link"))
+				assert.NoError(t, err)
+				assert.Equal(t, got, target)
+				body, err := os.ReadFile(filepath.Join(f.Repo, "nested", "link"))
+				if target == "missing.yaml" {
+					assert.Equal(t, os.IsNotExist(err), true)
+				} else {
+					assert.NoError(t, err)
+					assert.Equal(t, string(body), "after")
+				}
+			}
+		})
+	}
+}
+
+func TestScenario_SymlinkBoundary(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		link  symlink
+		valid bool
+	}{
+		{"dangling", symlink{Path: "repo/link", Target: "missing"}, true},
+		{"parent", symlink{Path: "repo/nested/link", Target: "../value"}, true},
+		{"absolute", symlink{Path: "repo/link", Target: "/tmp/outside"}, false},
+		{"escape", symlink{Path: "repo/link", Target: "../../outside"}, false},
+		{"git", symlink{Path: "repo/link", Target: ".git/HEAD"}, false},
+		{"link escape", symlink{Path: "../link", Target: "repo/value"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := validateOperation(&operation{Symlink: &tc.link}, nil, nil, map[string]bool{"repo": true})
+			assert.Equal(t, err == nil, tc.valid)
+		})
+	}
+}
+
+func TestFixture_EmptyRepositoryReplay(t *testing.T) {
+	t.Parallel()
+	dir := fixtureSource(t, "reset")
+	s, err := load(dir)
+	assert.NoError(t, err)
+	s.Repositories[0].Directory = ""
+	data, err := json.Marshal(s)
+	assert.NoError(t, err)
+	testutil.WriteFile(t, dir, "scenario.json", string(data))
+	f := materialize(t, dir, "sequence")
+	for range 2 {
+		f.Restore(t)
+		_, err := os.Stat(filepath.Join(f.Repo, "value"))
+		assert.Equal(t, os.IsNotExist(err), true)
+		f.Edit(t, f.Plan.Steps[0])
+		body, err := os.ReadFile(filepath.Join(f.Repo, "value"))
+		assert.NoError(t, err)
+		assert.Equal(t, string(body), "after")
+	}
+}
+
+func TestFixture_SourceOriginsReplay(t *testing.T) {
+	t.Parallel()
+	dir := fixtureSource(t, "reset")
+	f := materialize(t, dir, "sequence")
+	value := filepath.Join(f.Repo, "value")
+	for range 2 {
+		f.Restore(t)
+		assert.Equal(t, f.origins[value], filepath.Join(dir, "repo", "value"))
+		f.Edit(t, f.Plan.Steps[0])
+		after := filepath.Join(dir, "overlays", "after", "repo", "value")
+		assert.Equal(t, f.origins[value], after)
+		f.apply(t, &operation{Rename: &rename{From: "repo/value", To: "repo/moved"}})
+		assert.Equal(t, f.origins[filepath.Join(f.Repo, "moved")], after)
+		_, exists := f.origins[value]
+		assert.Equal(t, exists, false)
+		f.apply(t, &operation{Delete: "repo/moved"})
+		_, exists = f.origins[filepath.Join(f.Repo, "moved")]
+		assert.Equal(t, exists, false)
+		f.checkout(t, "head")
+		assert.Equal(t, f.origins[value], after)
+		f.checkout(t, "base")
+		assert.Equal(t, f.origins[value], filepath.Join(dir, "repo", "value"))
+		f.apply(t, &operation{Symlink: &symlink{Path: "repo/link", Target: "missing"}})
+		assert.Equal(t, f.origins[filepath.Join(f.Repo, "link")], filepath.Join(dir, "repo", "link"))
+	}
+}
+
+func TestFixture_NoGitReplay(t *testing.T) {
+	t.Parallel()
+	dir := fixtureSource(t, "reset")
+	s, err := load(dir)
+	assert.NoError(t, err)
+	s.Cases[0].Setup = append(s.Cases[0].Setup, operation{NoGit: "repo"})
+	data, err := json.Marshal(s)
+	assert.NoError(t, err)
+	testutil.WriteFile(t, dir, "scenario.json", string(data))
+	f := materialize(t, dir, "sequence")
+	for range 2 {
+		f.Restore(t)
+		_, err := git.PlainOpenWithOptions(f.Repo, &git.PlainOpenOptions{DetectDotGit: true})
+		assert.Equal(t, errors.Is(err, git.ErrRepositoryNotExists), true)
+		body, err := os.ReadFile(filepath.Join(f.Repo, "value"))
+		assert.NoError(t, err)
+		assert.Equal(t, string(body), "before")
+	}
+}
+
+func TestScenario_TransportOverrides(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		response Response
+		valid    bool
+	}{
+		{"success", Response{Host: "fixture.invalid", Method: "GET", Path: "/index.yaml", Status: 200, Body: "inputs/index.yaml"}, true},
+		{"reset", Response{Host: "fixture.invalid", Method: "GET", Path: "/index.yaml", Error: "connection-reset"}, true},
+		{"unknown error", Response{Host: "fixture.invalid", Method: "GET", Path: "/index.yaml", Error: "unknown"}, false},
+		{"mixed result", Response{Host: "fixture.invalid", Method: "GET", Path: "/index.yaml", Error: "connection-reset", Status: 200, Body: "inputs/index.yaml"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := fixtureSource(t, "reset")
+			s, err := load(dir)
+			assert.NoError(t, err)
+			s.Cases[0].Steps[1].Invoke.Transport = []Response{tc.response}
+			assert.Equal(t, s.validate(dir) == nil, tc.valid)
+		})
+	}
 }

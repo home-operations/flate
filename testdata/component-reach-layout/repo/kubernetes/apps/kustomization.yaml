@@ -1,0 +1,2 @@
+namespace: flux-system
+resources: [ai/hermes/ks.yaml, ai/hermes-peer/ks.yaml]

@@ -1,0 +1,3 @@
+
+  ⚠ warnings (1)
+    [SourceCredentialsUnavailable] GitRepository flux-system/side-repo: secret flux-system/side-repo-deploy not found

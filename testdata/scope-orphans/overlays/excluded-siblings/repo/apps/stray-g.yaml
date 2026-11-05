@@ -1,0 +1,15 @@
+{
+  "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "stray-g",
+    "namespace": "flux-system"
+  },
+  "spec": {
+    "path": "./missing-g",
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system"
+    }
+  }
+}

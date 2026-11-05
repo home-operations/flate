@@ -1,0 +1,10 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "hello": "world"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "orphan-cm"
+  }
+}

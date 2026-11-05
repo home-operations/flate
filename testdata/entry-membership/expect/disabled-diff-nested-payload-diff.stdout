@@ -1,0 +1,51 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "app",
+        "path": "payload"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "reachable-cm",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "original"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "reachable-cm",
+          "namespace": "apps"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "changed"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "reachable-cm",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

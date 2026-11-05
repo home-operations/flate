@@ -1,0 +1,13 @@
+
+@@ data.value @@
+# v1/ConfigMap/ns-a/shared
+! ± value change
+- original
++ changed
+
+@@ data.value @@
+# v1/ConfigMap/ns-b/shared
+! ± value change
+- original
++ changed
+

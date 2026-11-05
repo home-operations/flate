@@ -1,0 +1,247 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "optional-changed-committed-base",
+      "repository": "repo",
+      "overlay": "optional-changed-committed-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/optional-changed-committed-base"
+      ]
+    },
+    {
+      "name": "optional-changed-committed-baseline",
+      "repository": "baseline",
+      "overlay": "optional-changed-committed-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/optional-changed-committed-baseline"
+      ]
+    },
+    {
+      "name": "optional-changed-committed-after",
+      "repository": "repo",
+      "overlay": "optional-changed-committed-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "optional-changed-committed-base"
+      ],
+      "refs": [
+        "refs/heads/optional-changed-committed-after"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "optional-changed-committed-base",
+      "directory": "overlays/optional-changed-committed-base",
+      "operations": []
+    },
+    {
+      "name": "optional-changed-committed-baseline",
+      "directory": "overlays/optional-changed-committed-baseline",
+      "operations": []
+    },
+    {
+      "name": "optional-changed-committed-after",
+      "directory": "overlays/optional-changed-committed-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "optional-changed-committed",
+      "description": "optional changed committed.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "optional-changed-committed-baseline"
+        },
+        {
+          "commit": "optional-changed-committed-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/optional-changed-directory-full.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--base",
+              "@@commit:optional-changed-committed-base@@"
+            ],
+            "expect": {
+              "stdout": "expect/optional-changed-directory-full.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/optional-changed-directory-full.stdout",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/optional-changed-committed-after/repo/flux/optional.yaml",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-changed-committed-base/repo/apps/app/kustomization.yaml",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-changed-committed-base/repo/apps/app/output.yaml",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-changed-committed-base/repo/flux/cluster.yaml",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-changed-committed-baseline/baseline/apps/app/kustomization.yaml",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-changed-committed-baseline/baseline/apps/app/output.yaml",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-changed-committed-baseline/baseline/flux/cluster.yaml",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "optional-changed-committed"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

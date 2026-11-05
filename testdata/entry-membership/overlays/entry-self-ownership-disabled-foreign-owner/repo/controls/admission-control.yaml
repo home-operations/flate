@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: retained
+kind: ConfigMap
+metadata:
+  name: entry-admission-control
+  namespace: flux-system

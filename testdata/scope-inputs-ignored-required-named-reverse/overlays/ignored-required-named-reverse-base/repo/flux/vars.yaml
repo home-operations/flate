@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  FLAG: old
+kind: ConfigMap
+metadata:
+  name: vars
+  namespace: flux-system

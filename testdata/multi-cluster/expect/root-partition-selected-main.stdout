@@ -1,0 +1,17 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "main"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "shared",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "shared",
+      "namespace": "apps"
+    }
+  }
+]

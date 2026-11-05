@@ -1,0 +1,3 @@
+
+  ⚠ warnings (1)
+    [DiffSuppressed] Kustomization flux-system/apps: 1 object not rendered on the orig side; diff suppressed (suspended on orig)

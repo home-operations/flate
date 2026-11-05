@@ -1,0 +1,7 @@
+
+  ✓  Kustomization  default/app-a
+  ✓  Kustomization  flux-system/cluster-apps
+  ‒  Kustomization  flux-system/side-sync  source GitRepository.source.toolkit.fluxcd.io/flux-system/side-repo skipped: secret flux-system/side-repo-deploy not found
+  ‒  GitRepository  flux-system/side-repo  secret flux-system/side-repo-deploy not found
+
+  ✓ 2 passed · 2 skipped   <DUR>

@@ -1,0 +1,785 @@
+{
+  "source": {
+    "repository": "joryirving/home-ops",
+    "revision": "7548eb35aed27a000d9c8bfc4a6f8a73b14661cd",
+    "paths": [
+      "kubernetes/clusters/main",
+      "kubernetes/clusters/test",
+      "kubernetes/clusters/utility",
+      "kubernetes/apps/main/flux-system/flux-operator.yaml",
+      "kubernetes/apps/utility/flux-system/flux-operator.yaml"
+    ],
+    "reductions": "Flatten the common kubernetes/clusters prefix to sibling main/test/utility entries. Retain colliding flux-system/shared identities and repository-relative app paths. Replace charts and applications with one local, identically named ConfigMap whose value identifies the cluster. The root has no Kustomization and no cluster selector. This fixture records desired E4 partition behavior; its named scope test remains skipped until the discovery partition owner repairs root discovery."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "root-partition",
+      "directory": "overlays/root-partition",
+      "operations": []
+    },
+    {
+      "name": "one-sided-diff",
+      "directory": "overlays/one-sided-diff",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "root-partition",
+      "description": "Repository-root discovery retains three colliding Flux and workload identities, exact cluster framing, and named selection; each selected path has its own complete output.",
+      "setup": [
+        {
+          "overlay": "root-partition"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get-all-cold",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "name"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-partition-get-all-cold.stdout",
+              "stderr": "expect/root-partition-get-all-cold.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "get-all-warm",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "name"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-partition-get-all-warm.stdout",
+              "stderr": "expect/root-partition-get-all-warm.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "get-named",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "name"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-partition-get-named.stdout",
+              "stderr": "expect/root-partition-get-named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-partition-build-all.stdout",
+              "stderr": "expect/root-partition-build-all.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-named",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-partition-build-named.stdout",
+              "stderr": "expect/root-partition-build-named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected-main",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@/main",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-partition-selected-main.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected-test",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@/test",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-partition-selected-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected-utility",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@/utility",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-partition-selected-utility.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "one-sided-diff",
+      "description": "The removed utility cluster has an unsuppressed removal, main has only its own change, and test stays unchanged; independent selected entries establish the corresponding payloads.",
+      "setup": [
+        {
+          "overlay": "one-sided-diff"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root-cold",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/one-sided-diff-root-cold.stdout",
+              "stderr": "expect/one-sided-diff-root-cold.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-warm",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/one-sided-diff-root-warm.stdout",
+              "stderr": "expect/one-sided-diff-root-warm.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected-main",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@/main",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/main"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/one-sided-diff-selected-main.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected-test",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "shared",
+              "--path",
+              "@@repo@@/test",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/test"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/one-sided-diff-selected-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected-original-utility",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "shared",
+              "--path",
+              "@@baseline@@/utility",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/one-sided-diff-selected-original-utility.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/one-sided-diff-root-cold.stderr",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/one-sided-diff-root-cold.stdout",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/one-sided-diff-root-warm.stderr",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/one-sided-diff-root-warm.stdout",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/one-sided-diff-selected-main.stdout",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/one-sided-diff-selected-original-utility.stdout",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/one-sided-diff-selected-test.stdout",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-build-all.stderr",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-build-all.stdout",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-build-named.stderr",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-build-named.stdout",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-get-all-cold.stderr",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-get-all-cold.stdout",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-get-all-warm.stderr",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-get-all-warm.stdout",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-get-named.stderr",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-get-named.stdout",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-selected-main.stdout",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-selected-test.stdout",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/root-partition-selected-utility.stdout",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/main/app/configmap.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/main/app/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/main/flux.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/main/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/test/app/configmap.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/test/app/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/test/flux.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/test/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/utility/app/configmap.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/utility/app/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/utility/flux.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/baseline/utility/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/repo/main/app/configmap.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/repo/main/app/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/repo/main/flux.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/repo/main/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/repo/test/app/configmap.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/repo/test/app/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/repo/test/flux.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/one-sided-diff/repo/test/kustomization.yaml",
+      "cases": [
+        "one-sided-diff"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/main/app/configmap.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/main/app/kustomization.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/main/flux.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/main/kustomization.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/test/app/configmap.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/test/app/kustomization.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/test/flux.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/test/kustomization.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/utility/app/configmap.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/utility/app/kustomization.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/utility/flux.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/root-partition/repo/utility/kustomization.yaml",
+      "cases": [
+        "root-partition"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "one-sided-diff",
+        "root-partition"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

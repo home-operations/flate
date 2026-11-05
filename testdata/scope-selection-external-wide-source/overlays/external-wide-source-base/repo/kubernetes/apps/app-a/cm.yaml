@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  k: v
+kind: ConfigMap
+metadata:
+  name: app-a
+  namespace: default

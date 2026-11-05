@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/owner  kustomize build ./incidental/nested: accumulating resources: accumulation err='accumulating resources from 'unreadable.yaml': resolve incidental/nested/unreadable.yaml: stat @@repo@@/incidental/nested/unreadable.yaml: permission denied': must build at directory: not a valid directory: resolve incidental/nested/unreadable.yaml: stat @@repo@@/incidental/nested/unreadable.yaml: permission denied
+
+  ✗ 1 failed

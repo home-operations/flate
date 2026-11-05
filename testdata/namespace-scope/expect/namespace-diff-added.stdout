@@ -1,0 +1,37 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "selected",
+        "path": "payload"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "config",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "1"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "selected",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "config",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

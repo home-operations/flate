@@ -1,0 +1,6 @@
+
+data.app  (v1/ConfigMap/ns-a/app-a-cm)
+  ± value change
+    - app-a
+    + app-a-edited
+

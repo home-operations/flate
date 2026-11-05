@@ -1,0 +1,286 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "optional-sides-remove-base",
+      "repository": "repo",
+      "overlay": "optional-sides-remove-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/optional-sides-remove-base"
+      ]
+    },
+    {
+      "name": "optional-sides-remove-baseline",
+      "repository": "baseline",
+      "overlay": "optional-sides-remove-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/optional-sides-remove-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "optional-sides-remove-base",
+      "directory": "overlays/optional-sides-remove-base",
+      "operations": []
+    },
+    {
+      "name": "optional-sides-remove-baseline",
+      "directory": "overlays/optional-sides-remove-baseline",
+      "operations": []
+    },
+    {
+      "name": "optional-sides-remove-after",
+      "directory": "overlays/optional-sides-remove-after",
+      "operations": [
+        {
+          "delete": "repo/flux/optional.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "optional-sides-remove",
+      "description": "optional sides remove.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "optional-sides-remove-baseline"
+        },
+        {
+          "commit": "optional-sides-remove-base"
+        },
+        {
+          "overlay": "optional-sides-remove-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/optional-changed-directory-full.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/optional-sides-appear-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/optional-sides-remove-scoped-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/optional-changed-directory-full.stdout",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/optional-sides-appear-full-before.stdout",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/optional-sides-remove-scoped-diff.stdout",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/optional-sides-remove-base/repo/apps/app/kustomization.yaml",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-remove-base/repo/apps/app/output.yaml",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-remove-base/repo/flux/cluster.yaml",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-remove-base/repo/flux/optional.yaml",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-remove-baseline/baseline/apps/app/kustomization.yaml",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-remove-baseline/baseline/apps/app/output.yaml",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-remove-baseline/baseline/flux/cluster.yaml",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-remove-baseline/baseline/flux/optional.yaml",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "optional-sides-remove"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

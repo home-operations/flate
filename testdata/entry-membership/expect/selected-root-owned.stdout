@@ -1,0 +1,53 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: owner
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: podinfo-dev
+  namespace: apps
+spec:
+  chart:
+    spec:
+      chart: podinfo
+      sourceRef:
+        kind: HelmRepository
+        name: podinfo
+      version: 6.5.0
+  suspend: true
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: owner
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: podinfo-dev
+  namespace: apps
+spec:
+  suspend: true
+  url: https://fixture.invalid/charts
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: owner
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: child-dev
+  namespace: apps
+spec:
+  path: ./unavailable
+  suspend: true
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: owner
+  namespace: flux-system
+spec:
+  path: ./app
+  sourceRef:
+    kind: GitRepository
+    name: cluster

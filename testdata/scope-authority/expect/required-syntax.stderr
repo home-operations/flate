@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/owner  kustomize build ./app: accumulating resources: accumulating resources from 'child.yaml': MalformedYAMLError: yaml: line 4: did not find expected node content in File: child.yaml
+
+  ✗ 1 failed

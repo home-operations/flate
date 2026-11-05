@@ -1,0 +1,7 @@
+---
+apiVersion: v1
+data:
+  value: original
+kind: ConfigMap
+metadata:
+  name: input-dev

@@ -1,0 +1,245 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "."
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "flux-system",
+      "name": "sync",
+      "status": "changed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "sync",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./kube/deploy/app",
+          "targetNamespace": "media"
+        }
+      },
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "sync",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./kube/deploy/app",
+          "targetNamespace": "shifted"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "sync",
+        "path": "kube/deploy/app"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "media",
+      "name": "app-admission-control",
+      "status": "removed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "retained"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "app-admission-control",
+          "namespace": "media"
+        }
+      },
+      "new": null,
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "sync",
+        "path": "kube/deploy/app"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "shifted",
+      "name": "app-admission-control",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "retained"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "app-admission-control",
+          "namespace": "shifted"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "sync",
+        "path": "kube/deploy/app"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "media",
+      "name": "app",
+      "status": "removed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "app",
+          "namespace": "media"
+        },
+        "spec": {
+          "path": "./payload",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "new": null,
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "sync",
+        "path": "kube/deploy/app"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "shifted",
+      "name": "app",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "app",
+          "namespace": "shifted"
+        },
+        "spec": {
+          "path": "./payload",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "media",
+        "name": "app",
+        "path": "payload"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "reachable-cm",
+      "status": "removed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "original"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "media"
+          },
+          "name": "reachable-cm",
+          "namespace": "apps"
+        }
+      },
+      "new": null,
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "shifted",
+        "name": "app",
+        "path": "payload"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "reachable-cm",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "original"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "shifted"
+          },
+          "name": "reachable-cm",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

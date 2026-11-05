@@ -1,0 +1,5 @@
+
+  ✓  Kustomization  flux-system/parent
+  ⊘  Kustomization  child  blocked by flux-system (not found)
+
+  ✗ 1 passed · 1 blocked   <DUR>

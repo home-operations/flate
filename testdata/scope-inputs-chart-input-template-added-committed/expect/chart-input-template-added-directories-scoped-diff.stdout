@@ -1,0 +1,14 @@
+--- ConfigMap apps/chart-input-extra
++++ ConfigMap apps/chart-input-extra
+@@ -1 +1,11 @@
++apiVersion: v1
++data:
++  value: before
++kind: ConfigMap
++metadata:
++  labels:
++    helm.toolkit.fluxcd.io/name: demo
++    helm.toolkit.fluxcd.io/namespace: apps
++  name: chart-input-extra
++  namespace: apps
+ 

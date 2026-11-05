@@ -1,0 +1,181 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "owner",
+        "path": "entry"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "apps",
+      "name": "owner",
+      "status": "removed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "owner",
+          "namespace": "apps"
+        },
+        "spec": {
+          "dependsOn": [
+            {
+              "name": "sibling"
+            }
+          ],
+          "path": "./entry"
+        }
+      },
+      "new": null,
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "owner",
+        "path": "entry"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "entry-output",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "changed"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "owner",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "entry-output",
+          "namespace": "apps"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "original"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "owner",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "entry-output",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "owner",
+        "path": "entry"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "apps",
+      "name": "owner",
+      "status": "changed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "owner",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "owner",
+          "namespace": "apps"
+        },
+        "spec": {
+          "dependsOn": [
+            {
+              "name": "sibling"
+            }
+          ],
+          "path": "./entry"
+        }
+      },
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "owner",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "owner",
+          "namespace": "apps"
+        },
+        "spec": {
+          "path": "./entry"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "sibling",
+        "path": "prerequisite"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "prerequisite-output",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "changed"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sibling",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "prerequisite-output",
+          "namespace": "apps"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "original"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sibling",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "prerequisite-output",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

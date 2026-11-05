@@ -1,0 +1,9 @@
+
+  ✗  orig snapshot: entry  path "entry"  kustomize build entry: loading KV pairs: env source files: [.cluster-vars.env]: resolve entry/.cluster-vars.env: stat entry/.cluster-vars.env: file does not exist
+
+  ✗  current snapshot: entry  path "entry"  kustomize build entry: loading KV pairs: env source files: [.cluster-vars.env]: resolve entry/.cluster-vars.env: stat entry/.cluster-vars.env: file does not exist
+
+  ⚠ warnings (1)
+    [DiffSuppressed] entry path "entry": 0 objects withheld; diff suppressed (failed on both sides: orig: kustomize build entry: loading KV pairs: env source files: [.cluster-vars.env]: resolve entry/.cluster-vars.env: stat entry/.cluster-vars.env: file does not exist; current: kustomize build entry: loading KV pairs: env source files: [.cluster-vars.env]: resolve entry/.cluster-vars.env: stat entry/.cluster-vars.env: file does not exist)
+
+  ✗ 2 failed

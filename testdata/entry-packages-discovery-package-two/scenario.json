@@ -1,0 +1,142 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/entry_packages_test.go",
+      "test/e2e/scope/literal_root_layers_test.go",
+      "test/e2e/scope/entry_prerequisite_sides_test.go"
+    ],
+    "reductions": "Authored from the scope witnesses. Preserve every dynamic shape, independent negative control, transformed identity and complete CLI result."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "discovery-package-one",
+      "directory": "overlays/discovery-package-one"
+    }
+  ],
+  "cases": [
+    {
+      "name": "discovery-package-two",
+      "description": "discovery package two.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "overlay": "discovery-package-one"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry/two",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/discovery-package-two-build.stdout",
+              "stderr": "expect/discovery-package-two-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/discovery-package-one/repo/entry/Taskfile.yaml",
+      "cases": [
+        "discovery-package-two"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/discovery-package-one/repo/entry/one/kustomization.yaml",
+      "cases": [
+        "discovery-package-two"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/discovery-package-one/repo/entry/one/role.yaml",
+      "cases": [
+        "discovery-package-two"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/discovery-package-one/repo/entry/two/kustomization.yaml",
+      "cases": [
+        "discovery-package-two"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/discovery-package-one/repo/entry/two/role.yaml",
+      "cases": [
+        "discovery-package-two"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/discovery-package-two-build.stdout",
+      "cases": [
+        "discovery-package-two"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/discovery-package-two-build.stderr",
+      "cases": [
+        "discovery-package-two"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    }
+  ]
+}

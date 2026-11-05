@@ -1,0 +1,11 @@
+--- ConfigMap flux-system/rendered (apps/app)
++++ ConfigMap flux-system/rendered (apps/app)
+@@ -1,7 +1,7 @@
+ apiVersion: v1
+ data:
+   sentinel: active
+-  value: available
++  value: fallback
+ kind: ConfigMap
+ metadata:
+   labels:

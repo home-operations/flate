@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: unchanged
+kind: ConfigMap
+metadata:
+  name: control-surviving
+  namespace: apps

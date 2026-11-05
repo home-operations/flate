@@ -1,0 +1,4 @@
+
+  ⚠ warnings (2)
+    [ExternalSource] orig snapshot: Kustomization flux-system/apps: external source GitRepository.source.toolkit.fluxcd.io/flux-system/pinned is outside the local tree; not rendered
+    [ExternalSource] current snapshot: Kustomization flux-system/apps: external source GitRepository.source.toolkit.fluxcd.io/flux-system/pinned is outside the local tree; not rendered

@@ -1,0 +1,925 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Authored source topology with the existing pinned-tree regression inputs. Application payloads reduce to ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "registry",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "u2-aws-native-profile",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-aws-native-profile"
+    },
+    {
+      "repository": "repo",
+      "name": "u2-missing-certificate",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-missing-certificate"
+    },
+    {
+      "repository": "repo",
+      "name": "u2-missing-proxy",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-missing-proxy"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "u2-aws-native-profile",
+      "directory": "overlays/u2-aws-native-profile"
+    },
+    {
+      "name": "u2-missing-certificate",
+      "directory": "overlays/u2-missing-certificate"
+    },
+    {
+      "name": "u2-missing-proxy",
+      "directory": "overlays/u2-missing-proxy"
+    }
+  ],
+  "cases": [
+    {
+      "name": "docker-native-store",
+      "description": "docker native store",
+      "setup": [
+        {
+          "commit": "registry"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "docker-native-store",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--registry-config",
+              "@@inputs@@/docker/config.json"
+            ],
+            "expect": {
+              "stdout": "expect/docker-native-store.stdout",
+              "stderr": "expect/docker-native-store.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-native-store",
+      "description": "helm native store",
+      "setup": [
+        {
+          "commit": "registry"
+        }
+      ],
+      "env": {
+        "DOCKER_CONFIG": "@@inputs@@/empty-docker",
+        "HELM_REGISTRY_CONFIG": "@@inputs@@/helm/registry.json"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "helm-native-store",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/helm-native-store.stdout",
+              "stderr": "expect/helm-native-store.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "anonymous-registry",
+      "description": "anonymous registry",
+      "setup": [
+        {
+          "commit": "registry"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "anonymous-registry",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--registry-config",
+              "@@inputs@@/empty-docker/config.json"
+            ],
+            "expect": {
+              "stdout": "expect/anonymous-registry.stdout",
+              "stderr": "expect/anonymous-registry.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "malformed-native-registry-store",
+      "description": "malformed native registry store",
+      "setup": [
+        {
+          "commit": "registry"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "malformed-native-registry",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--registry-config",
+              "@@inputs@@/bad-registry.json"
+            ],
+            "expect": {
+              "stdout": "expect/malformed-native-registry.stdout",
+              "stderr": "expect/malformed-native-registry.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "aws-native-profile",
+      "description": "aws native profile",
+      "setup": [
+        {
+          "commit": "u2-aws-native-profile"
+        }
+      ],
+      "env": {
+        "AWS_PROFILE": "fixture",
+        "AWS_SHARED_CREDENTIALS_FILE": "@@inputs@@/aws/credentials",
+        "AWS_CONFIG_FILE": "@@inputs@@/aws/config",
+        "AWS_EC2_METADATA_DISABLED": "true"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "aws-native-profile",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/aws-native-profile.stdout",
+              "stderr": "expect/aws-native-profile.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-certificate",
+      "description": "missing certificate",
+      "setup": [
+        {
+          "commit": "u2-missing-certificate"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-certificate",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/missing-certificate.stdout",
+              "stderr": "expect/missing-certificate.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-proxy",
+      "description": "missing proxy",
+      "setup": [
+        {
+          "commit": "u2-missing-proxy"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-proxy",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/missing-proxy.stdout",
+              "stderr": "expect/missing-proxy.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/flux/source.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/flux/consumer.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/registry/manifest.json",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/registry/config.json",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/registry/source.data",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/docker/config.json",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/helm/registry.json",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/empty-docker/config.json",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/bad-registry.json",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/docker-native-store.stdout",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/docker-native-store.stderr",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/helm-native-store.stdout",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/helm-native-store.stderr",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/anonymous-registry.stdout",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/anonymous-registry.stderr",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/malformed-native-registry.stdout",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/malformed-native-registry.stderr",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "inputs/bucket/app/cm.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/bucket/app/kustomization.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/bucket/list.xml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/aws/credentials",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/aws/config",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-aws-native-profile/repo/flux/source.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-aws-native-profile/repo/flux/consumer.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/aws-native-profile.stdout",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/aws-native-profile.stderr",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-missing-certificate/repo/flux/source.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-missing-certificate/repo/flux/consumer.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/missing-certificate.stdout",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-certificate.stderr",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-missing-proxy/repo/flux/source.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-missing-proxy/repo/flux/consumer.yaml",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/missing-proxy.stdout",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-proxy.stderr",
+      "cases": [
+        "docker-native-store",
+        "helm-native-store",
+        "anonymous-registry",
+        "malformed-native-registry-store",
+        "aws-native-profile",
+        "missing-certificate",
+        "missing-proxy"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    }
+  ],
+  "inputs": "inputs",
+  "transport": [
+    {
+      "host": "registry.fixture.invalid",
+      "method": "GET",
+      "path": "/v2/source/app/manifests/1.0.0",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:ec685c6dbf267fd9e7e539c06de1557869c6855244545281c9cacad05e6c7056"
+      },
+      "body": "inputs/registry/manifest.json"
+    },
+    {
+      "host": "registry.fixture.invalid",
+      "method": "GET",
+      "path": "/v2/source/app/manifests/sha256:ec685c6dbf267fd9e7e539c06de1557869c6855244545281c9cacad05e6c7056",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:ec685c6dbf267fd9e7e539c06de1557869c6855244545281c9cacad05e6c7056"
+      },
+      "body": "inputs/registry/manifest.json"
+    },
+    {
+      "host": "registry.fixture.invalid",
+      "method": "GET",
+      "path": "/v2/source/app/blobs/sha256:d722c538ab80f37df777867230b52dc77f550a492c78e305ab872b75891afa92",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.layer.v1.tar+gzip",
+        "Docker-Content-Digest": "sha256:d722c538ab80f37df777867230b52dc77f550a492c78e305ab872b75891afa92"
+      },
+      "body": "inputs/registry/source.data"
+    },
+    {
+      "host": "registry.fixture.invalid",
+      "method": "GET",
+      "path": "/v2/source/app/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.config.v1+json",
+        "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      "body": "inputs/registry/config.json"
+    },
+    {
+      "host": "registry.fixture.invalid",
+      "method": "HEAD",
+      "path": "/v2/source/app/manifests/1.0.0",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:ec685c6dbf267fd9e7e539c06de1557869c6855244545281c9cacad05e6c7056"
+      },
+      "body": "inputs/registry/manifest.json"
+    },
+    {
+      "host": "registry.fixture.invalid",
+      "method": "HEAD",
+      "path": "/v2/source/app/manifests/sha256:ec685c6dbf267fd9e7e539c06de1557869c6855244545281c9cacad05e6c7056",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:ec685c6dbf267fd9e7e539c06de1557869c6855244545281c9cacad05e6c7056"
+      },
+      "body": "inputs/registry/manifest.json"
+    },
+    {
+      "host": "registry.fixture.invalid",
+      "method": "HEAD",
+      "path": "/v2/source/app/blobs/sha256:d722c538ab80f37df777867230b52dc77f550a492c78e305ab872b75891afa92",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.layer.v1.tar+gzip",
+        "Docker-Content-Digest": "sha256:d722c538ab80f37df777867230b52dc77f550a492c78e305ab872b75891afa92"
+      },
+      "body": "inputs/registry/source.data"
+    },
+    {
+      "host": "registry.fixture.invalid",
+      "method": "HEAD",
+      "path": "/v2/source/app/blobs/sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.config.v1+json",
+        "Docker-Content-Digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      "body": "inputs/registry/config.json"
+    },
+    {
+      "host": "s3.fixture.invalid",
+      "method": "GET",
+      "path": "/fixture/app/cm.yaml",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "ETag": "\"a5b1deadeb74504ab303af3b8322152a\"",
+        "Last-Modified": "Sat, 01 Jan 2000 00:00:00 GMT"
+      },
+      "body": "inputs/bucket/app/cm.yaml"
+    },
+    {
+      "host": "s3.fixture.invalid",
+      "method": "HEAD",
+      "path": "/fixture/app/cm.yaml",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "ETag": "\"a5b1deadeb74504ab303af3b8322152a\"",
+        "Last-Modified": "Sat, 01 Jan 2000 00:00:00 GMT"
+      },
+      "body": "inputs/bucket/app/cm.yaml"
+    },
+    {
+      "host": "s3.fixture.invalid",
+      "method": "GET",
+      "path": "/fixture/app/kustomization.yaml",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "ETag": "\"7664002938fe83dd054461466b1f1f95\"",
+        "Last-Modified": "Sat, 01 Jan 2000 00:00:00 GMT"
+      },
+      "body": "inputs/bucket/app/kustomization.yaml"
+    },
+    {
+      "host": "s3.fixture.invalid",
+      "method": "HEAD",
+      "path": "/fixture/app/kustomization.yaml",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "ETag": "\"7664002938fe83dd054461466b1f1f95\"",
+        "Last-Modified": "Sat, 01 Jan 2000 00:00:00 GMT"
+      },
+      "body": "inputs/bucket/app/kustomization.yaml"
+    },
+    {
+      "host": "s3.fixture.invalid",
+      "method": "GET",
+      "path": "/fixture/?delimiter=&encoding-type=url&fetch-owner=true&list-type=2&prefix=",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/xml"
+      },
+      "body": "inputs/bucket/list.xml"
+    }
+  ]
+}

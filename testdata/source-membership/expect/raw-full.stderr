@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  other/other  kustomize build ./shared: replace operation does not apply: doc is missing path: /does/not/exist: missing value
+
+  ✗ 1 failed

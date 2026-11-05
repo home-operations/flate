@@ -17,6 +17,16 @@
           "url": "https://example.test/cluster.git"
         }
       ]
+    },
+    {
+      "name": "remote",
+      "directory": "u2-remote",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://cache.fixture.invalid/source"
+        }
+      ]
     }
   ],
   "commits": [
@@ -31,9 +41,60 @@
         "refs/heads/base",
         "refs/remotes/origin/main"
       ]
+    },
+    {
+      "repository": "remote",
+      "name": "u2-source",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "u2-source-cache",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-source-cache"
     }
   ],
-  "overlays": [],
+  "overlays": [
+    {
+      "name": "u2-source-cache",
+      "directory": "overlays/u2-source-cache",
+      "operations": [
+        {
+          "delete": "repo/app/configmap.yaml"
+        },
+        {
+          "delete": "repo/app/crd.yaml"
+        },
+        {
+          "delete": "repo/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/app/pod.yaml"
+        },
+        {
+          "delete": "repo/app/secret.yaml"
+        },
+        {
+          "delete": "repo/charts/app/Chart.yaml"
+        },
+        {
+          "delete": "repo/charts/app/templates/cm.yaml"
+        },
+        {
+          "delete": "repo/cluster/flux.yaml"
+        }
+      ]
+    }
+  ],
   "cases": [
     {
       "name": "empty-cache",
@@ -296,6 +357,76 @@
           }
         }
       ]
+    },
+    {
+      "name": "source-prime-and-warm",
+      "description": "source prime and warm",
+      "setup": [
+        {
+          "commit": "u2-source-cache"
+        },
+        {
+          "ref": {
+            "repository": "remote",
+            "name": "HEAD",
+            "commit": "u2-source"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "u2-source-prime",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--git-depth",
+              "0",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/u2-source-prime.stdout",
+              "stderr": "expect/u2-source-prime.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-source-warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--git-depth",
+              "0",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/u2-source-warm.stdout",
+              "stderr": "expect/u2-source-warm.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -534,6 +665,62 @@
         "cache-command"
       ],
       "purpose": "Declared materialized repository, overlay, or input."
+    },
+    {
+      "path": "u2-remote/app/kustomization.yaml",
+      "cases": [
+        "source-prime-and-warm"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "u2-remote/app/cm.yaml",
+      "cases": [
+        "source-prime-and-warm"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-source-cache/repo/flux/source.yaml",
+      "cases": [
+        "source-prime-and-warm"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-source-cache/repo/flux/consumer.yaml",
+      "cases": [
+        "source-prime-and-warm"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "expect/u2-source-prime.stdout",
+      "cases": [
+        "source-prime-and-warm"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-source-prime.stderr",
+      "cases": [
+        "source-prime-and-warm"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-source-warm.stdout",
+      "cases": [
+        "source-prime-and-warm"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-source-warm.stderr",
+      "cases": [
+        "source-prime-and-warm"
+      ],
+      "purpose": "Reviewed expected CLI stream."
     }
   ]
 }

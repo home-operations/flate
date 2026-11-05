@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: pinned
+kind: ConfigMap
+metadata:
+  name: hello
+  namespace: apps

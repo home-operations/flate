@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
@@ -166,6 +168,8 @@ func (f *Fixture) apply(tb testing.TB, op *operation) {
 		must(tb, err)
 		hash := file.Hash.String()
 		must(tb, os.Remove(filepath.Join(f.root, c.Repository, ".git", "objects", hash[:2], hash[2:])))
+	case op.Submodule != nil:
+		f.addSubmodule(tb, op.Submodule)
 	case op.Ref != nil:
 		repo, ok := f.repositories[op.Ref.Repository]
 		if !ok {
@@ -300,4 +304,25 @@ func cacheFailureKey(tb testing.TB, failure *cacheFailure) sourcecache.BlobKey {
 		},
 		Required: []string{"chart-version", "chart-url"},
 	}
+}
+
+func (f *Fixture) addSubmodule(tb testing.TB, submodule *blob) {
+	tb.Helper()
+	c := f.namedCommit(submodule.Commit)
+	repo := f.repositories[c.Repository]
+	hash := f.commits[c.Name]
+	commit, err := repo.CommitObject(hash)
+	must(tb, err)
+	tree, err := commit.Tree()
+	must(tb, err)
+	tree.Entries = append(tree.Entries, object.TreeEntry{Name: submodule.Path, Mode: filemode.Submodule, Hash: hash})
+	sort.Sort(object.TreeEntrySorter(tree.Entries))
+	encoded := repo.Storer.NewEncodedObject()
+	must(tb, tree.Encode(encoded))
+	commit.TreeHash, err = repo.Storer.SetEncodedObject(encoded)
+	must(tb, err)
+	encoded = repo.Storer.NewEncodedObject()
+	must(tb, commit.Encode(encoded))
+	f.commits[c.Name], err = repo.Storer.SetEncodedObject(encoded)
+	must(tb, err)
 }

@@ -14,23 +14,7 @@ import (
 )
 
 // Each migration removes its files from this fixed list. New files receive no exemption.
-const unmigratedFiles = `sourceref/checkout_preservation_test.go
-sourceref/discovery_index_test.go
-sourceref/empty_source_path_test.go
-sourceref/held_source_failures_test.go
-sourceref/inputs_test.go
-sourceref/late_source_discovery_test.go
-sourceref/missing_source_kinds_test.go
-sourceref/path_origin_store_test.go
-sourceref/pinned_diff_revisions_test.go
-sourceref/pinned_producer_inputs_test.go
-sourceref/pinned_root_diff_test.go
-sourceref/pinned_source_ownership_test.go
-sourceref/source_diff_assertions_test.go
-sourceref/source_fixture_test.go
-sourceref/source_ref_test.go
-sourceref/source_transport_fixtures_test.go
-sourceref/warnings_test.go`
+const unmigratedFiles = ""
 
 func TestMigrationGuard_E2EBoundary(t *testing.T) {
 	t.Parallel()

@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/bad  kustomize build ./apps/bad: loading KV pairs: file sources: [OUT=../../../inputs/outside.txt]: fs-security-constraint resolve @@inputs@@/outside.txt: fs-security-constraint mount @@inputs@@/outside.txt: mount @@inputs@@/outside.txt: path escapes tree
+
+  ✗ 1 failed

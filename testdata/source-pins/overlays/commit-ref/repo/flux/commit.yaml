@@ -1,0 +1,11 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  ignore: /ignored.txt
+  interval: 10m
+  ref:
+    commit: PINNED_COMMIT
+  url: git://fixture.invalid/cluster

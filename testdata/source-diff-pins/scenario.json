@@ -1,0 +1,4975 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Authored source topology with the existing pinned-tree regression inputs. Application payloads reduce to ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://fixture.invalid/cluster"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://fixture.invalid/cluster"
+        }
+      ]
+    },
+    {
+      "name": "supplied",
+      "directory": "remotes/supplied",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://supplied.fixture.invalid/source"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "current-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/v1.0.0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "current-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-base"
+      ],
+      "overlay": "current-v2",
+      "refs": [
+        "refs/tags/v2.0.0",
+        "refs/heads/master"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/v1.0.0"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-base"
+      ],
+      "overlay": "baseline-v2",
+      "refs": [
+        "refs/tags/v2.0.0",
+        "refs/heads/master"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitute-from-producer-current-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-base"
+      ],
+      "overlay": "substitute-from-producer-current-base"
+    },
+    {
+      "repository": "repo",
+      "name": "substitute-from-producer-current-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-head"
+      ],
+      "overlay": "substitute-from-producer-current-head"
+    },
+    {
+      "repository": "baseline",
+      "name": "substitute-from-producer-baseline-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-base"
+      ],
+      "overlay": "substitute-from-producer-baseline-base"
+    },
+    {
+      "repository": "baseline",
+      "name": "substitute-from-producer-baseline-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-head"
+      ],
+      "overlay": "substitute-from-producer-baseline-head"
+    },
+    {
+      "repository": "repo",
+      "name": "deleted-substitute-from-producer-current-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-base"
+      ],
+      "overlay": "deleted-substitute-from-producer-current-base"
+    },
+    {
+      "repository": "repo",
+      "name": "deleted-substitute-from-producer-current-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-head"
+      ],
+      "overlay": "deleted-substitute-from-producer-current-head"
+    },
+    {
+      "repository": "baseline",
+      "name": "deleted-substitute-from-producer-baseline-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-base"
+      ],
+      "overlay": "deleted-substitute-from-producer-baseline-base"
+    },
+    {
+      "repository": "baseline",
+      "name": "deleted-substitute-from-producer-baseline-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-head"
+      ],
+      "overlay": "deleted-substitute-from-producer-baseline-head"
+    },
+    {
+      "repository": "repo",
+      "name": "transitive-current",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-head"
+      ],
+      "overlay": "transitive-current"
+    },
+    {
+      "repository": "baseline",
+      "name": "transitive-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-head"
+      ],
+      "overlay": "transitive-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "generator-secret-env-current",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-head"
+      ],
+      "overlay": "generator-secret-env-current"
+    },
+    {
+      "repository": "baseline",
+      "name": "generator-secret-env-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-head"
+      ],
+      "overlay": "generator-secret-env-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "generator-configmap-file-current",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-head"
+      ],
+      "overlay": "generator-configmap-file-current"
+    },
+    {
+      "repository": "baseline",
+      "name": "generator-configmap-file-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-head"
+      ],
+      "overlay": "generator-configmap-file-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "escaped-current-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-head"
+      ],
+      "overlay": "escaped-current-before",
+      "refs": [
+        "refs/tags/input-before"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "escaped-current-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "escaped-current-before"
+      ],
+      "overlay": "escaped-current-after",
+      "refs": [
+        "refs/tags/input-after"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "escaped-current-advance",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "escaped-current-after"
+      ],
+      "overlay": "escaped-current-advance"
+    },
+    {
+      "repository": "baseline",
+      "name": "escaped-baseline-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-head"
+      ],
+      "overlay": "escaped-baseline-before",
+      "refs": [
+        "refs/tags/input-before"
+      ]
+    },
+    {
+      "repository": "supplied",
+      "name": "supplied",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/master"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "supplied-consumer",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "supplied-consumer"
+    },
+    {
+      "repository": "repo",
+      "name": "root-pin-current-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-base"
+      ],
+      "overlay": "u2-root-pin-current"
+    },
+    {
+      "repository": "repo",
+      "name": "root-pin-current-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "current-head"
+      ],
+      "overlay": "u2-root-pin-current"
+    },
+    {
+      "repository": "baseline",
+      "name": "root-pin-baseline-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-base"
+      ],
+      "overlay": "u2-root-pin-baseline"
+    },
+    {
+      "repository": "baseline",
+      "name": "root-pin-baseline-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "baseline-head"
+      ],
+      "overlay": "u2-root-pin-baseline"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "current-v2",
+      "directory": "overlays/current-v2"
+    },
+    {
+      "name": "baseline-v2",
+      "directory": "overlays/baseline-v2"
+    },
+    {
+      "name": "different-spec",
+      "directory": "overlays/different-spec"
+    },
+    {
+      "name": "substitute-from-producer-current-base",
+      "directory": "overlays/substitute-from-producer-current-base"
+    },
+    {
+      "name": "substitute-from-producer-current-head",
+      "directory": "overlays/substitute-from-producer-current-head"
+    },
+    {
+      "name": "substitute-from-producer-current-dirty",
+      "directory": "overlays/substitute-from-producer-current-dirty"
+    },
+    {
+      "name": "substitute-from-producer-baseline-base",
+      "directory": "overlays/substitute-from-producer-baseline-base"
+    },
+    {
+      "name": "substitute-from-producer-baseline-head",
+      "directory": "overlays/substitute-from-producer-baseline-head"
+    },
+    {
+      "name": "substitute-from-producer-baseline-dirty",
+      "directory": "overlays/substitute-from-producer-baseline-dirty"
+    },
+    {
+      "name": "deleted-substitute-from-producer-current-base",
+      "directory": "overlays/deleted-substitute-from-producer-current-base"
+    },
+    {
+      "name": "deleted-substitute-from-producer-current-head",
+      "directory": "overlays/deleted-substitute-from-producer-current-head"
+    },
+    {
+      "name": "deleted-substitute-from-producer-current-dirty",
+      "directory": "overlays/deleted-substitute-from-producer-current-dirty",
+      "operations": [
+        {
+          "delete": "repo/apps/cm.yaml"
+        }
+      ]
+    },
+    {
+      "name": "deleted-substitute-from-producer-baseline-base",
+      "directory": "overlays/deleted-substitute-from-producer-baseline-base"
+    },
+    {
+      "name": "deleted-substitute-from-producer-baseline-head",
+      "directory": "overlays/deleted-substitute-from-producer-baseline-head"
+    },
+    {
+      "name": "deleted-substitute-from-producer-baseline-dirty",
+      "directory": "overlays/deleted-substitute-from-producer-baseline-dirty",
+      "operations": [
+        {
+          "delete": "baseline/apps/cm.yaml"
+        }
+      ]
+    },
+    {
+      "name": "transitive-current",
+      "directory": "overlays/transitive-current"
+    },
+    {
+      "name": "transitive-current-dirty",
+      "directory": "overlays/transitive-current-dirty"
+    },
+    {
+      "name": "transitive-baseline",
+      "directory": "overlays/transitive-baseline"
+    },
+    {
+      "name": "transitive-baseline-dirty",
+      "directory": "overlays/transitive-baseline-dirty"
+    },
+    {
+      "name": "generator-secret-env-current",
+      "directory": "overlays/generator-secret-env-current"
+    },
+    {
+      "name": "generator-secret-env-after",
+      "directory": "overlays/generator-secret-env-after"
+    },
+    {
+      "name": "generator-secret-env-baseline",
+      "directory": "overlays/generator-secret-env-baseline"
+    },
+    {
+      "name": "generator-configmap-file-current",
+      "directory": "overlays/generator-configmap-file-current"
+    },
+    {
+      "name": "generator-configmap-file-after",
+      "directory": "overlays/generator-configmap-file-after"
+    },
+    {
+      "name": "generator-configmap-file-baseline",
+      "directory": "overlays/generator-configmap-file-baseline"
+    },
+    {
+      "name": "escaped-current-before",
+      "directory": "overlays/escaped-current-before",
+      "operations": [
+        {
+          "delete": "repo/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/apps/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "escaped-current-after",
+      "directory": "overlays/escaped-current-after"
+    },
+    {
+      "name": "escaped-current-advance",
+      "directory": "overlays/escaped-current-advance"
+    },
+    {
+      "name": "escaped-current-dirty",
+      "directory": "overlays/escaped-current-dirty"
+    },
+    {
+      "name": "escaped-baseline-before",
+      "directory": "overlays/escaped-baseline-before",
+      "operations": [
+        {
+          "delete": "baseline/apps/cm.yaml"
+        },
+        {
+          "delete": "baseline/apps/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "supplied-consumer",
+      "directory": "overlays/supplied-consumer",
+      "operations": [
+        {
+          "delete": "repo/flux/entry.yaml"
+        },
+        {
+          "delete": "repo/ignored.txt"
+        },
+        {
+          "delete": "repo/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/apps/cm.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-root-pin-current",
+      "directory": "overlays/u2-root-pin-current"
+    },
+    {
+      "name": "u2-root-pin-baseline",
+      "directory": "overlays/u2-root-pin-baseline"
+    },
+    {
+      "name": "u2-root-pin-dirty",
+      "directory": "overlays/u2-root-pin-dirty"
+    },
+    {
+      "name": "u2-root-pin-tag-change",
+      "directory": "overlays/u2-root-pin-tag-change"
+    }
+  ],
+  "cases": [
+    {
+      "name": "source-ref--path-orig-uses-own-object-store-different-spec",
+      "description": "source ref  path orig uses own object store different spec",
+      "setup": [
+        {
+          "commit": "current-head"
+        },
+        {
+          "commit": "baseline-head"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/tags/v1.0.0",
+            "commit": "baseline-head"
+          }
+        },
+        {
+          "overlay": "different-spec"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "own-store-different-spec-v1.0.0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/own-store-different-spec-v1.0.0.stdout",
+              "stderr": "expect/own-store-different-spec-v1.0.0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "own-store-different-spec-v2.0.0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/own-store-different-spec-v2.0.0.stdout",
+              "stderr": "expect/own-store-different-spec-v2.0.0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "own-store-different-spec-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--git-depth",
+              "0",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/own-store-different-spec-diff.stdout",
+              "stderr": "expect/own-store-different-spec-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-ref--path-orig-uses-own-object-store-identical-spec",
+      "description": "source ref  path orig uses own object store identical spec",
+      "setup": [
+        {
+          "commit": "current-head"
+        },
+        {
+          "commit": "baseline-head"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/tags/v1.0.0",
+            "commit": "baseline-head"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "own-store-identical-spec-v1.0.0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/own-store-identical-spec-v1.0.0.stdout",
+              "stderr": "expect/own-store-identical-spec-v1.0.0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "own-store-identical-spec-v2.0.0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/own-store-identical-spec-v2.0.0.stdout",
+              "stderr": "expect/own-store-identical-spec-v2.0.0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "own-store-identical-spec-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "--git-depth",
+              "0",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/own-store-identical-spec-diff.stdout",
+              "stderr": "expect/own-store-identical-spec-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pinned-diff--substitute-from-producer",
+      "description": "pinned diff  substitute from producer",
+      "setup": [
+        {
+          "commit": "substitute-from-producer-current-head"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/tags/v1.0.0",
+            "commit": "substitute-from-producer-current-base"
+          }
+        },
+        {
+          "overlay": "substitute-from-producer-current-dirty"
+        },
+        {
+          "commit": "substitute-from-producer-baseline-head"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/tags/v1.0.0",
+            "commit": "substitute-from-producer-baseline-base"
+          }
+        },
+        {
+          "overlay": "substitute-from-producer-baseline-dirty"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "substitute-from-producer-after-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/substitute-from-producer-after-full.stdout",
+              "stderr": "expect/substitute-from-producer-after-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "substitute-from-producer-before-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/substitute-from-producer-before-full.stdout",
+              "stderr": "expect/substitute-from-producer-before-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "substitute-from-producer-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/substitute-from-producer-diff.stdout",
+              "stderr": "expect/substitute-from-producer-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pinned-diff--deleted-substitute-from-producer",
+      "description": "pinned diff  deleted substitute from producer",
+      "setup": [
+        {
+          "commit": "deleted-substitute-from-producer-current-head"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/tags/v1.0.0",
+            "commit": "deleted-substitute-from-producer-current-base"
+          }
+        },
+        {
+          "overlay": "deleted-substitute-from-producer-current-dirty"
+        },
+        {
+          "commit": "deleted-substitute-from-producer-baseline-head"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/tags/v1.0.0",
+            "commit": "deleted-substitute-from-producer-baseline-base"
+          }
+        },
+        {
+          "overlay": "deleted-substitute-from-producer-baseline-dirty"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "deleted-substitute-from-producer-after-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/deleted-substitute-from-producer-after-full.stdout",
+              "stderr": "expect/deleted-substitute-from-producer-after-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "deleted-substitute-from-producer-before-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/deleted-substitute-from-producer-before-full.stdout",
+              "stderr": "expect/deleted-substitute-from-producer-before-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "deleted-substitute-from-producer-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/deleted-substitute-from-producer-diff.stdout",
+              "stderr": "expect/deleted-substitute-from-producer-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pinned-diff--dirty-transitive-substitute-from",
+      "description": "pinned diff  dirty transitive substitute from",
+      "setup": [
+        {
+          "commit": "transitive-current"
+        },
+        {
+          "overlay": "transitive-current-dirty"
+        },
+        {
+          "commit": "transitive-baseline"
+        },
+        {
+          "overlay": "transitive-baseline-dirty"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "transitive-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/transitive-diff.stdout",
+              "stderr": "expect/transitive-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pinned-diff--generator-inputs-secret-env",
+      "description": "pinned diff  generator inputs secret env",
+      "setup": [
+        {
+          "commit": "generator-secret-env-current"
+        },
+        {
+          "overlay": "generator-secret-env-after"
+        },
+        {
+          "commit": "generator-secret-env-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "generator-secret-env-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/generator-secret-env-after.stdout",
+              "stderr": "expect/generator-secret-env-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "generator-secret-env-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/generator-secret-env-before.stdout",
+              "stderr": "expect/generator-secret-env-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "generator-secret-env-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/generator-secret-env-diff.stdout",
+              "stderr": "expect/generator-secret-env-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pinned-diff--generator-inputs-configmap-file",
+      "description": "pinned diff  generator inputs configmap file",
+      "setup": [
+        {
+          "commit": "generator-configmap-file-current"
+        },
+        {
+          "overlay": "generator-configmap-file-after"
+        },
+        {
+          "commit": "generator-configmap-file-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "generator-configmap-file-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/generator-configmap-file-after.stdout",
+              "stderr": "expect/generator-configmap-file-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "generator-configmap-file-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/generator-configmap-file-before.stdout",
+              "stderr": "expect/generator-configmap-file-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "generator-configmap-file-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/generator-configmap-file-diff.stdout",
+              "stderr": "expect/generator-configmap-file-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pinned-diff--escaped-patch-input",
+      "description": "pinned diff  escaped patch input",
+      "setup": [
+        {
+          "commit": "escaped-current-advance"
+        },
+        {
+          "overlay": "escaped-current-dirty"
+        },
+        {
+          "commit": "escaped-baseline-before"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "escaped-full-input-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/escaped-full-input-before.stdout",
+              "stderr": "expect/escaped-full-input-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "escaped-full-input-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/escaped-full-input-after.stdout",
+              "stderr": "expect/escaped-full-input-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "escaped-diff-commit",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/escaped-diff-commit.stdout",
+              "stderr": "expect/escaped-diff-commit.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "escaped-diff-directory",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/escaped-diff-directory.stdout",
+              "stderr": "expect/escaped-diff-directory.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "supplied-git-repository",
+      "description": "supplied git repository",
+      "setup": [
+        {
+          "commit": "supplied-consumer"
+        },
+        {
+          "ref": {
+            "repository": "supplied",
+            "name": "HEAD",
+            "commit": "supplied"
+          }
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "supplied-git-repository",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--supply",
+              "@@inputs@@/source.yaml",
+              "--git-depth",
+              "0"
+            ],
+            "expect": {
+              "stdout": "expect/supplied-git-repository.stdout",
+              "stderr": "expect/supplied-git-repository.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pinned-diff--root-pin",
+      "description": "pinned diff  root pin",
+      "setup": [
+        {
+          "commit": "root-pin-current-head"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/tags/v1.0.0",
+            "commit": "root-pin-current-base"
+          }
+        },
+        {
+          "commit": "root-pin-baseline-head"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/tags/v1.0.0",
+            "commit": "root-pin-baseline-base"
+          }
+        },
+        {
+          "overlay": "u2-root-pin-dirty"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root-pin-before-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-before-full.stdout",
+              "stderr": "expect/root-pin-before-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-current-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-current-full.stdout",
+              "stderr": "expect/root-pin-current-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-entry-forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-entry-forward-diff.stdout",
+              "stderr": "expect/root-pin-dirty-only-entry-forward-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-entry-forward-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-entry-forward-build.stdout",
+              "stderr": "expect/root-pin-dirty-only-entry-forward-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-entry-reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-entry-reverse-diff.stdout",
+              "stderr": "expect/root-pin-dirty-only-entry-reverse-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-entry-reverse-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-entry-reverse-build.stdout",
+              "stderr": "expect/root-pin-dirty-only-entry-reverse-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-repo-forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-repo-forward-diff.stdout",
+              "stderr": "expect/root-pin-dirty-only-repo-forward-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-repo-forward-json",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-repo-forward-json.stdout",
+              "stderr": "expect/root-pin-dirty-only-repo-forward-json.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-repo-forward-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-repo-forward-build.stdout",
+              "stderr": "expect/root-pin-dirty-only-repo-forward-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-repo-reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-repo-reverse-diff.stdout",
+              "stderr": "expect/root-pin-dirty-only-repo-reverse-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-repo-reverse-json",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-repo-reverse-json.stdout",
+              "stderr": "expect/root-pin-dirty-only-repo-reverse-json.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-dirty-only-repo-reverse-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-dirty-only-repo-reverse-build.stdout",
+              "stderr": "expect/root-pin-dirty-only-repo-reverse-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-tag-change",
+          "edit": {
+            "overlay": "u2-root-pin-tag-change"
+          }
+        },
+        {
+          "id": "root-pin-tag-change-entry-forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-tag-change-entry-forward-diff.stdout",
+              "stderr": "expect/root-pin-tag-change-entry-forward-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-tag-change-entry-forward-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-tag-change-entry-forward-build.stdout",
+              "stderr": "expect/root-pin-tag-change-entry-forward-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-tag-change-entry-reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-tag-change-entry-reverse-diff.stdout",
+              "stderr": "expect/root-pin-tag-change-entry-reverse-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-tag-change-entry-reverse-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-tag-change-entry-reverse-build.stdout",
+              "stderr": "expect/root-pin-tag-change-entry-reverse-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-tag-change-repo-forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-tag-change-repo-forward-diff.stdout",
+              "stderr": "expect/root-pin-tag-change-repo-forward-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-tag-change-repo-forward-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-tag-change-repo-forward-build.stdout",
+              "stderr": "expect/root-pin-tag-change-repo-forward-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-tag-change-repo-reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-tag-change-repo-reverse-diff.stdout",
+              "stderr": "expect/root-pin-tag-change-repo-reverse-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-pin-tag-change-repo-reverse-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@"
+            ],
+            "expect": {
+              "stdout": "expect/root-pin-tag-change-repo-reverse-build.stdout",
+              "stderr": "expect/root-pin-tag-change-repo-reverse-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/flux/entry.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/ignored.txt",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/flux/entry.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/ignored.txt",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/current-v2/repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/baseline-v2/baseline/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/different-spec/repo/flux/entry.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/own-store-different-spec-v1.0.0.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-different-spec-v1.0.0.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-different-spec-v2.0.0.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-different-spec-v2.0.0.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-different-spec-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-different-spec-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-identical-spec-v1.0.0.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-identical-spec-v1.0.0.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-identical-spec-v2.0.0.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-identical-spec-v2.0.0.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-identical-spec-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/own-store-identical-spec-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/substitute-from-producer-current-base/repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-current-base/repo/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-current-head/repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-current-head/repo/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-current-dirty/repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-current-dirty/repo/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-current-dirty/repo/consumer/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/substitute-from-producer-after-full.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/substitute-from-producer-after-full.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/substitute-from-producer-baseline-base/baseline/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-baseline-base/baseline/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-baseline-head/baseline/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-baseline-head/baseline/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-baseline-dirty/baseline/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-baseline-dirty/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/substitute-from-producer-baseline-dirty/baseline/consumer/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/substitute-from-producer-before-full.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/substitute-from-producer-before-full.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/substitute-from-producer-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/substitute-from-producer-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-current-base/repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-current-base/repo/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-current-head/repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-current-head/repo/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-current-dirty/repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-current-dirty/repo/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-current-dirty/repo/consumer/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/deleted-substitute-from-producer-after-full.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/deleted-substitute-from-producer-after-full.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-baseline-base/baseline/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-baseline-base/baseline/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-baseline-head/baseline/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-baseline-head/baseline/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-baseline-dirty/baseline/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-baseline-dirty/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/deleted-substitute-from-producer-baseline-dirty/baseline/consumer/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/deleted-substitute-from-producer-before-full.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/deleted-substitute-from-producer-before-full.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/deleted-substitute-from-producer-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/deleted-substitute-from-producer-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/transitive-current/repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-current/repo/bridge/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-current/repo/bridge/settings.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-current/repo/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-current/repo/shared/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-current-dirty/repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-current-dirty/repo/shared/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-baseline/baseline/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-baseline/baseline/bridge/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-baseline/baseline/bridge/settings.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-baseline/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-baseline/baseline/shared/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-baseline-dirty/baseline/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/transitive-baseline-dirty/baseline/shared/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/transitive-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/transitive-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/generator-secret-env-current/repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-current/repo/producer/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-current/repo/producer/values.sops.env",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-current/repo/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-current/repo/consumer/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-current/repo/sibling/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-current/repo/sibling/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-after/repo/producer/values.sops.env",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/generator-secret-env-after.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/generator-secret-env-after.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/generator-secret-env-baseline/baseline/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-baseline/baseline/producer/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-baseline/baseline/producer/values.sops.env",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-baseline/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-baseline/baseline/consumer/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-baseline/baseline/sibling/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-secret-env-baseline/baseline/sibling/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/generator-secret-env-before.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/generator-secret-env-before.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/generator-secret-env-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/generator-secret-env-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/generator-configmap-file-current/repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-current/repo/producer/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-current/repo/producer/value.txt",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-current/repo/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-current/repo/consumer/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-current/repo/sibling/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-current/repo/sibling/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-after/repo/producer/value.txt",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/generator-configmap-file-after.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/generator-configmap-file-after.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/generator-configmap-file-baseline/baseline/flux/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-baseline/baseline/producer/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-baseline/baseline/producer/value.txt",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-baseline/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-baseline/baseline/consumer/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-baseline/baseline/sibling/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/generator-configmap-file-baseline/baseline/sibling/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/generator-configmap-file-before.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/generator-configmap-file-before.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/generator-configmap-file-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/generator-configmap-file-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/escaped-current-before/repo/flux/entry.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-current-before/repo/apps/nested/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-current-before/repo/shared/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-current-before/repo/shared/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-current-before/repo/inputs/patch",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-current-after/repo/inputs/patch",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-current-advance/repo/unrelated.txt",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-current-dirty/repo/flux/entry.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-current-dirty/repo/inputs/patch",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-baseline-before/baseline/flux/entry.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-baseline-before/baseline/apps/nested/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-baseline-before/baseline/shared/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-baseline-before/baseline/shared/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/escaped-baseline-before/baseline/inputs/patch",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/escaped-full-input-before.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/escaped-full-input-before.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/escaped-full-input-after.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/escaped-full-input-after.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/escaped-diff-commit.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/escaped-diff-commit.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/escaped-diff-directory.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/escaped-diff-directory.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "remotes/supplied/app/kustomization.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "remotes/supplied/app/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/supplied-consumer/repo/consumer.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "inputs/source.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/supplied-git-repository.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/supplied-git-repository.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-root-pin-current/repo/flux/entry.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-root-pin-current/repo/flux/repo.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-root-pin-current/repo/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-root-pin-baseline/baseline/flux/entry.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-root-pin-baseline/baseline/flux/repo.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-root-pin-baseline/baseline/kustomization.yml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-root-pin-dirty/repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/root-pin-before-full.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-before-full.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-current-full.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-current-full.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-entry-forward-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-entry-forward-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-entry-forward-build.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-entry-forward-build.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-entry-reverse-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-entry-reverse-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-entry-reverse-build.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-entry-reverse-build.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-forward-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-forward-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-forward-json.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-forward-json.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-forward-build.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-forward-build.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-reverse-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-reverse-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-reverse-json.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-reverse-json.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-reverse-build.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-dirty-only-repo-reverse-build.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-root-pin-tag-change/repo/flux/repo.yaml",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/root-pin-tag-change-entry-forward-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-entry-forward-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-entry-forward-build.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-entry-forward-build.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-entry-reverse-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-entry-reverse-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-entry-reverse-build.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-entry-reverse-build.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-repo-forward-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-repo-forward-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-repo-forward-build.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-repo-forward-build.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-repo-reverse-diff.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-repo-reverse-diff.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-repo-reverse-build.stdout",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/root-pin-tag-change-repo-reverse-build.stderr",
+      "cases": [
+        "source-ref--path-orig-uses-own-object-store-different-spec",
+        "source-ref--path-orig-uses-own-object-store-identical-spec",
+        "pinned-diff--substitute-from-producer",
+        "pinned-diff--deleted-substitute-from-producer",
+        "pinned-diff--dirty-transitive-substitute-from",
+        "pinned-diff--generator-inputs-secret-env",
+        "pinned-diff--generator-inputs-configmap-file",
+        "pinned-diff--escaped-patch-input",
+        "supplied-git-repository",
+        "pinned-diff--root-pin"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    }
+  ],
+  "inputs": "inputs"
+}

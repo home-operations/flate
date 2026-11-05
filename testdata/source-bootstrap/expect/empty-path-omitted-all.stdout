@@ -1,0 +1,34 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: child
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: leaf-owned
+---
+apiVersion: v1
+data:
+  value: source-root
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: root-owned
+  namespace: apps
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: child
+  namespace: apps
+spec:
+  path: ./leaf
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system

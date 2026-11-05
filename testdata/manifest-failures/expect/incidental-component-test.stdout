@@ -1,0 +1,5 @@
+
+  ✓  Kustomization  flux-system/apps
+  ‒  Kustomization  flux-system/component-indexer  suspended
+
+  ✓ 1 passed · 1 skipped   <DUR>

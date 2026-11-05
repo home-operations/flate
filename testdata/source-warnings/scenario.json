@@ -1,0 +1,701 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Authored source topology with the existing pinned-tree regression inputs. Application payloads reduce to ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "aliases-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "submodule-aliases",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "aliases-base"
+      ],
+      "overlay": "submodule-aliases"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "submodule-aliases",
+      "directory": "overlays/submodule-aliases",
+      "operations": [
+        {
+          "delete": "repo/one"
+        },
+        {
+          "delete": "repo/two"
+        }
+      ]
+    },
+    {
+      "name": "submodule-current",
+      "directory": "overlays/submodule-current"
+    },
+    {
+      "name": "unavailable-ref",
+      "directory": "overlays/unavailable-ref"
+    }
+  ],
+  "cases": [
+    {
+      "name": "source-warnings-aliases-build",
+      "description": "source warnings aliases build",
+      "setup": [
+        {
+          "commit": "aliases-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "aliases-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/aliases-build.stdout",
+              "stderr": "expect/aliases-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-warnings-aliases-test",
+      "description": "source warnings aliases test",
+      "setup": [
+        {
+          "commit": "aliases-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "aliases-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/aliases-test.stdout",
+              "stderr": "expect/aliases-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-warnings-aliases-get",
+      "description": "source warnings aliases get",
+      "setup": [
+        {
+          "commit": "aliases-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "aliases-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "name"
+            ],
+            "expect": {
+              "stdout": "expect/aliases-get.stdout",
+              "stderr": "expect/aliases-get.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-warnings--bootstrap-submodule-aliases",
+      "description": "source warnings  bootstrap submodule aliases",
+      "setup": [
+        {
+          "commit": "submodule-aliases"
+        },
+        {
+          "submodule": {
+            "commit": "submodule-aliases",
+            "path": "module"
+          }
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/tags/baseline",
+            "commit": "submodule-aliases"
+          }
+        },
+        {
+          "overlay": "submodule-current"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "bootstrap-submodule-aliases",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "baseline",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/bootstrap-submodule-aliases.stdout",
+              "stderr": "expect/bootstrap-submodule-aliases.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-warnings-unavailable-ref-build",
+      "description": "source warnings unavailable ref build",
+      "setup": [
+        {
+          "commit": "aliases-base"
+        },
+        {
+          "overlay": "unavailable-ref"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "unavailable-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--allow-missing-kinds=Secret,ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/unavailable-build.stdout",
+              "stderr": "expect/unavailable-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-warnings-unavailable-ref-test",
+      "description": "source warnings unavailable ref test",
+      "setup": [
+        {
+          "commit": "aliases-base"
+        },
+        {
+          "overlay": "unavailable-ref"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "unavailable-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--allow-missing-kinds=Secret,ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/unavailable-test.stdout",
+              "stderr": "expect/unavailable-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-warnings-unavailable-ref-get",
+      "description": "source warnings unavailable ref get",
+      "setup": [
+        {
+          "commit": "aliases-base"
+        },
+        {
+          "overlay": "unavailable-ref"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "unavailable-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--allow-missing-kinds=Secret,ConfigMap",
+              "-o",
+              "name"
+            ],
+            "expect": {
+              "stdout": "expect/unavailable-get.stdout",
+              "stderr": "expect/unavailable-get.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/flux/one.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/one/kustomization.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/one/cm.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/flux/two.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/two/kustomization.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/two/cm.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/aliases-build.stdout",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/aliases-build.stderr",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/aliases-test.stdout",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/aliases-test.stderr",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/aliases-get.stdout",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/aliases-get.stderr",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/submodule-aliases/repo/flux/one.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/submodule-aliases/repo/flux/two.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/submodule-aliases/repo/apps/kustomization.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/submodule-aliases/repo/apps/cm.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/submodule-current/repo/apps/cm.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/bootstrap-submodule-aliases.stdout",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/bootstrap-submodule-aliases.stderr",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/unavailable-ref/repo/flux/one.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/unavailable-ref/repo/flux/two.yaml",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/unavailable-build.stdout",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/unavailable-build.stderr",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/unavailable-test.stdout",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/unavailable-test.stderr",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/unavailable-get.stdout",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/unavailable-get.stderr",
+      "cases": [
+        "source-warnings-aliases-build",
+        "source-warnings-aliases-test",
+        "source-warnings-aliases-get",
+        "source-warnings--bootstrap-submodule-aliases",
+        "source-warnings-unavailable-ref-build",
+        "source-warnings-unavailable-ref-test",
+        "source-warnings-unavailable-ref-get"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    }
+  ]
+}

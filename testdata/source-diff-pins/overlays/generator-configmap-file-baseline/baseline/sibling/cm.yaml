@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: ${STABLE}
+kind: ConfigMap
+metadata:
+  name: sibling
+  namespace: apps

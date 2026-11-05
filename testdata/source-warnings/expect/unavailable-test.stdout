@@ -1,0 +1,7 @@
+
+  ‒  Kustomization  flux-system/one  source GitRepository.source.toolkit.fluxcd.io/flux-system/one skipped: secret flux-system/unavailable-auth not found
+  ‒  Kustomization  flux-system/two  source GitRepository.source.toolkit.fluxcd.io/flux-system/two skipped: secret flux-system/unavailable-auth not found
+  ‒  GitRepository  flux-system/one  secret flux-system/unavailable-auth not found
+  ‒  GitRepository  flux-system/two  secret flux-system/unavailable-auth not found
+
+  ✓ 0 passed · 4 skipped   <DUR>

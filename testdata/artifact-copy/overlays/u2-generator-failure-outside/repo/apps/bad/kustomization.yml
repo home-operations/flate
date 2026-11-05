@@ -1,0 +1,3 @@
+configMapGenerator:
+- name: bad
+  files: [OUT=../../../inputs/outside.txt]

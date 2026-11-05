@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: independent
+kind: ConfigMap
+metadata:
+  name: unrelated
+  namespace: apps

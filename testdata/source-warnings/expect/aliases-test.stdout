@@ -1,0 +1,7 @@
+
+  ✓  Kustomization  flux-system/one
+  ✓  Kustomization  flux-system/two
+  ✓  GitRepository  flux-system/one
+  ✓  GitRepository  flux-system/two
+
+  ✓ 4 passed   <DUR>

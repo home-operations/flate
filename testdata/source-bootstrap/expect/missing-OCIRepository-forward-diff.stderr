@@ -1,0 +1,11 @@
+
+  ✗  orig snapshot: OCIRepository  sources/missing  not found
+         orig snapshot: required by apps/consumer
+
+  ✗  current snapshot: OCIRepository  sources/missing  not found
+         current snapshot: required by apps/consumer
+
+  ⚠ warnings (1)
+    [DiffSuppressed] HelmRelease apps/consumer: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: OCIRepository.source.toolkit.fluxcd.io/sources/missing: dependency not found; current: dependencies failed: OCIRepository.source.toolkit.fluxcd.io/sources/missing: dependency not found)
+
+  ✗ 2 failed · 2 blocked

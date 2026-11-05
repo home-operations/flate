@@ -1,0 +1,8 @@
+
+  ⚠ warnings (4)
+    [SourceCredentialsUnavailable] GitRepository flux-system/one: secret flux-system/unavailable-auth not found
+    [SourceCredentialsUnavailable] GitRepository flux-system/two: secret flux-system/unavailable-auth not found
+    [SourceRefUnavailable] GitRepository flux-system/one: declared source ref cannot be satisfied locally; using normal source fetch
+      tag:missing, ref unavailable in this tree's repository or checkout options require fetching
+    [SourceRefUnavailable] GitRepository flux-system/two: declared source ref cannot be satisfied locally; using normal source fetch
+      tag:missing, ref unavailable in this tree's repository or checkout options require fetching

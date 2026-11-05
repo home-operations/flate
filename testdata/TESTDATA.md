@@ -1308,3 +1308,108 @@ Stderr is empty, and the exit code is zero.
 
 Every case uses two workers, declared caches, and two complete replays through `testScopeCase`.
 Each reduction lists the omitted dependencies and authored variants in its source metadata.
+
+## Source and credential corpus
+
+The source cases retain tag, commit, semver, mutable HEAD, and dirty-file controls. Each case compares complete CLI results twice.
+
+The six late-source cases compare both build and diff with two and eight workers. The four followed-source cases compare one, two, and eight workers. Each worker count uses the same complete expectations.
+
+The source layout follows `wrmilling/k3s-gitops` at `dca29749e04b073f6463fdda490a74822594ed15`, with `flux-system/gotk-sync.yaml` as its topology reference. The regression manifests are authored reductions.
+
+The declared `submodule` operation adds a gitlink at a root path in a named commit. The operation changes that commit token. A following `ref` operation selects the changed commit without changing the worktree.
+
+The Git package retains HEAD, index, status, and file-byte observations. Low-level transport, authentication, helper processes, and cache identity remain package-level proofs. The identical-spec source-store case stays skipped because changed-only selection ignores divergent revisions with identical authored files.
+
+| Case | Behavior | Cache policy |
+| --- | --- | --- |
+| `source-pins/nonhead-renders-preserve-checkout-tag` | nonhead renders preserve checkout tag | Reset on replay. |
+| `source-pins/nonhead-renders-preserve-checkout-semver` | nonhead renders preserve checkout semver | Reset on replay. |
+| `source-pins/nonhead-renders-preserve-checkout-head` | nonhead renders preserve checkout head | Reset on replay. |
+| `source-pins/nonhead-renders-preserve-checkout-no-ref` | nonhead renders preserve checkout no ref | Reset on replay. |
+| `source-pins/nonhead-renders-preserve-checkout-commit` | nonhead renders preserve checkout commit | Reset on replay. |
+| `source-pins/stable-pin-ignores-dirty-content` | stable pin ignores dirty content | Reset on replay. |
+| `source-pins/source-ref--nonhead-tag` | source ref  nonhead tag | Reset on replay. |
+| `source-pins/pinned-diff--base-and-current-refs` | pinned diff  base and current refs | Reset on replay. |
+| `source-pins/source-ref--pinned-followed-source-inherits-namespace-clusters-explicit` | source ref  pinned followed source inherits namespace clusters explicit | Reset on replay. |
+| `source-pins/source-ref--pinned-followed-source-inherits-namespace-clusters-omitted` | source ref  pinned followed source inherits namespace clusters omitted | Reset on replay. |
+| `source-pins/source-ref--pinned-followed-source-inherits-namespace-sub-explicit` | source ref  pinned followed source inherits namespace sub explicit | Reset on replay. |
+| `source-pins/source-ref--pinned-followed-source-inherits-namespace-sub-omitted` | source ref  pinned followed source inherits namespace sub omitted | Reset on replay. |
+| `source-pins/source-ref--pinned-tree-replaces-held-consumer-removed` | source ref  pinned tree replaces held consumer removed | Reset on replay. |
+| `source-pins/source-ref--pinned-tree-replaces-held-consumer-replaced` | source ref  pinned tree replaces held consumer replaced | Reset on replay. |
+| `source-pins/source-ref--pinned-tree-replaces-held-consumer-different-name` | source ref  pinned tree replaces held consumer different name | Reset on replay. |
+| `source-pins/source-ref--pinned-tree-replaces-held-consumer-different-path` | source ref  pinned tree replaces held consumer different path | Reset on replay. |
+| `source-pins/source-ref--pinned-tree-replaces-held-consumer-different-source-ref` | source ref  pinned tree replaces held consumer different source ref | Reset on replay. |
+| `source-pins/source-ref--pinned-root-preserves-source` | source ref  pinned root preserves source | Reset on replay. |
+| `source-pins/source-ref--pinned-path-renders-deleted-kustomization` | source ref  pinned path renders deleted kustomization | Reset on replay. |
+| `source-pins/source-ref--patched-stub-kustomization-keeps-parent-path` | source ref  patched stub kustomization keeps parent path | Reset on replay. |
+| `source-pins/source-ref--pinned-source-discovered-after-consumer-apps-first-flux-system` | source ref  pinned source discovered after consumer apps first flux system | Reset on replay. |
+| `source-pins/source-ref--pinned-source-discovered-after-consumer-apps-first-cluster` | source ref  pinned source discovered after consumer apps first cluster | Reset on replay. |
+| `source-pins/source-ref--pinned-source-discovered-after-consumer-sources-first-flux-system` | source ref  pinned source discovered after consumer sources first flux system | Reset on replay. |
+| `source-pins/source-ref--pinned-source-discovered-after-consumer-sources-first-cluster` | source ref  pinned source discovered after consumer sources first cluster | Reset on replay. |
+| `source-pins/source-ref--pinned-source-discovered-after-consumer-unpinned-no-ref` | source ref  pinned source discovered after consumer unpinned no ref | Reset on replay. |
+| `source-pins/source-ref--pinned-source-discovered-after-consumer-unpinned-non-matching` | source ref  pinned source discovered after consumer unpinned non matching | Reset on replay. |
+| `source-pins/source-ref--pinned-path-owns-working-tree-releases` | source ref  pinned path owns working tree releases | Reset on replay. |
+| `source-pins/source-ref--pinned-path-ignores-added-discovery-objects` | source ref  pinned path ignores added discovery objects | Reset on replay. |
+| `source-bootstrap/source-ref--empty-path-matches-root-explicit` | source ref  empty path matches root explicit | Reset on replay. |
+| `source-bootstrap/source-ref--empty-path-matches-root-omitted` | source ref  empty path matches root omitted | Reset on replay. |
+| `source-bootstrap/source-ref--missing-non-git-ocirepository` | source ref  missing non git ocirepository | Reset on replay. |
+| `source-bootstrap/source-ref--missing-non-git-helmrepository` | source ref  missing non git helmrepository | Reset on replay. |
+| `source-bootstrap/source-ref--missing-non-git-bucket` | source ref  missing non git bucket | Reset on replay. |
+| `source-ignore/source-ref--ignore-negation-omitted` | source ref  ignore negation omitted | Reset on replay. |
+| `source-ignore/source-ref--ignore-negation-explicit` | source ref  ignore negation explicit | Reset on replay. |
+| `source-ignore/source-ref--ignore-negation-excluded` | source ref  ignore negation excluded | Reset on replay. |
+| `source-warnings/source-warnings-aliases-build` | source warnings aliases build | Reset on replay. |
+| `source-warnings/source-warnings-aliases-test` | source warnings aliases test | Reset on replay. |
+| `source-warnings/source-warnings-aliases-get` | source warnings aliases get | Reset on replay. |
+| `source-warnings/source-warnings--bootstrap-submodule-aliases` | source warnings  bootstrap submodule aliases | Reset on replay. |
+| `source-warnings/source-warnings-unavailable-ref-build` | source warnings unavailable ref build | Reset on replay. |
+| `source-warnings/source-warnings-unavailable-ref-test` | source warnings unavailable ref test | Reset on replay. |
+| `source-warnings/source-warnings-unavailable-ref-get` | source warnings unavailable ref get | Reset on replay. |
+| `source-diff-pins/source-ref--path-orig-uses-own-object-store-different-spec` | source ref  path orig uses own object store different spec | Reset on replay. |
+| `source-diff-pins/source-ref--path-orig-uses-own-object-store-identical-spec` | source ref  path orig uses own object store identical spec | Reset on replay. |
+| `source-diff-pins/pinned-diff--substitute-from-producer` | pinned diff  substitute from producer | Reset on replay. |
+| `source-diff-pins/pinned-diff--deleted-substitute-from-producer` | pinned diff  deleted substitute from producer | Reset on replay. |
+| `source-diff-pins/pinned-diff--dirty-transitive-substitute-from` | pinned diff  dirty transitive substitute from | Reset on replay. |
+| `source-diff-pins/pinned-diff--generator-inputs-secret-env` | pinned diff  generator inputs secret env | Reset on replay. |
+| `source-diff-pins/pinned-diff--generator-inputs-configmap-file` | pinned diff  generator inputs configmap file | Reset on replay. |
+| `source-diff-pins/pinned-diff--escaped-patch-input` | pinned diff  escaped patch input | Reset on replay. |
+| `source-diff-pins/supplied-git-repository` | supplied git repository | Reset on replay. |
+| `source-diff-pins/pinned-diff--root-pin` | pinned diff  root pin | Reset on replay. |
+| `substitute-sops/bootstrap-generator-sops-substitution` | bootstrap generator sops substitution | Reset on replay. |
+| `substitute-sops/generator-sops-document-hash` | generator sops document hash | Reset on replay. |
+| `source-membership/discovery-index--scoped-raw-file-fallback` | discovery index  scoped raw file fallback | Reset on replay. |
+| `source-membership/discovery-index--changed-only-file-backed-producers-plain` | discovery index  changed only file backed producers plain | Reset on replay. |
+| `source-membership/discovery-index--changed-only-file-backed-producers-list` | discovery index  changed only file backed producers list | Reset on replay. |
+| `artifact-reach/discovery-index--changed-only-generator-inputs-secret-env` | discovery index  changed only generator inputs secret env | Reset on replay. |
+| `artifact-reach/discovery-index--changed-only-generator-inputs-configmap-file` | discovery index  changed only generator inputs configmap file | Reset on replay. |
+| `manifest-failures/loader-incidental-parse-failure-sibling` | loader incidental parse failure sibling | Reset on replay. |
+| `manifest-failures/loader-incidental-parse-failure-component` | loader incidental parse failure component | Reset on replay. |
+| `manifest-failures/kustomization-parse-failure` | kustomization parse failure | Reset on replay. |
+| `artifact-copy/bootstrap-generator-failure-isolation-missing` | bootstrap generator failure isolation missing | Reset on replay. |
+| `artifact-copy/bootstrap-generator-failure-isolation-outside` | bootstrap generator failure isolation outside | Reset on replay. |
+| `chart-inputs/source-ref--last-owner-local-chart` | source ref  last owner local chart | Reset on replay. |
+| `source-errors/source-ref--held-error-across-namespaces-external-source` | source ref  held error across namespaces external source | Reset on replay. |
+| `source-errors/source-ref--held-error-across-namespaces-working-tree-source` | source ref  held error across namespaces working tree source | Reset on replay. |
+| `source-errors/source-ref--held-error-survives-namespace-inheritance-explicit-source-namespace` | source ref  held error survives namespace inheritance explicit source namespace | Reset on replay. |
+| `source-errors/source-ref--held-error-survives-namespace-inheritance-implicit-source-namespace` | source ref  held error survives namespace inheritance implicit source namespace | Reset on replay. |
+| `source-errors/source-ref--held-error-survives-namespace-inheritance-pinned-inherited-namespace` | source ref  held error survives namespace inheritance pinned inherited namespace | Reset on replay. |
+| `source-errors/source-ref--held-error-survives-namespace-inheritance-external-source-in-other-inherited-namespace` | source ref  held error survives namespace inheritance external source in other inherited namespace | Reset on replay. |
+| `source-errors/source-ref--held-error-survives-namespace-inheritance-pinned-namespace-free-source` | source ref  held error survives namespace inheritance pinned namespace free source | Reset on replay. |
+| `source-errors/source-ref--held-error-retained-by-empty-path` | source ref  held error retained by empty path | Reset on replay. |
+| `source-errors/source-ref--held-error-scope-oci` | source ref  held error scope oci | Reset on replay. |
+| `source-errors/source-ref--held-error-scope-bootstrap` | source ref  held error scope bootstrap | Reset on replay. |
+| `source-errors/source-ref--held-error-scope-resolved-unavailable-tag` | source ref  held error scope resolved unavailable tag | Reset on replay. |
+| `source-errors/source-ref--held-error-scope-non-matching-url` | source ref  held error scope non matching url | Reset on replay. |
+| `source-errors/source-ref--held-error-scope-two-held` | source ref  held error scope two held | Reset on replay. |
+| `source-errors/source-ref--held-error-scope-two-held-path-order` | source ref  held error scope two held path order | Reset on replay. |
+| `machine-auth/docker-native-store` | docker native store | Reset on replay. |
+| `machine-auth/helm-native-store` | helm native store | Reset on replay. |
+| `machine-auth/anonymous-registry` | anonymous registry | Reset on replay. |
+| `machine-auth/malformed-native-registry-store` | malformed native registry store | Reset on replay. |
+| `machine-auth/aws-native-profile` | aws native profile | Reset on replay. |
+| `machine-auth/missing-certificate` | missing certificate | Reset on replay. |
+| `machine-auth/missing-proxy` | missing proxy | Reset on replay. |
+| `remote-inputs/git-source` | git source | Reset on replay. |
+| `cache-lifecycle/source-prime-and-warm` | Prime a source cache, then reuse the same cache for the warm render and replay. | Reuse on replay. |
+| `source-errors/source-ref--held-error-scope-non-decode-error` | The loader package distinguishes a read error from a decode error. Unsupported readers remain not-run. | Package-only permission proof. |

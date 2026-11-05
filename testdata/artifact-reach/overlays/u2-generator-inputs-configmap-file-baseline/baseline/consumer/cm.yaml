@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: ${VALUE}
+kind: ConfigMap
+metadata:
+  name: consumer
+  namespace: apps

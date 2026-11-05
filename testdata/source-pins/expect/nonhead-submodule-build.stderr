@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [SkippedSubmodule] GitRepository flux-system/cluster: skipping submodule (×2)
+      module, @@commit:base@@, git://fixture.invalid/cluster, tag:v1.0.0

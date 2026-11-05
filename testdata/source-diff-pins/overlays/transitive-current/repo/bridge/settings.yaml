@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: ${value}
+kind: ConfigMap
+metadata:
+  name: bridge-settings
+  namespace: apps

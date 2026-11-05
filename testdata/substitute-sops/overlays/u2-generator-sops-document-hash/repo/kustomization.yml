@@ -1,0 +1,4 @@
+resources: [deployment.yaml]
+secretGenerator:
+- name: settings
+  files: [values.yaml=values.sops.yaml]

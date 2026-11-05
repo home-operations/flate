@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  value: pinned
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: alpha
+  name: hello
+  namespace: apps

@@ -1,0 +1,9 @@
+
+  ✗  orig snapshot: Kustomization  flux-system/apps  kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'deleted.yaml': resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist
+
+  ✗  current snapshot: Kustomization  flux-system/apps  kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'deleted.yaml': resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist
+
+  ⚠ warnings (1)
+    [DiffSuppressed] Kustomization flux-system/apps: 0 objects withheld; diff suppressed (failed on both sides: orig: kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'deleted.yaml': resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist; current: kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'deleted.yaml': resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist)
+
+  ✗ 2 failed

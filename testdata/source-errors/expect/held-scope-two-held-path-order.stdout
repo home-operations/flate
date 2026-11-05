@@ -1,0 +1,24 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: z-sources
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: held
+  namespace: flux-system
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: z-sources
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: second
+  namespace: flux-system
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster

@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: pinned
+  namespace: flux-system
+spec:
+  interval: 10m
+  ref:
+    tag: v1.0.0
+  url: git://fixture.invalid/cluster

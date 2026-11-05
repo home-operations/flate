@@ -264,6 +264,24 @@
       "refs": [
         "refs/heads/sops-unreadable-diff-both-directions-metadata-baseline-base"
       ]
+    },
+    {
+      "repository": "repo",
+      "name": "u2-bootstrap-generator-sops-substitution",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-bootstrap-generator-sops-substitution"
+    },
+    {
+      "repository": "repo",
+      "name": "u2-generator-sops-document-hash",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-generator-sops-document-hash"
     }
   ],
   "overlays": [
@@ -479,6 +497,54 @@
     {
       "name": "edit-sops-unreadable-diff-both-directions-metadata-1",
       "directory": "overlays/edit-sops-unreadable-diff-both-directions-metadata-1"
+    },
+    {
+      "name": "u2-bootstrap-generator-sops-substitution",
+      "directory": "overlays/u2-bootstrap-generator-sops-substitution",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-generator-sops-document-hash",
+      "directory": "overlays/u2-generator-sops-document-hash",
+      "operations": [
+        {
+          "delete": "repo/flux-system/apps/cm.yaml"
+        },
+        {
+          "delete": "repo/flux-system/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/ks.yaml"
+        },
+        {
+          "delete": "repo/flux-system/flux/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/kustomization.yaml"
+        },
+        {
+          "delete": "repo/flux-system/values.yaml"
+        }
+      ]
     }
   ],
   "inputs": "inputs",
@@ -1496,6 +1562,79 @@
           }
         }
       ]
+    },
+    {
+      "name": "bootstrap-generator-sops-substitution",
+      "description": "bootstrap generator sops substitution",
+      "setup": [
+        {
+          "commit": "u2-bootstrap-generator-sops-substitution"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "u2-bootstrap-sops",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/u2-bootstrap-sops.stdout",
+              "stderr": "expect/u2-bootstrap-sops.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generator-sops-document-hash",
+      "description": "generator sops document hash",
+      "setup": [
+        {
+          "commit": "u2-generator-sops-document-hash"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "u2-sops-hash",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--skip-kinds",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/u2-sops-hash.stdout",
+              "stderr": "expect/u2-sops-hash.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -2442,6 +2581,118 @@
         "sops-unreadable-empty-variable-set-resource-disabled"
       ],
       "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/u2-bootstrap-generator-sops-substitution/repo/flux/ks.yaml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-bootstrap-generator-sops-substitution/repo/kustomization.yml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-bootstrap-generator-sops-substitution/repo/flux/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-bootstrap-generator-sops-substitution/repo/apps/a/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-bootstrap-generator-sops-substitution/repo/apps/a/creds.sops.env",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-bootstrap-generator-sops-substitution/repo/apps/b/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-bootstrap-generator-sops-substitution/repo/apps/b/cm.yaml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "expect/u2-bootstrap-sops.stdout",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-bootstrap-sops.stderr",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-generator-sops-document-hash/repo/kustomization.yml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-sops-document-hash/repo/deployment.yaml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-sops-document-hash/repo/values.sops.yaml",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "expect/u2-sops-hash.stdout",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-sops-hash.stderr",
+      "cases": [
+        "bootstrap-generator-sops-substitution",
+        "generator-sops-document-hash"
+      ],
+      "purpose": "Reviewed expected CLI stream."
     }
   ]
 }

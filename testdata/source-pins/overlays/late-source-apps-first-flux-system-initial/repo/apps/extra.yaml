@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: pinned-extra
+kind: ConfigMap
+metadata:
+  name: extra
+  namespace: apps

@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/apps  flux kustomize generator: error converting YAML to JSON: yaml: line 1: did not find expected ',' or ']'
+
+  ✗ 0 passed · 1 failed   <DUR>

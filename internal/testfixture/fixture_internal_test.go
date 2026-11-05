@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -248,7 +249,7 @@ func TestFixture_GitFaultsAndFileOperations(t *testing.T) {
 
 func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"unknown field", "unknown overlay", "escape", "duplicate id", "both operations", "missing expectation", "cache policy"} {
+	for _, name := range []string{"unknown field", "unknown overlay", "escape", "duplicate id", "both operations", "missing expectation", "cache policy", "submodule escape", "submodule commit", "submodule overlay"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := fixtureSource(t, "reset")
@@ -270,6 +271,12 @@ func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
 				s.Cases[0].Steps[1].Edit = &operation{Overlay: "after"}
 			case "missing expectation":
 				s.Cases[0].Steps[1].Invoke.Expect.Code = nil
+			case "submodule escape":
+				s.Cases[0].Setup = []operation{{Submodule: &blob{Commit: "base", Path: "../module"}}}
+			case "submodule commit":
+				s.Cases[0].Setup = []operation{{Submodule: &blob{Commit: "missing", Path: "module"}}}
+			case "submodule overlay":
+				s.Overlays[0].Operations = []operation{{Submodule: &blob{Commit: "base", Path: "module"}}}
 			case "cache policy":
 				s.Cases[0].Cache.Repeat = ""
 			}
@@ -456,5 +463,45 @@ func TestScenario_TransportOverrides(t *testing.T) {
 			s.Cases[0].Steps[1].Invoke.Transport = []Response{tc.response}
 			assert.Equal(t, s.validate(dir) == nil, tc.valid)
 		})
+	}
+}
+
+func TestFixture_Submodule(t *testing.T) {
+	t.Parallel()
+	dir := fixtureSource(t, "reset")
+	s, err := load(dir)
+	assert.NoError(t, err)
+	s.Cases[0].Setup = []operation{
+		{Submodule: &blob{Commit: "base", Path: "module"}},
+		{Ref: &reference{Repository: "repo", Name: "refs/tags/pinned", Commit: "base"}},
+	}
+	data, err := json.Marshal(s)
+	assert.NoError(t, err)
+	testutil.WriteFile(t, dir, "scenario.json", string(data))
+	f := materialize(t, dir, "sequence")
+	pinned := f.commits["base"]
+	for range 2 {
+		commit, commitErr := f.repositories["repo"].CommitObject(f.commits["base"])
+		assert.NoError(t, commitErr)
+		tree, treeErr := commit.Tree()
+		assert.NoError(t, treeErr)
+		entry, entryErr := tree.FindEntry("module")
+		assert.NoError(t, entryErr)
+		assert.Equal(t, entry.Mode, filemode.Submodule)
+		original, originalErr := f.repositories["repo"].CommitObject(entry.Hash)
+		assert.NoError(t, originalErr)
+		file, fileErr := original.File("value")
+		assert.NoError(t, fileErr)
+		contents, readErr := file.Contents()
+		assert.NoError(t, readErr)
+		assert.Equal(t, contents, "before")
+		ref, refErr := f.repositories["repo"].Reference("refs/tags/pinned", true)
+		assert.NoError(t, refErr)
+		assert.Equal(t, ref.Hash(), pinned)
+		head, headErr := f.repositories["repo"].Head()
+		assert.NoError(t, headErr)
+		assert.Equal(t, head.Hash(), f.commits["head"])
+		f.Restore(t)
+		assert.Equal(t, f.commits["base"], pinned)
 	}
 }

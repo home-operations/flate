@@ -110,6 +110,42 @@
         "baseline-content-after"
       ],
       "overlay": "input-before"
+    },
+    {
+      "repository": "repo",
+      "name": "u2-generator-inputs-secret-env-repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-generator-inputs-secret-env-repo"
+    },
+    {
+      "repository": "baseline",
+      "name": "u2-generator-inputs-secret-env-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-generator-inputs-secret-env-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "u2-generator-inputs-configmap-file-repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-generator-inputs-configmap-file-repo"
+    },
+    {
+      "repository": "baseline",
+      "name": "u2-generator-inputs-configmap-file-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-generator-inputs-configmap-file-baseline"
     }
   ],
   "overlays": [
@@ -132,6 +168,194 @@
     {
       "name": "emitted-after",
       "directory": "overlays/emitted-after"
+    },
+    {
+      "name": "u2-generator-inputs-secret-env-repo",
+      "directory": "overlays/u2-generator-inputs-secret-env-repo",
+      "operations": [
+        {
+          "delete": "repo/after.yaml"
+        },
+        {
+          "delete": "repo/app/cm.yaml"
+        },
+        {
+          "delete": "repo/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/before.yaml"
+        },
+        {
+          "delete": "repo/bootstrap/consumer.yaml"
+        },
+        {
+          "delete": "repo/bootstrap/generator.yaml"
+        },
+        {
+          "delete": "repo/emitted/consumer.yaml"
+        },
+        {
+          "delete": "repo/emitted/owner.yaml"
+        },
+        {
+          "delete": "repo/emitted/unrelated.yaml"
+        },
+        {
+          "delete": "repo/generators/kustomization.yaml"
+        },
+        {
+          "delete": "repo/generators/owner.yaml"
+        },
+        {
+          "delete": "repo/shared/Kustomization"
+        },
+        {
+          "delete": "repo/shared/generator.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-generator-inputs-secret-env-baseline",
+      "directory": "overlays/u2-generator-inputs-secret-env-baseline",
+      "operations": [
+        {
+          "delete": "baseline/after.yaml"
+        },
+        {
+          "delete": "baseline/app/cm.yaml"
+        },
+        {
+          "delete": "baseline/app/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/before.yaml"
+        },
+        {
+          "delete": "baseline/bootstrap/consumer.yaml"
+        },
+        {
+          "delete": "baseline/bootstrap/generator.yaml"
+        },
+        {
+          "delete": "baseline/emitted/consumer.yaml"
+        },
+        {
+          "delete": "baseline/emitted/owner.yaml"
+        },
+        {
+          "delete": "baseline/emitted/unrelated.yaml"
+        },
+        {
+          "delete": "baseline/generators/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/generators/owner.yaml"
+        },
+        {
+          "delete": "baseline/shared/Kustomization"
+        },
+        {
+          "delete": "baseline/shared/generator.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-generator-inputs-secret-env-after",
+      "directory": "overlays/u2-generator-inputs-secret-env-after"
+    },
+    {
+      "name": "u2-generator-inputs-configmap-file-repo",
+      "directory": "overlays/u2-generator-inputs-configmap-file-repo",
+      "operations": [
+        {
+          "delete": "repo/after.yaml"
+        },
+        {
+          "delete": "repo/app/cm.yaml"
+        },
+        {
+          "delete": "repo/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/before.yaml"
+        },
+        {
+          "delete": "repo/bootstrap/consumer.yaml"
+        },
+        {
+          "delete": "repo/bootstrap/generator.yaml"
+        },
+        {
+          "delete": "repo/emitted/consumer.yaml"
+        },
+        {
+          "delete": "repo/emitted/owner.yaml"
+        },
+        {
+          "delete": "repo/emitted/unrelated.yaml"
+        },
+        {
+          "delete": "repo/generators/kustomization.yaml"
+        },
+        {
+          "delete": "repo/generators/owner.yaml"
+        },
+        {
+          "delete": "repo/shared/Kustomization"
+        },
+        {
+          "delete": "repo/shared/generator.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-generator-inputs-configmap-file-baseline",
+      "directory": "overlays/u2-generator-inputs-configmap-file-baseline",
+      "operations": [
+        {
+          "delete": "baseline/after.yaml"
+        },
+        {
+          "delete": "baseline/app/cm.yaml"
+        },
+        {
+          "delete": "baseline/app/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/before.yaml"
+        },
+        {
+          "delete": "baseline/bootstrap/consumer.yaml"
+        },
+        {
+          "delete": "baseline/bootstrap/generator.yaml"
+        },
+        {
+          "delete": "baseline/emitted/consumer.yaml"
+        },
+        {
+          "delete": "baseline/emitted/owner.yaml"
+        },
+        {
+          "delete": "baseline/emitted/unrelated.yaml"
+        },
+        {
+          "delete": "baseline/generators/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/generators/owner.yaml"
+        },
+        {
+          "delete": "baseline/shared/Kustomization"
+        },
+        {
+          "delete": "baseline/shared/generator.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-generator-inputs-configmap-file-after",
+      "directory": "overlays/u2-generator-inputs-configmap-file-after"
     }
   ],
   "cases": [
@@ -241,6 +465,9 @@
       "setup": [
         {
           "commit": "content-before"
+        },
+        {
+          "commit": "baseline-input"
         },
         {
           "overlay": "emitted-after"
@@ -577,6 +804,232 @@
             "expect": {
               "stdout": "expect/input-reverse.stdout",
               "stderr": "expect/input-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "discovery-index--changed-only-generator-inputs-secret-env",
+      "description": "discovery index  changed only generator inputs secret env",
+      "setup": [
+        {
+          "commit": "u2-generator-inputs-secret-env-repo"
+        },
+        {
+          "commit": "u2-generator-inputs-secret-env-baseline"
+        },
+        {
+          "overlay": "u2-generator-inputs-secret-env-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "u2-inputs-secret-env-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/u2-inputs-secret-env-before.stdout",
+              "stderr": "expect/u2-inputs-secret-env-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-inputs-secret-env-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/u2-inputs-secret-env-after.stdout",
+              "stderr": "expect/u2-inputs-secret-env-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-inputs-secret-env-forward",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/u2-inputs-secret-env-forward.stdout",
+              "stderr": "expect/u2-inputs-secret-env-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-inputs-secret-env-reverse",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/flux",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/u2-inputs-secret-env-reverse.stdout",
+              "stderr": "expect/u2-inputs-secret-env-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "discovery-index--changed-only-generator-inputs-configmap-file",
+      "description": "discovery index  changed only generator inputs configmap file",
+      "setup": [
+        {
+          "commit": "u2-generator-inputs-configmap-file-repo"
+        },
+        {
+          "commit": "u2-generator-inputs-configmap-file-baseline"
+        },
+        {
+          "overlay": "u2-generator-inputs-configmap-file-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "u2-inputs-configmap-file-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/u2-inputs-configmap-file-before.stdout",
+              "stderr": "expect/u2-inputs-configmap-file-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-inputs-configmap-file-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/u2-inputs-configmap-file-after.stdout",
+              "stderr": "expect/u2-inputs-configmap-file-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-inputs-configmap-file-forward",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/u2-inputs-configmap-file-forward.stdout",
+              "stderr": "expect/u2-inputs-configmap-file-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-inputs-configmap-file-reverse",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/flux",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/u2-inputs-configmap-file-reverse.stdout",
+              "stderr": "expect/u2-inputs-configmap-file-reverse.stderr",
               "code": 0
             }
           }
@@ -1003,6 +1456,470 @@
         "artifact-generator--input-source-changed-only-reverse-committed"
       ],
       "purpose": "Real unrelated workload that detects accidental selection."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/flux/repo.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/flux/ks.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/producer/kustomization.yml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/producer/values.sops.env",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/sibling/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/sibling/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/unrelated/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-repo/repo/unrelated/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/flux/repo.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/flux/ks.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/producer/kustomization.yml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/producer/values.sops.env",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/sibling/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/sibling/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/unrelated/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-baseline/baseline/unrelated/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-secret-env-after/repo/producer/values.sops.env",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "expect/u2-inputs-secret-env-before.stdout",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-secret-env-before.stderr",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-secret-env-after.stdout",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-secret-env-after.stderr",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-secret-env-forward.stdout",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-secret-env-forward.stderr",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-secret-env-reverse.stdout",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-secret-env-reverse.stderr",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/flux/repo.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/flux/ks.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/producer/kustomization.yml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/producer/value.txt",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/sibling/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/sibling/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/unrelated/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-repo/repo/unrelated/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/flux/repo.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/flux/ks.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/producer/kustomization.yml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/producer/value.txt",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/sibling/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/sibling/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/unrelated/kustomization.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-baseline/baseline/unrelated/cm.yaml",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-inputs-configmap-file-after/repo/producer/value.txt",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "expect/u2-inputs-configmap-file-before.stdout",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-configmap-file-before.stderr",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-configmap-file-after.stdout",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-configmap-file-after.stderr",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-configmap-file-forward.stdout",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-configmap-file-forward.stderr",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-configmap-file-reverse.stdout",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-inputs-configmap-file-reverse.stderr",
+      "cases": [
+        "discovery-index--changed-only-generator-inputs-secret-env",
+        "discovery-index--changed-only-generator-inputs-configmap-file"
+      ],
+      "purpose": "Reviewed expected CLI stream."
     }
   ]
 }

@@ -1,0 +1,11 @@
+
+  ✗  orig snapshot: Bucket  sources/missing  not found
+         orig snapshot: required by apps/consumer
+
+  ✗  current snapshot: Bucket  sources/missing  not found
+         current snapshot: required by apps/consumer
+
+  ⚠ warnings (1)
+    [DiffSuppressed] Kustomization apps/consumer: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: Bucket.source.toolkit.fluxcd.io/sources/missing: dependency not found; current: dependencies failed: Bucket.source.toolkit.fluxcd.io/sources/missing: dependency not found)
+
+  ✗ 2 failed · 2 blocked

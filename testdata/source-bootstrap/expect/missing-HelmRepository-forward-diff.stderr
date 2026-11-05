@@ -1,0 +1,11 @@
+
+  ✗  orig snapshot: HelmRepository  sources/missing  not found
+         orig snapshot: required by HelmRelease apps/consumer, HelmRelease apps/consumer
+
+  ✗  current snapshot: HelmRepository  sources/missing  not found
+         current snapshot: required by HelmRelease apps/consumer, HelmRelease apps/consumer
+
+  ⚠ warnings (1)
+    [DiffSuppressed] HelmRelease apps/consumer: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/consumer: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/sources/missing: dependency not found; current: dependencies failed: HelmRelease.helm.toolkit.fluxcd.io/apps/consumer: dependencies failed: HelmRepository.source.toolkit.fluxcd.io/sources/missing: dependency not found)
+
+  ✗ 2 failed · 4 blocked

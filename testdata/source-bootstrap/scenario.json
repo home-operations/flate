@@ -1,0 +1,1772 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Authored source topology with the existing pinned-tree regression inputs. Application payloads reduce to ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "empty-path-root",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "missing-OCIRepository-repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "missing-OCIRepository-repo"
+    },
+    {
+      "repository": "baseline",
+      "name": "missing-OCIRepository-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "missing-OCIRepository-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "missing-HelmRepository-repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "missing-HelmRepository-repo"
+    },
+    {
+      "repository": "baseline",
+      "name": "missing-HelmRepository-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "missing-HelmRepository-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "missing-Bucket-repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "missing-Bucket-repo"
+    },
+    {
+      "repository": "baseline",
+      "name": "missing-Bucket-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "missing-Bucket-baseline"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "empty-path-explicit",
+      "directory": "overlays/empty-path-explicit"
+    },
+    {
+      "name": "empty-path-omitted",
+      "directory": "overlays/empty-path-omitted"
+    },
+    {
+      "name": "missing-OCIRepository-repo",
+      "directory": "overlays/missing-OCIRepository-repo",
+      "operations": [
+        {
+          "delete": "repo/flux/root.yaml"
+        },
+        {
+          "delete": "repo/kustomization.yml"
+        },
+        {
+          "delete": "repo/cm.yaml"
+        },
+        {
+          "delete": "repo/child.yaml"
+        },
+        {
+          "delete": "repo/leaf/kustomization.yaml"
+        },
+        {
+          "delete": "repo/leaf/cm.yaml"
+        }
+      ]
+    },
+    {
+      "name": "missing-OCIRepository-baseline",
+      "directory": "overlays/missing-OCIRepository-baseline"
+    },
+    {
+      "name": "missing-HelmRepository-repo",
+      "directory": "overlays/missing-HelmRepository-repo",
+      "operations": [
+        {
+          "delete": "repo/flux/root.yaml"
+        },
+        {
+          "delete": "repo/kustomization.yml"
+        },
+        {
+          "delete": "repo/cm.yaml"
+        },
+        {
+          "delete": "repo/child.yaml"
+        },
+        {
+          "delete": "repo/leaf/kustomization.yaml"
+        },
+        {
+          "delete": "repo/leaf/cm.yaml"
+        }
+      ]
+    },
+    {
+      "name": "missing-HelmRepository-baseline",
+      "directory": "overlays/missing-HelmRepository-baseline"
+    },
+    {
+      "name": "missing-Bucket-repo",
+      "directory": "overlays/missing-Bucket-repo",
+      "operations": [
+        {
+          "delete": "repo/flux/root.yaml"
+        },
+        {
+          "delete": "repo/kustomization.yml"
+        },
+        {
+          "delete": "repo/cm.yaml"
+        },
+        {
+          "delete": "repo/child.yaml"
+        },
+        {
+          "delete": "repo/leaf/kustomization.yaml"
+        },
+        {
+          "delete": "repo/leaf/cm.yaml"
+        }
+      ]
+    },
+    {
+      "name": "missing-Bucket-baseline",
+      "directory": "overlays/missing-Bucket-baseline"
+    }
+  ],
+  "cases": [
+    {
+      "name": "source-ref--empty-path-matches-root-explicit",
+      "description": "source ref  empty path matches root explicit",
+      "setup": [
+        {
+          "commit": "empty-path-root"
+        },
+        {
+          "overlay": "empty-path-explicit"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "empty-path-explicit-owned",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/empty-path-explicit-owned.stdout",
+              "stderr": "expect/empty-path-explicit-owned.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "empty-path-explicit-all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/empty-path-explicit-all.stdout",
+              "stderr": "expect/empty-path-explicit-all.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-ref--empty-path-matches-root-omitted",
+      "description": "source ref  empty path matches root omitted",
+      "setup": [
+        {
+          "commit": "empty-path-root"
+        },
+        {
+          "overlay": "empty-path-omitted"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "empty-path-omitted-owned",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/empty-path-omitted-owned.stdout",
+              "stderr": "expect/empty-path-omitted-owned.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "empty-path-omitted-all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/empty-path-omitted-all.stdout",
+              "stderr": "expect/empty-path-omitted-all.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-ref--missing-non-git-ocirepository",
+      "description": "source ref  missing non git ocirepository",
+      "setup": [
+        {
+          "commit": "missing-OCIRepository-repo"
+        },
+        {
+          "commit": "missing-OCIRepository-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-OCIRepository-forward-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/missing-OCIRepository-forward-full.stdout",
+              "stderr": "expect/missing-OCIRepository-forward-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-OCIRepository-forward-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-OCIRepository-forward-changed.stdout",
+              "stderr": "expect/missing-OCIRepository-forward-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-OCIRepository-forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-OCIRepository-forward-diff.stdout",
+              "stderr": "expect/missing-OCIRepository-forward-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-OCIRepository-reverse-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/missing-OCIRepository-reverse-full.stdout",
+              "stderr": "expect/missing-OCIRepository-reverse-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-OCIRepository-reverse-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-OCIRepository-reverse-changed.stdout",
+              "stderr": "expect/missing-OCIRepository-reverse-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-OCIRepository-reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-OCIRepository-reverse-diff.stdout",
+              "stderr": "expect/missing-OCIRepository-reverse-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-ref--missing-non-git-helmrepository",
+      "description": "source ref  missing non git helmrepository",
+      "setup": [
+        {
+          "commit": "missing-HelmRepository-repo"
+        },
+        {
+          "commit": "missing-HelmRepository-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-HelmRepository-forward-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/missing-HelmRepository-forward-full.stdout",
+              "stderr": "expect/missing-HelmRepository-forward-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-HelmRepository-forward-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-HelmRepository-forward-changed.stdout",
+              "stderr": "expect/missing-HelmRepository-forward-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-HelmRepository-forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-HelmRepository-forward-diff.stdout",
+              "stderr": "expect/missing-HelmRepository-forward-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-HelmRepository-reverse-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/missing-HelmRepository-reverse-full.stdout",
+              "stderr": "expect/missing-HelmRepository-reverse-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-HelmRepository-reverse-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-HelmRepository-reverse-changed.stdout",
+              "stderr": "expect/missing-HelmRepository-reverse-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-HelmRepository-reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-HelmRepository-reverse-diff.stdout",
+              "stderr": "expect/missing-HelmRepository-reverse-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-ref--missing-non-git-bucket",
+      "description": "source ref  missing non git bucket",
+      "setup": [
+        {
+          "commit": "missing-Bucket-repo"
+        },
+        {
+          "commit": "missing-Bucket-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-Bucket-forward-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/missing-Bucket-forward-full.stdout",
+              "stderr": "expect/missing-Bucket-forward-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-Bucket-forward-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-Bucket-forward-changed.stdout",
+              "stderr": "expect/missing-Bucket-forward-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-Bucket-forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-Bucket-forward-diff.stdout",
+              "stderr": "expect/missing-Bucket-forward-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-Bucket-reverse-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/missing-Bucket-reverse-full.stdout",
+              "stderr": "expect/missing-Bucket-reverse-full.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-Bucket-reverse-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-Bucket-reverse-changed.stdout",
+              "stderr": "expect/missing-Bucket-reverse-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "missing-Bucket-reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/entry"
+            ],
+            "expect": {
+              "stdout": "expect/missing-Bucket-reverse-diff.stdout",
+              "stderr": "expect/missing-Bucket-reverse-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/flux/root.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/kustomization.yml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/child.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/leaf/kustomization.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/leaf/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/empty-path-explicit/repo/flux/root.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/empty-path-explicit-owned.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/empty-path-explicit-owned.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/empty-path-explicit-all.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/empty-path-explicit-all.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/empty-path-omitted/repo/flux/root.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/empty-path-omitted-owned.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/empty-path-omitted-owned.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/empty-path-omitted-all.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/empty-path-omitted-all.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "baseline/entry/consumer.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/Chart.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/.editorconfig",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/templates/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/decoy/kustomization.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "baseline/decoy/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-repo/repo/entry/consumer.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-repo/repo/Chart.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-repo/repo/.editorconfig",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-repo/repo/templates/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-repo/repo/decoy/kustomization.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-repo/repo/decoy/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-baseline/baseline/entry/consumer.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-baseline/baseline/Chart.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-baseline/baseline/.editorconfig",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-baseline/baseline/templates/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-baseline/baseline/decoy/kustomization.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-OCIRepository-baseline/baseline/decoy/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/missing-OCIRepository-forward-full.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-forward-full.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-forward-changed.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-forward-changed.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-forward-diff.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-forward-diff.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-reverse-full.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-reverse-full.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-reverse-changed.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-reverse-changed.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-reverse-diff.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-OCIRepository-reverse-diff.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-repo/repo/entry/consumer.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-repo/repo/Chart.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-repo/repo/.editorconfig",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-repo/repo/templates/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-repo/repo/decoy/kustomization.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-repo/repo/decoy/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-baseline/baseline/entry/consumer.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-baseline/baseline/Chart.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-baseline/baseline/.editorconfig",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-baseline/baseline/templates/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-baseline/baseline/decoy/kustomization.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-HelmRepository-baseline/baseline/decoy/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/missing-HelmRepository-forward-full.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-forward-full.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-forward-changed.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-forward-changed.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-forward-diff.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-forward-diff.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-reverse-full.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-reverse-full.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-reverse-changed.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-reverse-changed.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-reverse-diff.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-HelmRepository-reverse-diff.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/missing-Bucket-repo/repo/entry/consumer.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-repo/repo/Chart.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-repo/repo/.editorconfig",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-repo/repo/templates/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-repo/repo/decoy/kustomization.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-repo/repo/decoy/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-baseline/baseline/entry/consumer.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-baseline/baseline/Chart.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-baseline/baseline/.editorconfig",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-baseline/baseline/templates/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-baseline/baseline/decoy/kustomization.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/missing-Bucket-baseline/baseline/decoy/cm.yaml",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/missing-Bucket-forward-full.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-forward-full.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-forward-changed.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-forward-changed.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-forward-diff.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-forward-diff.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-reverse-full.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-reverse-full.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-reverse-changed.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-reverse-changed.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-reverse-diff.stdout",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/missing-Bucket-reverse-diff.stderr",
+      "cases": [
+        "source-ref--empty-path-matches-root-explicit",
+        "source-ref--empty-path-matches-root-omitted",
+        "source-ref--missing-non-git-ocirepository",
+        "source-ref--missing-non-git-helmrepository",
+        "source-ref--missing-non-git-bucket"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    }
+  ]
+}

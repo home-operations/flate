@@ -1,0 +1,12 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: a-x
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./
+  sourceRef:
+    kind: GitRepository
+    name: pinned
+    namespace: flux-system

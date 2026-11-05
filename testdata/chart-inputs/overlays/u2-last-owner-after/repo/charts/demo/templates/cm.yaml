@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  name: chart-rendered
+  namespace: apps

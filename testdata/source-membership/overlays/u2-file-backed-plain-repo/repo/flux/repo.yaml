@@ -1,0 +1,12 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  ref:
+    branch: main
+  sparseCheckout:
+  - ./apps
+  - ./consumer
+  url: https://example.test/cluster.git

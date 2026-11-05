@@ -1,0 +1,854 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Authored source topology with the existing pinned-tree regression inputs. Application payloads reduce to ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "scoped-raw-file-fallback",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "u2-file-backed-plain-repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-file-backed-plain-repo"
+    },
+    {
+      "repository": "baseline",
+      "name": "u2-file-backed-plain-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-file-backed-plain-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "u2-file-backed-list-repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-file-backed-list-repo"
+    },
+    {
+      "repository": "baseline",
+      "name": "u2-file-backed-list-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-file-backed-list-baseline"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "u2-file-backed-plain-repo",
+      "directory": "overlays/u2-file-backed-plain-repo",
+      "operations": [
+        {
+          "delete": "repo/shared/kustomization.yml"
+        },
+        {
+          "delete": "repo/shared/settings.yaml"
+        },
+        {
+          "delete": "repo/overlay/kustomization.yml"
+        }
+      ]
+    },
+    {
+      "name": "u2-file-backed-plain-baseline",
+      "directory": "overlays/u2-file-backed-plain-baseline",
+      "operations": [
+        {
+          "delete": "baseline/shared/kustomization.yml"
+        },
+        {
+          "delete": "baseline/shared/settings.yaml"
+        },
+        {
+          "delete": "baseline/overlay/kustomization.yml"
+        }
+      ]
+    },
+    {
+      "name": "file-backed-plain-dirty",
+      "directory": "overlays/file-backed-plain-dirty"
+    },
+    {
+      "name": "u2-file-backed-list-repo",
+      "directory": "overlays/u2-file-backed-list-repo",
+      "operations": [
+        {
+          "delete": "repo/shared/kustomization.yml"
+        },
+        {
+          "delete": "repo/shared/settings.yaml"
+        },
+        {
+          "delete": "repo/overlay/kustomization.yml"
+        }
+      ]
+    },
+    {
+      "name": "u2-file-backed-list-baseline",
+      "directory": "overlays/u2-file-backed-list-baseline",
+      "operations": [
+        {
+          "delete": "baseline/shared/kustomization.yml"
+        },
+        {
+          "delete": "baseline/shared/settings.yaml"
+        },
+        {
+          "delete": "baseline/overlay/kustomization.yml"
+        }
+      ]
+    },
+    {
+      "name": "file-backed-list-dirty",
+      "directory": "overlays/file-backed-list-dirty"
+    }
+  ],
+  "cases": [
+    {
+      "name": "discovery-index--scoped-raw-file-fallback",
+      "description": "discovery index  scoped raw file fallback",
+      "setup": [
+        {
+          "commit": "scoped-raw-file-fallback"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "raw-scoped",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/raw-scoped.stdout",
+              "stderr": "expect/raw-scoped.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "raw-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/raw-full.stdout",
+              "stderr": "expect/raw-full.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "discovery-index--changed-only-file-backed-producers-plain",
+      "description": "discovery index  changed only file backed producers plain",
+      "setup": [
+        {
+          "commit": "u2-file-backed-plain-repo"
+        },
+        {
+          "commit": "u2-file-backed-plain-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "file-backed-plain-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/file-backed-plain-full.stdout",
+              "stderr": "expect/file-backed-plain-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "file-backed-plain-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/file-backed-plain-repeat.stdout",
+              "stderr": "expect/file-backed-plain-repeat.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "file-backed-plain-edit",
+          "edit": {
+            "overlay": "file-backed-plain-dirty"
+          }
+        },
+        {
+          "id": "file-backed-plain-selected",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/file-backed-plain-selected.stdout",
+              "stderr": "expect/file-backed-plain-selected.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "discovery-index--changed-only-file-backed-producers-list",
+      "description": "discovery index  changed only file backed producers list",
+      "setup": [
+        {
+          "commit": "u2-file-backed-list-repo"
+        },
+        {
+          "commit": "u2-file-backed-list-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "file-backed-list-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/file-backed-list-full.stdout",
+              "stderr": "expect/file-backed-list-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "file-backed-list-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/file-backed-list-repeat.stdout",
+              "stderr": "expect/file-backed-list-repeat.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "file-backed-list-edit",
+          "edit": {
+            "overlay": "file-backed-list-dirty"
+          }
+        },
+        {
+          "id": "file-backed-list-selected",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/file-backed-list-selected.stdout",
+              "stderr": "expect/file-backed-list-selected.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/flux/repo.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/flux/ks.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/shared/kustomization.yml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/shared/settings.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/overlay/kustomization.yml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/raw-scoped.stdout",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/raw-scoped.stderr",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/raw-full.stdout",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/raw-full.stderr",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-repo/repo/flux/repo.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-repo/repo/flux/ks.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-repo/repo/apps/kustomization.yml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-repo/repo/apps/other/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-repo/repo/apps/other/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-repo/repo/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-repo/repo/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-baseline/baseline/flux/repo.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-baseline/baseline/flux/ks.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-baseline/baseline/apps/kustomization.yml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-baseline/baseline/apps/other/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-baseline/baseline/apps/other/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-baseline/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-plain-baseline/baseline/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/file-backed-plain-dirty/repo/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/file-backed-plain-full.stdout",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-plain-full.stderr",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-plain-repeat.stdout",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-plain-repeat.stderr",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-plain-selected.stdout",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-plain-selected.stderr",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-repo/repo/flux/repo.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-repo/repo/flux/ks.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-repo/repo/apps/kustomization.yml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-repo/repo/apps/other/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-repo/repo/apps/other/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-repo/repo/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-repo/repo/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-baseline/baseline/flux/repo.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-baseline/baseline/flux/ks.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-baseline/baseline/apps/kustomization.yml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-baseline/baseline/apps/other/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-baseline/baseline/apps/other/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-baseline/baseline/consumer/kustomization.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-file-backed-list-baseline/baseline/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/file-backed-list-dirty/repo/consumer/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/file-backed-list-dirty/repo/apps/other/cm.yaml",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/file-backed-list-full.stdout",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-list-full.stderr",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-list-repeat.stdout",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-list-repeat.stderr",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-list-selected.stdout",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/file-backed-list-selected.stderr",
+      "cases": [
+        "discovery-index--scoped-raw-file-fallback",
+        "discovery-index--changed-only-file-backed-producers-plain",
+        "discovery-index--changed-only-file-backed-producers-list"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    }
+  ]
+}

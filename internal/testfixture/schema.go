@@ -81,6 +81,7 @@ type operation struct {
 	MissingBlob  *blob         `json:"missingBlob,omitempty"`
 	Ref          *reference    `json:"ref,omitempty"`
 	NoGit        string        `json:"noGit,omitempty"`
+	Submodule    *blob         `json:"submodule,omitempty"`
 }
 
 type rename struct {
@@ -350,7 +351,7 @@ func (s *scenario) validateOverlayOperations(
 		for i := range o.Operations {
 			op := &o.Operations[i]
 			if op.Overlay != "" || op.Commit != "" || op.Shallow != "" || op.MissingBlob != nil || op.Ref != nil ||
-				op.NoGit != "" {
+				op.NoGit != "" || op.Submodule != nil {
 				return fmt.Errorf("overlay operations require delete, rename, chmod, symlink or cacheFailure")
 			}
 			if err := validateOperation(op, overlays, commitRepos, repos); err != nil {
@@ -472,7 +473,7 @@ func validateOperation(
 
 func validateOperationAction(op *operation) error {
 	count := 0
-	for _, set := range []bool{op.Overlay != "", op.Commit != "", op.Delete != "", op.Rename != nil, op.Chmod != nil, op.Symlink != nil, op.CacheFailure != nil, op.Shallow != "", op.MissingBlob != nil, op.Ref != nil, op.NoGit != ""} {
+	for _, set := range []bool{op.Overlay != "", op.Commit != "", op.Delete != "", op.Rename != nil, op.Chmod != nil, op.Symlink != nil, op.CacheFailure != nil, op.Shallow != "", op.MissingBlob != nil, op.Ref != nil, op.NoGit != "", op.Submodule != nil} {
 		if set {
 			count++
 		}
@@ -509,6 +510,12 @@ func validateOperationPaths(op *operation, commits map[string]string, repos map[
 	if op.MissingBlob != nil {
 		if !local(op.MissingBlob.Path) || commits[op.MissingBlob.Commit] == "" {
 			return fmt.Errorf("unknown blob commit")
+		}
+	}
+	if op.Submodule != nil {
+		if strings.Contains(op.Submodule.Path, "/") ||
+			!treePath(commits[op.Submodule.Commit]+"/"+op.Submodule.Path, repos) {
+			return fmt.Errorf("submodule requires a root path and a known commit")
 		}
 	}
 	if slices.ContainsFunc(paths, func(p string) bool { return p != "" && !treePath(p, repos) }) {

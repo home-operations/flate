@@ -1,0 +1,9 @@
+
+  ✗  Kustomization  flux-system/a-held  kustomize build ./held: accumulating resources: accumulating resources from 'extra.yaml': MalformedYAMLError: yaml: line 1: did not find expected ',' or '}' in File: extra.yaml
+  ✗  Kustomization  flux-system/b-second  kustomize build ./second: accumulating resources: accumulating resources from 'extra.yaml': MalformedYAMLError: yaml: line 1: did not find expected ',' or '}' in File: extra.yaml
+
+  ⚠ warnings (1)
+    [BootstrapAliases] aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree
+      GitRepository.source.toolkit.fluxcd.io/flux-system/held, GitRepository.source.toolkit.fluxcd.io/flux-system/second, @@repo@@
+
+  ✗ 2 failed

@@ -1,0 +1,15 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: remote
+  namespace: apps
+spec:
+  url: git://supplied.fixture.invalid/source
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unused
+  namespace: apps
+spec:
+  url: file:///absent-supplied-source

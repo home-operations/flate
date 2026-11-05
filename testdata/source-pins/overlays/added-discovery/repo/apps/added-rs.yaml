@@ -1,0 +1,15 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: added-rs
+  namespace: flux-system
+spec:
+  resourcesTemplate: 'apiVersion: v1
+
+    kind: ConfigMap
+
+    metadata: {name: added-rs-output, namespace: apps}
+
+    data: {value: phantom}
+
+    '

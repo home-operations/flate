@@ -1,3 +1,4 @@
+// Package harness provides shared in-process CLI and fixture support for e2e scenarios.
 package harness
 
 import (

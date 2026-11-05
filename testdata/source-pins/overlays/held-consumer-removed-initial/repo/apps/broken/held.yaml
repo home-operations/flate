@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: tagged-consumer
+kind: ConfigMap
+metadata:
+  name: restored
+  namespace: apps

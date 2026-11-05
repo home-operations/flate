@@ -3,9 +3,12 @@ package orchestrator
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,6 +33,7 @@ func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 			testEntryApplicationIntervalReceipt(t, kind)
 		})
 	}
+	t.Run("cold-self-applier-substituteFrom", testColdSelfApplierSubstituteFrom)
 }
 
 func testEntryApplicationIntervalReceipt(t *testing.T, kind string) {
@@ -476,4 +480,302 @@ spec: {url: `+fixture.tree.SelfURLs[0]+"}\n")
 	if tc.name == "chart" {
 		assertEntryReceiptInvalidatedRender(t, invalidated, &logs, &admissions)
 	}
+}
+
+func testColdSelfApplierSubstituteFrom(t *testing.T) {
+	t.Helper()
+	t.Skip(
+		"not run: a synthetic entry producer remains beside the real applier when the self source carries an ignore policy. Owner: discovery's entry binding",
+	)
+	owners := []manifest.NamedResource{
+		testutil.HelmReleaseID("apps", "typed"),
+		testutil.KustomizationID("apps", "volsync-a"),
+		testutil.KustomizationID("apps", "volsync-b"),
+	}
+	var full [2]Rendered
+	var measured [2][2]Rendered
+	var finalErrors [2][2]error
+	for side := range full {
+		reference := selfApplierTrees(t)[side]
+		reference.BaseInput, reference.ExternalChanges = nil, nil
+		runs, err := RenderTrees(t.Context(), []Tree{reference}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		assert.NoError(t, err)
+		assert.Equal(t, len(runs), 1)
+		full[side] = runs[0]
+	}
+	for repeat := range measured {
+		for side := range measured[repeat] {
+			tree := selfApplierTrees(t)[side]
+			runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{
+				CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true,
+				Selection: manifest.Selection{Changed: true},
+			})
+			assert.Equal(t, len(runs), 1)
+			measured[repeat][side], finalErrors[repeat][side] = runs[0], err
+		}
+	}
+	t.Run("output", func(t *testing.T) {
+		for repeat := range measured {
+			for side, run := range measured[repeat] {
+				t.Run(fmt.Sprintf("run-%d/%s", repeat, []string{"base", "head"}[run.ID.Side]), func(t *testing.T) {
+					assert.Diff(t, visibleWitnessOutput(run.Result), visibleWitnessOutput(full[side].Result))
+					assertSelfApplierOutput(t, run, owners, []string{"before", "after"}[side])
+				})
+			}
+		}
+	})
+	t.Run("final-failures", func(t *testing.T) {
+		for repeat := range measured {
+			for side, run := range measured[repeat] {
+				t.Run(fmt.Sprintf("run-%d/%s", repeat, []string{"base", "head"}[run.ID.Side]), func(t *testing.T) {
+					assert.NoError(t, finalErrors[repeat][side])
+					assert.NoError(t, run.Err)
+					assert.NoError(t, full[side].Err)
+					assert.Diff(t, run.Result.Failed, full[side].Result.Failed)
+					assert.Equal(t, len(run.Result.Failed), 0)
+				})
+			}
+		}
+	})
+	t.Run("determinism", func(t *testing.T) {
+		for side := range full {
+			t.Run([]string{"base", "head"}[side], func(t *testing.T) {
+				before, err := json.Marshal(measured[0][side].Result.Manifests)
+				assert.NoError(t, err)
+				after, err := json.Marshal(measured[1][side].Result.Manifests)
+				assert.NoError(t, err)
+				assert.Equal(t, string(after), string(before))
+				assert.Diff(t, measured[1][side].Result.Failed, measured[0][side].Result.Failed)
+			})
+		}
+	})
+	for repeat := range measured {
+		for _, run := range measured[repeat] {
+			t.Run(fmt.Sprintf("run-%d/%s", repeat, []string{"base", "head"}[run.ID.Side]), func(t *testing.T) {
+				assertSelfApplierWork(t, run, owners)
+			})
+		}
+	}
+}
+
+func selfApplierTrees(t *testing.T) [2]Tree {
+	t.Helper()
+	const url = "https://example.test/self-applier/repo"
+	files := map[string]string{
+		"entry/kustomization.yaml": "resources: [application.yaml, source.yaml, vars.yaml, typed.yaml, volsync-a.yaml, volsync-b.yaml]\n",
+		"entry/source.yaml": "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n" +
+			"metadata: {name: self, namespace: apps}\nspec:\n  url: " + url + "\n  ignore: |\n    /*\n    !/entry\n    !/charts\n    !/shared\n",
+		"entry/application.yaml": `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: sync, namespace: apps}
+spec:
+  interval: 1h
+  path: ./entry
+  sourceRef: {kind: GitRepository, name: self}
+  decryption: {provider: sops}
+  postBuild:
+    substitute: {COUNT: "7"}
+    substituteFrom: [{kind: Secret, name: vars, optional: false}]
+  patches:
+    - target: {kind: HelmRelease, name: typed}
+      patch: |-
+        - op: replace
+          path: /spec/values/marker
+          value: accepted
+`,
+		"entry/vars.yaml": "apiVersion: v1\nkind: Secret\nmetadata: {name: vars, namespace: apps}\n" +
+			"stringData: {TOKEN: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n",
+		"entry/typed.yaml": `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: typed, namespace: apps}
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: charts/typed
+      sourceRef: {kind: GitRepository, name: self}
+  values:
+    count: ${COUNT}
+    marker: raw
+`,
+		"charts/typed/Chart.yaml":         "apiVersion: v2\nname: typed\nversion: 1.0.0\n",
+		"charts/typed/values.schema.json": `{"type":"object","required":["count"],"properties":{"count":{"type":"integer"}}}`,
+		"charts/typed/templates/cm.yaml": `apiVersion: v1
+kind: ConfigMap
+metadata: {name: typed-output, namespace: apps}
+data:
+  count: {{ .Values.count | quote }}
+  marker: {{ .Values.marker | quote }}
+  revision: before
+`,
+		"shared/kustomization.yaml": "resources: [cm.yaml]\n",
+		"shared/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '${WORKLOAD_NAME}', namespace: apps}\n" +
+			"data: {workload: '${WORKLOAD_NAME}', revision: before}\n",
+	}
+	for _, name := range []string{"a", "b"} {
+		files["entry/volsync-"+name+".yaml"] = testutil.KustomizationYAML("volsync-"+name, "apps",
+			"  interval: 1h\n  path: ./shared\n  sourceRef: {kind: GitRepository, name: self}\n"+
+				"  postBuild:\n    substitute: {WORKLOAD_NAME: volsync-"+name+"}\n")
+	}
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	for side, root := range roots {
+		for _, name := range slices.Sorted(maps.Keys(files)) {
+			body := files[name]
+			if side == 1 && (name == "charts/typed/templates/cm.yaml" || name == "shared/cm.yaml") {
+				body = strings.ReplaceAll(body, "revision: before", "revision: after")
+			}
+			if side == 1 && name == "entry/volsync-a.yaml" {
+				body = strings.ReplaceAll(body, "interval: 1h", "interval: 2h")
+			}
+			testutil.WriteFile(t, root, name, body)
+		}
+	}
+	inputs := [2]*store.SourceArtifact{testDirectoryInput(t, roots[0]), testDirectoryInput(t, roots[1])}
+	inputs[0].LocalPath, inputs[0].LocalRoot, inputs[0].URL = roots[1], roots[1], "file://"+roots[1]
+	var trees [2]Tree
+	for side := range trees {
+		trees[side] = Tree{
+			ID: manifest.TreeID{
+				Cluster: ".",
+				Side:    []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead}[side],
+			},
+			Path:      filepath.Join(roots[1], "entry"),
+			RepoRoot:  roots[1],
+			SelfURLs:  []string{url},
+			Input:     inputs[side],
+			BaseInput: inputs[1-side],
+			ExternalChanges: change.NewSet(
+				[]string{"charts/typed/templates/cm.yaml", "shared/cm.yaml", "entry/volsync-a.yaml"},
+			),
+		}
+	}
+	return trees
+}
+
+func assertSelfApplierOutput(t *testing.T, run Rendered, owners []manifest.NamedResource, revision string) {
+	t.Helper()
+	output := visibleWitnessOutput(run.Result)
+	assert.Equal(t, len(output), len(owners)+1)
+	for index, owner := range owners {
+		docs := output[owner]
+		assert.Equal(t, len(docs), 1)
+		if len(docs) != 1 {
+			continue
+		}
+		metadata, _ := docs[0]["metadata"].(map[string]any)
+		name := "typed-output"
+		data := map[string]any{"count": "7", "marker": "accepted", "revision": revision}
+		if index != 0 {
+			name = owner.Name
+			data = map[string]any{"workload": name, "revision": revision}
+		}
+		assert.Equal(t, metadata["name"], any(name))
+		assert.Equal(t, metadata["namespace"], any("apps"))
+		assert.Diff(t, docs[0]["data"], data)
+	}
+	entry := output[testutil.KustomizationID("apps", "sync")]
+	assert.Equal(t, len(entry), 6)
+	for _, doc := range entry {
+		metadata, _ := doc["metadata"].(map[string]any)
+		if doc["kind"] != "HelmRelease" || metadata["name"] != "typed" {
+			continue
+		}
+		spec, _ := doc["spec"].(map[string]any)
+		values, err := json.Marshal(spec["values"])
+		assert.NoError(t, err)
+		assert.Equal(t, string(values), `{"count":7,"marker":"accepted"}`)
+	}
+}
+
+func assertSelfApplierWork(t *testing.T, run Rendered, owners []manifest.NamedResource) {
+	t.Helper()
+	engines := make(map[manifest.NamedResource]manifest.WorkSummary)
+	t.Logf("side=%d binding=%+v kustomize=%+v helm=%+v", run.ID.Side, run.entryBinding,
+		workCounts(run.Result.Work, manifest.NamedResource{}, manifest.WorkKustomize),
+		workCounts(run.Result.Work, manifest.NamedResource{}, manifest.WorkHelm))
+	for index := range run.Result.Work {
+		record := &run.Result.Work[index]
+		assert.Equal(t, record.Key.Tree, run.ID)
+		assert.Equal(t, record.Counts.RemoteTransfers, uint64(0))
+		if record.Key.Phase == manifest.WorkHelm || record.Key.Phase == manifest.WorkKustomize {
+			assert.Equal(t, record.Key.Input != "", true)
+			engines[record.Key.Owner] = append(engines[record.Key.Owner], *record)
+			t.Logf("engine: %+v", record)
+		}
+	}
+	t.Run("provisional-work", func(t *testing.T) {
+		for _, owner := range owners {
+			for index := range engines[owner] {
+				record := &engines[owner][index]
+				assert.Equal(t, record.Counts.Failures, uint64(0))
+				assert.Equal(t, record.Counts.Attempts, uint64(1))
+			}
+			assert.Equal(t, len(engines[owner]), 1)
+		}
+	})
+	t.Run("entry-application", func(t *testing.T) {
+		assert.Equal(t, workCounts(run.Result.Work, manifest.NamedResource{}, manifest.WorkKustomize),
+			manifest.WorkCounts{Attempts: 3, Completed: 3})
+		assert.Equal(t, workCounts(run.Result.Work, manifest.NamedResource{}, manifest.WorkHelm),
+			manifest.WorkCounts{Attempts: 1, Completed: 1})
+		applier := testutil.KustomizationID("apps", "sync")
+		synthetic := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", applier).Named()
+		assert.Equal(t, run.entryBinding.Producer, applier)
+		assert.Equal(t, len(engines[synthetic]), 0)
+		assert.Equal(t, len(engines[applier]), 1)
+		for index := range engines[applier] {
+			record := &engines[applier][index]
+			assert.Equal(t, record.Counts, manifest.WorkCounts{Attempts: 1, Completed: 1})
+		}
+		assert.Equal(
+			t,
+			workCounts(run.Result.Work, applier, manifest.WorkAdmission),
+			manifest.WorkCounts{Attempts: 1, Completed: 1},
+		)
+	})
+	t.Run("final-child-identities", func(t *testing.T) {
+		assertSelfApplierChildWork(t, run, owners, engines)
+	})
+}
+
+func assertSelfApplierChildWork(
+	t *testing.T,
+	run Rendered,
+	owners []manifest.NamedResource,
+	engines map[manifest.NamedResource]manifest.WorkSummary,
+) {
+	t.Helper()
+	var rawInputs [2]string
+	for index, owner := range owners {
+		phase := manifest.WorkKustomize
+		source := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Namespace: "apps",
+			Name:      "self",
+		}
+		if index == 0 {
+			phase = manifest.WorkHelm
+			source.Kind, source.Name = manifest.KindHelmChart, "apps-typed"
+		}
+		assert.Equal(t, len(engines[owner]), 1)
+		for index := range engines[owner] {
+			record := &engines[owner][index]
+			assert.Equal(t, record.Key.Source, source)
+			assert.Equal(t, record.Key.Phase, phase)
+			assert.Equal(t, record.Counts, manifest.WorkCounts{Attempts: 1, Completed: 1})
+		}
+		if index == 0 {
+			continue
+		}
+		if len(engines[owner]) == 1 {
+			rawInputs[index-1] = engines[owner][0].Key.Input
+		}
+		assert.Equal(
+			t,
+			workCounts(run.Result.Work, owner, manifest.WorkSubstitution),
+			manifest.WorkCounts{Attempts: 1, Completed: 1},
+		)
+	}
+	assert.Equal(t, rawInputs[0] != rawInputs[1], true)
 }

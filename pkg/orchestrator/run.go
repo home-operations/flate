@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -113,14 +114,21 @@ func (e *orchestratorExistence) promoteAdmission(
 	if e.o.admission == nil || reads == nil || reads.GetDeclaration(reads.ID()) == nil {
 		return false, nil
 	}
-	child, artifact, err := e.o.admission.Resolve(ctx, id, nil, reads.Work().Scope())
-	if err == nil && child.Obj != nil && artifact != nil && reads.Valid() {
-		accepted, admissionErr := e.admit(ctx, child, reads)
+	resolved, err := e.o.admission.Resolve(ctx, reads, discovery.ResolveRequest{ID: id, Work: reads.Work().Scope()})
+	if err != nil {
+		return false, err
+	}
+	if resolved.Resolve == nil {
+		return false, nil
+	}
+	artifact, err := resolved.Resolve(ctx, manifest.DrainNone)
+	if err == nil && resolved.Object != nil && artifact != nil && reads.Valid() {
+		accepted, admissionErr := e.admit(ctx, store.Child{Obj: resolved.Object}, reads)
 		if admissionErr != nil {
 			return false, admissionErr
 		}
 		if accepted {
-			e.o.store.AddObject(child.Obj)
+			e.o.store.AddObject(resolved.Object)
 			e.o.store.SetArtifact(id, artifact)
 			e.o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
 			return true, nil

@@ -98,7 +98,12 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		if err == nil {
 			err = cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt31, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt31,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 		}
 
@@ -150,6 +155,7 @@ func testTemplateCacheStorageFailuresCaseLoop(t *testing.T, loopInputs struct {
 						Owner:   (*loopInputs.hr).Named(),
 						Receipt: receipt30,
 						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
 					},
 				)
 				assert.NoError(t, recordErr)

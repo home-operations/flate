@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"cmp"
+	"strings"
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -53,11 +54,21 @@ func (g *GitRepository) Named() NamedResource {
 	}
 }
 
-// BootstrapAlias returns a local copy and the borrowed immutable Git descriptor.
-// A non-nil descriptor selects repository-root policy and supplies ref/view inputs.
+// BootstrapAlias permits working input only for valid mutable branch selections.
+// The borrowed Git descriptor retains authored ref and view policy for other routes.
 //
 //nolint:ireturn // The manifest contract requires polymorphic results.
-func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
+func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository, string) {
+	ignore := ""
+	if g.Ignore != nil {
+		ignore = *g.Ignore
+	}
+	ref := (*GitRepositoryRef)(g.Reference)
+	selected := ref.Effective()
+	if ref.Validate() != nil || selected.Kind != "" && selected.Kind != branchKey &&
+		(selected.Kind != nameKey || !strings.HasPrefix(selected.Value, "refs/heads/")) {
+		return nil, g, ignore
+	}
 	spec := g.GitRepositorySpec
 	spec.URL = "file://" + root
 	return NewGitRepository(
@@ -68,7 +79,7 @@ func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepositor
 			Annotations: g.Annotations,
 			Spec:        spec,
 		},
-	), g
+	), g, ignore
 }
 
 // Content returns the source inputs that define the selected Git content.
@@ -244,6 +255,21 @@ func (o *OCIRepository) Named() NamedResource {
 		Namespace: o.Namespace,
 		Name:      o.Name,
 	}
+}
+
+// BootstrapAlias admits unpinned OCI content only through guarded application support.
+//
+//nolint:ireturn // The manifest contract requires polymorphic results.
+func (o *OCIRepository) BootstrapAlias(_ string) (BaseManifest, *GitRepository, string) {
+	ignore := ""
+	if o.Ignore != nil {
+		ignore = *o.Ignore
+	}
+	if o.Reference != nil && (o.Reference.Tag != "" || o.Reference.Digest != "" ||
+		o.Reference.SemVer != "" || o.Reference.SemverFilter != "") {
+		return nil, nil, ignore
+	}
+	return o, nil, ignore
 }
 
 // Content returns the source inputs that define the selected OCI content.

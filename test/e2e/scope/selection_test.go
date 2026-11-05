@@ -434,8 +434,7 @@ func initSelfRefGitFixture(t *testing.T) string {
 kind: GitRepository
 metadata: {name: cluster, namespace: flux-system}
 spec:
-  url: ssh://git@github.com/example/cluster.git
-  secretRef: {name: deploy-key}
+  url: https://github.com/example/cluster.git
 `+"---\n"+
 		testutil.KustomizationYAML("apps", "flux-system", `  interval: 10m
   path: ./k8s/apps

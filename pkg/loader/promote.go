@@ -98,13 +98,9 @@ func (l *Loader) RegisterBuilt(
 	docs []store.Child,
 ) {
 	root := input.Root
-	var sourceRoot string
-	{
-		var admitted bool
-		sourceRoot, admitted = l.admitBuiltRoot(root)
-		if !admitted {
-			return
-		}
+	sourceRoot, admitted := l.admitBuiltRoot(root)
+	if !admitted {
+		return
 	}
 	rel, _ := filepath.Rel(sourceRoot, root)
 	var inputs, shared []string
@@ -131,6 +127,7 @@ func (l *Loader) RegisterBuilt(
 			Inputs:       inputs,
 		}
 		if raw, ok := l.Index.Lookup(id); ok {
+			record.Productions = inputProductions(raw.Productions)
 			original := l.IndexedObject(id, raw)
 			if raw.Authored != (manifest.NamedResource{}) && original.Obj != nil {
 				authored[id] = original

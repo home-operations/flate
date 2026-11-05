@@ -28,14 +28,18 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 		"%s",
 		"the same mutable artifact was treated as different material",
 	)
-	st.SetArtifact(source.Named(), artifact.WithReads(&ReadSet{}))
+	refreshed := artifact.WithReads(&ReadSet{})
+	assert.Equal(t, artifact.SameInput(refreshed, ArtifactContent|ArtifactRevision), true)
+	st.SetArtifact(source.Named(), refreshed)
 	assert.FatalIf(
 		t,
 		!before.Valid() || !current.Matches(&before),
 		"%s",
 		"refreshing registrations replaced the acquired mutable material",
 	)
-	st.SetArtifact(source.Named(), &SourceArtifact{LocalPath: artifact.LocalPath, FS: artifact.FS})
+	changed := &SourceArtifact{LocalPath: artifact.LocalPath, FS: artifact.FS}
+	assert.Equal(t, artifact.SameInput(changed, ArtifactContent|ArtifactRevision), false)
+	st.SetArtifact(source.Named(), changed)
 	var replacement ReadSet
 	replacement.Init(st, ownerID("consumer"), nil)
 	assert.FatalIf(

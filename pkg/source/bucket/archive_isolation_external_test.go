@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -90,19 +92,14 @@ func testFetcherArchiveIsolationAndWarmHitsCase(t *testing.T, attempts *int, bac
 			Region:     "us-east-1",
 			SecretRef:  &manifest.LocalObjectReference{Name: "creds"},
 		}
-		_, err := f.Fetch(
-			ctx,
-			b,
-			fInputs.readSet(b),
-			&cache.Policy{
-				MaxAge: b.SourceInterval(),
-				Retry: cache.RetryConfig{
-					Attempts: (*attempts),
-					MinWait:  time.Nanosecond,
-					MaxWait:  time.Nanosecond,
-				},
+		_, err := fetchtest.Fetch(ctx, f.Fetch, b, fInputs.readSet(b), &cache.Policy{
+			MaxAge: b.SourceInterval(),
+			Retry: cache.RetryConfig{
+				Attempts: (*attempts),
+				MinWait:  time.Nanosecond,
+				MaxWait:  time.Nanosecond,
 			},
-		)
+		}, nil)
 		done <- err
 	}()
 	select {
@@ -153,15 +150,22 @@ func testFetcherArchiveAcquisition(captures *testFetcherArchiveAcquisitionInputs
 			Source: b.Named(),
 		}
 		work := manifest.WorkRecorder{Key: key}
-		art, err := (*captures.f).Fetch((*captures.t).Context(), b, captures.fInputs.readSet(b), &cache.Policy{
-			MaxAge: b.SourceInterval(),
-			Retry: cache.RetryConfig{
-				Attempts: (*(*captures.attempts)),
-				MinWait:  time.Nanosecond,
-				MaxWait:  time.Nanosecond,
+		art, err := fetchtest.Fetch(
+			(*captures.t).Context(),
+			(*captures.f).Fetch,
+			b,
+			captures.fInputs.readSet(b),
+			&cache.Policy{
+				MaxAge: b.SourceInterval(),
+				Retry: cache.RetryConfig{
+					Attempts: (*(*captures.attempts)),
+					MinWait:  time.Nanosecond,
+					MaxWait:  time.Nanosecond,
+				},
+				Work: &manifest.AcquisitionWork{Scope: (&work).Scope()},
 			},
-			Work: &manifest.AcquisitionWork{Scope: (&work).Scope()},
-		})
+			nil,
+		)
 		func() {
 			assertBucketAcquisitionWork(
 				&assertBucketAcquisitionWorkInputs{b: &b, captures: &captures, key: &key, run: &run, work: &work},

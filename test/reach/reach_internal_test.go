@@ -299,6 +299,9 @@ func runReachWorld(t *testing.T, world *reachWorld, cfg *orchestrator.Config) (s
 		for i := range run.Result.Work {
 			row := &run.Result.Work[i]
 			assert.Equal(t, row.Key.Tree, run.ID)
+			if row.Key.Owner.Kind == "FluxInstance" && row.Key.Phase == manifest.WorkKustomize {
+				assert.Equal(t, row.Key.Input, "application")
+			}
 			if row.Key.Phase == manifest.WorkKustomize || row.Key.Phase == manifest.WorkHelm {
 				assert.Equal(t, row.Counts.Completed, row.Counts.Attempts)
 				assert.Equal(t, row.Counts.Failures, uint64(0))

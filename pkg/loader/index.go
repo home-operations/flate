@@ -153,12 +153,18 @@ func (l *Loader) resetDerivedProductions() {
 	if l.documents.compact && l.indexDerived {
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 		for id, record := range l.Index.Records {
-			if record.Path == "" && record.Builder == "" && record.Origin.Policy(id, nil).Root {
+			invocation := slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+				return inputProduction(&p)
+			})
+			if record.Path == "" && record.Builder == "" && record.Origin.Policy(id, nil).Root && !invocation {
 				delete(l.Index.Records, id)
 				delete(l.locations, id)
 				continue
 			}
 			record.Productions = slices.DeleteFunc(record.Productions, func(p manifest.Production) bool {
+				if inputProduction(&p) {
+					return false
+				}
 				return record.Builder == "" || p.Owner != record.BuilderOwner ||
 					p.Declaration != (manifest.NamedResource{}) ||
 					p.Path != ""
@@ -308,4 +314,19 @@ func (l *Loader) recordInputReferences(
 		refs = occurrence.references()
 	}
 	return refs
+}
+
+func inputProduction(p *manifest.Production) bool {
+	ownerless := p.Owner == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{})
+	return ownerless && p.Source != (manifest.NamedResource{}) && p.Path == "" && p.File == ""
+}
+
+func inputProductions(productions []manifest.Production) []manifest.Production {
+	var input []manifest.Production
+	for i := range productions {
+		if inputProduction(&productions[i]) {
+			input = append(input, productions[i])
+		}
+	}
+	return input
 }

@@ -19,15 +19,16 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-const frameDomain = "flateks4"
+const frameDomain = "flateks5"
 
 type renderHeader struct {
-	Key     string            `json:"Key"`
-	Binding string            `json:"Binding"`
-	Output  string            `json:"Output"`
-	Size    int               `json:"Size"`
-	Reads   readSetSnapshot   `json:"Reads"`
-	Entry   *entryApplication `json:",omitempty"`
+	EntrySpec *manifest.Kustomization `json:",omitempty"`
+	Key       string                  `json:"Key"`
+	Binding   string                  `json:"Binding"`
+	Output    string                  `json:"Output"`
+	Size      int                     `json:"Size"`
+	Reads     readSetSnapshot         `json:"Reads"`
+	Entry     *entryApplication       `json:",omitempty"`
 }
 
 type entryApplication struct {
@@ -72,6 +73,7 @@ func (a *renderBinding) equal(b *renderBinding) bool {
 
 type renderFrame struct {
 	lookup, raw     string
+	inventory       string
 	header          renderHeader
 	binding         renderBinding
 	output, encoded []byte
@@ -322,7 +324,7 @@ func (c *TreeCache) PreviousRender(
 	reader, _, lookup, err := c.owner.Blob(
 		ctx,
 		sourcecache.BlobKey{
-			Content: prepared.key,
+			Content: prepared.inventory,
 			Render:  sourcecache.RenderAccepted,
 		},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever, Work: req.Work.History()},
@@ -352,7 +354,7 @@ func (c *TreeCache) PreviousRender(
 	if ctx.Err() != nil {
 		return nil, nil, false
 	}
-	frame.binding, frame.lookup = prepared.binding, lookup
+	frame.binding, frame.lookup, frame.inventory = prepared.binding, lookup, prepared.inventory
 	return docs, manifest.NewRenderReceipt(frame, equalRenderFrame), true
 }
 
@@ -477,7 +479,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 		ctx,
 		c.owner,
 		sourcecache.AcceptedInventory[renderPublication]{
-			Key:        frame.header.Key,
+			Key:        cmp.Or(frame.inventory, frame.header.Key),
 			Lookup:     frame.lookup,
 			Acceptance: content,
 			Work:       acceptance.Work.History(),

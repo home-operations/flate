@@ -129,14 +129,21 @@ func (a *SourceArtifact) Input(read ArtifactRead) ArtifactInput {
 	return input
 }
 
+// SameInput compares selected source facts and retains identity for mutable material.
+func (a *SourceArtifact) SameInput(b *SourceArtifact, read ArtifactRead) bool {
+	input := a.Input(read)
+	return input == b.Input(read) &&
+		(!input.Readable || input.Content != "" || a.mutableMaterial() == b.mutableMaterial())
+}
+
 type artifactRecord struct {
 	authority
 
-	value                    *SourceArtifact
-	publication              uint64
-	effective                Artifact
-	inventoryVisible         bool
-	revisionHead, originHead authority
+	value                                     *SourceArtifact
+	publication                               uint64
+	effective                                 Artifact
+	inventoryVisible                          bool
+	revisionHead, originHead, acquisitionHead authority
 }
 
 // SetArtifact stores acquired content and notifies readers of selected source facts.
@@ -205,9 +212,16 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 	if origin != input.Origin || originPresent != input.OriginPresent {
 		changed |= ArtifactOrigin
 	}
+	previousSource, _ := record.effective.(*SourceArtifact)
+	nextSource, _ := value.(*SourceArtifact)
+	acquisitionChanged := previousSource != nextSource
+	if acquisitionChanged {
+		changed |= 1 << (acquisitionFacet - contentFacet)
+	}
 	sh.advanceArtifactLocked(id, record, changed)
 	record.effective = value
-	return changed != 0
+	return changed&(ArtifactContent|ArtifactRevision|ArtifactOrigin) != 0 ||
+		acquisitionChanged && record.acquisitionHead.links != nil && record.acquisitionHead.links.pending.Load()
 }
 
 // GetArtifact returns the artifact for id, or nil if none was set.
@@ -261,7 +275,11 @@ func (s *Store) Retire(reads *ReadSet) {
 	source := sh.artifacts[reads.id].value
 	retained := source != nil && source.Reads == reads
 	if head := sh.cells[reads.id].links; head != nil {
-		retained = retained || head.reconciliation.Load() == reads || head.binding.Load() == reads
+		for i := range head.assessments {
+			if accepted := head.assessments[i].Load(); accepted != nil && accepted.reads == reads {
+				retained = true
+			}
+		}
 	}
 	if slot := sh.slots[reads.id]; slot != nil {
 		if inventory := slot.current.Load(); inventory != nil {
@@ -385,7 +403,7 @@ func (a *SourceArtifact) HistoryIdentity(source manifest.NamedResource) manifest
 }
 
 func (sh *shard) advanceArtifactLocked(id manifest.NamedResource, record *artifactRecord, changed ArtifactRead) {
-	heads := [3]*authority{&record.authority, &record.revisionHead, &record.originHead}
+	heads := [4]*authority{&record.authority, &record.revisionHead, &record.originHead, &record.acquisitionHead}
 	var admissions uint64
 	for i, head := range heads {
 		if changed&(1<<i) != 0 {

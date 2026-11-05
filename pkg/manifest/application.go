@@ -3,17 +3,26 @@ package manifest
 import (
 	"cmp"
 	"encoding/json"
+	"time"
 
 	operatorv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	fluxapis "github.com/fluxcd/pkg/apis/kustomize"
 	"github.com/fluxcd/pkg/apis/meta"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EntryApplication describes the source and path applied by a declaration.
+const operatorSyncInterval = 10 * time.Minute
+
+// EntryApplication keeps the bootstrap specification separate from the authored owner.
 type EntryApplication struct {
-	Source      NamedResource
-	Path        string
-	Declaration BaseManifest
+	Source       NamedResource
+	Path         string
+	Declaration  BaseManifest
+	Spec         *Kustomization
+	Patches      []fluxapis.Patch
+	Transformers [][]byte
 }
 
 // EntryApplication returns the authored application of a non-internal Kustomization.
@@ -25,7 +34,10 @@ func (k *Kustomization) EntryApplication() (EntryApplication, bool) {
 	if source.Name == "" || source.Kind == "" {
 		source = BootstrapSourceID
 	}
-	return EntryApplication{Source: source, Path: k.Path}, true
+	return EntryApplication{Source: source, Path: k.Path, Spec: &Kustomization{
+		Name: k.Name, Namespace: k.Namespace,
+		Interval: k.Interval, Path: k.Path, Prune: k.Prune, SourceRef: k.SourceRef,
+	}}, true
 }
 
 // EntryApplication projects a FluxInstance sync through the operator source contract.
@@ -33,12 +45,16 @@ func (r *RawObject) EntryApplication() (EntryApplication, bool) {
 	if r.Named().Group != FluxOperatorDomain || r.Kind != "FluxInstance" {
 		return EntryApplication{}, false
 	}
-	data, err := json.Marshal(r.Spec["sync"])
+	data, err := json.Marshal(r.Spec)
 	if err != nil {
 		return EntryApplication{}, false
 	}
-	var sync operatorv1.Sync
-	if err := json.Unmarshal(data, &sync); err != nil || sync.URL == "" || sync.Ref == "" || sync.Path == "" {
+	var spec operatorv1.FluxInstanceSpec
+	if err := json.Unmarshal(data, &spec); err != nil || spec.Sync == nil {
+		return EntryApplication{}, false
+	}
+	sync := spec.Sync
+	if sync.URL == "" || sync.Ref == "" || sync.Path == "" {
 		return EntryApplication{}, false
 	}
 	name := cmp.Or(sync.Name, r.Namespace)
@@ -49,11 +65,16 @@ func (r *RawObject) EntryApplication() (EntryApplication, bool) {
 	if sync.PullSecret != "" {
 		secret = &meta.LocalObjectReference{Name: sync.PullSecret}
 	}
+	interval := metav1.Duration{Duration: time.Minute}
+	if sync.Interval != nil {
+		interval = *sync.Interval
+	}
 	var declaration BaseManifest
 	switch sync.Kind {
 	case KindGitRepository:
 		declaration = NewGitRepository(
 			sourcev1.GitRepository{Name: name, Namespace: r.Namespace, Spec: sourcev1.GitRepositorySpec{
+				Interval:  interval,
 				URL:       sync.URL,
 				Reference: &sourcev1.GitRepositoryRef{Name: sync.Ref},
 				SecretRef: secret,
@@ -63,6 +84,7 @@ func (r *RawObject) EntryApplication() (EntryApplication, bool) {
 	case KindOCIRepository:
 		declaration = NewOCIRepository(
 			sourcev1.OCIRepository{Name: name, Namespace: r.Namespace, Spec: sourcev1.OCIRepositorySpec{
+				Interval:  &interval,
 				URL:       sync.URL,
 				Reference: &sourcev1.OCIRepositoryRef{Tag: sync.Ref},
 				SecretRef: secret,
@@ -71,12 +93,49 @@ func (r *RawObject) EntryApplication() (EntryApplication, bool) {
 		)
 	case KindBucket:
 		declaration = NewBucket(sourcev1.Bucket{Name: name, Namespace: r.Namespace, Spec: sourcev1.BucketSpec{
-			Endpoint: sync.URL, BucketName: sync.Ref, SecretRef: secret, Provider: sync.Provider,
+			Interval: interval, Endpoint: sync.URL, BucketName: sync.Ref, SecretRef: secret, Provider: sync.Provider,
 		}})
 	default:
 		return EntryApplication{}, false
 	}
-	return EntryApplication{Source: declaration.Named(), Path: sync.Path, Declaration: declaration}, true
+	id := declaration.Named()
+	application := EntryApplication{
+		Source: id, Path: sync.Path, Declaration: declaration,
+		Spec: &Kustomization{
+			Name: name, Namespace: r.Namespace,
+			Interval: metav1.Duration{Duration: operatorSyncInterval}, Path: sync.Path, Prune: true,
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name},
+		},
+	}
+	if spec.Kustomize != nil {
+		application.Patches = spec.Kustomize.Patches
+	}
+	// flux-operator v0.62.1 applies external transformers after builtin patches.
+	for _, transformer := range []struct {
+		name, kind, field string
+		values            map[string]string
+	}{
+		{name: "annotations", kind: "AnnotationsTransformer", field: "annotations", values: map[string]string{
+			FluxKustomizeDomain + "/ssa": "Ignore", FluxKustomizeDomain + "/prune": "Disabled",
+		}},
+		{name: "labels", kind: "LabelTransformer", field: "labels", values: map[string]string{
+			"app.kubernetes.io/managed-by": "flux-operator",
+			"app.kubernetes.io/instance":   r.Namespace,
+			"app.kubernetes.io/version":    spec.Distribution.Version,
+			"app.kubernetes.io/part-of":    "flux",
+		}},
+	} {
+		raw, err := json.Marshal(map[string]any{
+			"apiVersion": "builtin", "kind": transformer.kind,
+			"metadata": map[string]string{nameKey: transformer.name}, transformer.field: transformer.values,
+			"fieldSpecs": []map[string]any{{"path": "metadata/" + transformer.field, "create": true}},
+		})
+		if err != nil {
+			return EntryApplication{}, false
+		}
+		application.Transformers = append(application.Transformers, raw)
+	}
+	return application, true
 }
 
 // ApplicationFor returns the application described by an entry applier.

@@ -17,6 +17,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
 
@@ -63,7 +65,7 @@ func TestFetcher_ResolveTransport(t *testing.T) {
 				ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
 				fInputs.secrets = func(_, _ string) *manifest.Secret { return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}} }
 			}
-			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
+			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).preparedBucket(b)
 			assert.NoError(t, err)
 			client, err := minio.New(request.endpoint, &request.options)
 			assert.NoError(t, err)
@@ -214,17 +216,24 @@ func testFetcherSecretReferencesCase1(t *testing.T, tc *struct {
 		if tc.unwired {
 			reads = nil
 		}
-		artifact, fetchErr := f.Fetch(t.Context(), b, reads, &cache.Policy{MaxAge: b.SourceInterval()})
+		artifact, fetchErr := fetchtest.Fetch(
+			t.Context(),
+			f.Fetch,
+			b,
+			reads,
+			&cache.Policy{MaxAge: b.SourceInterval()},
+			nil,
+		)
 		if artifact != nil {
 			t.Fatal("credential failure returned an acquired artifact")
 		}
 		err = fetchErr
 	case "cert":
 		b.CertSecretRef = ref
-		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
+		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).preparedBucket(b)
 	case "proxy":
 		b.ProxySecretRef = ref
-		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
+		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).preparedBucket(b)
 	}
 	testFetcherSecretReferencesCase1Tail(t, &testFetcherSecretReferencesCase1TailInputs{err: &err, tc: &tc, b: &b})
 }
@@ -246,8 +255,14 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := cachetest.New(t, "", cache.New)
 		start := time.Now()
-		_, err = (&Fetcher{Cache: c, Network: &network}).Fetch(
-			t.Context(),
+		_, err = fetchtest.Fetch(t.Context(), (&Fetcher{Cache: c, Network: &network}).Fetch, &manifest.Bucket{
+			Name:       "network",
+			Namespace:  "test",
+			BucketName: "data",
+			Endpoint:   "bucket.test",
+			Insecure:   true,
+			Region:     "us-east-1",
+		}, (testInputs{}).readSet(
 			&manifest.Bucket{
 				Name:       "network",
 				Namespace:  "test",
@@ -256,18 +271,7 @@ func TestFetcher_NetworkSuppressionSkipsBackoff(t *testing.T) {
 				Insecure:   true,
 				Region:     "us-east-1",
 			},
-			(testInputs{}).readSet(
-				&manifest.Bucket{
-					Name:       "network",
-					Namespace:  "test",
-					BucketName: "data",
-					Endpoint:   "bucket.test",
-					Insecure:   true,
-					Region:     "us-east-1",
-				},
-			),
-			&cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
-		)
+		), &cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}}, nil)
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
 		assert.FatalIf(t, !ok || terminal.Attempted || !errors.Is(err, cause) || calls.Load() != before ||
 			time.Since(start) > minio.DefaultRetryUnit,
@@ -371,7 +375,7 @@ func TestFetcher_ProviderTransportValidation(t *testing.T) {
 				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
-			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), &cache.Policy{})
+			_, err := fetchtest.Fetch(t.Context(), fetcher.Fetch, repo, inputs.readSet(repo), &cache.Policy{}, nil)
 			assert.FatalIf(
 				t,
 				!errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrMissingSecret),
@@ -452,9 +456,13 @@ func testFetcherResolveTransportSnapshotRotationCase(
 	}}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 	before := testCaseInput.requests.Load()
-	art, err := f.Fetch(
-		t.Context(), (*testCaseInput.b), fInputs.readSet((*testCaseInput.b)),
+	art, err := fetchtest.Fetch(
+		t.Context(),
+		f.Fetch,
+		(*testCaseInput.b),
+		fInputs.readSet((*testCaseInput.b)),
 		&cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval(), Retry: cache.RetryConfig{Attempts: 3}},
+		nil,
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -467,9 +475,13 @@ func testFetcherResolveTransportSnapshotRotationCase(
 	(*testCaseInput.previous) = art.Key
 	before = testCaseInput.requests.Load()
 	{
-		_, fetchErr2 := f.Fetch(
-			t.Context(), (*testCaseInput.b), fInputs.readSet((*testCaseInput.b)),
+		_, fetchErr2 := fetchtest.Fetch(
+			t.Context(),
+			f.Fetch,
+			(*testCaseInput.b),
+			fInputs.readSet((*testCaseInput.b)),
 			&cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval()},
+			nil,
 		)
 		assert.FatalIf(t, fetchErr2 != nil || testCaseInput.requests.
 			Load() != before, "warm snapshot missed: %v", fetchErr2)
@@ -478,11 +490,13 @@ func testFetcherResolveTransportSnapshotRotationCase(
 		Store(true)
 	failed := *(*testCaseInput.b)
 	failed.Interval.Duration = 0
-	_, err = f.Fetch(
+	_, err = fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		&failed,
 		fInputs.readSet(&failed),
 		&cache.Policy{MaxAge: failed.SourceInterval()},
+		nil,
 	)
 	terminal, ok := errors.AsType[*cache.TerminalError](err)
 	assert.FatalIf(t, !ok || !terminal.Attempted, "failed snapshot: %v", err)
@@ -518,7 +532,7 @@ func testFetcherProviderCredentialsCase(t *testing.T, tc *struct {
 		return &manifest.Secret{StringData: map[string]any{"accesskey": "fixture", "secretkey": "fixture"}}
 	}}
 	fetcher := &Fetcher{Network: newTestNetwork(t)}
-	request, err := (&operation{Fetcher: fetcher, secrets: inputs.lookup(repo)}).prepare(repo)
+	request, err := (&operation{Fetcher: fetcher, secrets: inputs.lookup(repo)}).preparedBucket(repo)
 	var client *minio.Client
 	if err == nil {
 		client, err = minio.New(request.endpoint, &request.options)
@@ -658,4 +672,12 @@ func testFetcherSecretReferencesCase1Tail(t *testing.T, inputs *testFetcherSecre
 			assert.Equal(t, (*inputs.err).Error(), "secret ns/missing not found")
 		}
 	}
+}
+
+func (f *operation) preparedBucket(b *manifest.Bucket) (bucketAcquisition, error) {
+	prepared, err := f.prepare(b)
+	if err == nil {
+		err = f.connect(&prepared)
+	}
+	return prepared, err
 }

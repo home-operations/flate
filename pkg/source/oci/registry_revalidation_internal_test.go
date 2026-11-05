@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -85,11 +87,13 @@ func testFetcherRevalidationCase(t *testing.T, operation *string,
 		}
 		failResolve.Store(phase == "resolve failure")
 		beforeHeads, beforeManifests, beforeLayers := heads.Load(), manifests.Load(), layers.Load()
-		art, err := f.Fetch(
+		art, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			repo,
 			(testInputs{}).readSet(repo),
 			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			nil,
 		)
 		if phase == "resolve failure" {
 			assert.FatalIf(

@@ -363,12 +363,15 @@ func (b *selfProduceBuilder) recordApplication(l *Loader, declaration *producerD
 	if declaration.visit.owner == (manifest.NamedResource{}) || declaration.visit.owner == declaration.identity {
 		return
 	}
+	input, _ := b.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	if input == nil {
+		return
+	}
 	object := declaration.obj
 	if object == nil && declaration.fact != nil {
 		object = manifest.CatalogObject(declaration.fact.facts.catalog, declaration.identity)
 	}
 	application, valid := manifest.ApplicationFor(object)
-	input, _ := b.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	if !valid || !AppliesToEntry(b.store, &application, input, l.entryPath) {
 		return
 	}

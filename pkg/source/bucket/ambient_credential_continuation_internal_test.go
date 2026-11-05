@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -70,14 +72,16 @@ func testFetcherMachineContinuationCase1Tail(t *testing.T, inputs *testFetcherMa
 	var warm *store.
 		SourceArtifact
 
-	warm, (*inputs.err) = (*inputs.f).Fetch(
+	warm, (*inputs.err) = fetchtest.Fetch(
 		t.Context(),
+		(*inputs.f).Fetch,
 		(*inputs.b),
 		inputs.reads,
 		&cache.Policy{MaxAge: time.Hour},
+		nil,
 	)
 	if missing, ok := errors.AsType[*source.MissingSecretError]((*inputs.err)); ok && missing.RetryAmbient != nil {
-		warm, (*inputs.err) = missing.RetryAmbient(t.Context())
+		warm, (*inputs.err) = fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	}
 	assert.NoError(t, (*inputs.err))
 	assert.FatalIf(
@@ -93,11 +97,18 @@ func testFetcherMachineContinuationCase1Tail(t *testing.T, inputs *testFetcherMa
 		(*(*inputs.access)) = "rotated-canary"
 		t.Setenv("AWS_ACCESS_KEY_ID", (*(*inputs.access)))
 		t.Setenv("AWS_SECRET_ACCESS_KEY", "rotated-secret-canary")
-		_, err := (*inputs.f).Fetch(t.Context(), (*inputs.b), inputs.reads, &cache.Policy{MaxAge: time.Hour})
+		_, err := fetchtest.Fetch(
+			t.Context(),
+			(*inputs.f).Fetch,
+			(*inputs.b),
+			inputs.reads,
+			&cache.Policy{MaxAge: time.Hour},
+			nil,
+		)
 		missing, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok, "%s", err)
 
-		rotated, err := missing.RetryMachine(t.Context(), inputs.reads)
+		rotated, err := fetchtest.Machine(t.Context(), missing, inputs.reads)
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -110,7 +121,7 @@ func testFetcherMachineContinuationCase1Tail(t *testing.T, inputs *testFetcherMa
 		t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 		testutil.WriteFileAt(t, os.Getenv("AWS_CONFIG_FILE"), "[default]\naws_access_key_id = partial\n")
 		beforeFailure := (*inputs.requests).Load()
-		failed, err := missing.RetryMachine(t.Context(), inputs.reads)
+		failed, err := fetchtest.Machine(t.Context(), missing, inputs.reads)
 		assert.FatalIf(
 			t,
 			failed != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) || (*inputs.requests).

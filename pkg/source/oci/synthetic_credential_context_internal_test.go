@@ -1,11 +1,14 @@
 package oci
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
@@ -100,7 +103,9 @@ func testFetcherSyntheticCredentialContextCase1(t *testing.T, generated *bool, m
 			return sec
 		},
 	}
-	_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+	_, err := fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {
+		return op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+	})
 	label := expected.Kind + " " + expected.NamespacedName()
 	if (*material) == "provider" {
 		label = expected.String()

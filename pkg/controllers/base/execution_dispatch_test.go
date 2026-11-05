@@ -585,7 +585,10 @@ func testExecutionDispatchCase3(t *testing.T, testCaseInput *bool,
 	c := base.New(st, tasks)
 	var bodies atomic.Int64
 	var seen atomic.Pointer[manifest.HelmRelease]
-	reconcile := func(_ *testing.T, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+	reconcile := func(run *base.Execution, ctx context.Context, obj *manifest.HelmRelease, level manifest.DrainLevel) error {
+		if _, err := run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+			return err
+		}
 		bodies.Add(1)
 		seen.Store(obj)
 		return nil
@@ -594,7 +597,7 @@ func testExecutionDispatchCase3(t *testing.T, testCaseInput *bool,
 	var first *base.Execution
 	tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
 		first = controllertest.NewExecution(c, predicted.Named())
-		first.Dispatch(ctx, manifest.DrainNone, t, reconcile)
+		first.Dispatch(ctx, manifest.DrainNone, first, reconcile)
 		if bodies.Load() != 0 || first.Outcome() != schedule.Blocked || !first.Valid() ||
 			len(first.Blocked) != 1 || first.Blocked[0] != parent.Named() {
 			t.Errorf(
@@ -635,7 +638,7 @@ func testExecutionDispatchCase3(t *testing.T, testCaseInput *bool,
 	tasks.Go(t.Context(), "redispatch", func(ctx context.Context) {
 		first.Settle(ctx, manifest.DrainNone)
 		fresh = controllertest.NewExecution(c, predicted.Named())
-		fresh.Dispatch(ctx, manifest.DrainNone, t, reconcile)
+		fresh.Dispatch(ctx, manifest.DrainNone, fresh, reconcile)
 	})
 	tasks.BlockTillDone()
 	defer fresh.Close()

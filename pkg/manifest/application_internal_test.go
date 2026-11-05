@@ -4,10 +4,12 @@ import (
 	"maps"
 	"slices"
 	"testing"
+	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/apis/meta"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 )
@@ -34,6 +36,10 @@ func TestEntryApplication_Kustomization(t *testing.T) {
 				assert.Equal(t, application.Source, tc.source)
 				assert.Equal(t, application.Path, tc.object.Path)
 				assert.Equal(t, application.Declaration, BaseManifest(nil))
+				assert.Equal(t, application.Spec.Path, tc.object.Path)
+				assert.Equal(t, application.Spec.Named(), tc.object.Named())
+				assert.Equal(t, len(application.Spec.DependsOn), 0)
+				assert.Equal(t, application.Spec.PostBuild == nil, true)
 			}
 		})
 	}
@@ -49,15 +55,15 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 	}{
 		{
 			name: "git namespace default", sync: map[string]any{"kind": KindGitRepository, "url": "https://fixture.invalid/self", "ref": "refs/heads/main", "path": "./clusters", "pullSecret": "credentials", "provider": "github"},
-			expected: NewGitRepository(sourcev1.GitRepository{Name: "control", Namespace: "control", Spec: sourcev1.GitRepositorySpec{URL: "https://fixture.invalid/self", Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/main"}, SecretRef: secret, Provider: "github"}}),
+			expected: NewGitRepository(sourcev1.GitRepository{Name: "control", Namespace: "control", Spec: sourcev1.GitRepositorySpec{Interval: metav1.Duration{Duration: time.Minute}, URL: "https://fixture.invalid/self", Reference: &sourcev1.GitRepositoryRef{Name: "refs/heads/main"}, SecretRef: secret, Provider: "github"}}),
 		},
 		{
 			name: "oci explicit name", sync: map[string]any{"name": "custom", "kind": KindOCIRepository, "url": "oci://fixture.invalid/self", "ref": "latest", "path": "./clusters", "pullSecret": "credentials", "provider": "aws"},
-			expected: NewOCIRepository(sourcev1.OCIRepository{Name: "custom", Namespace: "control", Spec: sourcev1.OCIRepositorySpec{URL: "oci://fixture.invalid/self", Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, SecretRef: secret, Provider: "aws"}}),
+			expected: NewOCIRepository(sourcev1.OCIRepository{Name: "custom", Namespace: "control", Spec: sourcev1.OCIRepositorySpec{Interval: &metav1.Duration{Duration: time.Minute}, URL: "oci://fixture.invalid/self", Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, SecretRef: secret, Provider: "aws"}}),
 		},
 		{
 			name: "bucket", sync: map[string]any{"kind": KindBucket, "url": "s3.fixture.invalid", "ref": "cluster", "path": "./clusters", "pullSecret": "credentials"},
-			expected: NewBucket(sourcev1.Bucket{Name: "control", Namespace: "control", Spec: sourcev1.BucketSpec{Endpoint: "s3.fixture.invalid", BucketName: "cluster", SecretRef: secret}}),
+			expected: NewBucket(sourcev1.Bucket{Name: "control", Namespace: "control", Spec: sourcev1.BucketSpec{Interval: metav1.Duration{Duration: time.Minute}, Endpoint: "s3.fixture.invalid", BucketName: "cluster", SecretRef: secret}}),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,6 +80,11 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 			assert.Equal(t, valid, true)
 			assert.Equal(t, application.Source, tc.expected.Named())
 			assert.Equal(t, application.Path, "./clusters")
+			assert.Equal(t, application.Spec.Path, application.Path)
+			assert.Equal(t, application.Spec.SourceID(), application.Source)
+			assert.Equal(t, application.Spec.Prune, true)
+			assert.Equal(t, application.Spec.Interval.Duration, 10*time.Minute)
+			assert.Equal(t, len(application.Transformers), 2)
 			if !Equal(application.Declaration, tc.expected) {
 				t.Fatalf("source projection differs: got %+v, want %+v", application.Declaration, tc.expected)
 			}

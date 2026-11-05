@@ -60,7 +60,12 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 				{
 					recordErr := warm.RecordRender(
 						t.Context(),
-						RenderAcceptance{Owner: hr.Named(), Receipt: receipt32, Records: emptyRenderInventory},
+						RenderAcceptance{
+							Owner:   hr.Named(),
+							Receipt: receipt32,
+							Records: emptyRenderInventory,
+							Sources: []manifest.SourceEvidence{},
+						},
 					)
 					assert.NoError(t, recordErr)
 				}
@@ -80,7 +85,12 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 				{
 					recordErr := fresh.RecordRender(
 						t.Context(),
-						RenderAcceptance{Owner: freshHR.Named(), Receipt: receipt33, Records: emptyRenderInventory},
+						RenderAcceptance{
+							Owner:   freshHR.Named(),
+							Receipt: receipt33,
+							Records: emptyRenderInventory,
+							Sources: []manifest.SourceEvidence{},
+						},
 					)
 					assert.NoError(t, recordErr)
 				}

@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -200,11 +202,11 @@ func testFetcherTransportMaterialAbsentFromCacheCase(
 			}
 		}}
 		f := &bucket.Fetcher{Network: network, Cache: owner}
-		artifact, err := f.Fetch(
+		artifact, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			(*testCaseInput.b),
-			fInputs.readSet((*testCaseInput.b)),
-			&cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval()},
+			fInputs.readSet((*testCaseInput.b)), &cache.Policy{MaxAge: (*testCaseInput.b).SourceInterval()}, nil,
 		)
 		assert.NoError(t, err)
 		assert.FatalIf(

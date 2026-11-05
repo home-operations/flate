@@ -45,7 +45,12 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt28, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt28,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -71,7 +76,12 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 			{
 				recordErr := freshClient.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt29, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt29,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}

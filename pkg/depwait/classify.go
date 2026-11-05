@@ -72,42 +72,57 @@ func (w *Waiter) classify(
 	level manifest.DrainLevel,
 	existence ExistenceLookup,
 ) (Classification, bool) {
-	reads, _ := w.Store.(*store.ReadSet)
 	id := dep.NamedResource
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
-	if dep.ArtifactOnly && w.sourceAvailable(id) {
+	if (dep.ArtifactOnly || dep.Artifact && id == manifest.BootstrapSourceID) && w.sourceAvailable(id) {
 		return Classification{Kind: schedule.Terminal}, false
 	}
 	obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
+	if !w.Materializer && dep.Artifact {
+		if status, ok := w.Store.GetStatus(id); ok && status.Outcome() == store.OutcomeSkipped {
+			return w.artifactReady(dep, level), false
+		}
+	}
+	diagnostic := !w.Materializer && dep.Artifact && obj != nil && w.Store.GetDeclaration(id) == nil
 	present := obj != nil || info.Status != ""
+	if diagnostic {
+		present = false
+	}
 	if !w.Materializer && present && !info.Statusful {
 		return w.artifactReady(dep, level), false
 	}
-	ready := false
+	readiness := expressionReadiness{}
 	if hasExpr {
-		var failMsg string
-		readiness := w.tryReadyExpr(dep, obj, info.Conditions)
-		ready, failMsg = readiness.ready, readiness.failure
-		if failMsg != "" {
-			return failedClassification(id, obj, failMsg, nil), false
-		}
+		readiness = w.tryReadyExpr(dep, obj, info.Conditions)
 	}
-	if !present && existence != nil {
-		promoted, err := existence.Promote(ctx, reads, id)
-		if err != nil {
-			return Classification{Err: err}, false
-		}
-		if promoted {
-			return Classification{}, true
-		}
-	}
-	if present && ready {
+	switch {
+	case readiness.failure != "":
+		return failedClassification(id, obj, readiness.failure, nil), false
+	case present && readiness.ready:
 		return w.artifactReady(dep, level), false
+	case present:
+		return w.classifyPresent(dep, obj, &info, level), false
 	}
-	if !present {
-		return w.classifyAbsent(dep, level), false
+	if result, promoted := w.promote(ctx, id, existence); result.Err != nil || promoted {
+		return result, promoted
 	}
-	return w.classifyPresent(dep, obj, &info, level), false
+	return w.classifyAbsent(dep, obj, level), false
+}
+
+func (w *Waiter) promote(
+	ctx context.Context,
+	id manifest.NamedResource,
+	existence ExistenceLookup,
+) (Classification, bool) {
+	if existence == nil {
+		return Classification{}, false
+	}
+	reads, _ := w.Store.(*store.ReadSet)
+	promoted, err := existence.Promote(ctx, reads, id)
+	if err != nil {
+		return Classification{Err: err}, false
+	}
+	return Classification{}, promoted
 }
 
 func (w *Waiter) sourceAvailable(id manifest.NamedResource) bool {
@@ -115,8 +130,18 @@ func (w *Waiter) sourceAvailable(id manifest.NamedResource) bool {
 	return ok && art.FS != nil
 }
 
-func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.DrainLevel) Classification {
+func (w *Waiter) classifyAbsent(
+	dep *manifest.DependencyRef,
+	obj manifest.BaseManifest,
+	level manifest.DrainLevel,
+) Classification {
 	id := dep.NamedResource
+	if obj != nil {
+		if level < manifest.DrainCascade {
+			return Classification{Kind: schedule.Blocked}
+		}
+		return failedClassification(id, obj, dependencyNotFound, nil)
+	}
 	if dep.Artifact {
 		if _, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
 			return w.artifactReady(dep, level)

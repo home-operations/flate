@@ -13,9 +13,12 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -318,6 +321,16 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCa
 		Namespace: "apps",
 	}
 	addEntryApplicationFixture(input, testCaseInput)
+	var expectedSource manifest.BaseManifest
+	if testCaseInput.instance && testCaseInput.qualified {
+		owners, err := loader.LoadDocuments(t.Context(), bytes.NewReader(input["owner.yaml"].Data), "owner.yaml")
+		assert.NoError(t, err)
+		application, valid := manifest.ApplicationFor(owners[0].Obj)
+		assert.Equal(t, valid, true)
+		prepared, err := kustomize.PrepareApplication(t.Context(), application, nil)
+		assert.NoError(t, err)
+		expectedSource = prepared.Declaration
+	}
 	if testCaseInput.admitted {
 		artifact := &store.SourceArtifact{
 			LocalPath:  "/virtual/application-alias",
@@ -369,7 +382,9 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCa
 		assert.Equal(t, len(d.prepared), 0)
 	}
 	if testCaseInput.instance {
-		assert.Equal(t, st.GetObject(source), manifest.BaseManifest(nil))
+		// The projected-source ruling requires the prepared declaration for qualified applications.
+		diff := cmp.Diff(expectedSource, st.GetObject(source), cmp.Comparer(manifest.Equal))
+		assert.ErrorIf(t, diff != "", "projected source (-want +got):\n%s", diff)
 		instance := manifest.NamedResource{
 			Group:     manifest.FluxOperatorDomain,
 			Kind:      "FluxInstance",

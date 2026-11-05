@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -170,7 +172,7 @@ func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
 				return tc.cert
 			})
 			hc := helmChart(r.Name, "app-template", "1.0.0")
-			artifact, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), &cache.Policy{})
+			artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, inputs.readSet(hc), &cache.Policy{}, nil)
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
 				errors.Is(err, manifest.ErrInput) != tc.wantInput ||
@@ -208,10 +210,10 @@ func TestFetcher_LocalHelmFiles(t *testing.T) {
 			r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
 			f, inputs := newHTTPFetcher(t, r)
 			hc := helmChart(r.Name, "app-template", "1.0.0")
-			_, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), &cache.Policy{})
+			_, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, inputs.readSet(hc), &cache.Policy{}, nil)
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
-			artifact, err := missing.RetryAmbient(t.Context())
+			artifact, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
 			unavailable := state == "missing" || state == "no usable match"
 			assert.FatalIf(t, err == nil || artifact != nil || errors.Is(err, manifest.ErrInput) == unavailable ||
 				!errors.Is(err, manifest.ErrFlux) ||
@@ -348,7 +350,7 @@ func testFetcherLocalHelmContinuationCase1(
 	root := t.TempDir()
 	f := New(nil, Config{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)})
 	before := inputs.requests.Load()
-	artifact, err := f.Fetch(t.Context(), hc, &reads, &cache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, &reads, &cache.Policy{}, nil)
 	if *inputs.rejected {
 		response, ok := errors.AsType[*fetcherr.ResponseError](err)
 		assert.FatalIf(t, artifact != nil || !ok || response.StatusCode != http.StatusUnauthorized ||
@@ -454,17 +456,17 @@ func testFetcherLocalHelmAuthenticatedRequestsCase(
 	f, inputs := newHTTPFetcher(t, r)
 	hc := helmChart(r.Name, "app-template", "1.0.0")
 	if *warmIndex {
-		prepared, err := (&operation{Fetcher: f, secrets: source.SecretLookup(inputs.readSet(hc))}).prepareHTTP(
+		prepared, err := (&operation{Fetcher: f, secrets: source.SecretLookup(inputs.readSet(hc))}).resolvedHTTP(
 			r,
 		)
 		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
 		_, err = f.fetchIndex(t.Context(), prepared, &cache.Policy{Retry: cache.RetryConfig{}})
 		assert.NoError(t, err)
 	}
-	_, err := f.Fetch(t.Context(), hc, inputs.readSet(hc), &cache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, inputs.readSet(hc), &cache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
-	artifact, err := missing.RetryAmbient(t.Context())
+	artifact, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(artifact.Warnings) != 0 || (signedCharts.Load() == 1) != (*pass) ||
 		indexRequests.Load() != map[bool]int32{false: 1, true: 2}[(*warmIndex)],
@@ -514,7 +516,7 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 	policy := &cache.Policy{
 		Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond},
 	}
-	_, err := f.Fetch(ctx, hc, inputs.readSet(hc), policy)
+	_, err := fetchtest.Fetch(ctx, f.Fetch, hc, inputs.readSet(hc), policy, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
 	var artifact *store.SourceArtifact
@@ -522,7 +524,7 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 		finished := make(chan error, 1)
 		go func() {
 			var failure error
-			artifact, failure = missing.RetryAmbient(ctx)
+			artifact, failure = fetchtest.Retry(ctx, missing.RetryAmbient)
 			finished <- failure
 		}()
 		<-entered
@@ -530,7 +532,7 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 		err = <-finished
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "lost cancellation identity: %v", err)
 	} else {
-		artifact, err = missing.RetryAmbient(ctx)
+		artifact, err = fetchtest.Retry(ctx, missing.RetryAmbient)
 	}
 	assert.FatalIf(
 		t,
@@ -567,11 +569,11 @@ func testFetcherLocalHelmAcquisitionFailuresCase(
 		assert.NoError(t, c.Close())
 		reopened := cachetest.New(t, root, cache.New)
 		replay := New(nil, Config{Cache: reopened, Network: newTestNetwork(t)})
-		_, err = replay.Fetch(ctx, hc, inputs.readSet(hc), policy)
+		_, err = fetchtest.Fetch(ctx, replay.Fetch, hc, inputs.readSet(hc), policy, nil)
 		pending, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok, "%s", err)
 
-		_, err = pending.RetryMachine(ctx, nil)
+		_, err = fetchtest.Machine(ctx, pending, nil)
 		terminal, ok = errors.AsType[*cache.TerminalError](err)
 		response, typed = errors.AsType[*fetcherr.ResponseError](err)
 		assert.FatalIf(t, !ok || terminal.Attempted || !typed || response.StatusCode != http.StatusServiceUnavailable ||
@@ -707,7 +709,7 @@ func testFetcherLocalHelmContinuationCase1Tail(t *testing.T, inputs *testFetcher
 			(*inputs.err),
 		)
 
-		prepared, prepErr := (&operation{Fetcher: (*inputs.f), secrets: source.SecretLookup(inputs.reads)}).prepareHTTP(
+		prepared, prepErr := (&operation{Fetcher: (*inputs.f), secrets: source.SecretLookup(inputs.reads)}).resolvedHTTP(
 			(*inputs.r),
 		)
 		assert.Equal(t, errors.Is(prepErr, manifest.ErrMissingSecret), true)
@@ -723,7 +725,9 @@ func testFetcherLocalHelmContinuationCase1Tail(t *testing.T, inputs *testFetcher
 			"machine values entered captured identity or transport",
 		)
 
-		retry = missing.RetryAmbient
+		retry = func(ctx context.Context) (*store.SourceArtifact, error) {
+			return fetchtest.Retry(ctx, missing.RetryAmbient)
+		}
 		(*inputs.artifact), (*inputs.err) = retry(t.Context())
 	}
 	assert.NoError(t, (*inputs.err))

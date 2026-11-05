@@ -96,9 +96,9 @@ func (s *Store) assessments() []*ReadSet {
 		sh.mu.RLock()
 		for _, cell := range sh.cells {
 			if cell.links != nil {
-				for _, reads := range [2]*ReadSet{cell.links.reconciliation.Load(), cell.links.binding.Load()} {
-					if reads != nil {
-						bundles = append(bundles, reads)
+				for i := range cell.links.assessments {
+					if accepted := cell.links.assessments[i].Load(); accepted != nil && accepted.reads != nil {
+						bundles = append(bundles, accepted.reads)
 					}
 				}
 			}

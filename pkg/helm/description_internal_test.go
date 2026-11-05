@@ -125,7 +125,12 @@ func TestDescription_SourceObservation(t *testing.T) {
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt1, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt1,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -225,7 +230,12 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt5, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt5,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -360,7 +370,12 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt2, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt2,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -401,7 +416,12 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 				{
 					recordErr := cli.RecordRender(
 						t.Context(),
-						RenderAcceptance{Owner: hr.Named(), Receipt: receipt3, Records: emptyRenderInventory},
+						RenderAcceptance{
+							Owner:   hr.Named(),
+							Receipt: receipt3,
+							Records: emptyRenderInventory,
+							Sources: []manifest.SourceEvidence{},
+						},
 					)
 					assert.NoError(t, recordErr)
 				}
@@ -418,7 +438,12 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 				{
 					recordErr := cli.RecordRender(
 						t.Context(),
-						RenderAcceptance{Owner: hr.Named(), Receipt: receipt4, Records: emptyRenderInventory},
+						RenderAcceptance{
+							Owner:   hr.Named(),
+							Receipt: receipt4,
+							Records: emptyRenderInventory,
+							Sources: []manifest.SourceEvidence{},
+						},
 					)
 					assert.NoError(t, recordErr)
 				}
@@ -550,7 +575,12 @@ func testReviewNestedWarningsCase(t *testing.T, testCaseInput *string,
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt6, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt6,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -580,7 +610,12 @@ func testReviewNestedWarningsCase(t *testing.T, testCaseInput *string,
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt7, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt7,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}

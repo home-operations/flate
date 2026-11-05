@@ -18,7 +18,9 @@ type Acquisition struct {
 	// AllowAnonymousDenied permits a proven registry denial without a credential.
 	AllowAnonymousDenied bool
 	// Fetch acquires content with this execution's captured inputs.
-	Fetch func(context.Context) (*store.SourceArtifact, error)
+	Fetch   func(context.Context) (source.PreparedFetch, error)
+	Select  func(context.Context) (bool, error)
+	Resolve func(context.Context, manifest.DrainLevel) (*store.SourceArtifact, error)
 	// Complete receives acquired content or an allowed unavailable-material error.
 	Complete func(context.Context, *store.SourceArtifact, error, manifest.DrainLevel) error
 }
@@ -29,50 +31,145 @@ func (e *Execution) Acquire(
 	obj manifest.BaseManifest,
 	acquisition Acquisition,
 	level manifest.DrainLevel,
-) error {
-	var artifact *store.SourceArtifact
-	var err error
-	e.Tasks.YieldSlot(func() { artifact, err = acquisition.Fetch(ctx) })
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+) (resultErr error) {
+	defer func() {
+		if resultErr != nil && !errors.Is(resultErr, manifest.ErrSourceSkipped) {
+			if _, blocked := errors.AsType[*depwait.ErrBlocked](resultErr); !blocked {
+				e.Reads.SetAcquisition(store.AcquisitionPending)
+			}
+		}
+	}()
+	e.Reads.SetAcquisition(store.AcquisitionPending)
+	if err := e.Checkpoint(); err != nil {
 		return err
 	}
-	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok {
-		pending := &pendingAcquisitionError{execution: e, object: obj, acquisition: acquisition, missing: missing}
+	p := &pendingAcquisitionError{execution: e, object: obj, acquisition: acquisition}
+	e.Tasks.YieldSlot(func() { p.prepared, p.cause = acquisition.Fetch(ctx) })
+	if errors.Is(p.cause, context.Canceled) || errors.Is(p.cause, context.DeadlineExceeded) {
+		return p.cause
+	}
+	if len(p.prepared.Inputs) != 0 {
+		if err := e.Require(ctx, p.prepared.Inputs, level); err != nil {
+			p.cause = err
+			if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+				return p
+			}
+			return err
+		}
+		return e.Checkpoint()
+	}
+	if missing, ok := errors.AsType[*source.MissingSecretError](p.cause); ok {
+		p.missing = missing
 		if level == manifest.DrainNone && missing.Secret != (manifest.NamedResource{}) {
 			e.Store.UpdateStatus(
 				e.Reads.ID(),
 				store.StatusInfo{Status: store.StatusPending, Message: "waiting for source Secret"},
 			)
-			return pending
+			return p
 		}
-		return pending.Settle(ctx, level)
+		return p.Settle(ctx, level)
 	}
-	return (&pendingAcquisitionError{execution: e, object: obj, acquisition: acquisition}).complete(
-		ctx,
-		artifact,
-		err,
-		level,
-	)
+	if p.cause != nil {
+		return p.complete(ctx, nil, p.cause, level)
+	}
+	return p.advance(ctx, level)
 }
 
 type pendingAcquisitionError struct {
-	execution   *Execution
-	object      manifest.BaseManifest
-	acquisition Acquisition
-	missing     *source.MissingSecretError
+	execution       *Execution
+	object          manifest.BaseManifest
+	acquisition     Acquisition
+	prepared        source.PreparedFetch
+	missing         *source.MissingSecretError
+	cause           error
+	ambientConsumed bool
+	selected        bool
+	local           bool
 }
 
-func (p *pendingAcquisitionError) Error() string { return p.missing.Error() }
+func (p *pendingAcquisitionError) Error() string { return p.cause.Error() }
 func (p *pendingAcquisitionError) Unwrap() error {
+	if len(p.prepared.Inputs) != 0 || p.missing == nil || p.ambientConsumed {
+		return p.cause
+	}
 	return &depwait.ErrBlocked{Deps: []manifest.NamedResource{p.missing.Secret}}
 }
 
-func (p *pendingAcquisitionError) Settle(ctx context.Context, level manifest.DrainLevel) error {
+func (p *pendingAcquisitionError) Settle(ctx context.Context, level manifest.DrainLevel) (resultErr error) {
+	e := p.execution
+	defer func() {
+		if resultErr != nil && !errors.Is(resultErr, manifest.ErrSourceSkipped) {
+			if _, blocked := errors.AsType[*depwait.ErrBlocked](resultErr); !blocked {
+				e.Reads.SetAcquisition(store.AcquisitionPending)
+			}
+		}
+	}()
+	if err := e.Checkpoint(); err != nil {
+		return err
+	}
+	if len(p.prepared.Inputs) != 0 {
+		if err := e.classify(ctx, level); err != nil {
+			p.cause = err
+			if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+				return p
+			}
+			return err
+		}
+		return e.Checkpoint()
+	}
+	if p.missing != nil && !p.ambientConsumed {
+		if level == manifest.DrainNone && p.missing.Secret != (manifest.NamedResource{}) {
+			return p
+		}
+		p.ambientConsumed = true
+		e.Tasks.YieldSlot(func() { p.prepared, p.cause = p.missing.RetryMachine(ctx, &e.Reads) })
+		if p.cause != nil {
+			return p.complete(ctx, nil, p.cause, level)
+		}
+	}
+	return p.advance(ctx, level)
+}
+
+func (p *pendingAcquisitionError) advance(ctx context.Context, level manifest.DrainLevel) error {
+	e := p.execution
+	if err := e.Checkpoint(); err != nil {
+		return err
+	}
+	if !p.selected {
+		if p.acquisition.Select != nil {
+			local, err := p.acquisition.Select(ctx)
+			if err != nil {
+				return err
+			}
+			p.local = local
+		}
+		p.selected = true
+	}
+	if p.local && p.prepared.LocalUnavailable != nil {
+		return p.complete(ctx, nil, p.prepared.LocalUnavailable, level)
+	}
+	e.Reads.SetAcquisition(store.AcquisitionPrepared)
+	var local *store.SourceArtifact
+	if p.acquisition.Resolve != nil {
+		var err error
+		local, err = p.acquisition.Resolve(ctx, level)
+		if err != nil {
+			p.cause = err
+			if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
+				return p
+			}
+			return err
+		}
+	}
+	if err := e.Checkpoint(); err != nil {
+		return err
+	}
 	var artifact *store.SourceArtifact
 	var err error
-	p.execution.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryMachine(ctx, &p.execution.Reads) })
-	if err != nil && !errors.Is(err, p.missing) {
-		err = manifest.NewError(nil, err, p.missing.Error())
+	e.Tasks.YieldSlot(func() { artifact, err = p.prepared.Fetch(ctx, local) })
+	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && !p.ambientConsumed {
+		p.missing, p.cause = missing, err
+		return p.Settle(ctx, level)
 	}
 	return p.complete(ctx, artifact, err, level)
 }
@@ -84,6 +181,9 @@ func (p *pendingAcquisitionError) complete(
 	level manifest.DrainLevel,
 ) error {
 	e, obj := p.execution, p.object
+	if err != nil && p.missing != nil && !errors.Is(err, p.missing) {
+		err = manifest.NewError(nil, err, p.missing.Error())
+	}
 	if err != nil {
 		missing, hasMissing := errors.AsType[*source.MissingSecretError](err)
 		anonymousDenied := hasMissing && p.acquisition.AllowAnonymousDenied && missing.AnonymousDenied &&
@@ -108,6 +208,7 @@ func (p *pendingAcquisitionError) complete(
 		if hasMissing && missing.Secret != (manifest.NamedResource{}) {
 			related = []manifest.NamedResource{missing.Secret}
 		}
+		e.Reads.SetAcquisition(store.AcquisitionSkipped)
 		e.Reads.AddWarning(manifest.Warning{
 			Resource: obj.Named(),
 			Related:  related,
@@ -116,5 +217,13 @@ func (p *pendingAcquisitionError) complete(
 			Message:  err.Error(),
 		})
 	}
-	return p.acquisition.Complete(ctx, artifact, err, level)
+	checkpoint := e.Checkpoint()
+	result := p.acquisition.Complete(ctx, artifact, err, level)
+	if checkpoint != nil {
+		return checkpoint
+	}
+	if err != nil && result == nil {
+		e.Reads.SetAcquisition(store.AcquisitionPending)
+	}
+	return result
 }

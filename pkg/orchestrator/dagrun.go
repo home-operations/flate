@@ -228,6 +228,7 @@ func (o *Orchestrator) admitEntry(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		o.store.AddObject(root)
+		o.history = nil
 		return true, nil
 	}
 }

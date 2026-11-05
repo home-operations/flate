@@ -232,6 +232,10 @@ func (d *Session) applications() []manifest.BaseManifest {
 			obj, policy := d.cfg.Store.Lookup(child.Identity)
 			if obj == nil || !policy.Root {
 				obj = d.loader.CatalogObject(child.Identity)
+				if _, valid := manifest.ApplicationFor(obj); valid {
+					record, _ := d.loader.Index.Lookup(child.Identity)
+					obj = d.loader.IndexedObject(child.Identity, record).Obj
+				}
 			}
 			add(obj)
 		}
@@ -240,7 +244,7 @@ func (d *Session) applications() []manifest.BaseManifest {
 		obj := record.Declaration
 		if obj == nil && objects[id] == nil {
 			obj = d.loader.CatalogObject(id)
-			if obj == nil {
+			if _, valid := manifest.ApplicationFor(obj); valid || obj == nil {
 				obj = d.loader.IndexedObject(id, record).Obj
 			}
 		}
@@ -258,6 +262,7 @@ func (d *Session) applications() []manifest.BaseManifest {
 
 type applicationEvidence struct {
 	object      manifest.BaseManifest
+	owner       manifest.NamedResource
 	application manifest.EntryApplication
 	source      entryResolution
 	history     bool
@@ -279,6 +284,7 @@ func (a *Admission) addApplication(st *store.Store, obj manifest.BaseManifest, h
 	}
 	evidence := &applicationEvidence{
 		object:      obj,
+		owner:       st.EmissionOwner(obj.Named()),
 		application: application,
 		source:      a.applicationSource(st, &application),
 		history:     history,
@@ -314,9 +320,6 @@ func (a *Admission) applicationSource(st *store.Store, application *manifest.Ent
 	resolved.artifact, _ = st.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
 	if resolved.object == nil {
 		resolved.object = a.sources[application.Source].object
-	}
-	if resolved.object == nil {
-		resolved.object = application.Declaration
 	}
 	return resolved
 }
@@ -370,6 +373,15 @@ func (a *Admission) qualifyApplication(
 	work manifest.WorkScope,
 ) (bool, error) {
 	artifact := resolved.artifact
+	if resolved.object == nil && artifact == nil && application.Declaration != nil {
+		candidate := a.sourceCandidate(nil, &ResolveRequest{ID: application.Source, Object: application.Declaration})
+		if !candidate.mutable || candidate.git == nil {
+			return false, nil
+		}
+		if _, matched := a.remotes[normalizeGitURL(candidate.git.URL)]; len(a.remotes) != 0 && !matched {
+			return false, nil
+		}
+	}
 	if artifact == nil {
 		var err error
 		*resolved, err = a.resolve(ctx, application.Source, resolved.object, work)
@@ -411,11 +423,15 @@ func (a *Admission) entry(
 	if len(appliers) == 0 {
 		found := false
 		for _, filename := range manifest.KustomizeBuilderFilenames {
-			_, err := fs.ReadFile(a.input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect entry package: %w", err), "")
+			_, readErr := fs.ReadFile(a.input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
+			if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+				return nil, nil, manifest.NewError(
+					manifest.ErrInput,
+					fmt.Errorf("inspect entry package: %w", readErr),
+					"",
+				)
 			}
-			if err == nil {
+			if readErr == nil {
 				found = true
 				break
 			}
@@ -430,7 +446,51 @@ func (a *Admission) entry(
 		owner = appliers[0]
 		applier = owner.Named()
 	}
-	return manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), applier), owner, nil
+	root := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), applier)
+	if owner == nil {
+		return root, nil, nil
+	}
+	root, err = a.applicationRoot(ctx, st, owner, root)
+	return root, owner, err
+}
+
+func (a *Admission) applicationRoot(
+	ctx context.Context,
+	st *store.Store,
+	owner manifest.BaseManifest,
+	root *manifest.Kustomization,
+) (*manifest.Kustomization, error) {
+	application, _ := manifest.ApplicationFor(owner)
+	original := a.sourceCandidate(nil, &ResolveRequest{ID: application.Source, Object: application.Declaration})
+	scope := st.WorkScope()
+	key := scope.Identity()
+	key.Owner = owner.Named()
+	work := scope.Recorder(&key).Scope().RenderWork()
+	application, err := kustomize.PrepareApplication(ctx, application, work)
+	if err != nil {
+		return nil, err
+	}
+	if application.Spec != nil {
+		source := root.SourceRef
+		root.KustomizationSpec = *application.Spec.KustomizationSpec.DeepCopy()
+		root.SourceRef = source
+	}
+	if application.Declaration == nil || st.GetDeclaration(application.Source) != nil {
+		return root, nil
+	}
+	candidate := a.sourceCandidate(nil, &ResolveRequest{ID: application.Source, Object: application.Declaration})
+	candidate.authored = true
+	candidate.bootstrap = candidate.mutable && candidate.git != nil && original.git != nil &&
+		(candidate.git.URL == original.git.URL || normalizeGitURL(candidate.git.URL) != "" &&
+			normalizeGitURL(candidate.git.URL) == normalizeGitURL(original.git.URL))
+	if a.sources == nil {
+		a.sources = make(map[manifest.NamedResource]entryResolution)
+	}
+	a.sources[application.Source] = candidate
+	admitEntrySource(st, application.Declaration)
+	root.SourceRef = application.Spec.SourceRef
+	root.SourceRef.Namespace = application.Source.Namespace
+	return root, nil
 }
 
 // BindEntry qualifies the admitted entry against the current declaration fixed point.

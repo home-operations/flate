@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -263,16 +265,18 @@ func testFetcherExactPinBeforeRecursionCase(t *testing.T, parent *string,
 		Reference:         &sourcev1.GitRepositoryRef{Commit: pin.String()},
 		RecurseSubmodules: tc.name != "gitlink",
 	}
-	art, err := f.Fetch(t.Context(), spec, (testInputs{}).readSet(spec), &sourcecache.Policy{})
+	art, err := fetchtest.Fetch(t.Context(), f.Fetch, spec, (testInputs{}).readSet(spec), &sourcecache.Policy{}, nil)
 	if err == nil {
 		other := *spec
 		other.Name = "other"
 		shared := &Fetcher{Cache: f.Cache}
-		reused, reuseErr := shared.Fetch(
+		reused, reuseErr := fetchtest.Fetch(
 			t.Context(),
+			shared.Fetch,
 			&other,
 			(testInputs{}).readSet(&other),
 			&sourcecache.Policy{},
+			nil,
 		)
 		assert.FatalIf(
 			t,
@@ -374,8 +378,9 @@ func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcher
 		}
 		signer, keyErr := ssh.ParsePrivateKey([]byte(*(*testCaseInput.identity)))
 		assert.NoError(t, keyErr)
-		artifact, err = f.Fetch(
+		artifact, err = fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			repo,
 			(testInputs{secrets: func(_, _ string) *manifest.Secret {
 				return &manifest.Secret{StringData: map[string]any{
@@ -384,6 +389,7 @@ func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcher
 				}}
 			}}).readSet(repo),
 			&sourcecache.Policy{},
+			nil,
 		)
 	}
 	if (*testCaseInput.restrict) && (*(*testCaseInput.shape)) != "relative" {

@@ -379,6 +379,10 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 			assert.ErrorIf(t, diff != "", "admitted input mismatch (-want +got):\n%s", diff)
 		}
 		aliasCopy := *alias
+		if alias.Reads != nil {
+			assert.Equal(t, alias.Reads.Valid(), true)
+		}
+		aliasCopy.Reads = nil
 		aliasCopy.FS = nil
 		aliasCopy.ContentFingerprint = nil
 		return aliasCopy

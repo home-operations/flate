@@ -59,7 +59,8 @@ func (c *admissionClosure) bindSource(evidence *admissionSource) *admissionSourc
 		}
 		bound := snapshot == input
 		if c.loader.frozen {
-			bound = c.loader.sideKnown && manifest.TreeSide(side) == c.loader.side && evidence.initial == input &&
+			bound = c.loader.sideKnown && manifest.TreeSide(side) == c.loader.side && evidence.initial != nil &&
+				evidence.initial.SameInput(input, store.ArtifactContent|store.ArtifactRevision) &&
 				snapshot.Input(
 					store.ArtifactContent|store.ArtifactRevision,
 				) == input.Input(
@@ -71,16 +72,23 @@ func (c *admissionClosure) bindSource(evidence *admissionSource) *admissionSourc
 			return evidence
 		}
 	}
-	if source == manifest.BootstrapSourceID {
-		return evidence
-	}
 	location := sourceView(source, c.loader.SourceRoot, input, declaration)
-	if !location.Pinned && !location.External {
+	switch {
+	case source == manifest.BootstrapSourceID:
+	case input == nil &&
+		slices.Contains(
+			c.objects.Productions(source, c.loader.Index),
+			manifest.Production{Source: manifest.BootstrapSourceID},
+		):
+		invocation := c.boundSource(manifest.BootstrapSourceID)
+		evidence.delta, evidence.input = invocation.delta, invocation.input
+		evidence.origin, evidence.toIndex, evidence.paired = invocation.origin, invocation.toIndex, invocation.paired
+	case !location.Pinned && !location.External:
 		delta, _, _ = c.loader.Options.Changes.ForSource(manifest.BootstrapSourceID)
 		evidence.delta = delta
-		return evidence
+	default:
+		evidence.delta = nil
 	}
-	evidence.delta = nil
 	return evidence
 }
 

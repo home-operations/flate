@@ -381,7 +381,7 @@ func (c *admissionClosure) selectProductionReaders(
 		file := c.coordinates(new(p)).indexed
 		for reader := range c.loader.Index.ReadersOfFile(file) {
 			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{ReaderEdges: 1})
-			if reader.Declaration != (manifest.NamedResource{}) {
+			if reader.Declaration != (manifest.NamedResource{}) || reader.Materialize {
 				continue
 			}
 			if !c.readerEmissionAllowed(id, reader.Reader) {

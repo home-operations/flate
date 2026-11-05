@@ -21,6 +21,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -141,11 +143,13 @@ func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 	// index advertises a wrong digest
 	f, fInputs := newHTTPFetcher(t, httpRepo(repository.server.URL))
 	{
-		_, err := f.Fetch(
+		_, err := fetchtest.Fetch(
 			context.Background(),
+			f.Fetch,
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 			&sourcecache.Policy{},
+			nil,
 		)
 		assert.FatalIf(t, err == nil, "%s", "expected digest-mismatch error, got nil")
 	}
@@ -160,7 +164,7 @@ func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
 	repository := httpRepo("https://charts.example.com")
 	f, inputs := newHTTPFetcher(t, repository)
 	chart := helmChart("repo", "nginx", "1.2.3")
-	_, err := f.Fetch(t.Context(), chart, inputs.readSet(chart), &sourcecache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, chart, inputs.readSet(chart), &sourcecache.Policy{}, nil)
 	assert.FatalIf(
 		t,
 		!errors.Is(err, manifest.ErrObjectNotFound) || !errors.Is(err, manifest.ErrFlux),
@@ -261,13 +265,15 @@ func testFetchHTTPChartSecretReferencesCase1(t *testing.T, tc *struct {
 	var artifact *store.SourceArtifact
 	var err error
 	if tc.state == "unwired" {
-		_, err = (&operation{Fetcher: f}).prepareHTTP(r)
+		_, err = (&operation{Fetcher: f}).resolvedHTTP(r)
 	} else {
-		artifact, err = f.Fetch(
+		artifact, err = fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 			&sourcecache.Policy{},
+			nil,
 		)
 	}
 	assert.FatalIf(t, err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || artifact != nil,
@@ -367,11 +373,13 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 		repository := startHelmRepoSubpath(t, "/charts", chartBytes, chartDigest(chartBytes))
 
 		f, fInputs := newHTTPFetcher(t, httpRepo(repository.server.URL+"/charts"))
-		art, err := f.Fetch(
+		art, err := fetchtest.Fetch(
 			context.Background(),
+			f.Fetch,
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 			&sourcecache.Policy{},
+			nil,
 		)
 		assert.FatalIf(t, err != nil, "Fetch: %v", err)
 		assert.ErrorIf(t, *repository.hits != 1,
@@ -388,11 +396,13 @@ func TestFetchHTTPChart_SubpathRelativeURL(t *testing.T) {
 
 		f, fInputs := newHTTPFetcher(t, httpRepo(repository2.server.URL+"/charts/"))
 		{
-			_, err := f.Fetch(
+			_, err := fetchtest.Fetch(
 				context.Background(),
+				f.Fetch,
 				helmChart("repo", "app-template", "1.0.0"),
 				fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 				&sourcecache.Policy{},
+				nil,
 			)
 			assert.FatalIf(t, err != nil, "Fetch: %v", err)
 		}
@@ -520,11 +530,13 @@ entries:
 			})
 
 			{
-				_, err := f.Fetch(
+				_, err := fetchtest.Fetch(
 					context.Background(),
+					f.Fetch,
 					helmChart("repo", "app-template", "1.0.0"),
 					fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 					&sourcecache.Policy{},
+					nil,
 				)
 				assert.FatalIf(t, err != nil, "Fetch: %v", err)
 			}
@@ -760,13 +772,15 @@ func testFetchHTTPChartWave(t *testing.T, captures *testFetchHTTPChartWaveInputs
 			consumers.Go(func() {
 				ctx := t.Context()
 				accounting := manifest.AcquisitionWork{Scope: work[cluster][chart].Scope()}
-				art, err := (*captures.f).Fetch(
+				art, err := fetchtest.Fetch(
 					ctx,
+					(*captures.f).Fetch,
 					helmChart("repo", name, "1.0.0"),
 					captures.fInputs.readSet(
 						helmChart("repo", name, "1.0.0"),
 					),
 					&sourcecache.Policy{Work: &accounting},
+					nil,
 				)
 				if err != nil {
 					t.Errorf("Fetch %s: %v", name, err)

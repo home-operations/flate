@@ -304,9 +304,13 @@ func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifes
 
 func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
 	// Owner evidence MUST survive compaction while provisional origins are removed.
+	invocation := slices.Contains(r.Productions, manifest.Production{Source: manifest.BootstrapSourceID})
 	r.Productions = slices.DeleteFunc(r.Productions, func(p manifest.Production) bool {
 		if p.Owner != (manifest.NamedResource{}) || p.Path == "" {
 			return false
+		}
+		if invocation && p.Source == manifest.BootstrapSourceID && p.Path == r.Path && p.Authored == id {
+			return true
 		}
 		return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
 			return owner.Owner != (manifest.NamedResource{}) &&
@@ -314,23 +318,26 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), p.Path))
 		})
 	})
-	if rf.loader.documents.compact && rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), r.Path) {
-		{
-			pValues := r.Productions
-			for pIndex := range pValues {
-				p := pValues[pIndex]
-				if p.Owner != (manifest.NamedResource{}) && p.Materializer(id) == (manifest.NamedResource{}) &&
-					p.Declaration == (manifest.NamedResource{}) &&
-					p.Authored != (manifest.NamedResource{}) {
-					p.Owner = manifest.NamedResource{}
-					if !slices.Contains(r.Productions, p) {
-						r.Productions = append(r.Productions, p)
-					}
-				}
-			}
+	rf.retainRootOrigins(id, r)
+	slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
+}
+
+func (rf *readerFinalizer) retainRootOrigins(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
+	if !rf.loader.documents.compact || !rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), r.Path) {
+		return
+	}
+	productions := r.Productions
+	for i := range productions {
+		p := productions[i]
+		if p.Owner == (manifest.NamedResource{}) || p.Materializer(id) != (manifest.NamedResource{}) ||
+			p.Declaration != (manifest.NamedResource{}) || p.Authored == (manifest.NamedResource{}) {
+			continue
+		}
+		p.Owner = manifest.NamedResource{}
+		if !slices.Contains(r.Productions, p) {
+			r.Productions = append(r.Productions, p)
 		}
 	}
-	slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
 }
 
 func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifest.DiscoveryRecord) {

@@ -116,6 +116,8 @@ func reachFixtureCases() []reachCase {
 			next: "  interval: 1h\n  timeout: 2m\n",
 
 			builders: []string{
+				// The FluxInstance projection is a separate Kustomize operation under the work-by-identity ruling.
+				"FluxInstance.fluxcd.controlplane.io/flux-system/flux",
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller",
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller-runners",
 				"Kustomization.kustomize.toolkit.fluxcd.io/cert-manager/cert-manager",
@@ -428,6 +430,8 @@ func reachFixtureCases() []reachCase {
 			next: "interval: 2h",
 
 			builders: []string{
+				// The FluxInstance projection is a separate Kustomize operation under the work-by-identity ruling.
+				"FluxInstance.fluxcd.controlplane.io/flux-system/flux",
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller",
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller-runners",
 				"Kustomization.kustomize.toolkit.fluxcd.io/cert-manager/cert-manager",

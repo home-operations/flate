@@ -77,7 +77,7 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 	indexPath := filepath.Join(directory, "oci", "index.json")
 	index, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)
-	input.Admit = func(string) (bool, error) { t.Fatal("history called Admit"); return false, nil }
+	input.Admit = func(RenderAdmission) (bool, error) { t.Fatal("history called Admit"); return false, nil }
 	for _, tc := range []struct {
 		name, patch string
 		complete    bool

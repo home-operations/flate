@@ -14,7 +14,9 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
+	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
+	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -25,10 +27,12 @@ import (
 )
 
 type registryAcquisition struct {
-	client    *remote.Repository
-	material  any
-	resolved  source.TransportMaterial
-	anonymous bool
+	reference  registry.Reference
+	credential auth.Credential
+	client     *remote.Repository
+	material   any
+	resolved   source.TransportMaterial
+	anonymous  bool
 }
 
 func (f *operation) fetchLayer(

@@ -12,6 +12,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -90,7 +92,7 @@ func testWalkBucketPhaseTimeoutsCaseCallback(
 			Request:       req,
 		}, nil
 	})
-	artifact, err := f.Fetch(t.Context(), b, (testInputs{}).readSet(b), &cache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, (testInputs{}).readSet(b), &cache.Policy{}, nil)
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second {
 		t.Fatalf("phase result: elapsed=%v error=%v", time.Since(start), err)
 	}

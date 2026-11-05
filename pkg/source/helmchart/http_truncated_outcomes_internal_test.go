@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -54,7 +56,7 @@ func testFetchHTTPChartTruncatedOutcomeReplayCase(
 		MinWait:  time.Nanosecond,
 		MaxWait:  time.Nanosecond,
 	}
-	_, err = f.Fetch(t.Context(), hc, fInputs.readSet(hc), &sourcecache.Policy{Retry: retry})
+	_, err = fetchtest.Fetch(t.Context(), f.Fetch, hc, fInputs.readSet(hc), &sourcecache.Policy{Retry: retry}, nil)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 	assert.FatalIf(
 		t,
@@ -112,7 +114,14 @@ func testFetchHTTPChartTruncatedOutcomeReplayCase(
 	warmInputs := testInputs{repos: lookup}
 	warm := New(nil, Config{Network: newTestNetwork(t), Cache: warmCache})
 
-	_, err = warm.Fetch(t.Context(), hc, warmInputs.readSet(hc), &sourcecache.Policy{Retry: retry})
+	_, err = fetchtest.Fetch(
+		t.Context(),
+		warm.Fetch,
+		hc,
+		warmInputs.readSet(hc),
+		&sourcecache.Policy{Retry: retry},
+		nil,
+	)
 	terminal, ok = errors.AsType[*sourcecache.TerminalError](err)
 	assert.ErrorIf(
 		t,

@@ -117,7 +117,7 @@ func testFetcherFailureSourceAndOperationCase(
 			t.Error(closeErr3)
 		}
 	})
-	request, err := (&operation{Fetcher: f}).newRepoClient(ctx, new(repo.RegistryAccess()))
+	request, err := (&operation{Fetcher: f}).resolvedRepository(ctx, new(repo.RegistryAccess()))
 	assert.NoError(t, err)
 
 	var original error

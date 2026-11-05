@@ -299,6 +299,39 @@ func TestMissingSecretError_RetryMachine(t *testing.T) {
 	}
 }
 
+func TestMissingSecretError_DeferredDenial(t *testing.T) {
+	t.Parallel()
+	for _, secret := range []string{"", "auth"} {
+		t.Run(secret, func(t *testing.T) {
+			t.Parallel()
+			owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "repo"}
+			missing, _ := errors.AsType[*MissingSecretError](
+				MissingSecretErr(manifest.DiagnosticFor(owner, nil), secret, "unavailable"),
+			)
+			denied := &MissingSecretError{Owner: owner, AnonymousDenied: true}
+			calls := 0
+			missing.RetryAmbient = func(context.Context) (PreparedFetch, error) {
+				return PreparedFetch{
+					Fetch: func(context.Context, *store.SourceArtifact) (*store.SourceArtifact, error) {
+						calls++
+						return nil, denied
+					},
+				}, nil
+			}
+			prepared, err := missing.RetryMachine(t.Context(), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, calls, 0)
+			_, err = prepared.Fetch(t.Context(), nil)
+			assert.Equal(t, calls, 1)
+			if secret == "" {
+				assert.Equal(t, err, error(denied))
+			} else {
+				assert.Equal(t, err, error(missing))
+			}
+		})
+	}
+}
+
 func testMissingSecretErrCase(t *testing.T, tc *struct {
 	name   string
 	secret string
@@ -371,7 +404,7 @@ func testAcquireMachineLifecycleCase(t *testing.T, cause **fs.PathError,
 	partial := &store.SourceArtifact{
 		Warnings: []manifest.Warning{{Category: manifest.WarnSourceCredentialsUnavailable}},
 	}
-	artifact, err := AcquireMachine(ctx, policy, func(ctx context.Context) error {
+	preparedFetch, err := AcquireMachine(ctx, policy, func(ctx context.Context) error {
 		prepared++
 		preparation = ctx //nolint:fatcontext // The callback records the context for later cancellation assertions.
 		if (*phase) == "unavailable" {
@@ -381,7 +414,8 @@ func testAcquireMachineLifecycleCase(t *testing.T, cause **fs.PathError,
 			return (*cause)
 		}
 		return nil
-	}, func(got context.Context, p *cache.Policy) (*store.SourceArtifact, error) {
+	}, func(got context.Context, pValue *cache.Policy, _ *store.SourceArtifact) (*store.SourceArtifact, error) {
+		p := *pValue
 		acquired++
 		assert.FatalIf(t, got != ctx || got.Err() != nil || preparation.Err() == nil || !p.Machine ||
 			p.Timeout != policy.Timeout ||
@@ -393,6 +427,11 @@ func testAcquireMachineLifecycleCase(t *testing.T, cause **fs.PathError,
 		}
 		return partial, nil
 	})
+	assert.Equal(t, acquired, 0)
+	var artifact *store.SourceArtifact
+	if err == nil {
+		artifact, err = preparedFetch.Fetch(ctx, nil)
+	}
 	testAcquireMachineLifecycleResult(t, &machineLifecycleResult{
 		phase:    phase,
 		cause:    cause,
@@ -413,20 +452,22 @@ func testMissingSecretErrorRetryMachineCase(t *testing.T, shape *string,
 	missing, _ := errors.AsType[*MissingSecretError](err)
 	denial := &fetcherr.ResponseError{StatusCode: 401}
 	calls := 0
-	missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+	missing.RetryAmbient = func(context.Context) (PreparedFetch, error) {
 		calls++
 		if (*shape) == "unavailable" {
-			return nil, MissingSecretErr(manifest.DiagnosticFor(owner, nil), "", "unavailable")
+			return PreparedFetch{}, MissingSecretErr(manifest.DiagnosticFor(owner, nil), "", "unavailable")
 		}
 		if (*shape) == "anonymous denied" || (*shape) == "authored anonymous denied" {
-			return nil, &MissingSecretError{
+			return PreparedFetch{}, &MissingSecretError{
 				Owner:           owner,
 				Detail:          "registry credentials unavailable",
 				AnonymousDenied: true,
 				Cause:           denial,
 			}
 		}
-		return &store.SourceArtifact{}, nil
+		return PreparedFetch{Fetch: func(context.Context, *store.SourceArtifact) (*store.SourceArtifact, error) {
+			return &store.SourceArtifact{}, nil
+		}}, nil
 	}
 	var reads *store.ReadSet
 	if (*shape) == "source only" || (*shape) == "anonymous denied" {
@@ -460,7 +501,11 @@ func testMissingSecretErrorRetryMachineCase(t *testing.T, shape *string,
 	if (*shape) == "canceled" {
 		cancel()
 	}
-	artifact, got := missing.RetryMachine(ctx, reads)
+	preparedFetch, got := missing.RetryMachine(ctx, reads)
+	var artifact *store.SourceArtifact
+	if got == nil {
+		artifact, got = preparedFetch.Fetch(ctx, nil)
+	}
 	switch *shape {
 	case "producer", "no callback", "unavailable", "authored anonymous denied":
 		assert.FatalIf(t, !errors.Is(got, missing) || artifact != nil ||

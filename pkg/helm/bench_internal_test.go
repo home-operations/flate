@@ -75,7 +75,12 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 		if err == nil {
 			if recordErr := cli.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt1, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt1,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
@@ -118,7 +123,12 @@ func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 		if err == nil {
 			if recordErr := cli.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt2, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt2,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
@@ -229,7 +239,12 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 	if err == nil {
 		if recordErr := cli.RecordRender(
 			ctx,
-			RenderAcceptance{Owner: hr.Named(), Receipt: receipt8, Records: emptyRenderInventory},
+			RenderAcceptance{
+				Owner:   hr.Named(),
+				Receipt: receipt8,
+				Records: emptyRenderInventory,
+				Sources: []manifest.SourceEvidence{},
+			},
 		); recordErr != nil {
 			b.Fatal(recordErr)
 		}
@@ -249,7 +264,12 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		if err == nil {
 			if recordErr := cli.RecordRender(
 				ctx,
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt9, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt9,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
@@ -449,7 +469,12 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 	if err == nil {
 		recordErr = cli.RecordRender(
 			b.Context(),
-			RenderAcceptance{Owner: hr.Named(), Receipt: receipt4, Records: emptyRenderInventory},
+			RenderAcceptance{
+				Owner:   hr.Named(),
+				Receipt: receipt4,
+				Records: emptyRenderInventory,
+				Sources: []manifest.SourceEvidence{},
+			},
 		)
 	}
 	if recordErr != nil {
@@ -488,7 +513,12 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 		if err == nil {
 			if recordErr := cli.RecordRender(
 				b.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt6, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt6,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
@@ -522,7 +552,12 @@ func benchmarkTemplateCRDsValidationCase(b *testing.B, count *int, policy *strin
 		if err == nil {
 			if recordErr := cli.RecordRender(
 				b.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt7, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt7,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			); recordErr != nil {
 				b.Fatal(recordErr)
 			}
@@ -602,7 +637,12 @@ func benchmarkSourceValuesPersistence(b *testing.B, inputs *benchmarkSourceValue
 	if err == nil {
 		if recordErr := (*inputs.cli).RecordRender(
 			b.Context(),
-			RenderAcceptance{Owner: (*inputs.hr).Named(), Receipt: receipt5, Records: emptyRenderInventory},
+			RenderAcceptance{
+				Owner:   (*inputs.hr).Named(),
+				Receipt: receipt5,
+				Records: emptyRenderInventory,
+				Sources: []manifest.SourceEvidence{},
+			},
 		); recordErr != nil {
 			b.Fatal(recordErr)
 		}

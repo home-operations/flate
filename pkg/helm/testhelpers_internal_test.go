@@ -172,6 +172,7 @@ func chartFixtureFS(hr *manifest.HelmRelease, input fs.FS) fs.FS {
 
 func emptyRenderInventory(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}
 
+//nolint:gocritic // Test helpers preserve independent key values while replacing callbacks.
 func writeTestRecord(w io.Writer, key cache.BlobKey, record *renderRecord) error {
 	identity := key.Content.(string)
 	data, err := encodeFrame(renderHeader{Key: identity, Analysis: record.Analysis}, record.Output)

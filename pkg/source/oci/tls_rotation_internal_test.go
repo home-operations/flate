@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -193,14 +195,16 @@ func testFetcherResolveTLSSnapshotRotationCase(
 	}}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 	before := testCaseInput.requests.Load()
-	art, err := f.Fetch(
+	art, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		(*testCaseInput.repo),
 		fInputs.readSet((*testCaseInput.repo)),
 		&sourcecache.Policy{
 			MaxAge: (*testCaseInput.repo).SourceInterval(),
 			Retry:  sourcecache.RetryConfig{Attempts: 3},
 		},
+		nil,
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -213,9 +217,13 @@ func testFetcherResolveTLSSnapshotRotationCase(
 	(*testCaseInput.previous) = art.Key
 	before = testCaseInput.requests.Load()
 	{
-		_, fetchErr := f.Fetch(
-			t.Context(), (*testCaseInput.repo), fInputs.readSet((*testCaseInput.repo)),
+		_, fetchErr := fetchtest.Fetch(
+			t.Context(),
+			f.Fetch,
+			(*testCaseInput.repo),
+			fInputs.readSet((*testCaseInput.repo)),
 			&sourcecache.Policy{MaxAge: (*testCaseInput.repo).SourceInterval()},
+			nil,
 		)
 		assert.FatalIf(t, fetchErr != nil || testCaseInput.requests.
 			Load() != before, "warm snapshot missed: %v", fetchErr)
@@ -224,11 +232,13 @@ func testFetcherResolveTLSSnapshotRotationCase(
 		Store(true)
 	failed := *(*testCaseInput.repo)
 	failed.Interval = &metav1.Duration{}
-	_, err = f.Fetch(
+	_, err = fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		&failed,
 		fInputs.readSet(&failed),
 		&sourcecache.Policy{MaxAge: failed.SourceInterval()},
+		nil,
 	)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 	assert.FatalIf(t, !ok || !terminal.Attempted, "failed snapshot: %v", err)

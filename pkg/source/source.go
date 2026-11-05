@@ -43,12 +43,19 @@ type Fetcher interface {
 		obj manifest.BaseManifest,
 		reads *store.ReadSet,
 		policy *sourcecache.Policy,
-	) (*store.SourceArtifact, error)
+	) (PreparedFetch, error)
+}
+
+// PreparedFetch settles prerequisites and credentials before content authority is resolved.
+type PreparedFetch struct {
+	Inputs           []manifest.DependencyRef
+	LocalUnavailable *MissingSecretError
+	Fetch            func(context.Context, *store.SourceArtifact) (*store.SourceArtifact, error)
 }
 
 // TypedFetcher acquires artifacts of one manifest type with explicit freshness and retries.
 type TypedFetcher[T manifest.BaseManifest] interface {
-	Fetch(ctx context.Context, obj T, reads *store.ReadSet, policy *sourcecache.Policy) (*store.SourceArtifact, error)
+	Fetch(ctx context.Context, obj T, reads *store.ReadSet, policy *sourcecache.Policy) (PreparedFetch, error)
 }
 
 // Wrap converts a TypedFetcher into the untyped Fetcher interface
@@ -72,10 +79,10 @@ func (a typedAdapter[T]) Fetch(
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
 	policy *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
+) (PreparedFetch, error) {
 	typed, ok := obj.(T)
 	if !ok {
-		return nil, manifest.NewError(
+		return PreparedFetch{}, manifest.NewError(
 			manifest.ErrInput,
 			nil,
 			fmt.Sprintf("%s fetcher: unexpected payload %T", a.label, obj),

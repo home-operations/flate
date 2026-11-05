@@ -34,7 +34,12 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 		{
 			recordErr := (*inputs.cli).RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt18, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt18,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -51,7 +56,12 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 		{
 			recordErr := fresh.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt19, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt19,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -74,7 +84,12 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 		{
 			recordErr := (*inputs.cli).RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt20, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt20,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -125,7 +140,12 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 		{
 			recordErr := (*inputs.cli).RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt21, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt21,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}

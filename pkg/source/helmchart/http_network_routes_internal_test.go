@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -121,11 +123,13 @@ func testFetchHTTPChartNetworkRoutesCase(t *testing.T, route *string,
 			assert.NoError(t, err)
 		}
 	}
-	_, err := f.Fetch(
+	_, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		helmChart("repo", "chart", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "chart", "1.0.0")),
 		&sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
+		nil,
 	)
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 	wantIndex := int32(0)

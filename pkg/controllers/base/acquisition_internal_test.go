@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -68,15 +69,15 @@ func TestAcquire_SettlementContinuation(t *testing.T) {
 		FS:   fstest.MapFS{"inputs.json": {Data: []byte(`[]`)}},
 	}
 	var fetches, retries, completions int
-	missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+	missing.RetryAmbient = func(context.Context) (source.PreparedFetch, error) {
 		retries++
-		return artifact, nil
+		return fetchtest.Prepared(artifact, nil)
 	}
 	acquisition := Acquisition{
-		Fetch: func(context.Context) (*store.SourceArtifact, error) {
+		Fetch: func(context.Context) (source.PreparedFetch, error) {
 			fetches++
 			source.SecretLookup(&run.Reads)(provider.Namespace, missing.Secret.Name)
-			return nil, missing
+			return source.PreparedFetch{}, missing
 		},
 		Complete: func(_ context.Context, acquired *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
 			completions++
@@ -162,8 +163,8 @@ func TestAcquire_CanceledMaterialDoesNotPark(t *testing.T) {
 					provider,
 					Acquisition{
 						AllowMissingSecrets: true,
-						Fetch: func(context.Context) (*store.SourceArtifact, error) {
-							return nil, missing
+						Fetch: func(context.Context) (source.PreparedFetch, error) {
+							return source.PreparedFetch{}, missing
 						},
 						Complete: func(context.Context, *store.SourceArtifact, error, manifest.DrainLevel) error {
 							t.Error("canceled acquisition completed")
@@ -259,14 +260,14 @@ func testAcquireOutcomesCase(t *testing.T, testCaseInput *struct {
 					Acquisition{
 						AllowMissingSecrets:  testCaseInput.allow,
 						AllowAnonymousDenied: testCaseInput.policy,
-						Fetch: func(context.Context) (*store.SourceArtifact, error) {
+						Fetch: func(context.Context) (source.PreparedFetch, error) {
 							if testCaseInput.missing {
 								source.SecretLookup(&run.Reads)(provider.Namespace, missing.Secret.Name)
 							}
 							if failure != nil {
-								return nil, failure
+								return source.PreparedFetch{}, failure
 							}
-							return artifact, nil
+							return fetchtest.Prepared(artifact, nil)
 						},
 						Complete: func(_ context.Context, acquired *store.SourceArtifact, unavailable error, completedLevel manifest.DrainLevel) error {
 							completed++

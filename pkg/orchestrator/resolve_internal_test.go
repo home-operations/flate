@@ -81,6 +81,7 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 	input, err := gittree.AdmitDirectory(t.Context(), location)
 	assert.NoError(t, err)
 	o.store.SetArtifact(manifest.BootstrapSourceID, input)
+	o.src.Fetchers[manifest.KindGitRepository] = emptySourceFetcher{}
 	o.store.AddObject(
 		&manifest.GitRepository{Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace},
 	)

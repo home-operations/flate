@@ -188,7 +188,7 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 	reader, _, _, err := c.owner.Blob(
 		ctx,
 		sourcecache.BlobKey{
-			Content: prepared.key,
+			Content: prepared.inventory,
 			Render:  sourcecache.RenderAccepted,
 		},
 		&sourcecache.Policy{MaxAge: sourcecache.Forever, Work: req.Work.History()},
@@ -202,11 +202,35 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 		return EntryEvidence{}
 	}
 	frame, err := decodeFrame(data)
-	if err != nil || frame.accepted == nil || frame.accepted.Owner != req.Spec.Named() ||
+	if err != nil {
+		return EntryEvidence{}
+	}
+	if spec := frame.header.EntrySpec; spec != nil {
+		if spec.Named() != req.Spec.Named() || spec.SourceID() != req.Spec.SourceID() {
+			return EntryEvidence{}
+		}
+		entry := req
+		entry.Spec, entry.SubPath = spec, spec.Path
+		actual, prepareErr := c.prepareRender(ctx, &entry)
+		if prepareErr != nil || actual.inventory != prepared.inventory {
+			return EntryEvidence{}
+		}
+		prepared = actual
+	}
+	if frame.accepted == nil || frame.accepted.Owner != req.Spec.Named() ||
 		frame.header.Key != prepared.key ||
 		frame.header.Binding != manifest.Fingerprint(prepared.binding) {
 		return EntryEvidence{}
 	}
+	return previousEntryEvidence(ctx, &req, &prepared, &frame)
+}
+
+func previousEntryEvidence(
+	ctx context.Context,
+	req *RenderRequest,
+	prepared *renderRequest,
+	frame *renderFrame,
+) EntryEvidence {
 	if frame.header.Entry == nil {
 		valid, localsValidErr := frame.header.Reads.localsValid(ctx, prepared.lower, req.Source.Content != "")
 		if localsValidErr != nil || !valid {

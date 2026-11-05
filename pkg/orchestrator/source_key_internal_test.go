@@ -29,6 +29,7 @@ import (
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -105,11 +106,13 @@ func testDAGSourceEffectiveWarmCacheTail(t *testing.T, tailCaseInput *testDAGSou
 	var reads store.ReadSet
 	reads.Init(warmStore, effective.Named(), nil)
 	defer reads.Retire()
-	artifact, err := fetcher.Fetch(
+	artifact, err := fetchtest.Fetch(
 		t.Context(),
+		fetcher.Fetch,
 		effective,
 		&reads,
 		&sourcecache.Policy{MaxAge: effective.Interval.Duration},
+		nil,
 	)
 	assert.NoError(t, err)
 	before, err := fs.ReadFile(artifact.FS, source.OCICopiedLayerFilename)
@@ -241,7 +244,14 @@ func testDAGSourceEffectiveWarmCacheTail(t *testing.T, tailCaseInput *testDAGSou
 	control := *effective
 	control.Interval = &metav1.Duration{}
 	owner := cachetest.New(t, root, sourcecache.New)
-	_, err = (&oci.Fetcher{Cache: owner, Network: network}).Fetch(ctx, &control, &reads, &sourcecache.Policy{})
+	_, err = fetchtest.Fetch(
+		ctx,
+		(&oci.Fetcher{Cache: owner, Network: network}).Fetch,
+		&control,
+		&reads,
+		&sourcecache.Policy{},
+		nil,
+	)
 	if err == nil || attempts.Load() == 0 || tailCaseInput.requests.Load() == 0 {
 		t.Fatalf(
 			"blocked control failed to detect a request: err=%v attempts=%d requests=%d",

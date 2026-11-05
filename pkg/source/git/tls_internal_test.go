@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/home-operations/flate/pkg/store"
@@ -205,11 +207,13 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 		ssrfguard.Restrict(true)
 		defer ssrfguard.Restrict(false)
-		_, err := f.Fetch(
+		_, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			gitRepoWithSecret("restricted", srv.URL, "tls"),
 			fInputs.readSet(gitRepoWithSecret("restricted", srv.URL, "tls")),
 			&sourcecache.Policy{},
+			nil,
 		)
 		{
 			op, ok := errors.AsType[*net.OpError](err)
@@ -613,7 +617,14 @@ func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 		Provider:  sourcev1.GitProviderGitHub,
 	}
 	repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
-	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), &sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	_, err := fetchtest.Fetch(
+		t.Context(),
+		f.Fetch,
+		repo,
+		fInputs.readSet(repo),
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
+	)
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "proxy validation before cache admission: %v", err)
 	assert.FatalIf(
 		t,

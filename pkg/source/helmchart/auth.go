@@ -66,13 +66,7 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 		credentials = [2]string{prepared.username, prepared.password}
 	}
 	prepared.material = resolved.Identity(credentials)
-	tr, err := f.network.HTTPTransport(
-		source.HTTPTransportConfig{Material: resolved, Credentials: credentials, DisableCompression: true},
-	)
-	if err != nil {
-		return nil, err
-	}
-	prepared.client = &http.Client{Transport: tr}
+
 	prepared.resolved = resolved
 	return prepared, authErr
 }
@@ -125,4 +119,19 @@ func repositoryURLEqual(target, entry string) bool {
 		u.Path = filepath.Clean(u.Path)
 	}
 	return a.String() == b.String()
+}
+
+func (f *Fetcher) connectHTTP(r *httpRepository) error {
+	var credentials any
+	if r.username != "" || r.password != "" {
+		credentials = [2]string{r.username, r.password}
+	}
+	tr, err := f.network.HTTPTransport(
+		source.HTTPTransportConfig{Material: r.resolved, Credentials: credentials, DisableCompression: true},
+	)
+	if err != nil {
+		return err
+	}
+	r.client = &http.Client{Transport: tr}
+	return nil
 }

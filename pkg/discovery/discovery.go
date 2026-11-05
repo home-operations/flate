@@ -207,6 +207,7 @@ func (d *Session) finishDiscovery(
 	if err := d.acceptPrepared(ctx); err != nil {
 		return nil, err
 	}
+	d.captureAliases()
 	admission := d.admission()
 	if admission.qualification != nil && cfg.Selection.Changed && d.binding == (Binding{}) {
 		d.entryReceipt(ctx, admission)
@@ -453,7 +454,9 @@ func (d *Session) entryRoot(ctx context.Context, input *store.SourceArtifact) (*
 	var internal *manifest.Kustomization
 	if d.binding == (Binding{}) {
 		var err error
-		internal, _, err = d.admission().entry(ctx, d.cfg.Store, d.applications())
+		admission := d.admission()
+		internal, _, err = admission.entry(ctx, d.cfg.Store, d.applications())
+		d.resolvedSources = admission.sources
 		if err != nil || internal == nil {
 			return nil, err
 		}
@@ -478,7 +481,7 @@ func (d *Session) matchesEntryPath(
 		return false
 	}
 	if sourceID, ok := d.cfg.Store.GetObject(ks.SourceID()).(entrySource); ok {
-		_, descriptor := sourceID.BootstrapAlias(input.LocalPath)
+		_, descriptor, _ := sourceID.BootstrapAlias(input.LocalPath)
 		if descriptor != nil &&
 			(descriptor.Ignore != nil && *descriptor.Ignore != "" || len(descriptor.SparseCheckout) != 0) {
 			return false
@@ -734,4 +737,21 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (d *Session) captureAliases() {
+	for _, id := range slices.SortedFunc(maps.Keys(d.resolvedSources), manifest.NamedResource.Compare) {
+		if id == manifest.BootstrapSourceID {
+			continue
+		}
+		artifact, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+		if artifact == nil || !artifact.InputAlias || artifact.Reads != nil {
+			continue
+		}
+		reads := &store.ReadSet{}
+		reads.Init(d.cfg.Store, id, nil)
+		reads.GetDeclaration(id)
+		reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+		d.cfg.Store.SetArtifact(id, artifact.WithReads(reads))
+	}
 }

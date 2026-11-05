@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -41,6 +42,7 @@ func TestPrepareNeededHistory_StaticOutput(t *testing.T) {
 				o.store.SetArtifact(manifest.BootstrapSourceID, new(store.SourceArtifact))
 			}
 			o.store.AddObject(owner)
+			o.loader = loader.New(o.store)
 			history := map[manifest.NamedResource]struct {
 				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 				Complete bool

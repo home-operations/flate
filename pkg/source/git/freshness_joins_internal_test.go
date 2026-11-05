@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -71,11 +73,13 @@ func testFetcherFreshnessCase(t *testing.T, tc *struct {
 			repo.Reference.Tag = "ignored"
 		}
 	}
-	first, err := f.Fetch(
+	first, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		repo,
 		(testInputs{}).readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, first.Revision, initial)
@@ -138,11 +142,13 @@ func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFresh
 	(*captures.beforeAdvertisements), (*captures.beforeUploads), (*captures.beforeConnections) = captures.advertisements.Load(), captures.uploads.Load(), captures.connections.Load()
 	var hit *store.SourceArtifact
 
-	hit, (*captures.err) = (*captures.f).Fetch(
+	hit, (*captures.err) = fetchtest.Fetch(
 		t.Context(),
+		(*captures.f).Fetch,
 		&cached,
 		(testInputs{}).readSet(&cached),
 		&sourcecache.Policy{MaxAge: cached.SourceInterval()},
+		nil,
 	)
 	assert.NoError(t, (*captures.err))
 	assert.Equal(t, hit.Revision, want)
@@ -173,11 +179,13 @@ func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFresh
 	}
 	var reopened *store.SourceArtifact
 
-	reopened, (*captures.err) = (*captures.f).Fetch(
+	reopened, (*captures.err) = fetchtest.Fetch(
 		t.Context(),
+		(*captures.f).Fetch,
 		&cached,
 		(testInputs{}).readSet(&cached),
 		&sourcecache.Policy{MaxAge: cached.SourceInterval()},
+		nil,
 	)
 	assert.NoError(t, (*captures.err))
 	assert.Equal(t, reopened.Revision, want)
@@ -252,9 +260,13 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 	if (*scope.tc).fail {
 		(*scope.srv).Close()
 		{
-			_, fetchErr := (*scope.f).Fetch(
-				t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
+			_, fetchErr := fetchtest.Fetch(
+				t.Context(),
+				(*scope.f).Fetch,
+				(*scope.repo),
+				(testInputs{}).readSet((*scope.repo)),
 				&sourcecache.Policy{MaxAge: (*scope.repo).SourceInterval()},
+				nil,
 			)
 			assert.FatalIf(t, fetchErr == nil, "%s", "expected refresh to fail after upstream shutdown")
 		}
@@ -272,9 +284,13 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 	if (*scope.tc).commit {
 		(*scope.srv).Close()
 		assert.NoError(t, os.RemoveAll((*scope.src)))
-		committed, fetchErr2 := (*scope.f).Fetch(
-			t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
+		committed, fetchErr2 := fetchtest.Fetch(
+			t.Context(),
+			(*scope.f).Fetch,
+			(*scope.repo),
+			(testInputs{}).readSet((*scope.repo)),
 			&sourcecache.Policy{MaxAge: (*scope.tc).interval},
+			nil,
 		)
 		if (*scope.tc).mixed {
 			assert.FatalIf(t, fetchErr2 == nil || committed != nil, "%s", "mixed commit unexpectedly retained forever")
@@ -289,9 +305,13 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 	tip := mustCommitFile(t, (*scope.src), "later.txt", "new content")
 	assert.FatalIf(t, tip == (*scope.initial), "%s", "tip did not move")
 
-	second, (*scope.err) = (*scope.f).Fetch(
-		t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
+	second, (*scope.err) = fetchtest.Fetch(
+		t.Context(),
+		(*scope.f).Fetch,
+		(*scope.repo),
+		(testInputs{}).readSet((*scope.repo)),
 		&sourcecache.Policy{MaxAge: (*scope.repo).SourceInterval()},
+		nil,
 	)
 	assert.NoError(t, (*scope.err))
 	t.Logf(

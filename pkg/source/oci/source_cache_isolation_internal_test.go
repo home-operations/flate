@@ -3,6 +3,8 @@ package oci
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -26,11 +28,13 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 			Insecure:  true,
 			Reference: &sourcev1.OCIRepositoryRef{Digest: v.manifestDigest},
 		}
-		art, err := f.Fetch(
+		art, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			repo,
 			(testInputs{}).readSet(repo),
 			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			nil,
 		)
 		assert.NoError(t, err)
 
@@ -42,7 +46,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		if body != "first" {
 			continue
 		}
-		request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(repo.RegistryAccess()))
+		request, err := (&operation{Fetcher: f}).resolvedRepository(t.Context(), new(repo.RegistryAccess()))
 		assert.NoError(t, err)
 
 		identities := map[string]string{art.Key: "original"}

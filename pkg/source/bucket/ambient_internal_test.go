@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/testutil"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -61,14 +63,18 @@ func (f *operation) fetchMachine(
 	request := *requestValue
 	timeout := request.bucket.OperationTimeout()
 	policy.Timeout = &timeout
-	return source.AcquireMachine(
+	prepared, err := source.AcquireMachine(
 		ctx,
 		policy,
 		func(ctx context.Context) error { return request.machineCredentials(ctx, providers) },
-		func(ctx context.Context, policy *cache.Policy) (*store.SourceArtifact, error) {
+		func(ctx context.Context, policy *cache.Policy, _ *store.SourceArtifact) (*store.SourceArtifact, error) {
 			return f.fetch(ctx, &request, policy)
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
+	return prepared.Fetch(ctx, nil)
 }
 
 type bucketTransport func(*http.Request) (*http.Response, error)
@@ -162,7 +168,7 @@ func testFetcherMachineContinuationEligibilityCase1(t *testing.T, tc *struct {
 		return tc.cert
 	}}
 	f := &Fetcher{Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, inputs.readSet(b), &cache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, inputs.readSet(b), &cache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
 		errors.Is(err, manifest.ErrInput) != tc.wantInput ||
@@ -266,7 +272,7 @@ func TestFetcher_MachineIAMFailures(t *testing.T) {
 				Fetcher: &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)},
 				secrets: func(string, string) *manifest.Secret { return nil },
 			}
-			request, err := f.prepare(b)
+			request, err := f.preparedBucket(b)
 			assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
 			providers := []credentials.Provider{
 				&machineProvider{get: func(*credentials.CredContext) (credentials.Value, error) {
@@ -431,7 +437,7 @@ func testFetcherMachineContinuationCase1(
 	}
 	f := &Fetcher{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)}
 	initialRequests := inputs.requests.Load()
-	artifact, err := f.Fetch(t.Context(), b, &reads, &cache.Policy{MaxAge: time.Hour})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, &reads, &cache.Policy{MaxAge: time.Hour}, nil)
 	if (*inputs.tier) == "rejected" {
 		assert.FatalIf(
 			t,
@@ -448,7 +454,7 @@ func testFetcherMachineContinuationCase1(
 		assert.FatalIf(t, !ok || missing.RetryAmbient == nil,
 			"missing continuation: %v", err)
 
-		artifact, err = missing.RetryAmbient(t.Context())
+		artifact, err = fetchtest.Retry(t.Context(), missing.RetryAmbient)
 		rejection, rejected := errors.AsType[credentials.ErrorResponse](err)
 		assert.FatalIf(t, artifact != nil || !rejected || rejection.STSError.Code != "AccessDenied" ||
 			errors.Is(err, manifest.ErrMissingSecret) ||
@@ -463,15 +469,15 @@ func testFetcherMachineContinuationCase1(
 		assert.FatalIf(t, !ok || missing.RetryAmbient == nil || artifact != nil,
 			"missing auth did not retain continuation: %v", err)
 
-		before, prepErr := (&operation{Fetcher: f, secrets: source.SecretLookup(&reads)}).prepare(b)
+		before, prepErr := (&operation{Fetcher: f, secrets: source.SecretLookup(&reads)}).preparedBucket(b)
 		assert.Equal(t, errors.Is(prepErr, manifest.ErrMissingSecret), true)
 		t.Setenv("AWS_SECRET_ACCESS_KEY", "rotated-before-first-acquisition")
-		after, prepErr := (&operation{Fetcher: f, secrets: source.SecretLookup(&reads)}).prepare(b)
+		after, prepErr := (&operation{Fetcher: f, secrets: source.SecretLookup(&reads)}).preparedBucket(b)
 		assert.Equal(t, errors.Is(prepErr, manifest.ErrMissingSecret), true)
 		assert.FatalIf(t, before.material != nil || after.material != nil ||
 			before.options.Transport != after.options.Transport, "%s", "machine values changed transport identity")
 
-		artifact, err = missing.RetryAmbient(t.Context())
+		artifact, err = fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	}
 	testFetcherMachineContinuationCase1Tail(
 		t,
@@ -625,7 +631,7 @@ func testFetcherMachineProvidersCase(t *testing.T, failure **fs.PathError,
 		Fetcher: &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)},
 		secrets: func(string, string) *manifest.Secret { return nil },
 	}
-	request, err := f.prepare(b)
+	request, err := f.preparedBucket(b)
 	providers := []credentials.Provider{
 		&credentials.EnvAWS{},
 		&credentials.FileAWSCredentials{},
@@ -722,7 +728,7 @@ func testFetcherMachineAcquisitionFailuresCase(
 		Fetcher: &Fetcher{Cache: c, Network: newTestNetwork(t)},
 		secrets: func(string, string) *manifest.Secret { return nil },
 	}
-	request, err := f.prepare(b)
+	request, err := f.preparedBucket(b)
 	assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
 	providers := []credentials.Provider{
 		&machineProvider{

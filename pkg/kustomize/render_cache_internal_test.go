@@ -97,6 +97,7 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 	return snap, docs, true
 }
 
+//nolint:gocritic // Test helpers preserve independent key values while replacing callbacks.
 func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
 	tb.Helper()
 	if key.Render == sourcecache.RenderPending && renderPersistenceEligible(tb) {

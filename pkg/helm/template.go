@@ -49,17 +49,17 @@ func (c *Client) Template(
 	if err != nil {
 		return nil, nil, err
 	}
-	prepared.release, prepared.options, prepared.work = hr, input.Options, input.Work
+	prepared.release = hr
 
-	if input.Admit != nil {
-		if handled, admitErr := input.Admit(prepared.key); handled || admitErr != nil {
-			return nil, nil, admitErr
-		}
-	}
 	render := func(ctx context.Context, cacheErr error) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
 		return prepared.render(ctx, c, cacheErr)
 	}
 	if prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
+		if input.Admit != nil {
+			if handled, admitErr := input.Admit(RenderAdmission{Key: prepared.key}); handled || admitErr != nil {
+				return nil, nil, admitErr
+			}
+		}
 		return render(ctx, nil)
 	}
 	// Callback state MUST share one allocation to preserve cache-hit allocation counts.
@@ -71,6 +71,11 @@ func (c *Client) Template(
 			return prepared.validate(ctx, c, &result, generation)
 		},
 	}
+	if input.Admit != nil {
+		blobKey.Observe = func(_ context.Context, _ fs.FS) (bool, error) {
+			return result.admit(&prepared)
+		}
+	}
 	_, _, _, err = c.cache.Blob(
 		ctx,
 		blobKey,
@@ -80,18 +85,23 @@ func (c *Client) Template(
 		},
 	)
 	if err != nil {
+		if result.admissionErr != nil {
+			return nil, nil, result.admissionErr
+		}
 		if _, storage := errors.AsType[*cache.CacheError](err); !storage {
 			return nil, nil, err
 		}
 		return render(ctx, err)
 	}
+	if result.handled {
+		return nil, nil, nil
+	}
 	return normalizeLists(result.docs), result.receipt, nil
 }
 
 type templateRequest struct {
-	work          *manifest.RenderWork
+	input         RenderOptions
 	release       *manifest.HelmRelease
-	options       Options
 	loaded        chartDescription
 	caps          *common.Capabilities
 	capabilityErr error
@@ -162,6 +172,7 @@ func (c *Client) prepareTemplate(
 	}
 	work.Finish(nil)
 	return templateRequest{
+		input:         *input,
 		loaded:        loaded,
 		caps:          caps,
 		capabilityErr: capabilityErr,
@@ -545,7 +556,7 @@ func (r *templateRequest) render(
 	c *Client,
 	cacheErr error,
 ) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
-	decodeChartErr := c.decodeChart(ctx, &r.loaded, &RenderOptions{Work: r.work})
+	decodeChartErr := c.decodeChart(ctx, &r.loaded, &r.input)
 	if decodeChartErr != nil {
 		return nil, nil, decodeChartErr
 	}
@@ -555,7 +566,7 @@ func (r *templateRequest) render(
 		if ociChartVersionErr != nil {
 			return nil, nil, fmt.Errorf("track oci chart version: %w", ociChartVersionErr)
 		}
-		if !r.options.DisableChartDigestTracking {
+		if !r.input.Options.DisableChartDigestTracking {
 			trackedVersion = version
 		}
 	}
@@ -622,46 +633,60 @@ func (r *templateRequest) validate(
 		if err != nil || record == nil {
 			return false, err
 		}
-		var errResult error
-		result.docs, errResult = manifest.DecodeRender(record.Output)
-		if errResult != nil {
-			//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
-			return false, nil
-		}
 	} else {
 		record.identity = identity
 	}
+	current, documents, err := r.validateRecord(ctx, c, record)
+	if err != nil || current == nil {
+		return false, err
+	}
+	if current != r.loaded.record {
+		c.rememberDescription(&r.loaded, current)
+	}
+	result.docs, result.receipt, result.record = documents, current.receipt, current
+	return true, nil
+}
+
+func (r *templateRequest) validateRecord(
+	ctx context.Context,
+	c *Client,
+	record *renderRecord,
+) (*renderRecord, []manifest.DocOccurrence, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("validate rendered chart: %w", err)
+	}
 	if record.Analysis.RequiresLoader {
-		if decodeChartErr2 := c.decodeChart(ctx, &r.loaded, &RenderOptions{Work: r.work}); decodeChartErr2 != nil {
-			return false, decodeChartErr2
+		if err := c.decodeChart(ctx, &r.loaded, &r.input); err != nil {
+			return nil, nil, err
 		}
 	}
 	if r.loaded.oci != nil {
-		if _, ociChartVersionErr2 := ociChartVersion(
-			record.Analysis.Version,
-			r.loaded.artifact.Revision,
-		); ociChartVersionErr2 != nil {
-			return false, ociChartVersionErr2
+		if _, err := ociChartVersion(record.Analysis.Version, r.loaded.artifact.Revision); err != nil {
+			return nil, nil, err
 		}
 	}
-	if !record.binding.same(&r.binding) || record.receipt == nil {
-		fresh := *record
-		fresh.binding = r.binding
-		frame := record.frame
-		frame.binding = r.binding
-		binding := manifest.Fingerprint(r.binding)
-		if frame.header.Binding != binding {
-			frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-			frame.accepted, frame.acceptedKey = nil, ""
+	documents, err := manifest.DecodeRender(record.Output)
+	if err == nil {
+		if !record.binding.same(&r.binding) || record.receipt == nil {
+			fresh := *record
+			fresh.binding = r.binding
+			frame := record.frame
+			frame.binding = r.binding
+			binding := manifest.Fingerprint(r.binding)
+			if frame.header.Binding != binding {
+				frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
+				frame.accepted, frame.acceptedKey = nil, ""
+			}
+			fresh.frame = frame
+			fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+			record = &fresh
 		}
-		fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
-		record = &fresh
+		if err := ctx.Err(); err != nil {
+			return nil, nil, fmt.Errorf("validate rendered chart: %w", err)
+		}
+		return record, documents, nil
 	}
-	if record != r.loaded.record {
-		c.rememberDescription(&r.loaded, record)
-	}
-	result.receipt = record.receipt
-	return true, nil
+	return nil, nil, nil
 }
 
 func (r *templateRequest) produce(
@@ -701,12 +726,6 @@ func (r *templateRequest) produce(
 	return cache.ProducerResult{}, errResult2
 }
 
-type templateResult struct {
-	docs     []manifest.DocOccurrence
-	produced *renderRecord
-	receipt  *manifest.RenderReceipt
-}
-
 func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalValues map[string]any) (string, error) {
 	cfg := new(action.Configuration)
 	if initErr := cfg.Init(envSettings().RESTClientGetter(), r.release.ReleaseNamespace(), ""); initErr != nil {
@@ -719,16 +738,16 @@ func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalVal
 		deterministic.SeedFor(r.release.ReleaseName(), r.release.ReleaseNamespace()),
 	)
 
-	inst, disableHooks := newInstallAction(cfg, r.release, r.options, r.caps)
+	inst, disableHooks := newInstallAction(cfg, r.release, r.input.Options, r.caps)
 	if renderer, ok := inst.PostRenderer.(*kustomizePostRenderer); ok {
-		renderer.work = r.work.PostRender(r.key)
+		renderer.work = r.input.Work.PostRender(r.key)
 	}
 	inst.SkipSchemaValidation = schemaValidationSkipped(r.release)
 
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		slog.Debug("helm: render", "release", r.release.Named().String())
 	}
-	work := r.work.Engine(manifest.WorkHelm, r.key)
+	work := r.input.Work.Engine(manifest.WorkHelm, r.key)
 	work.Add(&manifest.WorkCounts{Attempts: 1})
 	rel, decodeChartErr := inst.RunWithContext(ctx, ch, finalValues)
 	work.Finish(decodeChartErr)
@@ -742,13 +761,13 @@ func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalVal
 
 	// Disabled dependencies must be pruned before validating their CRDs.
 	policy := (&helmv2.HelmRelease{Spec: r.release.HelmReleaseSpec}).GetInstall()
-	if r.options.SkipCRDs && policy.CRDs != helmv2.Skip {
+	if r.input.Options.SkipCRDs && policy.CRDs != helmv2.Skip {
 		if validateCRDsErr := validateCRDs(ch); validateCRDsErr != nil {
 			return "", validateCRDsErr
 		}
 	}
 
-	skipTests := r.options.SkipTests || r.release.Test == nil || !r.release.Test.Enable
+	skipTests := r.input.Options.SkipTests || r.release.Test == nil || !r.release.Test.Enable
 	return releaseManifest(relV1, disableHooks, skipTests), nil
 }
 

@@ -75,8 +75,9 @@ func Render(
 	var result renderResult
 
 	blobKey := sourcecache.BlobKey{
-		Content: prepared.key,
-		Render:  sourcecache.RenderPending,
+		Content:  prepared.key,
+		Accepted: prepared.inventory,
+		Render:   sourcecache.RenderPending,
 		Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
 			return prepared.validate(ctx, cache, &result, generation)
 		},
@@ -108,6 +109,7 @@ type renderRequest struct {
 	maxAge    time.Duration
 	lower     fs.FS
 	root, key string
+	inventory string
 	binding   renderBinding
 }
 
@@ -147,6 +149,13 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
 	key := renderKey(&req, root, ignore)
+	inventory := key
+	if req.Spec != nil && req.Spec.Named().ReportHidden() {
+		entry := req
+		entry.Spec = manifest.NewEntryKustomization(req.Spec.SourceID(), req.Spec.Name, manifest.NamedResource{})
+		entry.SubPath = entry.Spec.Path
+		inventory = renderKey(&entry, root, ignore)
+	}
 	req.Work.Fingerprint(key)
 	source := manifest.BootstrapSourceID
 	if req.Spec != nil {
@@ -154,7 +163,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	}
 	work.Finish(nil)
 	return renderRequest{
-		lower: lower, root: root, key: key,
+		lower: lower, root: root, key: key, inventory: inventory,
 		binding: renderBinding{
 			key,
 			source,
@@ -300,7 +309,7 @@ func (r *renderRequest) validate(
 		//nolint:nilerr // Incomplete render output must reject cache publication without failing the local result.
 		return false, nil
 	}
-	frame.binding = r.binding
+	frame.binding, frame.inventory = r.binding, r.inventory
 	binding := manifest.Fingerprint(r.binding)
 	if frame.header.Binding != binding {
 		frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
@@ -365,8 +374,13 @@ func (r *renderRequest) produce(
 	if cleanedAbsErr != nil {
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
+	header := renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()}
+	if r.request.Spec != nil && r.request.Spec.Named().ReportHidden() {
+		header.EntrySpec = r.request.Spec.Clone()
+		header.EntrySpec.EntryReceipt = nil
+	}
 	data, cleanedAbsErr := encodeFrame(
-		&renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
+		&header,
 		payload,
 	)
 	if cleanedAbsErr == nil {

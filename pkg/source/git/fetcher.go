@@ -66,10 +66,13 @@ func (f *Fetcher) Fetch(
 	repo *manifest.GitRepository,
 	reads *store.ReadSet,
 	policyValue *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
-	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
+	innerOperation := operation{
+		Fetcher: f,
+		reads:   reads,
+		secrets: source.SecretLookup(reads),
+	}
 	return innerOperation.fetchSource(ctx, repo, &policy)
 }
 
@@ -77,11 +80,10 @@ func (f *operation) fetchSource(
 	ctx context.Context,
 	repo *manifest.GitRepository,
 	policyValue *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return source.PreparedFetch{}, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	f.work.Scope = f.reads.Work().Scope()
 	if policy.Work != nil {
@@ -96,9 +98,13 @@ func (f *operation) fetchSource(
 	request, err := f.resolveTransport(repo, &policy)
 	work.Finish(err)
 	if err != nil {
-		return nil, err
+		return source.PreparedFetch{}, err
 	}
-	return f.fetch(ctx, &request, &policy)
+	return source.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			return request.complete(ctx, f.Fetcher, &policy, local)
+		},
+	}, nil
 }
 
 func (f *operation) resolveTransport(
@@ -106,8 +112,7 @@ func (f *operation) resolveTransport(
 	policyValue *sourcecache.Policy,
 ) (gitAcquisition, error) {
 	policy := *policyValue
-
-	endpoint, err := f.validateRepo(repo)
+	endpoint, err := f.validateRepo(repo, true)
 	if err != nil {
 		return gitAcquisition{}, err
 	}
@@ -155,12 +160,12 @@ func (f *operation) resolveTransport(
 	if err != nil {
 		return gitAcquisition{}, err
 	}
+	var secretMaterial any
+	if sec != nil {
+		secretMaterial = [2]any{sec.Data, sec.StringData}
+	}
 	var material any
 	if sec != nil || opts.ProxyOptions.URL != "" {
-		var secretMaterial any
-		if sec != nil {
-			secretMaterial = [2]any{sec.Data, sec.StringData}
-		}
 		material = [2]any{secretMaterial, opts.ProxyOptions}
 	}
 	if authErr == nil && auth == nil && repo.Provider == sourcev1.GitProviderGitHub {
@@ -178,20 +183,23 @@ func (f *operation) resolveTransport(
 	if skipTLS {
 		timeout := repo.OperationTimeout()
 		policy.Timeout = &timeout
-		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+		missing.RetryAmbient = func(ctx context.Context) (source.PreparedFetch, error) {
 			return f.retrySSH(ctx, &request, &policy, endpoint)
 		}
 		return request, authErr
 	}
-	missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-		return source.AcquireMachine(ctx, &policy,
+	missing.RetryAmbient = func(ctx context.Context) (source.PreparedFetch, error) {
+		prepared, err := source.AcquireMachine(
+			ctx,
+			&policy,
 			func(context.Context) error { return nil },
-			func(ctx context.Context, policyValue *sourcecache.Policy) (*store.SourceArtifact, error) {
+			func(ctx context.Context, policyValue *sourcecache.Policy, local *store.SourceArtifact) (*store.SourceArtifact, error) {
 				policy := *policyValue
-
-				return f.fetch(ctx, &request, &policy)
+				return request.complete(ctx, f.Fetcher, &policy, local)
 			},
 		)
+		prepared.LocalUnavailable = missing
+		return prepared, err
 	}
 	return request, authErr
 }
@@ -218,6 +226,34 @@ func gitProxyOptions(repoURL string, resolved *source.TransportMaterial) (transp
 		options.URL = selected.String()
 	}
 	return options, nil
+}
+
+type gitAcquisition struct {
+	work     *manifest.AcquisitionWork
+	protocol string
+	timeout  time.Duration
+	spec     *manifest.GitRepository
+	options  git.CloneOptions
+	material any
+}
+
+func (r *gitAcquisition) complete(
+	ctx context.Context,
+	f *Fetcher,
+	policyValue *sourcecache.Policy,
+	local *store.SourceArtifact,
+) (*store.SourceArtifact, error) {
+	policy := *policyValue
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("acquire git: %w", err)
+	}
+	if local != nil {
+		return local, nil
+	}
+	if _, err := f.validateRepo(r.spec, false); err != nil {
+		return nil, err
+	}
+	return f.fetch(ctx, r, &policy)
 }
 
 func (f *Fetcher) fetch(
@@ -354,15 +390,6 @@ func gitWarnings(input *gittree.FS, id manifest.NamedResource, repository, ref s
 	return warnings
 }
 
-type gitAcquisition struct {
-	work     *manifest.AcquisitionWork
-	protocol string
-	timeout  time.Duration
-	spec     *manifest.GitRepository
-	options  git.CloneOptions
-	material any
-}
-
 func (f *Fetcher) acquire(
 	ctx context.Context,
 	storer storage.Storer,
@@ -464,7 +491,7 @@ func initRemote(storer storage.Storer, worktree billy.Filesystem, remoteURL stri
 	return repo, nil
 }
 
-func (f *Fetcher) validateRepo(repo *manifest.GitRepository) (*transport.Endpoint, error) {
+func (f *Fetcher) validateRepo(repo *manifest.GitRepository, admitted bool) (*transport.Endpoint, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is nil")
 	}
@@ -475,7 +502,7 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository) (*transport.Endpoin
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("parse git endpoint: %w", err), "")
 	}
-	if f.RestrictSchemes {
+	if f.RestrictSchemes && !admitted {
 		// Restricted scp-style remotes require an explicit user.
 		allowedSSH := endpoint.Protocol == sshScheme && (endpoint.User != "" || strings.HasPrefix(repo.URL, "ssh://"))
 		if endpoint.Protocol != "https" && !allowedSSH {
@@ -494,34 +521,38 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository) (*transport.Endpoin
 
 func (f *operation) retrySSH(
 	ctx context.Context, request *gitAcquisition, policyValue *sourcecache.Policy, endpoint *transport.Endpoint,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
 	repo := request.spec
 	user := cmp.Or(endpoint.User, "git")
 	prepared := *request
 	var conn net.Conn
-	defer func() {
-		if conn != nil {
-			_ = conn.Close()
-		}
-	}()
-	return source.AcquireMachine(ctx, &policy, func(ctx context.Context) error {
-		auth, opened, keys, err := machineSSHAuthentication(ctx, repo, user)
+	var stop func() bool
+	result, err := source.AcquireMachine(ctx, &policy, func(preparation context.Context) error {
+		auth, opened, keys, err := machineSSHAuthentication(preparation, repo, user)
 		conn = opened
 		if err != nil {
 			return err
 		}
+		stop = context.AfterFunc(ctx, func() { _ = opened.Close() })
 		prepared.options.Auth = auth
 		prepared.material = [3]any{request.material, user, keys}
 		return nil
-	}, func(ctx context.Context, policyValue *sourcecache.Policy) (*store.SourceArtifact, error) {
+	}, func(ctx context.Context, policyValue *sourcecache.Policy, local *store.SourceArtifact) (*store.SourceArtifact, error) {
 		policy := *policyValue
-
-		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 		defer stop()
-		return f.fetch(ctx, &prepared, &policy)
+		defer conn.Close()
+		return prepared.complete(ctx, f.Fetcher, &policy, local)
 	})
+	if err != nil {
+		if stop != nil {
+			stop()
+		}
+		if conn != nil {
+			_ = conn.Close()
+		}
+	}
+	return result, err
 }
 
 func machineSSHAuthentication(

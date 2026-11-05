@@ -387,6 +387,15 @@ func (s *Store) contributionBinding(id manifest.NamedResource) sourceBinding {
 
 // Bootstrap promotion alone supplies no independent authority against accepted output.
 func bootstrapSeed(productions []manifest.Production) bool {
+	if slices.ContainsFunc(productions, func(p manifest.Production) bool {
+		return p.Owner == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) &&
+			p.Source == manifest.BootstrapSourceID && p.Path == "" && p.File == ""
+	}) {
+		return !slices.ContainsFunc(productions, func(p manifest.Production) bool {
+			return p.Owner == (manifest.NamedResource{}) &&
+				(p.Source != manifest.BootstrapSourceID || p.Path != "" || p.File != "")
+		})
+	}
 	return len(productions) > 0 && !slices.ContainsFunc(productions, func(p manifest.Production) bool {
 		return p.Owner != (manifest.NamedResource{}) || p.Declaration != (manifest.NamedResource{}) ||
 			p.Source != manifest.BootstrapSourceID
@@ -526,6 +535,10 @@ func (sh *shard) addProductionMembers(
 	if cell.hidden && cell.reference == nil {
 		result.reset(nil)
 		return
+	}
+	// A directly bound declaration can precede its discovery record.
+	if cell.static != nil && cell.binding != nil && cell.support == nil && len(result.out) == 0 && cell.bound() {
+		result.add(&manifest.Production{Source: cell.binding.Ref.NamedResource})
 	}
 	if cell.static != nil && cell.retired && provisional {
 		result.reset(nil)

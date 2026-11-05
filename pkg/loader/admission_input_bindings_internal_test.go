@@ -242,6 +242,8 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 	l.sideKnown, l.side = true, manifest.TreeHead
 	l.freezeConstruction()
 	input := stores[1].GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+	input = input.WithReads(input.Reads)
+	stores[1].SetArtifact(source.Named(), input)
 	var captured [2]store.ReadSet
 	closers := make([]func(), 0, len(captured))
 	defer func() {

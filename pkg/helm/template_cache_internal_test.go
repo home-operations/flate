@@ -257,7 +257,12 @@ data:
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt5, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt5,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -276,7 +281,12 @@ data:
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt6, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt6,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -293,7 +303,12 @@ data:
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt7, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt7,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -315,7 +330,12 @@ data:
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt8, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt8,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -337,7 +357,12 @@ data:
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt9, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt9,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -448,7 +473,12 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt1, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt1,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -491,7 +521,12 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt2, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt2,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -567,7 +602,12 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt3, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt3,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -605,7 +645,12 @@ func testTemplateCacheOCIIdentityOneAdmittedArtifact(t *testing.T) {
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt4, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt4,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}

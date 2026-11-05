@@ -12,6 +12,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -28,7 +30,7 @@ func TestHelmRepoTransport_NoCertRef(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	f, fInputs := newHTTPFetcherWithSecrets(t, r, nil)
 
-	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
+	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).resolvedHTTP(r)
 	assert.FatalIf(t, err != nil, "prepareHTTP: %v", err)
 	expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{DisableCompression: true})
 	assert.NoError(t, err)
@@ -49,7 +51,7 @@ func TestHelmRepoTransport_CertSecret(t *testing.T) {
 		return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
 	})
 
-	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
+	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).resolvedHTTP(r)
 	assert.FatalIf(t, err != nil, "prepareHTTP: %v", err)
 	material, err := source.ResolveTransport(
 		fInputs.secrets,
@@ -73,7 +75,7 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	preparedHTTP(t, f, fInputs, r)
 	secret = nil
 
-	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
+	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).resolvedHTTP(r)
 	assert.FatalIf(t, err == nil, "%s", "expected an error for an absent certSecretRef Secret")
 
 	assert.ErrorIf(
@@ -119,7 +121,7 @@ func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
 			f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
 			preparedHTTP(t, f, fInputs, r)
 			secret = &manifest.Secret{StringData: tc.data}
-			prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
+			prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).resolvedHTTP(r)
 			assert.FatalIf(t, err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.soft || prepared != nil,
 				"warm memo bypassed material policy: repository=%v, error=%v", prepared, err)
 		})
@@ -203,11 +205,13 @@ func TestHelmRepoTransport_OwnedCleanup(t *testing.T) {
 	f := New(nil, Config{Cache: cachetest.New(t, "", sourcecache.New), Network: network})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, err := f.Fetch(
+	_, err := fetchtest.Fetch(
 		ctx,
+		f.Fetch,
 		helmChart("repo", "app", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "app", "1.0.0")),
 		&sourcecache.Policy{},
+		nil,
 	)
 	assert.FatalIf(t, err == nil, "%s", "malformed index unexpectedly succeeded")
 
@@ -294,7 +298,7 @@ func testHelmRepoTransportClientReuseCase(t *testing.T, ca *string,
 	for i, repo := range []*manifest.HelmRepository{r, &other} {
 		wg.Go(func() {
 			<-start
-			prepared[i], errs[i] = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).prepareHTTP(repo)
+			prepared[i], errs[i] = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolvedHTTP(repo)
 		})
 	}
 	testHelmRepoTransportClientReuseCaseCompletion(
@@ -345,7 +349,7 @@ func testHelmRepoTransportClientReuseCaseCompletion(
 		"credential-free identity must be empty",
 	)
 
-	warm, err := (&operation{Fetcher: (*captures.f), secrets: captures.fInputs.lookup((*captures.r))}).prepareHTTP(
+	warm, err := (&operation{Fetcher: (*captures.f), secrets: captures.fInputs.lookup((*captures.r))}).resolvedHTTP(
 		(*captures.r),
 	)
 	assert.FatalIf(t, (*(*captures.settings)) != "ambient" && err != nil || (*(*captures.settings)) ==

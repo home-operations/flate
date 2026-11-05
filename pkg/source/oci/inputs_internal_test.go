@@ -18,6 +18,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -83,7 +85,7 @@ func TestFetcher_InputsRequireRegistry(t *testing.T) {
 		Type:      fluxopv1.InputProviderStatic,
 		URL:       "oci://registry.test/app",
 	}
-	_, err := (&Fetcher{}).FetchInputs(t.Context(), provider, nil, &cache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), (&Fetcher{}).FetchInputs, provider, nil, &cache.Policy{}, nil)
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "non-registry inputs: %v", err)
 }
 
@@ -223,7 +225,7 @@ func TestFetcher_InputsMachineCredentialsReuse(t *testing.T) {
 	repo := &manifest.OCIRepository{Name: "source", Namespace: "apps", URL: provider.URL, Insecure: true}
 	sourceReads := (testInputs{}).readSet(repo)
 	defer sourceReads.Close()
-	_, err := f.Fetch(t.Context(), repo, sourceReads, &cache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, sourceReads, &cache.Policy{}, nil)
 	assert.NoError(t, err)
 	var original *store.SourceArtifact
 	for invocation := range 3 {
@@ -232,7 +234,7 @@ func TestFetcher_InputsMachineCredentialsReuse(t *testing.T) {
 			t.Setenv("FLATE_HELPER_SECRET", "second")
 		}
 		reads := (testInputs{}).readSet(provider)
-		got, err := f.FetchInputs(t.Context(), provider, reads, &cache.Policy{MaxAge: time.Hour})
+		got, err := fetchtest.Fetch(t.Context(), f.FetchInputs, provider, reads, &cache.Policy{MaxAge: time.Hour}, nil)
 		reads.Close()
 		assert.NoError(t, err)
 		if invocation == 0 {
@@ -335,7 +337,7 @@ func testFetcherInputsSelectionAndRefreshCase(
 			changed.Store(true)
 		}
 		reads := (testInputs{}).readSet(provider)
-		artifact, err := f.FetchInputs(t.Context(), provider, reads, &cache.Policy{})
+		artifact, err := fetchtest.Fetch(t.Context(), f.FetchInputs, provider, reads, &cache.Policy{}, nil)
 		reads.Close()
 		assert.NoError(t, err)
 		var got []map[string]any
@@ -380,7 +382,7 @@ func testFetcherInputsSelectionAndRefreshCase(
 	empty.Filter = &fluxopv1.ResourceSetInputFilter{IncludeTag: "^absent$"}
 	reads := (testInputs{}).readSet(&empty)
 	defer reads.Close()
-	artifact, err := f.FetchInputs(t.Context(), &empty, reads, &cache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.FetchInputs, &empty, reads, &cache.Policy{}, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, mustReadFile(t, artifact.FS, "inputs.json"), "[]\n")
 	assert.Equal(t, heads.Load(), int32(6))
@@ -499,7 +501,14 @@ func testFetcherInputsAuthenticationCaseCompletion(
 		ctx, done = context.WithDeadline(ctx, time.Unix(0, 0))
 		defer done()
 	}
-	artifact, err := (*captures.f).FetchInputs(ctx, (*captures.provider), (*captures.reads), &cache.Policy{})
+	artifact, err := fetchtest.Fetch(
+		ctx,
+		(*captures.f).FetchInputs,
+		(*captures.provider),
+		(*captures.reads),
+		&cache.Policy{},
+		nil,
+	)
 	assert.FatalIf(
 		t,
 		artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != (*captures.tc).wantMissing,
@@ -611,7 +620,7 @@ func testFetcherInputsCanceledWorkCase(t *testing.T, stage *string,
 	defer cancel()
 	done := make(chan error)
 	go func() {
-		artifact, err := f.FetchInputs(ctx, provider, reads, &cache.Policy{})
+		artifact, err := fetchtest.Fetch(ctx, f.FetchInputs, provider, reads, &cache.Policy{}, nil)
 		if artifact != nil {
 			err = fmt.Errorf("partial artifact admitted: %v", artifact)
 		}
@@ -626,7 +635,7 @@ func testFetcherInputsCanceledWorkCase(t *testing.T, stage *string,
 		"canceled acquisition: %v",
 		err,
 	)
-	got, err := f.FetchInputs(t.Context(), provider, reads, &cache.Policy{})
+	got, err := fetchtest.Fetch(t.Context(), f.FetchInputs, provider, reads, &cache.Policy{}, nil)
 	assert.NoError(t, err)
 	var inputs []map[string]any
 	assert.NoError(t, json.Unmarshal([]byte(mustReadFile(t, got.FS, "inputs.json")), &inputs))
@@ -676,11 +685,13 @@ func testFetcherInputsRetryCase(t *testing.T, stage *string,
 		Cache:          cachetest.New(t, t.TempDir(), cache.New),
 		RegistryConfig: config,
 	}
-	got, err := f.FetchInputs(
+	got, err := fetchtest.Fetch(
 		t.Context(),
+		f.FetchInputs,
 		provider,
 		reads,
 		&cache.Policy{Retry: cache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}},
+		nil,
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -718,11 +729,13 @@ func testFetcherInputsAcquisitionWave(t *testing.T, captures *testFetcherInputsA
 		reads := captures.inputs.readSet((*captures.provider))
 		reads.SetWork(&captures.work[index])
 		defer reads.Close()
-		captures.artifacts[index], captures.failures[index] = (*captures.f).FetchInputs(
+		captures.artifacts[index], captures.failures[index] = fetchtest.Fetch(
 			t.Context(),
+			(*captures.f).FetchInputs,
 			(*captures.provider),
 			reads,
 			&policy,
+			nil,
 		)
 	}
 	wg.Go(func() { run(0) })
@@ -764,7 +777,7 @@ func testFetcherInputsAcquisitionWave(t *testing.T, captures *testFetcherInputsA
 	reads := captures.inputs.readSet((*captures.provider))
 	defer reads.Close()
 	reads.SetWork(&captures.work[2])
-	_, err := (*captures.f).FetchInputs(t.Context(), (*captures.provider), reads, &cache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), (*captures.f).FetchInputs, (*captures.provider), reads, &cache.Policy{}, nil)
 	assert.NoError(t, err)
 	if got := captures.lists.Load(); got != 2 {
 		t.Fatalf("new acquisition wave listed tags %d times, want 2", got)

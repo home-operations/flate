@@ -6,6 +6,7 @@ import (
 	"iter"
 	"log/slog"
 	"maps"
+	"path/filepath"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -46,10 +47,13 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 		}
 	}
 	o.preparation = proposal
-	history := map[manifest.NamedResource]struct {
-		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-		Complete bool
-	}{}
+	history := maps.Clone(o.history)
+	if history == nil {
+		history = map[manifest.NamedResource]struct {
+			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+			Complete bool
+		}{}
+	}
 	defer func() {
 		for range o.store.Sweep() {
 		}
@@ -58,10 +62,10 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	if err := o.prepareNeededHistory(ctx, proposal.Needed, history); err != nil {
 		return err
 	}
+	o.history = history
 	if _, err := o.admitEntry(ctx); err != nil {
 		return err
 	}
-	o.history = history
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context: %w", err)
 	}
@@ -146,26 +150,50 @@ func (o *Orchestrator) lookupHistory(ctx context.Context) error {
 	}
 	var query []manifest.SourceEvidence
 	changes := o.cfg.ExternalChanges
+	entryPath := ""
+	if o.cfg.Input != nil {
+		relative, err := filepath.Rel(o.cfg.Input.LocalPath, o.cfg.Path)
+		if err == nil {
+			entry := manifest.NewEntryKustomization(
+				manifest.BootstrapSourceID,
+				filepath.ToSlash(relative),
+				manifest.NamedResource{},
+			)
+			if !o.index.Records[entry.Named()].StaticOutput {
+				entryPath = filepath.ToSlash(relative)
+			}
+		}
+	}
 	for source := range changes.Sources() {
-		query = o.appendHistoryQuery(query, source, changes)
+		query = o.appendHistoryQuery(query, source, changes, entryPath)
 	}
 	producers, err := o.cache.ProducersForPaths(ctx, query)
 	if err != nil {
 		return err
 	}
 	o.loader.Options.HistoryOwners = append([]manifest.NamedResource{}, producers...)
-	return nil
+	if o.history == nil {
+		o.history = map[manifest.NamedResource]struct {
+			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+			Complete bool
+		}{}
+	}
+	return o.prepareNeededHistory(ctx, producers, o.history)
 }
 
 func (o *Orchestrator) appendHistoryQuery(
 	query []manifest.SourceEvidence,
 	source manifest.NamedResource,
 	changes *change.Set,
+	entryPath string,
 ) []manifest.SourceEvidence {
 	delta, inputs, _ := changes.ForSource(source)
 	paths := delta.Paths()
 	if len(paths) == 0 {
 		return query
+	}
+	if source == manifest.BootstrapSourceID && entryPath != "" {
+		paths = append(slices.Clone(paths), entryPath)
 	}
 	found := false
 	for _, input := range inputs {
@@ -230,9 +258,6 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	}
 	o.changeNamespaces = proposal.Namespaces
 	o.preparation = nil
-	if len(o.admission.EntryInputs()) == 0 {
-		o.history = nil
-	}
 	o.loader.Options.HistoryOwners = nil
 	if changes := o.cfg.ExternalChanges; changes != nil && changes.Len() == 0 && len(o.filter.KeepNames()) == 0 &&
 		o.cfg.BaseInput != nil {

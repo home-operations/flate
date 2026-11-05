@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	src "github.com/home-operations/flate/pkg/source"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -230,13 +232,21 @@ func (f *advisorySourceFetcher) Fetch(
 	manifest.BaseManifest,
 	*store.ReadSet,
 	*sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	f.calls.Add(1)
-	return &store.SourceArtifact{
-		Kind:      manifest.KindGitRepository,
-		Key:       "advisory-source",
-		FS:        os.DirFS(f.root),
-		LocalPath: f.root,
+) (src.PreparedFetch, error) {
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			f.calls.Add(1)
+			return &store.SourceArtifact{
+				Kind:      manifest.KindGitRepository,
+				Key:       "advisory-source",
+				FS:        os.DirFS(f.root),
+				LocalPath: f.root,
+			}, nil
+		},
 	}, nil
 }
 

@@ -179,7 +179,12 @@ func testTemplateCacheTemplateIntegrationCase(
 			t,
 			cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			),
 		)
 	}
@@ -356,7 +361,8 @@ func testTemplateCacheTemplateIntegrationCase2(
 				t.Context(),
 				hr,
 				values,
-				RenderOptions{Sources: cliSources, Admit: func(value string) (bool, error) {
+				RenderOptions{Sources: cliSources, Admit: func(admission RenderAdmission) (bool, error) {
+					value := admission.Key
 					key = value
 					return false, nil
 				}},
@@ -400,7 +406,12 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt12, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   newHR().Named(),
+						Receipt: receipt12,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -489,7 +500,12 @@ extra: {sequence: [{value: original}]}
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt13, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt13,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -511,7 +527,12 @@ extra: {sequence: [{value: original}]}
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt14, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt14,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -523,7 +544,8 @@ extra: {sequence: [{value: original}]}
 	blocked, receipt15, err := testutil.RenderMaps(
 		cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{
 			Sources: cliSources,
-			Admit: func(key string) (bool, error) {
+			Admit: func(admission RenderAdmission) (bool, error) {
+				key := admission.Key
 				admittedKey = key
 				return true, nil
 			},
@@ -533,7 +555,12 @@ extra: {sequence: [{value: original}]}
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt15, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt15,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -561,7 +588,12 @@ extra: {sequence: [{value: original}]}
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt16, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt16,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -611,7 +643,12 @@ extra: {sequence: [{value: original}]}
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt17, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt17,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -651,7 +688,12 @@ extra: {sequence: [{value: original}]}
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt26, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt26,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -699,7 +741,12 @@ func testTemplateCacheTemplateIntegrationCase3Loop(t *testing.T, loopInputs stru
 			{
 				recordErr := (*loopInputs.cli).RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: newHR().Named(), Receipt: receipt27, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   newHR().Named(),
+						Receipt: receipt27,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}

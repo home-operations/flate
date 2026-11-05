@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/pkg/source/bucket"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -52,7 +54,14 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 		BucketName: "x", Endpoint: "s3.amazonaws.com",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(context.Background(), b, fInputs.readSet(b), &cache.Policy{MaxAge: b.SourceInterval()})
+	_, err := fetchtest.Fetch(
+		context.Background(),
+		f.Fetch,
+		b,
+		fInputs.readSet(b),
+		&cache.Policy{MaxAge: b.SourceInterval()},
+		nil,
+	)
 	assert.FatalIf(t, err == nil, "expected missing-secret error")
 	assert.ErrorIf(
 		t,
@@ -157,13 +166,13 @@ func testFetcherTransientStatusRecoveryCase(t *testing.T, tc *struct {
 	t.Cleanup(srv.Close)
 	c := cachetest.New(t, "", cache.New)
 	f := &bucket.Fetcher{Network: newTestNetwork(t), Cache: c}
-	_, err := f.Fetch(t.Context(), &manifest.Bucket{
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, &manifest.Bucket{
 		Name: "retry", Namespace: "test", BucketName: "data",
 		Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
 	}, (testInputs{}).readSet(&manifest.Bucket{
 		Name: "retry", Namespace: "test", BucketName: "data",
 		Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
-	}), &cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}})
+	}), &cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}}, nil)
 	if tc.status == http.StatusForbidden {
 		cause, ok := errors.AsType[minio.ErrorResponse](err)
 		response, typed := errors.AsType[*fetcherr.ResponseError](err)
@@ -223,7 +232,7 @@ func testFetcherTimeoutRecoveryCase(t *testing.T, reopen *bool,
 		Insecure: true, Region: "us-east-1", Timeout: &metav1.Duration{Duration: time.Second},
 	}
 	policy := cache.Policy{MaxAge: time.Hour}
-	artifact, err := f.Fetch(t.Context(), b, (testInputs{}).readSet(b), &policy)
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, (testInputs{}).readSet(b), &policy, nil)
 	assert.FatalIf(
 		t,
 		!errors.Is(err, context.DeadlineExceeded) || artifact != nil,
@@ -248,7 +257,7 @@ func testFetcherTimeoutRecoveryCase(t *testing.T, reopen *bool,
 	blocked.Store(false)
 	longer := *b
 	longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
-	artifact, err = f.Fetch(t.Context(), &longer, (testInputs{}).readSet(&longer), &policy)
+	artifact, err = fetchtest.Fetch(t.Context(), f.Fetch, &longer, (testInputs{}).readSet(&longer), &policy, nil)
 	assert.FatalIf(t, err != nil, "longer policy reused timeout: %v", err)
 	{
 		data, err := fs.ReadFile(artifact.FS, "hello.txt")
@@ -284,11 +293,13 @@ func testFetcherTerminalStatusReplayCase(t *testing.T, status *int,
 		Endpoint: srv.URL, Insecure: true, Region: "us-east-1",
 	}
 	retry := cache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond}
-	_, err = f.Fetch(
+	_, err = fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		b,
 		(testInputs{}).readSet(b),
 		&cache.Policy{MaxAge: b.SourceInterval(), Retry: retry},
+		nil,
 	)
 	terminal, ok := errors.AsType[*cache.TerminalError](err)
 	cause, typed := errors.AsType[*fetcherr.ResponseError](err)
@@ -372,11 +383,13 @@ func testFetcherTerminalStatusReplayCase(t *testing.T, status *int,
 
 	t.Cleanup(func() { _ = reopened.Close() })
 	f.Cache = reopened
-	_, err = f.Fetch(
+	_, err = fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		b,
 		(testInputs{}).readSet(b),
 		&cache.Policy{MaxAge: b.SourceInterval(), Retry: retry},
+		nil,
 	)
 	terminal, ok = errors.AsType[*cache.TerminalError](err)
 	cause, typed = errors.AsType[*fetcherr.ResponseError](err)
@@ -455,8 +468,14 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 			assert.NoError(t, err)
 		}
 	}
-	_, err := f.Fetch(
-		t.Context(),
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, &manifest.Bucket{
+		Name:       "network",
+		Namespace:  "test",
+		BucketName: "data",
+		Endpoint:   target,
+		Insecure:   true,
+		Region:     "us-east-1",
+	}, (testInputs{}).readSet(
 		&manifest.Bucket{
 			Name:       "network",
 			Namespace:  "test",
@@ -465,18 +484,7 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 			Insecure:   true,
 			Region:     "us-east-1",
 		},
-		(testInputs{}).readSet(
-			&manifest.Bucket{
-				Name:       "network",
-				Namespace:  "test",
-				BucketName: "data",
-				Endpoint:   target,
-				Insecure:   true,
-				Region:     "us-east-1",
-			},
-		),
-		&cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}},
-	)
+	), &cache.Policy{Retry: cache.RetryConfig{Attempts: 3, MinWait: time.Hour}}, nil)
 	terminal, ok := errors.AsType[*cache.TerminalError](err)
 	wantLists := int32(0)
 	if (*route) == "object" {

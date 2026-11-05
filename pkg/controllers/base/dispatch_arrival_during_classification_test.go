@@ -28,80 +28,92 @@ func TestDispatch_ArrivalDuringClassification(t *testing.T) {
 	for _, suspended := range []bool{false, true} {
 		t.Run(strconv.FormatBool(suspended), func(t *testing.T) {
 			t.Parallel()
-			st := store.New()
-			tasks := task.NewBounded(2)
-			parent := &manifest.Kustomization{Name: "publisher", Namespace: "apps"}
-			child := &manifest.HelmRelease{
-				ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
-				Name:      "consumer",
-				Namespace: "apps",
-			}
-			st.AddObject(child)
-			st.SetDiscoveryIndex(
-				&manifest.DiscoveryIndex{
-					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-						child.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
-					},
-				},
-			)
-			entered, published := make(chan struct{}), make(chan struct{})
-			c := base.New(st, tasks)
-			c.Configure(base.Options{Existence: declarationPromotion(func(id manifest.NamedResource) bool {
-				if id != parent.Named() {
-					t.Errorf("unrelated promotion: %s", id)
-					return false
-				}
-				close(entered)
-				tasks.YieldSlot(func() { <-published })
-				return true
-			})})
-			var run *base.Execution
-			var bodies atomic.Int64
-			tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
-				run = controllertest.NewExecution(c, child.Named())
-				run.Dispatch(
-					ctx,
-					manifest.DrainNone,
-					struct{}{},
-					func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-						bodies.Add(1)
-						return nil
-					},
-				)
-			})
-			tasks.Go(t.Context(), "publish", func(context.Context) {
-				tasks.YieldSlot(func() { <-entered })
-				st.AddObject(parent)
-				accepted := child.Clone()
-				accepted.Suspend = suspended
-				st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}, nil)
-				st.UpdateStatus(
-					parent.Named(),
-					store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"},
-				)
-				close(published)
-			})
-			tasks.BlockTillDone()
-			if tasks.Failures() != 0 || run.Valid() || bodies.Load() != 0 {
-				t.Fatalf("stale dispatch continued: bodies=%d valid=%t", bodies.Load(), run.Valid())
-			}
-			run.Close()
-			fresh := controllertest.NewExecution(c, child.Named())
-			fresh.Dispatch(
-				t.Context(),
-				manifest.DrainNone,
-				struct{}{},
-				func(_ struct{}, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-					bodies.Add(1)
-					return nil
-				},
-			)
-			info, _ := st.GetStatus(child.Named())
-			if suspended && (bodies.Load() != 0 || info.Outcome() != store.OutcomeSuspended) ||
-				!suspended && bodies.Load() != 1 {
-				t.Fatalf("fresh declaration gate: bodies=%d status=%+v", bodies.Load(), info)
-			}
+			testDispatchArrivalDuringClassificationCase(t, suspended)
 		})
+	}
+}
+
+func testDispatchArrivalDuringClassificationCase(t *testing.T, suspended bool) {
+	t.Helper()
+
+	st := store.New()
+	tasks := task.NewBounded(2)
+	parent := &manifest.Kustomization{Name: "publisher", Namespace: "apps"}
+	child := &manifest.HelmRelease{
+		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
+		Name:      "consumer",
+		Namespace: "apps",
+	}
+	st.AddObject(child)
+	st.SetDiscoveryIndex(
+		&manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				child.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
+			},
+		},
+	)
+	entered, published := make(chan struct{}), make(chan struct{})
+	c := base.New(st, tasks)
+	c.Configure(base.Options{Existence: declarationPromotion(func(id manifest.NamedResource) bool {
+		if id != parent.Named() {
+			t.Errorf("unrelated promotion: %s", id)
+			return false
+		}
+		close(entered)
+		tasks.YieldSlot(func() { <-published })
+		return true
+	})})
+	var run *base.Execution
+	var bodies atomic.Int64
+	tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
+		run = controllertest.NewExecution(c, child.Named())
+		run.Dispatch(
+			ctx,
+			manifest.DrainNone,
+			struct{}{},
+			func(_ struct{}, ctx context.Context, obj *manifest.HelmRelease, level manifest.DrainLevel) error {
+				if _, err := run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+					return err
+				}
+				bodies.Add(1)
+				return nil
+			},
+		)
+	})
+	tasks.Go(t.Context(), "publish", func(context.Context) {
+		tasks.YieldSlot(func() { <-entered })
+		st.AddObject(parent)
+		accepted := child.Clone()
+		accepted.Suspend = suspended
+		st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: accepted}}}, nil)
+		st.UpdateStatus(
+			parent.Named(),
+			store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"},
+		)
+		close(published)
+	})
+	tasks.BlockTillDone()
+	if tasks.Failures() != 0 || run.Valid() || bodies.Load() != 0 {
+		t.Fatalf("stale dispatch continued: bodies=%d valid=%t", bodies.Load(), run.Valid())
+	}
+	run.Close()
+	fresh := controllertest.NewExecution(c, child.Named())
+	fresh.Dispatch(
+		t.Context(),
+		manifest.DrainNone,
+		struct{}{},
+		func(_ struct{}, ctx context.Context, obj *manifest.HelmRelease, level manifest.DrainLevel) error {
+			if _, err := fresh.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+				return err
+			}
+			bodies.Add(1)
+			return nil
+		},
+	)
+	info, _ := st.GetStatus(child.Named())
+	if suspended && (bodies.Load() != 0 || info.Outcome() != store.OutcomeSuspended) ||
+		!suspended && bodies.Load() != 1 {
+		t.Fatalf("fresh declaration gate: bodies=%d status=%+v", bodies.Load(), info)
 	}
 }
 

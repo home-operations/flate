@@ -175,7 +175,7 @@ func (l *Loader) desiredAuthored(
 					projected := inAuthoredNamespace(new(fact), namespace)
 					refs := authoredReferences(new(projected))
 					record := r
-					record.Productions = nil
+					record.Productions = inputProductions(r.Productions)
 					record.Refs = refs
 					next[projected.Identity] = record
 					l.publishAuthoredLocation(&projected)

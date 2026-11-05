@@ -54,15 +54,19 @@ func TestResolveEntrySources_MissingNonGit(t *testing.T) {
 				assert.FatalIf(t, err != nil || count != 0, "missing source discovery = %d, %v", count, err)
 			}
 
-			obj, artifact, err := d.admission().Resolve(t.Context(), id, nil, manifest.WorkScope{})
+			resolved, err := d.admission().Resolve(t.Context(), nil, ResolveRequest{ID: id})
+			var artifact *store.SourceArtifact
+			if err == nil && resolved.Resolve != nil {
+				artifact, err = resolved.Resolve(t.Context(), manifest.DrainNone)
+			}
 
 			assert.FatalIf(t, err != nil, "%v", err)
 
-			assert.FatalIf(t, obj.Obj != nil || artifact != nil || st.GetObject(id) != nil ||
+			assert.FatalIf(t, resolved.Object != nil || artifact != nil || st.GetObject(id) != nil ||
 				st.GetArtifact(
 					id,
 					store.ArtifactContent,
-				) != nil, "missing source resolved: object=%v artifact=%v error=%v", obj, artifact, err)
+				) != nil, "missing source resolved: object=%v artifact=%v error=%v", resolved.Object, artifact, err)
 
 			{
 				status, ok := st.GetStatus(id)

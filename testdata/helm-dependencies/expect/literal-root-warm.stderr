@@ -1,0 +1,6 @@
+
+  ⚠ warnings (2)
+    [StaleValues] orig snapshot: HelmRelease flux-system/emitter: values not used by the chart
+      root
+    [StaleValues] current snapshot: HelmRelease flux-system/emitter: values not used by the chart
+      root

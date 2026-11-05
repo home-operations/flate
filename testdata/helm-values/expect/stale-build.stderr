@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [StaleValues] HelmRelease apps/app: values not used by the chart
+      oldUnusedKey

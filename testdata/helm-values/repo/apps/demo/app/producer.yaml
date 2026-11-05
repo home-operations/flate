@@ -1,0 +1,4 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: unreadable, namespace: apps}
+spec: {target: {name: unreadable}}

@@ -1,0 +1,4 @@
+
+  ✗  HelmRelease  apps/demo  document 2: yaml: construct errors: line 19: mapping key "key" already defined at line 18
+
+  ✗ 1 failed

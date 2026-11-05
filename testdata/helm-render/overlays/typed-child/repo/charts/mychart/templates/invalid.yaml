@@ -1,0 +1,13 @@
+null
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: invalid}
+spec:
+  interval: []
+  suspend: true
+  chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: charts}}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: chart-sibling}

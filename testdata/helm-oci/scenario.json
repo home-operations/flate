@@ -1,0 +1,253 @@
+{
+  "source": {
+    "repository": "ionfury/homelab",
+    "revision": "a249de48aa6c00fe6e549c489eebb67fe4bd4073",
+    "paths": [
+      "kubernetes/clusters/live/resourcesets/helm-charts.yaml"
+    ],
+    "reductions": "Authored minimal reduction of the observed source and HelmRelease topology. Preserve the existing regression inputs, with local charts and explicit negative controls."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main",
+        "refs/heads/base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "missing-source",
+      "directory": "overlays/missing-source",
+      "operations": [
+        {
+          "delete": "repo/apps/release.yaml"
+        },
+        {
+          "delete": "repo/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/cluster/apps.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "helm-missingoci-source",
+      "description": "helm missingoci source",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-source"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-oci",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/missing-oci.stdout",
+              "stderr": "expect/missing-oci.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "chart/demo/Chart.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Shared chart for the orchestrator inline OCI package witnesses, including selected and irrelevant registry layers."
+    },
+    {
+      "path": "chart/demo/templates/configmap.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Shared chart for the orchestrator inline OCI package witnesses, including selected and irrelevant registry layers."
+    },
+    {
+      "path": "expect/missing-oci.stderr",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/missing-oci.stdout",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/apps/demo/app/kustomization.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/apps/demo/ks.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/apps/kustomization.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/apps/sibling/app/kustomization.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/apps/sibling/ks.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/charts/jenkins-deployment/Chart.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/charts/jenkins-deployment/templates/configmap.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/charts/jenkins-deployment/values.prod.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/charts/jenkins-deployment/values.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/cluster/source.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/config/prod.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/demo/Chart.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/missing-source/repo/demo/templates/cm.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/kustomization.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/release.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/apps.yaml",
+      "cases": [
+        "helm-missingoci-source"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    }
+  ]
+}

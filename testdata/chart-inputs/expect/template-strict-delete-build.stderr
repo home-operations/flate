@@ -1,0 +1,4 @@
+
+  ✗  HelmRelease  apps/demo  chart valuesFiles: read values file "./config/prod.yaml": stat config/prod.yaml: file does not exist
+
+  ✗ 1 failed

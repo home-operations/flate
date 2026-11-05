@@ -1,0 +1,4 @@
+
+  ✗  HelmRelease  apps/demo  document 4 (HelmRelease.helm.toolkit.fluxcd.io/invalid): HelmRelease decode: json: cannot unmarshal array into Go value of type string
+
+  ✗ 1 failed

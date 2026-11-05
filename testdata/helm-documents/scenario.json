@@ -1,0 +1,438 @@
+{
+  "source": {
+    "repository": "toboshii/home-ops",
+    "revision": "b16119e828316df78f73d378bf7c386bad9dac12",
+    "paths": [
+      "cluster/apps/database/cloudnative-pg/helm-release.yaml",
+      "cluster/apps/default/hajimari/helm-release.yaml"
+    ],
+    "reductions": "Authored local chart reductions of the pinned HelmRelease topology. Negative inputs and diff controls preserve the former regression cases."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main",
+        "refs/heads/base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "original",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "invalid-list",
+      "directory": "overlays/invalid-list",
+      "operations": []
+    },
+    {
+      "name": "list-base",
+      "directory": "overlays/list-base",
+      "operations": []
+    },
+    {
+      "name": "list-add",
+      "directory": "overlays/list-add",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "invalid-helm-list-included",
+      "description": "invalid helm list included",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "invalid-list"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invalid-list-included",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/invalid-list-included.stdout",
+              "stderr": "expect/invalid-list-included.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid-helm-list-excluded",
+      "description": "invalid helm list excluded",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "invalid-list"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invalid-list-excluded",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--skip-kinds=ConfigMapList",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/invalid-list-excluded.stdout",
+              "stderr": "expect/invalid-list-excluded.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-list-member-diff-added",
+      "description": "helm list member diff added",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "list-base"
+        },
+        {
+          "overlay": "list-add"
+        },
+        {
+          "commit": "original"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "list-diff-added",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--path-orig",
+              "@@baseline@@/cluster",
+              "-o",
+              "json",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/list-diff-added.stdout",
+              "stderr": "expect/list-diff-added.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-list-member-diff-removed",
+      "description": "helm list member diff removed",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "list-base"
+        },
+        {
+          "overlay": "list-add"
+        },
+        {
+          "commit": "original"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "list-diff-removed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/cluster",
+              "--path-orig",
+              "@@repo@@/cluster",
+              "-o",
+              "json",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/list-diff-removed.stdout",
+              "stderr": "expect/list-diff-removed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/charts/mychart/Chart.yaml",
+      "cases": [
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/mychart/values.yaml",
+      "cases": [
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/cluster/release.yaml",
+      "cases": [
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/cluster/source.yaml",
+      "cases": [
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/invalid-list-excluded.stderr",
+      "cases": [
+        "invalid-helm-list-excluded"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/invalid-list-excluded.stdout",
+      "cases": [
+        "invalid-helm-list-excluded"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/invalid-list-included.stderr",
+      "cases": [
+        "invalid-helm-list-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/invalid-list-included.stdout",
+      "cases": [
+        "invalid-helm-list-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/list-diff-added.stderr",
+      "cases": [
+        "helm-list-member-diff-added"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/list-diff-added.stdout",
+      "cases": [
+        "helm-list-member-diff-added"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/list-diff-removed.stderr",
+      "cases": [
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/list-diff-removed.stdout",
+      "cases": [
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/invalid-list/repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "invalid-helm-list-included",
+        "invalid-helm-list-excluded"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/list-add/repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/list-base/repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/Chart.yaml",
+      "cases": [
+        "invalid-helm-list-included",
+        "invalid-helm-list-excluded",
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "invalid-helm-list-included",
+        "invalid-helm-list-excluded",
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/values.yaml",
+      "cases": [
+        "invalid-helm-list-included",
+        "invalid-helm-list-excluded",
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/release.yaml",
+      "cases": [
+        "invalid-helm-list-included",
+        "invalid-helm-list-excluded",
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/source.yaml",
+      "cases": [
+        "invalid-helm-list-included",
+        "invalid-helm-list-excluded",
+        "helm-list-member-diff-added",
+        "helm-list-member-diff-removed"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    }
+  ]
+}

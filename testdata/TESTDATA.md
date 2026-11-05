@@ -18,11 +18,6 @@ with `go test -race ./test/e2e/...`.
 
 - `unclaimed-change/` - an offline Helm producer emits a Kustomization over unchanged content. A changed text file has no owner or reader. `TestE2E_UnclaimedPathWithoutHistory` requires empty changed-only output with separate cold caches.
 
-- `hr-oci-template/` - inline OCI chart template and tiny chart for package-level
-  orchestration integration tests with an in-process registry. The test replaces
-  the registry URL, serves an unrelated first layer, and compares tag/digest,
-  copy/extract, credentials and explicit chartRef behavior.
-
 - `simple/` - a hand-crafted minimal cluster used across the scenario packages.
   Exercises the Kustomization + HelmRelease pipeline end-to-end without any network
   access.
@@ -382,3 +377,57 @@ An unavailable persistence witness is not-run and does not satisfy the warm acce
 U1 through U9 retain their existing fixture helpers and unmigrated files until their assigned migrations.
 The explicit allowlist lives in `test/e2e/internal/harness/migration_internal_test.go` and shrinks with each unit.
 U0 does not replace other scenario data or package fixtures.
+
+### U3 Helm catalog
+
+The Helm render cases use authored reductions of the pinned toboshii HelmRelease topology.
+The other scenarios record their observed repository, full revision, source paths, and authored reductions in `scenario.json`.
+Expected manifests include Flux ownership labels.
+Package OCI witnesses use `helm-oci/chart` and `helm-oci/repo`.
+They retain selected and irrelevant layers, tag and digest tracking, credentials, and copy and extract operations.
+The `simple` data remain for `scope/selection_test.go`, which U1 owns.
+The stale-value and dependency cases use their shared scenarios after their last old callers migrate.
+
+The three source-root values cases and both malformed-chart producer cases invoke the same build twice per sequence.
+The second invocation reuses the populated default cache and compares the same complete expectations.
+Both sequence replays start with empty caches.
+
+| Scenario / case | Behavior | Cache regime |
+| --- | --- | --- |
+| `helm-render/buildhr-secret-excluded` | buildhr secret excluded. | Reuse within sequence; reset on replay. |
+| `helm-render/buildhr-secret-included` | buildhr secret included. | Reuse within sequence; reset on replay. |
+| `helm-render/malformed-chartcrd-omitted` | malformed chartcrd omitted. | Reuse within sequence; reset on replay. |
+| `helm-render/malformed-chartcrd-included` | malformed chartcrd included. | Reuse within sequence; reset on replay. |
+| `helm-render/malformed-chart-fails-producer-duplicate-keys` | malformed chart fails producer duplicate keys. | Reuse within sequence; reset on replay. |
+| `helm-render/malformed-chart-fails-producer-typed-child` | malformed chart fails producer typed child. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-reported-strict` | helm source root values files reported strict. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-reported-ignore-missing` | helm source root values files reported ignore missing. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-outside-chart` | helm source root values files outside chart. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-changed-only-template-edit` | helm source root values files changed only template edit. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-changed-only-template-add` | helm source root values files changed only template add. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-changed-only-template-delete` | helm source root values files changed only template delete. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-changed-only-template-strict-delete` | helm source root values files changed only template strict delete. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-changed-only-chartref-edit` | helm source root values files changed only chartref edit. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-changed-only-chartref-add` | helm source root values files changed only chartref add. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-changed-only-chartref-delete` | helm source root values files changed only chartref delete. | Reuse within sequence; reset on replay. |
+| `chart-inputs/helm-source-root-values-files-changed-only-chartref-strict-delete` | helm source root values files changed only chartref strict delete. | Reuse within sequence; reset on replay. |
+| `helm-identity/gethr-yaml-exposes-projected-fields-target-namespace` | gethr yaml exposes projected fields target namespace. | Reuse within sequence; reset on replay. |
+| `helm-identity/gethr-yaml-exposes-projected-fields-explicit-override` | gethr yaml exposes projected fields explicit override. | Reuse within sequence; reset on replay. |
+| `helm-identity/helm-release-target-namespace-identity` | helm release target namespace identity. | Reuse within sequence; reset on replay. |
+| `helm-documents/invalid-helm-list-included` | invalid helm list included. | Reuse within sequence; reset on replay. |
+| `helm-documents/invalid-helm-list-excluded` | invalid helm list excluded. | Reuse within sequence; reset on replay. |
+| `helm-documents/helm-list-member-diff-added` | helm list member diff added. | Reuse within sequence; reset on replay. |
+| `helm-documents/helm-list-member-diff-removed` | helm list member diff removed. | Reuse within sequence; reset on replay. |
+| `helm-values/unreadable-parent-does-not-fill-required-values-full` | unreadable parent does not fill required values full. | Reuse within sequence; reset on replay. |
+| `helm-values/unreadable-parent-does-not-fill-required-values-changed-only` | unreadable parent does not fill required values changed only. | Reuse within sequence; reset on replay. |
+| `helm-values/unreadable-parent-does-not-fill-required-values-diff-current` | unreadable parent does not fill required values diff current. | Reuse within sequence; reset on replay. |
+| `helm-values/unreadable-parent-does-not-fill-required-values-diff-orig` | unreadable parent does not fill required values diff orig. | Reuse within sequence; reset on replay. |
+| `helm-values/stale-values-warning` | stale values warning. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/changed-onlyhr-depends-on-unchanged-dep` | changed onlyhr depends on unchanged dep. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/changed-only-emitted-kustomization-path-templated` | changed only emitted kustomization path templated. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/changed-only-emitted-kustomization-path-templated-root` | changed only emitted kustomization path templated root. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/changed-only-emitted-kustomization-path-literal` | changed only emitted kustomization path literal. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/changed-only-emitted-kustomization-path-literal-root` | changed only emitted kustomization path literal root. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/changed-only-render-emitted-dependency` | changed only render emitted dependency. | Reuse within sequence; reset on replay. |
+| `helm-dependencies/ready-expr--helm-release` | ready expr  helm release. | Reuse within sequence; reset on replay. |
+| `helm-oci/helm-missingoci-source` | helm missingoci source. | Reuse within sequence; reset on replay. |

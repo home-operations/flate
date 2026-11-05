@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMapList
+items:
+- metadata: {name: stable}
+  data: {value: fixed}
+- metadata: {name: added}
+  data: {value: extra}

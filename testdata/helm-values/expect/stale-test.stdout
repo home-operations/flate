@@ -1,0 +1,5 @@
+
+  ✓  HelmRelease  apps/app
+  ✓  HelmRelease  apps/opaque
+
+  ✓ 2 passed   <DUR>

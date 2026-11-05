@@ -1,0 +1,8 @@
+
+  ✗  HelmRelease  apps/demo  document 1: normalize helm list: unable to get type info from the object "*unstructured.Unstructured": Object 'Kind' is missing in 'object has no kind field '
+
+  ⚠ warnings (1)
+    [StaleValues] HelmRelease apps/demo: values not used by the chart
+      greeting, replicas
+
+  ✗ 1 failed

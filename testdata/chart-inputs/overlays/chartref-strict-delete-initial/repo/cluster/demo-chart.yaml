@@ -1,0 +1,9 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmChart
+metadata: {name: demo, namespace: flux-system}
+spec:
+  interval: 10m
+  chart: charts/jenkins-deployment
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  valuesFiles: [./config/prod.yaml]
+  ignoreMissingValuesFiles: false

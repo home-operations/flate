@@ -1,0 +1,7 @@
+
+  ✓  Kustomization  apps/demo
+  ‒  Kustomization  apps/sibling  unchanged
+  ✓  Kustomization  flux-system/apps
+  ✓  HelmRelease    apps/demo
+
+  ✓ 3 passed · 1 skipped   <DUR>

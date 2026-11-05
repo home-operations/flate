@@ -1,0 +1,94 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "demo",
+        "path": "apps/demo/app"
+      },
+      "apiVersion": "helm.toolkit.fluxcd.io/v2",
+      "kind": "HelmRelease",
+      "namespace": "apps",
+      "name": "demo",
+      "status": "changed",
+      "old": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "demo",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "demo",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "charts/jenkins-deployment",
+              "ignoreMissingValuesFiles": false,
+              "sourceRef": {
+                "kind": "GitRepository",
+                "name": "flux-system",
+                "namespace": "flux-system"
+              },
+              "valuesFiles": []
+            }
+          },
+          "interval": "10m",
+          "values": {
+            "greeting": ""
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "helm.toolkit.fluxcd.io/v2",
+        "kind": "HelmRelease",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "demo",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "demo",
+          "namespace": "apps"
+        },
+        "spec": {
+          "chart": {
+            "spec": {
+              "chart": "charts/jenkins-deployment",
+              "ignoreMissingValuesFiles": false,
+              "sourceRef": {
+                "kind": "GitRepository",
+                "name": "flux-system",
+                "namespace": "flux-system"
+              },
+              "valuesFiles": []
+            }
+          },
+          "interval": "10m",
+          "values": {
+            "greeting": "valid"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "apps",
+        "name": "demo",
+        "path": ""
+      },
+      "side": "orig",
+      "count": 1,
+      "reason": "helm template: execution error at (demo/templates/configmap.yaml:4:20): missing required value"
+    }
+  ]
+}

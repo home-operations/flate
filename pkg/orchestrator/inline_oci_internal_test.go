@@ -21,7 +21,7 @@ import (
 
 func inlineChartFiles(t *testing.T) map[string]string {
 	t.Helper()
-	root := os.DirFS("../../testdata/hr-oci-template/chart")
+	root := os.DirFS("../../testdata/helm-oci/chart")
 	files := map[string]string{}
 	assert.NoError(t, fs.WalkDir(root, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -40,7 +40,7 @@ func inlineChartFiles(t *testing.T) map[string]string {
 func inlineChartRepository(t *testing.T, url string, fields map[string]any) inlineChartFixture {
 	t.Helper()
 	root := t.TempDir()
-	testutil.CopyTree(t, "../../testdata/hr-oci-template", root)
+	testutil.CopyTree(t, "../../testdata/helm-oci/repo", root)
 	body, err := os.ReadFile(filepath.Join(root, "apps", "release.yaml"))
 	assert.NoError(t, err)
 	var doc map[string]any

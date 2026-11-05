@@ -4,9 +4,7 @@ metadata:
   name: cluster
   namespace: flux-system
 spec:
-  secretRef:
-    name: deploy-key
-  url: ssh://git@example.test/cluster.git
+  url: https://example.test/cluster.git
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization

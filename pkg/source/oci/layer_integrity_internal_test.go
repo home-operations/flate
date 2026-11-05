@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -117,11 +119,13 @@ func testFetcherLayerDigestMismatchPublishesNothingCase(
 
 			f.Cache = c
 		}
-		_, fetchErr := f.Fetch(
+		_, fetchErr := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			repo,
 			(testInputs{}).readSet(repo),
 			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			nil,
 		)
 		terminal, _ := errors.AsType[*sourcecache.TerminalError](fetchErr)
 		if fetchErr == nil || terminal != nil && !terminal.Attempted || layers.Load() != int32(attempt+1) {
@@ -139,11 +143,13 @@ func testFetcherLayerDigestMismatchPublishesNothingCase(
 		)
 	}
 	repaired.Store(true)
-	art, err := f.Fetch(
+	art, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		repo,
 		(testInputs{}).readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	assert.NoError(t, err)
 

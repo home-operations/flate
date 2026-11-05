@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -64,10 +66,10 @@ func testFetcherProviderAnonymousCase(t *testing.T, root *string,
 	reads := inputs.readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New)}
-	_, err := f.Fetch(t.Context(), repo, reads, &cache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &cache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
-	got, err := missing.RetryAmbient(t.Context())
+	got, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	if advertisements.Load() != 1 {
 		t.Fatalf("advertisements=%d: %v", advertisements.Load(), err)
 	}

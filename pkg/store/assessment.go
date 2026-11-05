@@ -6,37 +6,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// AssessmentKind separates binding evidence from reconciliation during replacement.
-type AssessmentKind uint8
-
-// AssessmentReconciled and AssessmentEntryBinding MUST retain independent assessment outcomes.
-const (
-	AssessmentReconciled AssessmentKind = iota
-	AssessmentEntryBinding
-)
-
-// Accept MUST preserve reconciliation snapshots until their output borrowers finish.
-func (r *ReadSet) Accept(kind AssessmentKind) {
-	r.GetObject(r.id)
-	if !r.Valid() {
-		return
-	}
-	if kind == AssessmentEntryBinding {
-		r.ReleaseCapture()
-	}
-	r.accepted.Store(true)
-	input := r.input(r.id)
-	if head := input.object.head; head != nil && input.object.absent == nil {
-		origin := &head.reconciliation
-		if kind == AssessmentEntryBinding {
-			origin = &head.binding
-		}
-		if previous := origin.Swap(r); previous != r {
-			r.store.Retire(previous)
-		}
-	}
-}
-
 // ReleaseCapture MUST follow evaluation, replay and every output borrow.
 func (r *ReadSet) ReleaseCapture() {
 	if r == nil {
@@ -64,8 +33,9 @@ func (r *ReadSet) ReplacesInvalid() bool {
 	if head == nil {
 		return false
 	}
-	previous := head.reconciliation.Load()
-	return previous != nil && (!previous.Valid() || previous.retired.Load() && !r.Matches(previous))
+	previous := head.assessments[0].Load()
+	return previous != nil && previous.reads != nil &&
+		(!previous.reads.Valid() || previous.reads.retired.Load() && !r.Matches(previous.reads))
 }
 
 // Admitted reports the captured changed-only disposition.
@@ -82,7 +52,9 @@ func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq[manifest.Name
 	sh.mu.RUnlock()
 	var reads *ReadSet
 	if head != nil {
-		reads = head.reconciliation.Load()
+		if accepted := head.assessments[0].Load(); accepted != nil {
+			reads = accepted.reads
+		}
 	}
 	if reads == nil || !reads.Valid() {
 		return func(func(manifest.NamedResource) bool) {}

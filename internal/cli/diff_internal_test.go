@@ -11,6 +11,9 @@ import (
 	"testing"
 	"unsafe"
 
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/testutil"
@@ -407,6 +410,16 @@ func TestRun_Diff_OmittedValues(t *testing.T) {
 
 func writeCustomSourceDiffFixture(t *testing.T, sourceURL string) diffFixture {
 	t.Helper()
+	identity := testutil.SelfSignedClientCert(t).Key
+	signer, err := ssh.ParsePrivateKey([]byte(identity))
+	assert.NoError(t, err)
+	credential, err := json.Marshal(testutil.ObjectDocument(&manifest.Secret{
+		Name: "source-auth", Namespace: "gitops-system", StringData: map[string]any{
+			"identity": identity, "known_hosts": knownhosts.Line([]string{"github.com"}, signer.PublicKey()),
+			"username": "fixture", "password": "fixture",
+		},
+	}))
+	assert.NoError(t, err)
 	var current string
 	var orig string
 	current = t.TempDir()
@@ -418,11 +431,12 @@ metadata: {name: home-kubernetes, namespace: gitops-system}
 spec:
   url: `+sourceURL+`
   interval: 1h
+  secretRef: {name: source-auth}
 `+"---\n"+
 		testutil.KustomizationYAML("apps", "gitops-system", `  path: ./apps
   sourceRef: {kind: GitRepository, name: home-kubernetes}
   interval: 1h
-`))
+`)+"---\n"+string(credential)+"\n")
 	testutil.WriteFile(t, current, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, current, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap

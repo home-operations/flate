@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -36,7 +38,14 @@ func TestFetcher_ProviderTransportValidation(t *testing.T) {
 				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
-			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{})
+			_, err := fetchtest.Fetch(
+				t.Context(),
+				fetcher.Fetch,
+				repo,
+				inputs.readSet(repo),
+				&sourcecache.Policy{},
+				nil,
+			)
 			assert.FatalIf(
 				t,
 				!errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrMissingSecret),
@@ -75,7 +84,14 @@ func TestFetcher_ProviderRegistryMatching(t *testing.T) {
 				}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t), RegistryConfig: config}
-			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{})
+			_, err := fetchtest.Fetch(
+				t.Context(),
+				fetcher.Fetch,
+				repo,
+				inputs.readSet(repo),
+				&sourcecache.Policy{},
+				nil,
+			)
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(
 				t,

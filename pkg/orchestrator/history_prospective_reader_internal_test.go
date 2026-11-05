@@ -649,6 +649,18 @@ spec:
 		reconcileEntryForTest(t, warm)
 		assert.Equal(t, warm.store.EmissionOwner(supplied), warm.entryBinding.Producer)
 		assert.Equal(t, warm.store.GetDeclaration(supplied) != nil, true)
+		info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+			Tasks: warm.tasks,
+			Store: warm.store,
+			ID: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "charts",
+			},
+			ReconcileNode: warm.src.ReconcileNode,
+		})
+		assert.Equal(t, info.Status, store.StatusReady)
 		reads.Init(warm.store, owner, nil)
 		hr := declaration.(*manifest.HelmRelease)
 		prepared, localErr := helm.Prepare(

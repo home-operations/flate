@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	controllerbase "github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -548,7 +550,11 @@ func (f *selectedSelfFixture) assertBootstrap(t *testing.T) {
 		o, err := newTestOrchestrator(t, one.Tree, one.Config)
 		assert.NoError(t, err)
 		assert.NoError(t, o.bootstrap(t.Context()))
-		execution := o.src.ReconcileNode(t.Context(), manifest.BootstrapSourceID, manifest.DrainNone)
+		var execution *controllerbase.Execution
+		o.tasks.Go(t.Context(), "bootstrap-proof", func(ctx context.Context) {
+			execution = o.src.ReconcileNode(ctx, manifest.BootstrapSourceID, manifest.DrainNone)
+		})
+		o.tasks.BlockTillDone()
 		assert.Equal(
 			t,
 			workCounts(o.freezeWork(), manifest.BootstrapSourceID, manifest.WorkPreparation),

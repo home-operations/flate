@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
@@ -196,7 +198,7 @@ func testFetcherLocalAgentSSHCase(t *testing.T, shape *string,
 	reads := inputs.readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-	artifact, err := f.Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
 	if (*shape) == "explicit rejected" {
 		if err == nil || errors.Is(err, manifest.ErrMissingSecret) != ((*shape) == "absent") ||
 			artifact != nil ||
@@ -212,7 +214,7 @@ func testFetcherLocalAgentSSHCase(t *testing.T, shape *string,
 	}
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
-	artifact, err = missing.RetryAmbient(t.Context())
+	artifact, err = fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	if closed != nil {
 		<-closed
 	}

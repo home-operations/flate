@@ -476,8 +476,7 @@ func TestWarnings_RetiredCredentialOrigin(t *testing.T) {
 			})
 			workers.Go(func() {
 				<-cleaned
-				assert.Equal(t, origin.retired.Load(), true)
-				assert.Equal(t, origin.input(source.Named()).object.head.reconciliation.Load(), &origin)
+				assertRetiredOrigin(t, &origin)
 				assertRetiredDiagnostics(t, s, []manifest.Warning{warning}, advisory)
 				var unchanged ReadSet
 				unchanged.Init(s, source.Named(), nil)
@@ -606,6 +605,14 @@ func TestWarnings_RetiredAuthorityFacets(t *testing.T) {
 			assertRetiredDiagnostics(t, s, nil, AdvisoryEvidence{})
 		})
 	}
+}
+
+func assertRetiredOrigin(t *testing.T, origin *ReadSet) {
+	t.Helper()
+	assert.Equal(t, origin.retired.Load(), true)
+	objectHead := origin.input(origin.ID()).object.head
+	accepted := objectHead.assessments[0].Load()
+	assert.Equal(t, accepted != nil && accepted.reads == origin, true)
 }
 
 func assertRetiredDiagnostics(t *testing.T, s *Store, warnings []manifest.Warning, advisory AdvisoryEvidence) {

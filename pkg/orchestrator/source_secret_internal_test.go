@@ -32,29 +32,41 @@ func (f *secretChartFetcher) Fetch(
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
 	_ *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	repo := obj.(*manifest.OCIRepository)
-	secret, ok := reads.Get[*manifest.Secret](
-		manifest.NamedResource{Kind: manifest.KindSecret, Namespace: repo.Namespace, Name: repo.CertSecretRef.Name},
-	)
-	if !ok {
-		return nil, source.MissingSecretErr(
-			manifest.DiagnosticFor(repo.Named(), repo),
-			repo.CertSecretRef.Name,
-			"not found",
-		)
-	}
-	if got, _ := secret.Value("ca.crt"); got.Value != "rendered-ca" {
-		return nil, fmt.Errorf("source: CA = %q, want rendered-ca", got.Value)
-	}
-	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-	return &store.SourceArtifact{
-		Kind:      manifest.KindOCIRepository,
-		LocalPath: f.chart,
-		Digest:    digest,
-		Revision:  "0.1.0@" + digest,
-		Key:       digest,
-		FS:        os.DirFS(f.chart),
+) (source.PreparedFetch, error) {
+	return source.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			repo := obj.(*manifest.OCIRepository)
+			secret, ok := reads.Get[*manifest.Secret](
+				manifest.NamedResource{
+					Kind:      manifest.KindSecret,
+					Namespace: repo.Namespace,
+					Name:      repo.CertSecretRef.Name,
+				},
+			)
+			if !ok {
+				return nil, source.MissingSecretErr(
+					manifest.DiagnosticFor(repo.Named(), repo),
+					repo.CertSecretRef.Name,
+					"not found",
+				)
+			}
+			if got, _ := secret.Value("ca.crt"); got.Value != "rendered-ca" {
+				return nil, fmt.Errorf("source: CA = %q, want rendered-ca", got.Value)
+			}
+			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+			return &store.SourceArtifact{
+				Kind:      manifest.KindOCIRepository,
+				LocalPath: f.chart,
+				Digest:    digest,
+				Revision:  "0.1.0@" + digest,
+				Key:       digest,
+				FS:        os.DirFS(f.chart),
+			}, nil
+		},
 	}, nil
 }
 

@@ -12,6 +12,8 @@ import (
 	"testing/fstest"
 	"testing/synctest"
 
+	src "github.com/home-operations/flate/pkg/source"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/google/go-cmp/cmp"
 
@@ -33,23 +35,31 @@ type sharedRepositoryFetcher struct {
 }
 
 func (f *sharedRepositoryFetcher) Fetch(
-	ctx context.Context,
+	_ context.Context,
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
 	_ *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	f.mu.Lock()
-	f.calls[obj.Named()]++
-	f.mu.Unlock()
-	if f.observe != nil {
-		f.observe(ctx, obj, reads)
-	}
-	return &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart", FS: fstest.MapFS{
-		"chart/Chart.yaml": {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
-		"chart/templates/configmap.yaml": {
-			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-output\n"),
+) (src.PreparedFetch, error) {
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			f.mu.Lock()
+			f.calls[obj.Named()]++
+			f.mu.Unlock()
+			if f.observe != nil {
+				f.observe(ctx, obj, reads)
+			}
+			return &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart", FS: fstest.MapFS{
+				"chart/Chart.yaml": {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+				"chart/templates/configmap.yaml": {
+					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-output\n"),
+				},
+			}}, nil
 		},
-	}}, nil
+	}, nil
 }
 
 //nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.

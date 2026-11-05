@@ -1,12 +1,15 @@
 package store
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestGetEmission_CompleteFingerprint(t *testing.T) {
@@ -108,6 +111,75 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 		"%s",
 		"selected document and binding did not invalidate old replay together",
 	)
+}
+
+func TestRecordEmitted_AbsentArtifactPublication(t *testing.T) {
+	t.Parallel()
+	for _, rebound := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rebound=%t", rebound), func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			owner := &manifest.RawObject{
+				APIVersion: "example.test/v1",
+				Kind:       "Producer",
+				Name:       "owner",
+				Namespace:  "apps",
+			}
+			st.AddObject(parent)
+			binding := sourceBinding{source: manifest.BootstrapSourceID, artifact: &SourceArtifact{Key: "first"}}
+			st.RecordEmitted(
+				parent.Named(),
+				&Emission{Children: []Child{{Obj: owner}}, Complete: true, binding: binding},
+				nil,
+			)
+			publish := func() {
+				var reads ReadSet
+				reads.Init(st, owner.Named(), nil)
+				_, _, next := reads.GetEmission(owner.Named())
+				defer next.Finish()
+				next.Complete, next.Fingerprint = true, "same"
+				st.RecordEmitted(owner.Named(), &next, nil)
+			}
+			if rebound {
+				publish()
+				binding.artifact = &SourceArtifact{Key: "second"}
+				st.RecordEmitted(
+					parent.Named(),
+					&Emission{Children: []Child{{Obj: owner}}, Complete: true, binding: binding},
+					nil,
+				)
+			}
+			var pending ReadSet
+			pending.Init(st, ownerID("consumer"), nil)
+			defer pending.Retire()
+			captured, published := make(chan struct{}), make(chan struct{})
+			tasks := task.NewBounded(2)
+			tasks.Go(t.Context(), "read", func(context.Context) {
+				assert.Equal(t, pending.GetArtifact(owner.Named(), ArtifactContent), Artifact(nil))
+				assert.Equal(t, pending.Valid(), true)
+				close(captured)
+				tasks.YieldSlot(func() { <-published })
+			})
+			tasks.Go(t.Context(), "publish", func(context.Context) {
+				tasks.YieldSlot(func() { <-captured })
+				publish()
+				close(published)
+			})
+			tasks.BlockTillDone()
+			assert.Equal(t, tasks.Failures(), int64(0))
+			assert.Equal(t, pending.Valid(), false)
+			assert.Equal(t, slices.Contains(slices.Collect(st.Sweep()), pending.ID()), true)
+			assert.Equal(t, pending.Valid(), false)
+			assert.Equal(t, pending.GetArtifact(owner.Named(), ArtifactContent), Artifact(nil))
+			var fresh ReadSet
+			fresh.Init(st, ownerID("fresh"), nil)
+			defer fresh.Retire()
+			accepted, ok := fresh.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
+			assert.FatalIf(t, !ok, "%s", "fresh execution lacks accepted output")
+			assert.Equal(t, accepted.Complete && accepted.OutputReads.Valid() && fresh.Valid(), true)
+		})
+	}
 }
 
 func testGetEmissionAuthoritativeDocumentCase(

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -110,11 +112,13 @@ func testFetcherRecursiveTLSDefaultsCase(t *testing.T, testCaseInput testFetcher
 	if *testCaseInput.exact {
 		repo.Reference = &sourcev1.GitRepositoryRef{Commit: hash.String()}
 	}
-	art, err := f.Fetch(
+	art, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		repo,
 		fInputs.readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	if (*testCaseInput.child) == "private-ca" {
 		{

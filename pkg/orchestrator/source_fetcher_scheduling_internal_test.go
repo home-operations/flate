@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	src "github.com/home-operations/flate/pkg/source"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -25,8 +27,16 @@ func (emptySourceFetcher) Fetch(
 	manifest.BaseManifest,
 	*store.ReadSet,
 	*sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	return nil, nil //nolint:nilnil // A nil result denotes successful absence.
+) (src.PreparedFetch, error) {
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			return nil, nil //nolint:nilnil // A nil result denotes successful absence.
+		},
+	}, nil
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.

@@ -27,7 +27,7 @@ type MissingSecretError struct {
 	// Cause preserves the acquisition owner's typed failure.
 	Cause error
 	// RetryAmbient attempts the acquisition owner's eligible ambient credentials.
-	RetryAmbient func(context.Context) (*store.SourceArtifact, error)
+	RetryAmbient func(context.Context) (PreparedFetch, error)
 }
 
 // Error identifies unavailable material.
@@ -60,38 +60,58 @@ func (e *MissingSecretError) ProducerBacked(reads *store.ReadSet) bool {
 }
 
 // RetryMachine runs the acquisition owner's continuation when no producer can supply material.
-func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.ReadSet) (*store.SourceArtifact, error) {
+func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.ReadSet) (PreparedFetch, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return PreparedFetch{}, fmt.Errorf("retry machine credentials: %w", err)
 	}
 	if e.RetryAmbient == nil || e.ProducerBacked(reads) {
-		return nil, e
+		return PreparedFetch{}, e
 	}
-	artifact, err := e.RetryAmbient(ctx)
-	if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) &&
-		!errors.Is(err, context.DeadlineExceeded) {
-		if missing, ok := errors.AsType[*MissingSecretError](
-			err,
-		); ok && missing.AnonymousDenied &&
-			e.Secret == (manifest.NamedResource{}) {
-			return artifact, err
+	prepared, err := e.RetryAmbient(ctx)
+	normalize := func(err error) error {
+		if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) &&
+			!errors.Is(err, context.DeadlineExceeded) {
+			if missing, ok := errors.AsType[*MissingSecretError](
+				err,
+			); ok && missing.AnonymousDenied &&
+				e.Secret == (manifest.NamedResource{}) {
+				return err
+			}
+			return e
 		}
-		return artifact, e
+		return err
 	}
-	return artifact, err
+	if prepared.Fetch != nil {
+		fetch := prepared.Fetch
+		prepared.Fetch = func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			artifact, fetchErr := fetch(ctx, local)
+			return artifact, normalize(fetchErr)
+		}
+	}
+	return prepared, normalize(err)
 }
 
-// AcquireMachine selects credentials before acquisition and classifies machine failures.
+// AcquireMachine bounds preparation independently of deferred content acquisition.
 func AcquireMachine(
 	ctx context.Context,
 	policyValue *cache.Policy,
 	prepare func(context.Context) error,
-	acquire func(context.Context, *cache.Policy) (*store.SourceArtifact, error),
-) (*store.SourceArtifact, error) {
+	acquire func(context.Context, *cache.Policy, *store.SourceArtifact) (*store.SourceArtifact, error),
+) (PreparedFetch, error) {
 	policy := *policyValue
-
+	classify := func(err error) error {
+		if err != nil && !errors.Is(err, manifest.ErrMissingSecret) {
+			if _, cached := errors.AsType[*cache.CacheError](err); !cached {
+				if !errors.Is(err, manifest.ErrFlux) {
+					err = manifest.NewError(manifest.ErrFlux, err, "")
+				}
+				err = cache.MachineCredentialErr(err)
+			}
+		}
+		return err
+	}
 	if err := ctx.Err(); err != nil {
-		return nil, manifest.NewError(manifest.ErrFlux, err, "")
+		return PreparedFetch{}, classify(err)
 	}
 	policy.Machine = true
 	var preparation context.Context
@@ -106,19 +126,13 @@ func AcquireMachine(
 		err = errors.Join(err, preparation.Err())
 	}
 	cancel()
-	var artifact *store.SourceArtifact
-	if err == nil {
-		artifact, err = acquire(ctx, &policy)
+	if err != nil {
+		return PreparedFetch{}, classify(err)
 	}
-	if err != nil && !errors.Is(err, manifest.ErrMissingSecret) {
-		if _, cached := errors.AsType[*cache.CacheError](err); !cached {
-			if !errors.Is(err, manifest.ErrFlux) {
-				err = manifest.NewError(manifest.ErrFlux, err, "")
-			}
-			err = cache.MachineCredentialErr(err)
-		}
-	}
-	return artifact, err
+	return PreparedFetch{Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+		artifact, fetchErr := acquire(ctx, &policy, local)
+		return artifact, classify(fetchErr)
+	}}, nil
 }
 
 // MissingSecretErr captures unavailable material with raw and display identities.

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -36,11 +38,13 @@ func testFetcherSparseCheckoutCase(t *testing.T, captures *testFetcherSparseChec
 	}
 	var previous map[string]string
 	for run := range 2 {
-		art, err := (*captures.f).Fetch(
+		art, err := fetchtest.Fetch(
 			t.Context(),
+			(*captures.f).Fetch,
 			spec,
 			(testInputs{}).readSet(spec),
 			&sourcecache.Policy{MaxAge: time.Hour},
+			nil,
 		)
 		assert.NoError(t, err)
 		got := map[string]string{}

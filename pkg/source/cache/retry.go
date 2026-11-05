@@ -92,7 +92,7 @@ func (c *Cache) acquire(
 		key.policy = remaining
 		e, err := c.acquireOnce(ctx, &key, callbacks)
 		if err == nil {
-			if !e.ready.Load() {
+			if e != nil && !e.ready.Load() {
 				e.ready.Store(true)
 			}
 			return e, key.id, nil

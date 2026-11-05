@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -95,7 +97,7 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 	fetch := func(request *manifest.OCIRepository, n *source.Network) {
 		t.Helper()
 		f := &Fetcher{Network: n, Cache: owner}
-		got, err := f.Fetch(t.Context(), request, inputs.readSet(request), &sourcecache.Policy{})
+		got, err := fetchtest.Fetch(t.Context(), f.Fetch, request, inputs.readSet(request), &sourcecache.Policy{}, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, mustReadFile(t, got.FS, "app.yaml"), "version: v1\n")
 	}
@@ -112,7 +114,7 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 		f := &Fetcher{Network: network, Cache: cachetest.New(t, "", sourcecache.New)}
 		wg.Go(func() {
 			<-start
-			got, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{})
+			got, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, inputs.readSet(repo), &sourcecache.Policy{}, nil)
 			if err != nil {
 				t.Errorf("concurrent acquisition: %v", err)
 				return
@@ -162,11 +164,13 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 	assert.Equal(t, exchanges.Load(), int32(6))
 	generation.Add(1)
 	failTokens.Store(true)
-	_, err := (&Fetcher{Network: network, Cache: owner}).Fetch(
+	_, err := fetchtest.Fetch(
 		t.Context(),
+		(&Fetcher{Network: network, Cache: owner}).Fetch,
 		repo,
 		inputs.readSet(repo),
 		&sourcecache.Policy{},
+		nil,
 	)
 	assert.FatalIf(
 		t,

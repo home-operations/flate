@@ -390,13 +390,6 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 		}
 		p.frame.encoded = encoded
 	}
-	if !p.accepted.Complete {
-		n, err := io.Copy(w, bytes.NewReader(p.frame.encoded))
-		if err != nil {
-			return n, fmt.Errorf("write helm render frame: %w", err)
-		}
-		return n, nil
-	}
 	data, err := json.Marshal(p.accepted)
 	if err != nil {
 		return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
@@ -425,7 +418,7 @@ type RenderAcceptance struct {
 //nolint:gocritic // Preserve the public value API and its accepted-inventory snapshot.
 func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) error {
 	owner, receipt, records := acceptance.Owner, acceptance.Receipt, acceptance.Records
-	if receipt == nil || records == nil {
+	if receipt == nil || records == nil || acceptance.Sources == nil {
 		return nil
 	}
 	frame, ok := receipt.Value().(renderFrame)
@@ -454,17 +447,13 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 			frame.encoded[12 : framePrefixSize+int(binary.BigEndian.Uint32(frame.encoded[8:framePrefixSize]))],
 		)
 	}
-	var accepted acceptedRender
-	content := frame.raw
-	if acceptance.Sources != nil {
-		accepted, err = prepareAccepted(owner, &frame, records)
-		if err != nil {
-			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
-		}
-		content = frame.acceptedKey
-		if frame.accepted == nil || content == "" || !frame.accepted.equal(&accepted) {
-			content = manifest.Fingerprint(accepted)
-		}
+	accepted, err := prepareAccepted(owner, &frame, records)
+	if err != nil {
+		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
+	}
+	content := frame.acceptedKey
+	if frame.accepted == nil || content == "" || !frame.accepted.equal(&accepted) {
+		content = manifest.Fingerprint(accepted)
 	}
 	return cache.RecordInventory(
 		ctx,
@@ -487,7 +476,7 @@ func (c *Client) lookupRender(
 	input *RenderOptions,
 ) (*renderRecord, error) {
 	record := loaded.record
-	if record != nil && record.key == key {
+	if record != nil && record.key == key && record.frame.lookup != "" {
 		renderMetadataResult1, renderMetadataResult1Err := c.cache.RenderMetadata(
 			ctx,
 			key,
@@ -496,13 +485,12 @@ func (c *Client) lookupRender(
 		)
 		identity, enabled, err := renderMetadataResult1.Identity, renderMetadataResult1.Enabled, renderMetadataResult1Err
 		if errors.Is(err, errdef.ErrNotFound) {
-			//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
-			return nil, nil
+			record, err = nil, nil
 		}
 		if err != nil {
 			return nil, fmt.Errorf("lookup helm render cache: %w", err)
 		}
-		if !enabled || identity == "" || identity != record.identity {
+		if !enabled || identity == "" || record == nil || identity != record.identity {
 			record = nil
 		}
 	} else {
@@ -515,15 +503,8 @@ func (c *Client) lookupRender(
 			return nil, err
 		}
 	}
-	var chartErr error
 	if record.Analysis.RequiresLoader {
-		chartErr = c.decodeChart(ctx, loaded, input)
-	}
-	if chartErr != nil {
-		return nil, chartErr
-	}
-	if loaded.oci != nil && record != loaded.record {
-		if _, err := ociChartVersion(record.Analysis.Version, loaded.artifact.Revision); err != nil {
+		if err := c.decodeChart(ctx, loaded, input); err != nil {
 			return nil, err
 		}
 	}
@@ -546,14 +527,9 @@ func (c *Client) PreviousRender(
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
 	}
-	record, err := c.lookupRender(ctx, &prepared.loaded, prepared.key, &input)
-	if err != nil || record == nil || record.frame.header.Binding != manifest.Fingerprint(prepared.binding) {
-		return nil, false
-	}
-	if _, err := manifest.DecodeRender(record.Output); err != nil {
-		return nil, false
-	}
-	if ctx.Err() != nil {
+	prepared.release = hr
+	_, record := prepared.contentRender(ctx, c)
+	if record == nil {
 		return nil, false
 	}
 	records, complete := record.frame.history(hr.Named())
@@ -561,6 +537,26 @@ func (c *Client) PreviousRender(
 		c.rememberDescription(&prepared.loaded, record)
 	}
 	return records, complete
+}
+
+func (r *templateRequest) contentRender(ctx context.Context, c *Client) (RenderAdmission, *renderRecord) {
+	admission := RenderAdmission{Key: r.key}
+	if ctx.Err() != nil || r.key == "" || r.loaded.valuesErr != nil || r.capabilityErr != nil {
+		return admission, nil
+	}
+	record, err := c.lookupRender(ctx, &r.loaded, r.key, &r.input)
+	if err != nil || record == nil {
+		return admission, nil
+	}
+	record, documents, err := r.validateRecord(ctx, c, record)
+	if err != nil || record == nil {
+		return admission, nil
+	}
+	admission.Receipt = record.receipt
+	if _, complete := record.frame.history(r.release.Named()); complete {
+		admission.Documents, admission.Accepted = normalizeLists(documents), true
+	}
+	return admission, record
 }
 
 const framePrefixSize = 12
@@ -582,11 +578,11 @@ func (a *acceptedRender) ordered() bool {
 }
 
 func (c *Client) readRender(ctx context.Context, key string, input *RenderOptions) (*renderRecord, error) {
-	reader, _, lookup, err := c.cache.Blob(
+	reader, _, _, err := c.cache.Blob(
 		ctx,
 		cache.BlobKey{
 			Content: key,
-			Render:  cache.RenderAccepted,
+			Render:  cache.RenderPending,
 		},
 		&cache.Policy{MaxAge: cache.Forever, Work: input.Work.History()},
 		nil,
@@ -608,7 +604,7 @@ func (c *Client) readRender(ctx context.Context, key string, input *RenderOption
 		//nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
 		return nil, nil
 	}
-	frame.lookup = lookup
+	frame.lookup = ""
 	record := &renderRecord{
 		key:      key,
 		identity: identity,
@@ -617,4 +613,26 @@ func (c *Client) readRender(ctx context.Context, key string, input *RenderOption
 		frame:    frame,
 	}
 	return record, nil
+}
+
+type templateResult struct {
+	admissionErr error
+	record       *renderRecord
+	observed     bool
+	handled      bool
+	docs         []manifest.DocOccurrence
+	produced     *renderRecord
+	receipt      *manifest.RenderReceipt
+}
+
+func (r *templateResult) admit(request *templateRequest) (bool, error) {
+	r.observed = true
+	admission := RenderAdmission{Key: request.key, Receipt: r.receipt}
+	if r.record != nil {
+		if _, complete := r.record.frame.history(request.release.Named()); complete {
+			admission.Documents, admission.Accepted = normalizeLists(r.docs), true
+		}
+	}
+	r.handled, r.admissionErr = request.input.Admit(admission)
+	return r.handled, r.admissionErr
 }

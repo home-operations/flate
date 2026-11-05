@@ -17,13 +17,60 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
+
+//nolint:paralleltest // Credential fixture helpers change the process environment.
+func TestFetcher_AnonymousPreparation(t *testing.T) {
+	clearMachineEnvironment(t)
+	metadata := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"Code":"Success","Expiration":"2099-01-01T00:00:00Z"}`))
+	}))
+	t.Cleanup(metadata.Close)
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", metadata.URL)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+	}))
+	t.Cleanup(server.Close)
+	for _, authored := range []bool{false, true} {
+		t.Run(strconv.FormatBool(authored), func(t *testing.T) {
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", cache.New)}
+			b := ambientBucket()
+			b.Endpoint, b.Insecure, b.Provider = server.URL, true, "aws"
+			if !authored {
+				b.SecretRef = nil
+			}
+			reads := (testInputs{}).readSet(b)
+			defer reads.Close()
+			before := requests.Load()
+			prepared, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
+			var missing *source.MissingSecretError
+			if authored {
+				var ok bool
+				missing, ok = errors.AsType[*source.MissingSecretError](err)
+				assert.FatalIf(t, !ok, "missing credentials: %v", err)
+				prepared, err = missing.RetryMachine(t.Context(), reads)
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, prepared.LocalUnavailable, missing)
+			assert.Equal(t, requests.Load(), before)
+			artifact, err := prepared.Fetch(t.Context(), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, artifact != nil, true)
+			assert.Equal(t, requests.Load(), before+1)
+		})
+	}
+}
 
 func TestFetcher_AnonymousBucketsShareIAM(t *testing.T) {
 	clearMachineEnvironment(t)
@@ -63,7 +110,7 @@ func TestFetcher_AnonymousBucketsShareIAM(t *testing.T) {
 		closers = append(closers, reads.Close)
 		workers.Go(func() {
 			<-start
-			artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
+			artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, reads, &cache.Policy{}, nil)
 			if err != nil || artifact == nil {
 				t.Errorf("Bucket %s: %v", b.Name, err)
 			}
@@ -149,7 +196,7 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 		f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: network}
 		workers.Go(func() {
 			<-start
-			artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
+			artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, reads, &cache.Policy{}, nil)
 			if err != nil || artifact == nil {
 				t.Errorf("Bucket %s: %v", b.Name, err)
 			}
@@ -223,7 +270,7 @@ func TestFetcher_MachineWebIdentityTransport(t *testing.T) {
 	reads := inputs.readSet(b)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, reads, &cache.Policy{}, nil)
 	if err != nil || artifact == nil || probes.Load() != 1 || acquisitions.Load() != 1 || leaked.Load() != 0 {
 		t.Fatalf(
 			"web identity: STS=%d S3=%d proxy leaks=%d error=%v",
@@ -277,7 +324,7 @@ func testFetcherMachineIAMCancellationCase(t *testing.T, after *string,
 	defer cancel()
 	finished := make(chan error, 1)
 	go func() {
-		_, err := f.Fetch(ctx, b, reads, &cache.Policy{})
+		_, err := fetchtest.Fetch(ctx, f.Fetch, b, reads, &cache.Policy{}, nil)
 		finished <- err
 	}()
 	<-entered
@@ -299,7 +346,7 @@ func testFetcherMachineIAMCancellationCase(t *testing.T, after *string,
 		return
 	}
 	releaseProbe()
-	artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, reads, &cache.Policy{}, nil)
 	if err != nil || artifact == nil || probes.Load() != 1 || acquisitions.Load() != 1 {
 		t.Fatalf(
 			"cancelled caller poisoned shared discovery: %v probes=%d acquisitions=%d",
@@ -323,7 +370,7 @@ func testFetcherSharedIAMTransportRestrictedMetadataDial(
 	reads := (testInputs{}).readSet(b)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, reads, &cache.Policy{}, nil)
 	dial, ok := errors.AsType[*net.OpError](err)
 	if artifact != nil || !ok || dial.Op != "dial" || probes.Load() != 1 || acquisitions.
 		Load() != 2 || leaked.

@@ -10,7 +10,7 @@ import (
 
 func preparedHTTP(t *testing.T, f *Fetcher, fInputs testInputs, r *manifest.HelmRepository) *httpRepository {
 	t.Helper()
-	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
+	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).resolvedHTTP(r)
 	assert.NoError(t, err)
 
 	return prepared
@@ -19,3 +19,13 @@ func preparedHTTP(t *testing.T, f *Fetcher, fInputs testInputs, r *manifest.Helm
 type chartTransport func(*http.Request) (*http.Response, error)
 
 func (f chartTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func (f *operation) resolvedHTTP(r *manifest.HelmRepository) (*httpRepository, error) {
+	prepared, err := f.prepareHTTP(r)
+	if prepared != nil {
+		if connectErr := f.connectHTTP(prepared); err == nil {
+			err = connectErr
+		}
+	}
+	return prepared, err
+}

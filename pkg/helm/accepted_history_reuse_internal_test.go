@@ -97,7 +97,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			},
 		),
 	)
-	input.Admit = func(string) (bool, error) { t.Fatal("history called Admit"); return false, nil }
+	input.Admit = func(RenderAdmission) (bool, error) { t.Fatal("history called Admit"); return false, nil }
 	{
 		previous, complete := client.PreviousRender(t.Context(), hr, nil, input)
 		assert.FatalIf(t, complete || previous != nil, "%s", "unaccepted template supplied history")
@@ -164,11 +164,27 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 			},
 		),
 	)
+	assert.NoError(t, (*testCaseInput.client).RecordRender(t.Context(), RenderAcceptance{
+		Owner: (*testCaseInput.hr).Named(), Receipt: *testCaseInput.receipt, Records: emptyRenderInventory,
+	}))
 	fresh := NewClient(cachetest.New(t, (*testCaseInput.root), cache.New))
 	previous, complete := fresh.PreviousRender(t.Context(), (*testCaseInput.hr), nil, (*testCaseInput.input))
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, records)
+	observed := *testCaseInput.input
+	calls := 0
+	observed.Admit = func(admission RenderAdmission) (bool, error) {
+		calls++
+		assert.Equal(t, admission.Key, testCaseInput.frame.header.Key)
+		assert.Equal(t, admission.Receipt != nil, true)
+		assert.Equal(t, len(admission.Documents), 1)
+		return true, nil
+	}
+	_, _, admitErr := fresh.Template(t.Context(), *testCaseInput.hr, nil, observed)
+	assert.NoError(t, admitErr)
+	assert.Equal(t, calls, 1)
+
 	t.Run("static output", func(t *testing.T) {
 		t.Parallel()
 		testTemplateAcceptedHistoryDurableStaticOutput(t, &testCaseInput, records)

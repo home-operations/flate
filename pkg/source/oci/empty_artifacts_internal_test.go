@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"helm.sh/helm/v4/pkg/registry"
@@ -55,11 +57,13 @@ func testFetcherEmptyArtifactCase(t *testing.T, operation *string,
 			selected := *repo
 			selected.LayerSelector = &sourcev1.OCILayerSelector{Operation: (*operation), MediaType: media}
 			for range 2 {
-				got, err := f.Fetch(
+				got, err := fetchtest.Fetch(
 					t.Context(),
+					f.Fetch,
 					&selected,
 					(testInputs{}).readSet(&selected),
 					&sourcecache.Policy{},
+					nil,
 				)
 				assert.FatalIf(
 					t,

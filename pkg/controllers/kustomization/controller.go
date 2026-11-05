@@ -217,9 +217,6 @@ func (c *execution) recordRender(
 	acceptance.Receipt, acceptance.Reads, acceptance.OutputReads = attempt.Render, attempt.Reads, attempt.OutputReads
 	acceptance.Records = attempt.Footprint()
 	acceptance.Sources = attempt.SourcePaths()
-	if acceptance.Entry != nil {
-		acceptance.Sources = c.Store.ChildSourcePaths(acceptance.Owner, attempt.Children, nil)
-	}
 	return c.Trees.RecordRender(ctx, *acceptance)
 }
 

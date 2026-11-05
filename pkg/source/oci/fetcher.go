@@ -41,14 +41,18 @@ func (f *Fetcher) Fetch(
 	repo *manifest.OCIRepository,
 	reads *store.ReadSet,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
 	var mediaTypes []string
 	if mediaType := repo.LayerMediaType(); mediaType != "" {
 		mediaTypes = []string{mediaType}
 	}
-	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads), mediaTypes: mediaTypes}
+	innerOperation := operation{
+		Fetcher:    f,
+		reads:      reads,
+		secrets:    source.SecretLookup(reads),
+		mediaTypes: mediaTypes,
+	}
 	return innerOperation.fetchSource(ctx, repo, &policy)
 }
 
@@ -58,9 +62,8 @@ func (f *Fetcher) FetchChart(
 	repo *manifest.OCIRepository,
 	reads *store.ReadSet,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
 	innerOperation2 := operation{
 		Fetcher: f, reads: reads, secrets: source.SecretLookup(reads),
 		mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType},
@@ -72,13 +75,11 @@ func (f *operation) fetchSource(
 	ctx context.Context,
 	repo *manifest.OCIRepository,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
 	f.produce = func(ctx context.Context, request registryAcquisition, policyValue *cache.Policy) (*store.SourceArtifact, error) {
-		productionPolicy := *policyValue
-
-		return f.fetchLayer(ctx, repo, &request, &productionPolicy)
+		acquisitionPolicy := *policyValue
+		return f.fetchLayer(ctx, repo, new(request), &acquisitionPolicy)
 	}
 	return f.acquire(ctx, new(repo.RegistryAccess()), &policy)
 }

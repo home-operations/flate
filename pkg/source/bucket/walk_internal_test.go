@@ -20,6 +20,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
@@ -425,7 +427,7 @@ func TestWalkBucket_SourceTimeout(t *testing.T) {
 					defer cancel()
 				}
 				start := time.Now()
-				artifact, err := f.Fetch(ctx, b, (testInputs{}).readSet(b), &cache.Policy{})
+				artifact, err := fetchtest.Fetch(ctx, f.Fetch, b, (testInputs{}).readSet(b), &cache.Policy{}, nil)
 				if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || artifact != nil ||
 					calls != 1 ||
 					time.Since(start) != tc.want {

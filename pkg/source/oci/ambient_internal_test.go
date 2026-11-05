@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -46,15 +48,24 @@ func (f *ambientObserver) Fetch(
 	repo *manifest.OCIRepository,
 	reads *store.ReadSet,
 	policy *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	artifact, err := f.Fetcher.Fetch(ctx, repo, reads, policy)
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryAmbient != nil {
 		f.missing = missing
 		retry := missing.RetryAmbient
-		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+		missing.RetryAmbient = func(ctx context.Context) (source.PreparedFetch, error) {
 			f.calls++
-			f.artifact, f.ambientError = retry(ctx)
-			return f.artifact, f.ambientError
+			prepared, prepareErr := retry(ctx)
+			if prepareErr != nil {
+				f.ambientError = prepareErr
+				return prepared, prepareErr
+			}
+			fetch := prepared.Fetch
+			prepared.Fetch = func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+				f.artifact, f.ambientError = fetch(ctx, local)
+				return f.artifact, f.ambientError
+			}
+			return prepared, nil
 		}
 	}
 	return artifact, err
@@ -103,10 +114,10 @@ func TestFetcher_AmbientFailedAcquisition(t *testing.T) {
 	reads.Init(s, repo.Named(), nil)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t), RegistryConfig: config}
-	_, err := f.Fetch(t.Context(), repo, &reads, &sourcecache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, &reads, &sourcecache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
-	artifact, err := missing.RetryAmbient(t.Context())
+	artifact, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	if artifact != nil || err == nil || authenticated.Load() == 0 || !errors.Is(err, manifest.ErrMissingSecret) ||
 		!errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("ambient failure: artifact=%v error=%v authenticated=%d", artifact, err, authenticated.Load())
@@ -177,7 +188,7 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 		var reads store.ReadSet
 		reads.Init(s, repo.Named(), nil)
 		op := &operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}
-		request, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
+		request, err := op.resolvedRepository(t.Context(), new(repo.RegistryAccess()))
 		assert.NoError(t, err)
 		identities = append(identities, request.material)
 		reads.Close()
@@ -405,12 +416,14 @@ func testFetcherHelmAmbientReloadCase(t *testing.T, mode *string,
 	inputs := testInputs{secrets: func(_, _ string) *manifest.Secret { lookups.Add(1); return nil }}
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}
 	op := &operation{Fetcher: f, secrets: inputs.lookup(repo)}
-	_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+	_, err := fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {
+		return op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+	})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil || lookups.Load() != 1 {
 		t.Fatalf("Helm eligibility: lookups=%d error=%v", lookups.Load(), err)
 	}
-	first, err := missing.RetryMachine(t.Context(), nil)
+	first, err := fetchtest.Machine(t.Context(), missing, nil)
 	assert.NoError(t, err)
 	if (*mode) == "removed" {
 		expected.Store("")
@@ -421,13 +434,15 @@ func testFetcherHelmAmbientReloadCase(t *testing.T, mode *string,
 	}
 	before := accepted.Load()
 	f = &Fetcher{Cache: f.Cache, Network: newTestNetwork(t)}
-	_, err = (&operation{Fetcher: f, secrets: inputs.lookup(repo)}).fetchSource(
-		t.Context(),
-		repo,
-		&sourcecache.Policy{},
-	)
+	_, err = fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {
+		return (&operation{Fetcher: f, secrets: inputs.lookup(repo)}).fetchSource(
+			t.Context(),
+			repo,
+			&sourcecache.Policy{},
+		)
+	})
 	missing, _ = errors.AsType[*source.MissingSecretError](err)
-	got, err := missing.RetryMachine(t.Context(), nil)
+	got, err := fetchtest.Machine(t.Context(), missing, nil)
 	if (*mode) == "removed" {
 		assert.FatalIf(
 			t,
@@ -557,14 +572,28 @@ func testFetcherAmbientAcquisitionErrorsCaseCompletion(
 	var art *store.SourceArtifact
 	var err error
 	if *(*captures.deferred) {
-		_, err = (*captures.f).Fetch(t.Context(), (*captures.repo), captures.reads, &sourcecache.Policy{})
+		_, err = fetchtest.Fetch(
+			t.Context(),
+			(*captures.f).Fetch,
+			(*captures.repo),
+			captures.reads,
+			&sourcecache.Policy{},
+			nil,
+		)
 		missing, ok := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)
-		art, err = missing.RetryMachine((*captures.ctx), captures.reads)
+		art, err = fetchtest.Machine((*captures.ctx), missing, captures.reads)
 		assert.FatalIf(t, ((*(*captures.stage)) == "producer" || (*(*captures.stage)) == "unavailable") &&
 			!errors.Is(err, missing), "%s", "unavailable selection changed missing identity")
 	} else {
-		art, err = (*captures.f).Fetch((*captures.ctx), (*captures.repo), captures.reads, &sourcecache.Policy{})
+		art, err = fetchtest.Fetch(
+			(*captures.ctx),
+			(*captures.f).Fetch,
+			(*captures.repo),
+			captures.reads,
+			&sourcecache.Policy{},
+			nil,
+		)
 	}
 	if art != nil || err == nil || captures.remote.
 		Load() != map[bool]int32{false: 0, true: 1}[(*(*captures.stage)) == "unavailable"] ||

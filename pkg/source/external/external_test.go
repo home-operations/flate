@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 
@@ -45,7 +47,7 @@ func TestFetcher_NoArtifact(t *testing.T) {
 				"prediction supplied source content",
 			)
 
-			_, err := f.Fetch(t.Context(), ea, testReadSet(ea), &sourcecache.Policy{})
+			_, err := fetchtest.Fetch(t.Context(), f.Fetch, ea, testReadSet(ea), &sourcecache.Policy{}, nil)
 			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
 				err.Error() != "no generated content", "missing-content error = %v", err)
 		})

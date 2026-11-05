@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	gitlib "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -84,10 +86,10 @@ func TestFetcher_AmbientSubmodulesShareAttempt(t *testing.T) {
 	reads := (testInputs{}).readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-	_, err = f.Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
+	_, err = fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
-	artifact, err := missing.RetryAmbient(t.Context())
+	artifact, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	assert.NoError(t, err)
 	<-closed
 	if opened.Load() != 1 || tr.authenticated.Load() < 2 {
@@ -159,10 +161,10 @@ func testFetcherAmbientPostAuthenticationFailureCase(
 	repo := gitRepoWithSecret("failure", "ssh://git@fixture"+root, "auth")
 	reads := (testInputs{}).readSet(repo)
 	defer reads.Close()
-	_, err := f.Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
-	artifact, err := missing.RetryAmbient(t.Context())
+	artifact, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	assert.FatalIf(t, artifact != nil || err == nil || !errors.Is(err, manifest.ErrFlux) || (*phase) ==
 		"publication" && !strings.Contains(err.Error(), "blobs") || (*phase) ==
 		"view" &&

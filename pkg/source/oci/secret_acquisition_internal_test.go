@@ -45,11 +45,11 @@ func testFetcherSecretReferencesCase(t *testing.T, tt *struct {
 	var err error
 	switch {
 	case tt.proxy:
-		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
+		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolvedRepository(
 			t.Context(), new(repo.RegistryAccess()),
 		)
 	case tt.cert:
-		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
+		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolvedRepository(
 			t.Context(), new(repo.RegistryAccess()),
 		)
 	default:

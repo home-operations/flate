@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -43,8 +45,9 @@ func testFetcherPackedContentCase(t *testing.T, testCaseInput testFetcherPackedC
 		root = t.TempDir()
 	}
 	f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
-	art, err := f.Fetch(
+	art, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		&manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: srv.URL},
 		(testInputs{}).readSet(
 			&manifest.GitRepository{Name: "packed", Namespace: "flux-system", URL: srv.URL},
@@ -56,6 +59,7 @@ func testFetcherPackedContentCase(t *testing.T, testCaseInput testFetcherPackedC
 				MaxWait:  time.Nanosecond,
 			},
 		},
+		nil,
 	)
 	if (*testCaseInput.attempts) == 1 {
 		if err == nil || art != nil || acquisitions.Load() != 1 {

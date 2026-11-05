@@ -16,6 +16,9 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+- `bootstrap-credentials/build-and-diff` compares complete build and diff output before and after a bootstrap source gains unavailable authentication and verification references.
+  Both replays use two workers and fresh caches.
+
 - `unclaimed-change/` - an offline Helm producer emits a Kustomization over unchanged content. A changed text file has no owner or reader. `TestE2E_UnclaimedPathWithoutHistory` requires empty changed-only output with separate cold caches.
 
 - `simple/` - a hand-crafted minimal cluster used across the scenario packages.

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing"
 
@@ -47,11 +49,13 @@ func testCheckoutRefPreservesOriginFirstBranchLookupCase(
 	spec := &manifest.GitRepository{
 		URL: srv.URL, Reference: ref, RecurseSubmodules: true,
 	}
-	artifact, err := f.Fetch(
+	artifact, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		spec,
 		(testInputs{}).readSet(spec),
 		&sourcecache.Policy{MaxAge: time.Hour},
+		nil,
 	)
 	assert.NoError(t, err)
 	acquired := openGeneration(t, f, spec, artifact)

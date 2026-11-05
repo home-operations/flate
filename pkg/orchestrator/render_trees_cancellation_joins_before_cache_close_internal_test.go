@@ -16,6 +16,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	src "github.com/home-operations/flate/pkg/source"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -96,26 +98,34 @@ type countedChartFetcher struct {
 }
 
 func (f *countedChartFetcher) Fetch(
-	ctx context.Context,
+	_ context.Context,
 	object manifest.BaseManifest,
 	_ *store.ReadSet,
 	_ *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	f.calls.Add(1)
-	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-	chart := f.chart
-	if selected := f.charts[object.Named()]; selected != "" {
-		chart = selected
-	}
-	artifact, _, err := baseline.AdmitDirectory(ctx, chart, chart, manifest.WorkScope{})
-	if err != nil {
-		return nil, err
-	}
-	artifact.Kind, artifact.Digest, artifact.Revision, artifact.Key = manifest.KindOCIRepository, digest, "1.0.0@"+digest, digest
-	if f.incomplete {
-		artifact.ContentFingerprint = nil
-	}
-	return artifact, nil
+) (src.PreparedFetch, error) {
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			f.calls.Add(1)
+			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+			chart := f.chart
+			if selected := f.charts[object.Named()]; selected != "" {
+				chart = selected
+			}
+			artifact, _, err := baseline.AdmitDirectory(ctx, chart, chart, manifest.WorkScope{})
+			if err != nil {
+				return nil, err
+			}
+			artifact.Kind, artifact.Digest, artifact.Revision, artifact.Key = manifest.KindOCIRepository, digest, "1.0.0@"+digest, digest
+			if f.incomplete {
+				artifact.ContentFingerprint = nil
+			}
+			return artifact, nil
+		},
+	}, nil
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.

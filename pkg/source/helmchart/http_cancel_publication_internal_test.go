@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -55,11 +57,13 @@ func testFetchHTTPChartCancellationDoesNotPublishCase(
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
-		_, err := f.Fetch(
+		_, err := fetchtest.Fetch(
 			ctx,
+			f.Fetch,
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 			&sourcecache.Policy{},
+			nil,
 		)
 		result <- err
 	}()
@@ -85,11 +89,13 @@ func testFetchHTTPChartCancellationDoesNotPublishCase(
 	case <-time.After(5 * time.Second):
 		t.Fatal("HTTP request outlived fetch")
 	}
-	art, err := f.Fetch(
+	art, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		helmChart("repo", "app-template", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 		&sourcecache.Policy{},
+		nil,
 	)
 	assert.NoError(t, err)
 

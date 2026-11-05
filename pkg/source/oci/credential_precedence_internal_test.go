@@ -34,7 +34,7 @@ func TestFetcher_ResolveConfig_CredentialSnapshot(t *testing.T) {
 	repo := ociRepo("snapshot", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://docker.io/library/test" })
 	selected, err := newTestNetwork(t).RegistryCredentials(t.Context(), path, "registry-1.docker.io")
 	assert.NoError(t, err)
-	request, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
+	request, err := op.resolvedRepository(t.Context(), new(repo.RegistryAccess()))
 	if err == nil {
 		err = op.configure(new(repo.RegistryAccess()), &request, *selected)
 	}
@@ -44,7 +44,7 @@ func TestFetcher_ResolveConfig_CredentialSnapshot(t *testing.T) {
 	assert.FatalIf(t, err != nil || cred.Password != "first", "credential was not frozen: %v", err)
 	selected, err = newTestNetwork(t).RegistryCredentials(t.Context(), path, "registry-1.docker.io")
 	assert.NoError(t, err)
-	next, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
+	next, err := op.resolvedRepository(t.Context(), new(repo.RegistryAccess()))
 	if err == nil {
 		err = op.configure(new(repo.RegistryAccess()), &next, *selected)
 	}
@@ -118,7 +118,7 @@ func testFetcherResolveConfigCredentialPrecedenceCase(
 		).RegistryCredentials(t.Context(), f.RegistryConfig, tt.registry)
 		assert.NoError(t, err)
 	}
-	request, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
+	request, err := op.resolvedRepository(t.Context(), new(repo.RegistryAccess()))
 	if err == nil && selected != nil {
 		err = op.configure(new(repo.RegistryAccess()), &request, *selected)
 	}
@@ -143,7 +143,7 @@ func testFetcherResolveConfigCredentialPrecedenceCase(
 		)
 		assert.FatalIf(t, err != nil || captured != want, "%s", "producer reread mutable credentials")
 
-		rotated, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
+		rotated, err := op.resolvedRepository(t.Context(), new(repo.RegistryAccess()))
 		assert.FatalIf(
 			t,
 			err != nil || cmp.Equal(request.material, rotated.material),

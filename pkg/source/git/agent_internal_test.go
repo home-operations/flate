@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
@@ -283,7 +285,7 @@ func testFetcherAmbientAcquisitionCaseCompletion(
 	if (*(*captures.shape)) == "retry" {
 		policy.Retry = sourcecache.RetryConfig{Attempts: 2, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	}
-	artifact, err := f.Fetch(t.Context(), (*captures.repo), reads, &policy)
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, (*captures.repo), reads, &policy, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(
 		t,
@@ -295,7 +297,7 @@ func testFetcherAmbientAcquisitionCaseCompletion(
 	if (missing.Secret == (manifest.NamedResource{})) != ((*(*captures.shape)) == "source only" || (*(*captures.shape)) == "HTTPS") {
 		t.Fatalf("missing identity = %s", missing.Secret)
 	}
-	artifact, err = missing.RetryAmbient(t.Context())
+	artifact, err = fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	success := (*(*captures.shape)) == "fallback" || (*(*captures.shape)) == "accepted" ||
 		(*(*captures.shape)) == "source only" ||
 		(*(*captures.shape)) == "retry" ||
@@ -364,7 +366,7 @@ func testFetcherAmbientPreparationCase(t *testing.T, shape *string,
 	}}).readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-	artifact, err := f.Fetch(t.Context(), repo, reads, &sourcecache.Policy{})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
 	if artifact != nil || err == nil || opened.Load() != 0 {
 		t.Fatalf(
 			"preparation opened agent or acquired content: artifact=%v error=%v opened=%d",
@@ -487,11 +489,13 @@ func testFetcherStalledAgentCase(t *testing.T, cause *string,
 
 func testFetcherStalledAgentCaseCompletion(t *testing.T, captures *testFetcherStalledAgentCaseCompletionInputs) {
 	t.Helper()
-	_, (*captures.err) = (*captures.f).Fetch(
+	_, (*captures.err) = fetchtest.Fetch(
 		(*captures.ctx),
+		(*captures.f).Fetch,
 		(*captures.repo),
 		(*captures.reads),
 		&sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 1}},
+		nil,
 	)
 	missing, ok := errors.AsType[*source.MissingSecretError]((*captures.err))
 	if !ok || missing.RetryAmbient == nil {
@@ -501,7 +505,7 @@ func testFetcherStalledAgentCaseCompletion(t *testing.T, captures *testFetcherSt
 	var artifact *store.SourceArtifact
 	started := time.Now()
 	go func() {
-		artifact, (*captures.err) = missing.RetryAmbient((*captures.ctx))
+		artifact, (*captures.err) = fetchtest.Retry((*captures.ctx), missing.RetryAmbient)
 		close((*captures.done))
 	}()
 	watchdog := time.NewTimer(5 * time.Second)
@@ -609,7 +613,7 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 		assert.NoError(t, (*scope.f).Cache.Close())
 		(*scope.f).Cache = cachetest.New(t, (*scope.cacheDir), sourcecache.New)
 		before := (*(*scope.captures).opened).Load()
-		warm, err := (*scope.missing).RetryAmbient(t.Context())
+		warm, err := fetchtest.Retry(t.Context(), (*scope.missing).RetryAmbient)
 		assert.NoError(t, err)
 		<-(*(*scope.captures).closed)
 		assert.FatalIf(
@@ -620,10 +624,17 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 		)
 		if (*(*(*scope.captures).shape)) == "accepted" {
 			mustCommitFile(t, (*(*scope.captures).root), "hello.txt", "refreshed")
-			_, err := (*scope.f).Fetch(t.Context(), (*(*scope.captures).repo), (*scope.reads), &sourcecache.Policy{})
+			_, err := fetchtest.Fetch(
+				t.Context(),
+				(*scope.f).Fetch,
+				(*(*scope.captures).repo),
+				(*scope.reads),
+				&sourcecache.Policy{},
+				nil,
+			)
 			refresh, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || refresh.RetryAmbient == nil, "refresh preparation = %v", err)
-			fresh, err := refresh.RetryAmbient(t.Context())
+			fresh, err := fetchtest.Retry(t.Context(), refresh.RetryAmbient)
 			assert.NoError(t, err)
 			<-(*(*scope.captures).closed)
 			data, err := fs.ReadFile(fresh.FS, "hello.txt")
@@ -640,7 +651,7 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 			(*(*scope.captures).tr).
 				allowed = rotatedSigner.PublicKey()
 			authenticated := (*(*scope.captures).tr).authenticated.Load()
-			rotated, err := (*scope.missing).RetryAmbient(t.Context())
+			rotated, err := fetchtest.Retry(t.Context(), (*scope.missing).RetryAmbient)
 			assert.NoError(t, err)
 			<-(*(*scope.captures).closed)
 			assert.FatalIf(

@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
@@ -44,9 +45,17 @@ func (f *materializerFetcher) Fetch(
 	manifest.BaseManifest,
 	*store.ReadSet,
 	*sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	f.calls.Add(1)
-	return nil, manifest.NewError(manifest.ErrInput, nil, "content unavailable")
+) (src.PreparedFetch, error) {
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			f.calls.Add(1)
+			return nil, manifest.NewError(manifest.ErrInput, nil, "content unavailable")
+		},
+	}, nil
 }
 
 func TestController_ArtifactMaterializersProduction(t *testing.T) {
@@ -272,9 +281,9 @@ func TestController_AmbientSettlementExactlyOnce(t *testing.T) {
 					src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), secret, "credentials unavailable"),
 				)
 				calls := 0
-				missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+				missing.RetryAmbient = func(context.Context) (src.PreparedFetch, error) {
 					calls++
-					return &store.SourceArtifact{Kind: manifest.KindGitRepository}, nil
+					return fetchtest.Prepared(&store.SourceArtifact{Kind: manifest.KindGitRepository}, nil)
 				}
 				f := &fakeFetcher{err: missing}
 				c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
@@ -346,15 +355,15 @@ func TestController_AmbientFailureRetainsCause(t *testing.T) {
 			if rejected {
 				cause = manifest.NewError(manifest.ErrFlux, &fetcherr.ResponseError{StatusCode: 401}, "")
 			}
-			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+			missing.RetryAmbient = func(context.Context) (src.PreparedFetch, error) {
 				if !rejected {
-					return nil, src.MissingSecretErr(
+					return src.PreparedFetch{}, src.MissingSecretErr(
 						manifest.DiagnosticFor(repo.Named(), repo),
 						"",
 						"SSH agent unavailable",
 					)
 				}
-				return nil, cause
+				return src.PreparedFetch{}, cause
 			}
 			controller, st := newConfiguredController(t, nil, FetchOptions{AllowMissingSecrets: true})
 			st.AddObject(repo)
@@ -363,7 +372,7 @@ func TestController_AmbientFailureRetainsCause(t *testing.T) {
 			defer c.run.Close()
 			acquisition := base.Acquisition{
 				AllowMissingSecrets: true,
-				Fetch:               func(context.Context) (*store.SourceArtifact, error) { return nil, missing },
+				Fetch:               func(context.Context) (src.PreparedFetch, error) { return src.PreparedFetch{}, missing },
 				Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
 					return c.completeFetch(repo, artifact, unavailable)
 				},

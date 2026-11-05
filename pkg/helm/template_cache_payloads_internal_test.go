@@ -51,7 +51,12 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 		{
 			recordErr := (*inputs.cli).RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt23, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt23,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -94,7 +99,12 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 		{
 			recordErr := (*inputs.cli).RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt24, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt24,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -111,7 +121,12 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 		{
 			recordErr := reopened.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: newHR().Named(), Receipt: receipt25, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   newHR().Named(),
+					Receipt: receipt25,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}

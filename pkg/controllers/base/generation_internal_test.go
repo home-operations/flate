@@ -55,7 +55,10 @@ func TestGeneratedObjects_WithdrawalBeforeBlockedSource(t *testing.T) {
 		t.Context(),
 		manifest.DrainNone,
 		struct{}{},
-		func(struct{}, context.Context, *configGenerator, manifest.DrainLevel) error { return nil },
+		func(_ struct{}, ctx context.Context, obj *configGenerator, level manifest.DrainLevel) error {
+			_, err := initial.RequireRefresh(ctx, obj, manifest.GateParents, level)
+			return err
+		},
 	)
 	next := *first
 	next.Kustomization = first.Clone()
@@ -69,7 +72,10 @@ func TestGeneratedObjects_WithdrawalBeforeBlockedSource(t *testing.T) {
 		Name:      "replacement",
 		Namespace: "apps",
 	}
-	check := func(_ struct{}, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
+	check := func(_ struct{}, ctx context.Context, obj *configGenerator, level manifest.DrainLevel) error {
+		if _, err := run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+			return err
+		}
 		assert.ErrorIf(
 			t,
 			s.GetObject(child.Named()) != nil,
@@ -147,7 +153,10 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 				t.Context(),
 				manifest.DrainNone,
 				struct{}{},
-				func(struct{}, context.Context, *configGenerator, manifest.DrainLevel) error { return nil },
+				func(_ struct{}, ctx context.Context, obj *configGenerator, level manifest.DrainLevel) error {
+					_, err := first.RequireRefresh(ctx, obj, manifest.GateParents, level)
+					return err
+				},
 			)
 
 			assert.FatalIf(
@@ -229,7 +238,10 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 		t.Context(),
 		manifest.DrainNone,
 		run,
-		func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
+		func(run *Execution, ctx context.Context, obj *configGenerator, level manifest.DrainLevel) error {
+			if _, err := run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+				return err
+			}
 			_, _, next := run.Reads.GetEmission(first.Named())
 			defer next.Finish()
 			rendered = store.Child{
@@ -271,11 +283,14 @@ func testGeneratedObjectsLifecycleCase(t *testing.T, testCaseInput *string,
 		t.Context(),
 		manifest.DrainNone,
 		second,
-		func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
-			if (*testCaseInput) == "failure" {
-				return manifest.ErrInput
+		func(run *Execution, ctx context.Context, obj *configGenerator, level manifest.DrainLevel) error {
+			if _, err := run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+				return err
 			}
-			if (*testCaseInput) == "replay" {
+			switch *testCaseInput {
+			case "failure":
+				return manifest.ErrInput
+			case "replay":
 				fingerprintDedupResult, err := run.FingerprintDedup(
 					t.Context(),
 					next.Named(),
@@ -365,7 +380,10 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		t.Context(),
 		manifest.DrainNone,
 		first,
-		func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
+		func(run *Execution, ctx context.Context, obj *configGenerator, level manifest.DrainLevel) error {
+			if _, err := run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+				return err
+			}
 			_, _, output := run.Reads.GetEmission(object.Named())
 			defer output.Finish()
 			doc := map[string]any{
@@ -424,7 +442,10 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		t.Context(),
 		manifest.DrainNone,
 		second,
-		func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
+		func(run *Execution, ctx context.Context, obj *configGenerator, level manifest.DrainLevel) error {
+			if _, err := run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+				return err
+			}
 			fingerprintDedupResult2, err := run.FingerprintDedup(t.Context(), object.Named(), "same", &store.Emission{})
 			handled := fingerprintDedupResult2.Reused
 

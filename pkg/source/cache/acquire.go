@@ -62,6 +62,9 @@ type BlobKey struct {
 	// Validate checks a candidate against this caller's inputs under the acquisition lock.
 	// Streams belong to the callback; the callback never affects identity.
 	Validate func(context.Context, fs.FS) (bool, error)
+	// Observe receives the validated candidate or nil before production, once per call.
+	// Returning true completes this call without producing or publishing a generation.
+	Observe func(context.Context, fs.FS) (bool, error)
 	// Required lists unprefixed descriptor annotation names; it does not affect identity.
 	Required []string
 }
@@ -244,6 +247,7 @@ func (c *Cache) Blob(
 		ctx, new(request), &policy,
 		acquisitionCallbacks{
 			validate: validate,
+			observe:  key.observer(),
 			produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
 				return producer.produce(ctx, c, staged, produce)
 			},
@@ -251,6 +255,9 @@ func (c *Cache) Blob(
 	)
 	if err != nil {
 		return nil, ocispec.Descriptor{}, "", err
+	}
+	if e == nil {
+		return nil, ocispec.Descriptor{}, "", nil
 	}
 	if c.store != nil && !request.memoryOnly {
 		if _, err := c.root.Stat(
@@ -260,6 +267,24 @@ func (c *Cache) Blob(
 		}
 	}
 	return e.fs, e.descriptor, id, nil
+}
+
+func (k *BlobKey) observer() func(context.Context, *entry) (bool, error) {
+	if k.Observe == nil {
+		return nil
+	}
+	observed := false
+	return func(ctx context.Context, e *entry) (bool, error) {
+		if observed {
+			return false, nil
+		}
+		observed = true
+		var generation fs.FS
+		if e != nil {
+			generation = e.fs
+		}
+		return k.Observe(ctx, generation)
+	}
 }
 
 // RenderMetadata returns the current descriptor and generation without opening the payload.
@@ -359,6 +384,22 @@ func (c *Cache) acquireOnce(ctx context.Context, key *acquireKey, callbacks acqu
 	key.lookup = work
 	work.Add(&manifest.WorkCounts{Attempts: 1})
 	result, err := c.acquireCandidate(ctx, key, callbacks)
+	if err == nil && callbacks.observe != nil {
+		var handled bool
+		handled, err = callbacks.observe(ctx, result)
+		if err == nil && ctx.Err() != nil {
+			err = &CacheError{ctx.Err()}
+		}
+		if handled || err != nil {
+			result = nil
+		} else if result == nil {
+			callbacks.observe = nil
+			pending := *key
+			// Accepted backing is the immutable observation for this operation; recheck only pending work.
+			pending.accepted = ""
+			result, err = c.acquireCandidate(ctx, &pending, callbacks)
+		}
+	}
 	work.Finish(err)
 	return result, err
 }
@@ -415,6 +456,9 @@ func (c *Cache) acquireCandidate(
 		}
 	}
 
+	if callbacks.observe != nil {
+		return nil, nil //nolint:nilnil // Absence reaches admission before the same operation attempts production.
+	}
 	if key.lookupOnly {
 		return nil, c.missingGeneration(&key, e)
 	}

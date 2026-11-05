@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -48,7 +49,7 @@ func warmGeneratedChartCache(t *testing.T, owner *sourcecache.Cache, network *so
 	reads := new(store.ReadSet)
 	reads.Init(st, chartID, nil)
 	fetcher := helmchart.New(nil, helmchart.Config{Cache: owner, Network: network, Concurrency: 2})
-	_, err := fetcher.Fetch(t.Context(), hc, reads, &sourcecache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), fetcher.Fetch, hc, reads, &sourcecache.Policy{}, nil)
 	assert.NoError(t, err)
 }
 

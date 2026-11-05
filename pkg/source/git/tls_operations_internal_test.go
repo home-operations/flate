@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -121,11 +123,13 @@ func testFetcherTLSOperationsCaseCase(t *testing.T, testCaseInput testFetcherTLS
 	if (*(*testCaseInput.route)) != "direct" {
 		repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
 	}
-	art, err := f.Fetch(
+	art, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		repo,
 		fInputs.readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	if err != nil {
 		_, fallback := f.fallback.Load(srv.URL)
@@ -184,10 +188,8 @@ func testFetcherTLSOperationsCaseCaseCompletion(
 			Load(), (*captures.connects).
 			Load(),
 	)
-	_, (*captures.err) = (*captures.f).Fetch(
-		t.Context(), (*captures.repo), captures.fInputs.
-			readSet((*captures.repo)), &sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval()},
-	)
+	_, (*captures.err) = fetchtest.Fetch(t.Context(), (*captures.f).Fetch, (*captures.repo), captures.fInputs.
+		readSet((*captures.repo)), &sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval()}, nil)
 	assert.NoError(t, (*captures.err))
 
 	t.Logf(

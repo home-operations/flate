@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -74,11 +76,13 @@ func testFetcherRevalidationSelectedTagMetadataCase(
 		Reference:     &sourcev1.OCIRepositoryRef{SemVer: ">=1.0.0"},
 		LayerSelector: &sourcev1.OCILayerSelector{Operation: (*operation)},
 	}
-	first, err := f.Fetch(
+	first, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		repo,
 		(testInputs{}).readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	assert.NoError(t, err)
 	firstMetadata := map[string]string{
@@ -94,11 +98,13 @@ func testFetcherRevalidationSelectedTagMetadataCase(
 			f.Cache = cachetest.New(t, root, sourcecache.New)
 		}
 		beforeTags, beforeHeads, beforeManifests, beforeLayers := tags.Load(), heads.Load(), manifests.Load(), layers.Load()
-		got, err := f.Fetch(
+		got, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			repo,
 			(testInputs{}).readSet(repo),
 			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			nil,
 		)
 		assert.NoError(t, err)
 		if tags.Load()-beforeTags != 1 || heads.Load()-beforeHeads != 1 ||

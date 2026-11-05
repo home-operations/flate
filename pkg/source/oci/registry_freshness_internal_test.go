@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -64,11 +66,13 @@ func testFetcherFreshnessCase(t *testing.T, tt *struct {
 			repo.Reference.SemVer = "1.x"
 		}
 	}
-	first, err := f.Fetch(
+	first, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		repo,
 		(testInputs{}).readSet(repo),
 		&sourcecache.Policy{MaxAge: tt.interval},
+		nil,
 	)
 	assert.NoError(t, err)
 
@@ -92,11 +96,13 @@ func testFetcherFreshnessCase(t *testing.T, tt *struct {
 		registry.server.Close()
 	}
 	shared := &Fetcher{Network: newTestNetwork(t), Cache: f.Cache}
-	second, err := shared.Fetch(
+	second, err := fetchtest.Fetch(
 		t.Context(),
+		shared.Fetch,
 		repo,
 		(testInputs{}).readSet(repo),
 		&sourcecache.Policy{MaxAge: tt.interval},
+		nil,
 	)
 	if tt.failRefresh {
 		assert.FatalIf(t, err == nil, "%s", "expected refresh to fail after registry shutdown")

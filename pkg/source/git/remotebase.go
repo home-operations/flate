@@ -55,7 +55,7 @@ func (f *Fetcher) FetchRemoteBase(
 	}
 	repo := &attempt.repo
 	policy.Work = &attempt.work
-	endpoint, err := f.validateRepo(repo)
+	endpoint, err := f.validateRepo(repo, false)
 	if err != nil {
 		return nil, err
 	}

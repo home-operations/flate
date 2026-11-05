@@ -131,90 +131,68 @@ func (c *Controller) ReconcileNode(
 	}
 }
 
-func (c *execution) reuseArtifact(id manifest.NamedResource, art *store.SourceArtifact) bool {
-	if art.FS == nil {
-		return false
-	}
-	switch {
-	case art.Reads.Valid():
-		c.run.Reads.CarryAdvisories(art.Reads)
-	case c.run.Reads.Matches(art.Reads):
-		c.run.Reads.CarryAdvisories(art.Reads)
-		c.Store.SetArtifact(id, art.WithReads(&c.run.Reads))
-	default:
-		return false
-	}
-	for i := range art.Warnings {
-		c.run.Reads.AddWarning(art.Warnings[i])
-	}
-	c.run.Reused = true
-	return true
-}
-
 func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
 	id := obj.Named()
 	facts := obj.(sourceFacts) //nolint:errcheck // The source controller accepts only source manifests.
 	if facts.ExistenceOnly() {
-		return nil
-	}
-	// Dispatcher ownership guarantees a fetcher for this kind.
-	fetcher := c.Fetchers[id.Kind]
-	// Available content survives idempotent re-emission. Released pins must
-	// reacquire normally and publish a Ready transition to wake content consumers.
-	if art, ok := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
-		if c.reuseArtifact(id, art) {
-			return nil
-		}
-	}
-	var err error
-	obj, err = c.run.RequireRefresh(ctx, obj, manifest.GateInputs, level)
-	if err != nil {
+		_, err := c.run.RequireRefresh(ctx, obj, manifest.GateParents, level)
 		return err
 	}
-
-	if c.admission != nil {
-		_, artifact, err := c.admission.Resolve(ctx, obj.Named(), obj, c.run.Reads.Work().Scope())
-		if err != nil {
-			return err
-		}
-		if artifact != nil {
-			return c.completeFetch(obj, artifact, nil)
-		}
-	}
-
-	if level == manifest.DrainNone {
-		// A producer may need this source's content; drain releases availability waits.
-		if blocked := c.run.Reads.UnsettledProducers(id); len(blocked) != 0 {
-			return &depwait.ErrBlocked{Deps: blocked}
-		}
-	}
-
-	if c.acquired != nil {
-		artifact := c.acquired
-		c.acquired = nil
-		return c.completeFetch(obj, artifact, nil)
-	}
-
-	c.SetPendingUnlessReady(id, "fetching")
-
-	return c.run.Acquire(
-		ctx,
-		obj,
-		base.Acquisition{
-			AllowMissingSecrets: c.allowMissingSecrets,
-			Fetch: func(ctx context.Context) (*store.SourceArtifact, error) {
-				return fetcher.Fetch(
-					ctx,
-					obj,
-					&c.run.Reads,
-					&cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry},
-				)
-			},
-			Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
-				return c.completeFetch(obj, artifact, unavailable)
-			},
+	fetcher := c.Fetchers[id.Kind]
+	var selected *store.SourceArtifact
+	return c.run.Acquire(ctx, obj, base.Acquisition{
+		AllowMissingSecrets: c.allowMissingSecrets,
+		Fetch: func(ctx context.Context) (src.PreparedFetch, error) {
+			return fetcher.Fetch(ctx, obj, &c.run.Reads, &cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
 		},
-		level)
+		Select: func(ctx context.Context) (bool, error) {
+			if c.admission == nil {
+				return false, nil
+			}
+			var err error
+			_, selected, err = c.admission.Resolve(ctx, id, obj, c.run.Reads.Work().Scope())
+			return selected != nil, err
+		},
+		Resolve: func(ctx context.Context, level manifest.DrainLevel) (*store.SourceArtifact, error) {
+			// Declaration and input gates MUST follow credential settlement.
+			if _, err := c.run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
+				return nil, err
+			}
+			if artifact := c.resolve(obj, selected); artifact != nil {
+				return artifact, nil
+			}
+			if level == manifest.DrainNone {
+				if blocked := c.run.Reads.UnsettledProducers(id); len(blocked) != 0 {
+					return nil, &depwait.ErrBlocked{Deps: blocked}
+				}
+			}
+			if c.acquired != nil {
+				artifact := c.acquired
+				c.acquired = nil
+				return artifact, nil
+			}
+			if _, err := c.run.RequireRefresh(ctx, obj, manifest.GateInputs, level); err != nil {
+				return nil, err
+			}
+			c.SetPendingUnlessReady(id, "fetching")
+			return nil, nil
+		},
+		Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+			return c.completeFetch(obj, artifact, unavailable)
+		},
+	}, level)
+}
+
+func (c *execution) resolve(obj manifest.BaseManifest, resolved *store.SourceArtifact) *store.SourceArtifact {
+	id := obj.Named()
+	artifact, _ := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	if artifact != nil && artifact.FS != nil &&
+		(artifact.Reads.Valid() || c.run.Reads.Matches(artifact.Reads)) {
+		c.run.Reads.CarryAdvisories(artifact.Reads)
+		c.run.Reused = true
+		return artifact
+	}
+	return resolved
 }
 
 func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.SourceArtifact, err error) error {
@@ -230,6 +208,12 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	}
 	if err != nil {
 		return manifest.NewError(manifest.ErrSourceSkipped, err, "")
+	}
+	if c.run.Reused {
+		if artifact != nil && !artifact.Reads.Valid() {
+			c.Store.SetArtifact(obj.Named(), artifact.WithReads(&c.run.Reads))
+		}
+		return nil
 	}
 	if artifact != nil {
 		if !c.run.Reads.Valid() {

@@ -22,6 +22,12 @@ type AdvisoryEvidence struct {
 //
 //nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) RecordSuppliedOverride(override SuppliedOverride) {
+	if slices.ContainsFunc(r.advisories.Overrides, func(current SuppliedOverride) bool {
+		return current.Resource == override.Resource && current.SupplyPath == override.SupplyPath &&
+			slices.Equal(current.Keys, override.Keys)
+	}) {
+		return
+	}
 	override.Keys = slices.Clone(override.Keys)
 	r.advisories.Overrides = append(r.advisories.Overrides, override)
 }

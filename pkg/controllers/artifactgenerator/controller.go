@@ -72,6 +72,11 @@ type evaluation struct {
 }
 
 func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, level manifest.DrainLevel) error {
+	var err error
+	obj, err = c.run.RequireRefresh(ctx, obj, manifest.GateParents, level)
+	if err != nil {
+		return err
+	}
 	id := obj.Named()
 	selected, doc, attempt := c.run.Reads.GetEmission(id)
 	defer attempt.Finish()

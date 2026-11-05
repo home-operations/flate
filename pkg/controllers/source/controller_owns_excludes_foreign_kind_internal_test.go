@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
@@ -196,35 +197,43 @@ func (f *fallbackFetcher) Fetch(
 	_ manifest.BaseManifest,
 	_ *store.ReadSet,
 	policy *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	f.retry = *policy
-	if f.rendered {
-		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
-	}
-	missing, _ := errors.AsType[*src.MissingSecretError](
-		src.MissingSecretErr(
-			manifest.DiagnosticFor(
-				manifest.NamedResource{
-					Group:     manifest.SourceDomain,
-					Kind:      manifest.KindOCIRepository,
-					Namespace: "ns",
-					Name:      "r",
-				},
-				nil,
-			),
-			"ghcr-creds",
-			"not found",
-		),
-	)
-	missing.RetryAmbient = func(_ context.Context) (*store.SourceArtifact, error) {
-		f.fallbackCalls++
-		f.fallbackRetry = *policy
-		if f.fallbackErr != nil {
-			return nil, f.fallbackErr
-		}
-		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
-	}
-	return nil, missing
+) (src.PreparedFetch, error) {
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			f.retry = *policy
+			if f.rendered {
+				return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
+			}
+			missing, _ := errors.AsType[*src.MissingSecretError](
+				src.MissingSecretErr(
+					manifest.DiagnosticFor(
+						manifest.NamedResource{
+							Group:     manifest.SourceDomain,
+							Kind:      manifest.KindOCIRepository,
+							Namespace: "ns",
+							Name:      "r",
+						},
+						nil,
+					),
+					"ghcr-creds",
+					"not found",
+				),
+			)
+			missing.RetryAmbient = func(_ context.Context) (src.PreparedFetch, error) {
+				f.fallbackCalls++
+				f.fallbackRetry = *policy
+				if f.fallbackErr != nil {
+					return src.PreparedFetch{}, f.fallbackErr
+				}
+				return fetchtest.Prepared(&store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil)
+			}
+			return nil, missing
+		},
+	}, nil
 }
 
 func TestController_MissingSecretRegistryFallback(t *testing.T) {
@@ -299,7 +308,7 @@ func TestController_AmbientContextError(t *testing.T) {
 			missing, _ := errors.AsType[*src.MissingSecretError](
 				src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found"),
 			)
-			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) { return nil, failure }
+			missing.RetryAmbient = func(context.Context) (src.PreparedFetch, error) { return src.PreparedFetch{}, failure }
 			controller, st := newConfiguredController(t, nil, FetchOptions{AllowMissingSecrets: true})
 			st.AddObject(repo)
 			c := &execution{Controller: controller}
@@ -312,8 +321,8 @@ func TestController_AmbientContextError(t *testing.T) {
 					repo,
 					base.Acquisition{
 						AllowMissingSecrets: true,
-						Fetch: func(context.Context) (*store.SourceArtifact, error) {
-							return nil, missing
+						Fetch: func(context.Context) (src.PreparedFetch, error) {
+							return src.PreparedFetch{}, missing
 						},
 						Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
 							return c.completeFetch(repo, artifact, unavailable)
@@ -441,9 +450,9 @@ func testControllerUnavailableSecretAtFixpointCase(
 	ambientCalls := 0
 	if testCaseInput.producer && !testCaseInput.malformed {
 		missing, _ := errors.AsType[*src.MissingSecretError](fetchErr)
-		missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+		missing.RetryAmbient = func(context.Context) (src.PreparedFetch, error) {
 			ambientCalls++
-			return &store.SourceArtifact{Kind: repo.Named().Kind}, nil
+			return fetchtest.Prepared(&store.SourceArtifact{Kind: repo.Named().Kind}, nil)
 		}
 	}
 	f := &fakeFetcher{err: fetchErr, secret: secret.Name}
@@ -627,12 +636,15 @@ func testControllerAmbientPolicyCase(t *testing.T, testCaseInput testControllerA
 	if failure != nil {
 		failure = manifest.NewError(manifest.ErrFlux, fmt.Errorf("ambient acquisition: %w", failure), "")
 	}
-	missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+	missing.RetryAmbient = func(context.Context) (src.PreparedFetch, error) {
 		calls++
 		if failure != nil {
-			return nil, failure
+			return src.PreparedFetch{}, failure
 		}
-		return &store.SourceArtifact{Kind: (*testCaseInput.repo).Named().Kind, FS: fstest.MapFS{}}, nil
+		return fetchtest.Prepared(
+			&store.SourceArtifact{Kind: (*testCaseInput.repo).Named().Kind, FS: fstest.MapFS{}},
+			nil,
+		)
 	}
 	f := &fakeFetcher{err: missing, secret: "auth"}
 	c, st := newConfiguredController(

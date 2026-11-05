@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  VALUE: resolved
+kind: ConfigMap
+metadata:
+  name: settings
+  namespace: apps

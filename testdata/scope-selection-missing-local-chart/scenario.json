@@ -1,0 +1,203 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "missing-local-chart-base",
+      "repository": "repo",
+      "overlay": "missing-local-chart-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/missing-local-chart-base"
+      ]
+    },
+    {
+      "name": "missing-local-chart-baseline",
+      "repository": "baseline",
+      "overlay": "missing-local-chart-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/missing-local-chart-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "missing-local-chart-base",
+      "directory": "overlays/missing-local-chart-base",
+      "operations": []
+    },
+    {
+      "name": "missing-local-chart-baseline",
+      "directory": "overlays/missing-local-chart-baseline",
+      "operations": []
+    },
+    {
+      "name": "missing-local-chart-after",
+      "directory": "overlays/missing-local-chart-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "missing-local-chart",
+      "description": "missing local chart.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "missing-local-chart-baseline"
+        },
+        {
+          "commit": "missing-local-chart-base"
+        },
+        {
+          "overlay": "missing-local-chart-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/missing-local-chart-build.stdout",
+              "stderr": "expect/missing-local-chart-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/missing-local-chart-build.stderr",
+      "cases": [
+        "missing-local-chart"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/missing-local-chart-build.stdout",
+      "cases": [
+        "missing-local-chart"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/missing-local-chart-base/repo/kustomization.yaml",
+      "cases": [
+        "missing-local-chart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-chart-base/repo/probe.yaml",
+      "cases": [
+        "missing-local-chart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-chart-base/repo/source.yaml",
+      "cases": [
+        "missing-local-chart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-chart-baseline/baseline/kustomization.yaml",
+      "cases": [
+        "missing-local-chart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-chart-baseline/baseline/probe.yaml",
+      "cases": [
+        "missing-local-chart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-chart-baseline/baseline/source.yaml",
+      "cases": [
+        "missing-local-chart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    }
+  ],
+  "inputs": ""
+}

@@ -1,0 +1,15 @@
+apiVersion: v1
+data:
+  values.yaml: 'greeting: supplied'
+kind: ConfigMap
+metadata:
+  name: external
+  namespace: apps
+---
+apiVersion: v1
+data:
+  values.yaml: 'greeting: unrelated-supply'
+kind: ConfigMap
+metadata:
+  name: external
+  namespace: other

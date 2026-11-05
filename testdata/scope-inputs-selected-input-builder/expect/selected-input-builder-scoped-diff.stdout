@@ -1,0 +1,21 @@
+--- ConfigMap input-dev (.)
++++ ConfigMap input-dev (.)
+@@ -1,7 +1 @@
+-apiVersion: v1
+-data:
+-  value: before
+-kind: ConfigMap
+-metadata:
+-  name: input-dev
+ 
+
+--- ConfigMap input-prod (.)
++++ ConfigMap input-prod (.)
+@@ -1 +1,7 @@
++apiVersion: v1
++data:
++  value: before
++kind: ConfigMap
++metadata:
++  name: input-prod
+ 

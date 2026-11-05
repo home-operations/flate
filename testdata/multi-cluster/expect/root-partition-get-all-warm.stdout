@@ -1,0 +1,3 @@
+main:Kustomization/shared
+test:Kustomization/shared
+utility:Kustomization/shared

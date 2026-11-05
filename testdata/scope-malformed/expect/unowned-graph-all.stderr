@@ -1,0 +1,7 @@
+
+  ✗  entry  path "monitoring"  kustomize build monitoring: accumulating resources: accumulating resources from 'blackbox-exporter.yaml': MalformedYAMLError: yaml: line 6: did not find expected ',' or ']' in File: blackbox-exporter.yaml
+
+  ⚠ warnings (1)
+    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct
+
+  ✗ 1 failed

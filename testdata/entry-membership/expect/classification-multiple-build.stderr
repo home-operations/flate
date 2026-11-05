@@ -1,0 +1,7 @@
+
+  ✗  entry  path "."  kustomize build .: Found multiple kustomization files under: @@repo@@
+
+  ⚠ warnings (1)
+    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct
+
+  ✗ 1 failed

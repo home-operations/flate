@@ -1,0 +1,16 @@
+[
+  {
+    "chart": "demo-demo-demo/demo",
+    "kind": "HelmRelease",
+    "name": "demo",
+    "namespace": "demo",
+    "releaseName": "demo",
+    "source": "demo-demo",
+    "sourceRef": {
+      "kind": "HelmChart",
+      "name": "demo-demo",
+      "namespace": "demo"
+    },
+    "version": "0.1.0"
+  }
+]

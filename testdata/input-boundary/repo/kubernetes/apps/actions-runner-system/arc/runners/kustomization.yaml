@@ -1,0 +1,6 @@
+namespace: actions-runner-system
+configMapGenerator:
+- name: runner-settings
+  envs: [../../../../shared/runner.env]
+generatorOptions:
+  disableNameSuffixHash: true

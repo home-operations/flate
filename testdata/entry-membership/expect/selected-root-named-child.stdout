@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: child-dev
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: leaf-output

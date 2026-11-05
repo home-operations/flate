@@ -1,0 +1,45 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "state": "enabled"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "project-zomboid-primary",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "project-zomboid-settings",
+      "namespace": "flux-system"
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "name": "project-zomboid-primary",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "interval": "30m",
+      "path": "./clusters/corpus/apps/games/project-zomboid",
+      "prune": true,
+      "retryInterval": "1m",
+      "sourceRef": {
+        "kind": "GitRepository",
+        "name": "flux-system",
+        "namespace": "flux-system"
+      },
+      "timeout": "5m",
+      "wait": false
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Namespace",
+    "metadata": {
+      "name": "flux-system"
+    }
+  }
+]

@@ -1,0 +1,23 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: side-repo
+  namespace: flux-system
+spec:
+  ref:
+    branch: main
+  secretRef:
+    name: side-repo-deploy
+  url: ssh://git@github.com/someone/private-side-repo.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: side-sync
+  namespace: flux-system
+spec:
+  path: ./kubernetes
+  sourceRef:
+    kind: GitRepository
+    name: side-repo
+    namespace: flux-system

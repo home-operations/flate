@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  capacity: ${KOPIUR_CAPACITY}
+  policy: before
+kind: ConfigMap
+metadata:
+  name: backup-settings

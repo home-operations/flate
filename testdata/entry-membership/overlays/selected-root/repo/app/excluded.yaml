@@ -1,0 +1,15 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: excluded-driver
+  namespace: apps
+spec:
+  path: ./must-not-run
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: excluded-source
+  namespace: apps
+spec:
+  url: https://must-not-run.invalid/charts

@@ -1,0 +1,227 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "cache-implicit-suspended-current-external-base",
+      "repository": "repo",
+      "overlay": "cache-implicit-suspended-current-external-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/cache-implicit-suspended-current-external-base"
+      ]
+    },
+    {
+      "name": "cache-implicit-suspended-current-external-baseline",
+      "repository": "baseline",
+      "overlay": "cache-implicit-suspended-current-external-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/cache-implicit-suspended-current-external-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "cache-implicit-suspended-current-external-base",
+      "directory": "overlays/cache-implicit-suspended-current-external-base",
+      "operations": []
+    },
+    {
+      "name": "cache-implicit-suspended-current-external-baseline",
+      "directory": "overlays/cache-implicit-suspended-current-external-baseline",
+      "operations": []
+    },
+    {
+      "name": "cache-implicit-suspended-current-external-after",
+      "directory": "overlays/cache-implicit-suspended-current-external-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "cache-implicit-suspended-current-external",
+      "description": "cache implicit suspended current external.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "cache-implicit-suspended-current-external-baseline"
+        },
+        {
+          "commit": "cache-implicit-suspended-current-external-base"
+        },
+        {
+          "overlay": "cache-implicit-suspended-current-external-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "fresh",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--base",
+              "@@commit:cache-implicit-suspended-current-external-base@@",
+              "--path",
+              "flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/cache-implicit-suspended-current-external-fresh.stdout",
+              "stderr": "expect/cache-implicit-suspended-current-external-fresh.stderr",
+              "code": 0
+            }
+          }
+        }
+      ],
+      "directory": "@@repo@@"
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/cache-implicit-suspended-current-external-fresh.stderr",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/cache-implicit-suspended-current-external-fresh.stdout",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-after/repo/flux/cluster.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-base/repo/apps/cm.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-base/repo/apps/kustomization.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-base/repo/flux/cluster.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-baseline/baseline/apps/cm.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-baseline/baseline/apps/kustomization.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-baseline/baseline/flux/cluster.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cache-implicit-suspended-current-external-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "cache-implicit-suspended-current-external"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    }
+  ],
+  "inputs": ""
+}

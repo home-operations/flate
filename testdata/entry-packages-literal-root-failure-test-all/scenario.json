@@ -1,0 +1,223 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/entry_packages_test.go",
+      "test/e2e/scope/literal_root_layers_test.go",
+      "test/e2e/scope/entry_prerequisite_sides_test.go"
+    ],
+    "reductions": "Authored from the scope witnesses. Preserve every dynamic shape, independent negative control, transformed identity and complete CLI result."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "literal-root-failure-build-all",
+      "directory": "overlays/literal-root-failure-build-all"
+    }
+  ],
+  "cases": [
+    {
+      "name": "literal-root-failure-test-all",
+      "description": "literal root failure test all.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "overlay": "literal-root-failure-build-all"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "failure",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/literal-root-failure-test-all-failure.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "get-ks",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "json",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/literal-root-failure-test-all-get-ks.stdout",
+              "stderr": "expect/literal-root-failure-test-all-get-ks.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "get-all",
+          "invoke": {
+            "argv": [
+              "get",
+              "all",
+              "-o",
+              "json",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/literal-root-failure-test-all-get-all.stdout",
+              "stderr": "expect/literal-root-failure-test-all-get-all.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/literal-root-failure-build-all/repo/kustomization.yaml",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/literal-root-failure-build-all/repo/cm.yaml",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/literal-root-failure-build-all/repo/ks.yaml",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/literal-root-failure-build-all/repo/app/kustomization.yaml",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation.",
+      "package": "failure"
+    },
+    {
+      "path": "expect/literal-root-failure-test-all-failure.stdout",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/literal-root-failure-test-all-get-ks.stdout",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/literal-root-failure-test-all-get-ks.stderr",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/literal-root-failure-test-all-get-all.stdout",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/literal-root-failure-test-all-get-all.stderr",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "literal-root-failure-test-all"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

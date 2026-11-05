@@ -1,0 +1,13 @@
+resources: [child.yaml]
+patches:
+- target: {kind: ConfigMap, name: invalid}
+  patch: |-
+    - op: replace
+      path: /apiVersion
+      value: helm.toolkit.fluxcd.io/v2
+    - op: replace
+      path: /kind
+      value: HelmRelease
+    - op: add
+      path: /spec
+      value: {interval: [], suspend: true}

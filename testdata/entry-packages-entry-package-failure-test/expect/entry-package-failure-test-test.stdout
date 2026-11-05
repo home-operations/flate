@@ -1,0 +1,4 @@
+
+  ✗  entry  path "entry"  kustomize build entry: loading KV pairs: env source files: [.cluster-vars.env]: resolve entry/.cluster-vars.env: stat entry/.cluster-vars.env: file does not exist
+
+  ✗ 0 passed · 1 failed   <DUR>

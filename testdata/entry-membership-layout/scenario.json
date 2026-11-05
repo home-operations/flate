@@ -1,0 +1,216 @@
+{
+  "source": {
+    "repository": "tyzbit/fleet-infra",
+    "revision": "87c199e34e96df4e475c5bb1a29b9aff035730e3",
+    "paths": [
+      "clusters/corpus/_disabled/project-zomboid/ks.yaml"
+    ],
+    "reductions": "Reduced from the pinned project-zomboid Kustomization at its original disabled-file and application paths. Retain flux-system identity, sourceRef and timing; omit unrelated dependency and Secret substitution requirements. Application charts become one authored ConfigMap. The flux entry, bootstrap Namespace and enabled/disabled resource-list sequence are authored membership variants, not copied upstream behavior. Existing flate-only regression families retain their own lineage."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "exclude-declaration",
+      "directory": "overlays/exclude-declaration"
+    },
+    {
+      "name": "restore-declaration",
+      "directory": "overlays/restore-declaration"
+    }
+  ],
+  "cases": [
+    {
+      "name": "pinned-disabled-declaration",
+      "description": "Reduced from the pinned project-zomboid Kustomization at its original disabled-file and application paths. Retain flux-system identity, sourceRef and timing; omit unrelated dependency and Secret substitution requirements. Application charts become one authored ConfigMap. The flux entry, bootstrap Namespace and enabled/disabled resource-list sequence are authored membership variants, not copied upstream behavior. Existing flate-only regression families retain their own lineage.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "included",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/clusters/corpus/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/included.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "exclude-declaration",
+          "edit": {
+            "overlay": "exclude-declaration"
+          }
+        },
+        {
+          "id": "excluded",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/clusters/corpus/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/excluded.stdout",
+              "stderr": "expect/excluded.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "restore-declaration",
+          "edit": {
+            "overlay": "restore-declaration"
+          }
+        },
+        {
+          "id": "restored",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/clusters/corpus/flux",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/restored.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/clusters/corpus/flux/kustomization.yaml",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Authored admission list includes the pinned source declaration outside the flux directory."
+    },
+    {
+      "path": "repo/clusters/corpus/flux/namespace.yaml",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Meaningful bootstrap Namespace remains visible when the application declaration is excluded."
+    },
+    {
+      "path": "repo/clusters/corpus/_disabled/project-zomboid/ks.yaml",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Reduced pinned source declaration retains identity, sourceRef, timing and the original application path."
+    },
+    {
+      "path": "repo/clusters/corpus/apps/games/project-zomboid/kustomization.yaml",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Tiny replacement for the application chart at the original source target path."
+    },
+    {
+      "path": "repo/clusters/corpus/apps/games/project-zomboid/configmap.yaml",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Meaningful local application output makes source-declaration membership observable."
+    },
+    {
+      "path": "expect/included.stdout",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Independently authored complete stdout for included."
+    },
+    {
+      "path": "overlays/exclude-declaration/repo/clusters/corpus/flux/kustomization.yaml",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Authored negative variant removes only the disabled-file membership edge."
+    },
+    {
+      "path": "expect/excluded.stdout",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Independently authored complete stdout for excluded."
+    },
+    {
+      "path": "expect/excluded.stderr",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Independently authored complete stderr for excluded."
+    },
+    {
+      "path": "overlays/restore-declaration/repo/clusters/corpus/flux/kustomization.yaml",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Authored variant restores the same pinned source declaration."
+    },
+    {
+      "path": "expect/restored.stdout",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "Independently authored complete stdout for restored."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "pinned-disabled-declaration"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

@@ -1,0 +1,380 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "cross-source-optional-removal-baseline-selected",
+      "repository": "baseline",
+      "overlay": "cross-source-optional-removal-baseline-selected",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/cross-source-optional-removal-baseline-selected",
+        "refs/heads/selected"
+      ]
+    },
+    {
+      "name": "cross-source-optional-removal-baseline-bootstrap",
+      "repository": "baseline",
+      "overlay": "cross-source-optional-removal-baseline-bootstrap",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "cross-source-optional-removal-baseline-selected"
+      ],
+      "refs": [
+        "refs/heads/cross-source-optional-removal-baseline-bootstrap"
+      ]
+    },
+    {
+      "name": "cross-source-optional-removal-repo-selected",
+      "repository": "repo",
+      "overlay": "cross-source-optional-removal-repo-selected",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/cross-source-optional-removal-repo-selected",
+        "refs/heads/selected"
+      ]
+    },
+    {
+      "name": "cross-source-optional-removal-repo-bootstrap",
+      "repository": "repo",
+      "overlay": "cross-source-optional-removal-repo-bootstrap",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "cross-source-optional-removal-repo-selected"
+      ],
+      "refs": [
+        "refs/heads/cross-source-optional-removal-repo-bootstrap"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "cross-source-optional-removal-baseline-selected",
+      "directory": "overlays/cross-source-optional-removal-baseline-selected",
+      "operations": []
+    },
+    {
+      "name": "cross-source-optional-removal-baseline-bootstrap",
+      "directory": "overlays/cross-source-optional-removal-baseline-bootstrap",
+      "operations": [
+        {
+          "delete": "baseline/inputs/optional.yaml"
+        },
+        {
+          "delete": "baseline/inputs/sentinel.yaml"
+        },
+        {
+          "delete": "baseline/inputs/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "cross-source-optional-removal-repo-selected",
+      "directory": "overlays/cross-source-optional-removal-repo-selected",
+      "operations": []
+    },
+    {
+      "name": "cross-source-optional-removal-repo-bootstrap",
+      "directory": "overlays/cross-source-optional-removal-repo-bootstrap",
+      "operations": [
+        {
+          "delete": "repo/inputs/sentinel.yaml"
+        },
+        {
+          "delete": "repo/inputs/kustomization.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "cross-source-optional-removal",
+      "description": "Identical bootstrap trees consume different selected supplier histories.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "cross-source-optional-removal-baseline-bootstrap"
+        },
+        {
+          "commit": "cross-source-optional-removal-repo-bootstrap"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/cross-source-optional-removal-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/cross-source-optional-removal-full-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/optional-sides-projected-remove-scoped-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/cross-source-optional-removal-full-after.stdout",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/cross-source-optional-removal-full-before.stdout",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/optional-sides-projected-remove-scoped-diff.stdout",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-baseline-bootstrap/baseline/apps/app/kustomization.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-baseline-bootstrap/baseline/apps/app/output.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-baseline-bootstrap/baseline/flux/cluster.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-baseline-bootstrap/baseline/flux/inputs.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-baseline-bootstrap/baseline/flux/supplier.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-baseline-selected/baseline/inputs/kustomization.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-baseline-selected/baseline/inputs/optional.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-baseline-selected/baseline/inputs/sentinel.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-repo-bootstrap/repo/apps/app/kustomization.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-repo-bootstrap/repo/apps/app/output.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-repo-bootstrap/repo/flux/cluster.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-repo-bootstrap/repo/flux/inputs.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-repo-bootstrap/repo/flux/supplier.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-repo-selected/repo/inputs/kustomization.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/cross-source-optional-removal-repo-selected/repo/inputs/sentinel.yaml",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "cross-source-optional-removal"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "."
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "",
+      "name": "settings",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "settings"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "settings"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

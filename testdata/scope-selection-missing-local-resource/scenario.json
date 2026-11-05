@@ -1,0 +1,219 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "missing-local-resource-base",
+      "repository": "repo",
+      "overlay": "missing-local-resource-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/missing-local-resource-base"
+      ]
+    },
+    {
+      "name": "missing-local-resource-baseline",
+      "repository": "baseline",
+      "overlay": "missing-local-resource-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/missing-local-resource-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "missing-local-resource-base",
+      "directory": "overlays/missing-local-resource-base",
+      "operations": []
+    },
+    {
+      "name": "missing-local-resource-baseline",
+      "directory": "overlays/missing-local-resource-baseline",
+      "operations": []
+    },
+    {
+      "name": "missing-local-resource-after",
+      "directory": "overlays/missing-local-resource-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "missing-local-resource",
+      "description": "missing local resource.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "missing-local-resource-baseline"
+        },
+        {
+          "commit": "missing-local-resource-base"
+        },
+        {
+          "overlay": "missing-local-resource-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/missing-local-resource-build.stdout",
+              "stderr": "expect/missing-local-resource-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/missing-local-resource-build.stderr",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/missing-local-resource-build.stdout",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/missing-local-resource-base/repo/apps/kustomization.yaml",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/missing-local-resource-base/repo/kustomization.yaml",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-resource-base/repo/probe.yaml",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-resource-base/repo/source.yaml",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-resource-baseline/baseline/apps/kustomization.yaml",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/missing-local-resource-baseline/baseline/kustomization.yaml",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-resource-baseline/baseline/probe.yaml",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/missing-local-resource-baseline/baseline/source.yaml",
+      "cases": [
+        "missing-local-resource"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    }
+  ],
+  "inputs": ""
+}

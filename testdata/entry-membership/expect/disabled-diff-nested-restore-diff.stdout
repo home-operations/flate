@@ -1,0 +1,74 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "app",
+        "path": "payload"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "reachable-cm",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "original"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "app",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "reachable-cm",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "sync",
+        "path": "kube/clusters/main/flux"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "flux-system",
+      "name": "app",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "sync",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "app",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./payload",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

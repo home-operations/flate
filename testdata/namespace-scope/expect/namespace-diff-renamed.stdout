@@ -1,0 +1,69 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "selected",
+        "path": "payload"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "after",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "1"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "selected",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "after",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "selected",
+        "path": "payload"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "before",
+      "status": "removed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "0"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "selected",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "before",
+          "namespace": "apps"
+        }
+      },
+      "new": null,
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

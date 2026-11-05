@@ -1,0 +1,2570 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/namespace_orphans_test.go",
+      "test/e2e/scope/child_kustomization_identity_test.go",
+      "test/e2e/scope/runtime_owner_namespace_test.go",
+      "test/e2e/scope/bootstrap_namespace_projection_test.go"
+    ],
+    "reductions": "Preserve the existing namespace, raw identity, cache replay and orphan authority witnesses as disk scenarios."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "child-bare",
+      "directory": "overlays/child-bare",
+      "operations": []
+    },
+    {
+      "name": "child-target",
+      "directory": "overlays/child-target",
+      "operations": []
+    },
+    {
+      "name": "child-authored",
+      "directory": "overlays/child-authored",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert01-remove0",
+      "directory": "overlays/child-authored-insert01-remove0",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert01-remove0-withdraw",
+      "directory": "overlays/child-authored-insert01-remove0-withdraw",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert01-remove0-version",
+      "directory": "overlays/child-authored-insert01-remove0-version",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert01-remove1",
+      "directory": "overlays/child-authored-insert01-remove1",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert01-remove1-withdraw",
+      "directory": "overlays/child-authored-insert01-remove1-withdraw",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert01-remove1-version",
+      "directory": "overlays/child-authored-insert01-remove1-version",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert10-remove0",
+      "directory": "overlays/child-authored-insert10-remove0",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert10-remove0-withdraw",
+      "directory": "overlays/child-authored-insert10-remove0-withdraw",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert10-remove0-version",
+      "directory": "overlays/child-authored-insert10-remove0-version",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert10-remove1",
+      "directory": "overlays/child-authored-insert10-remove1",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert10-remove1-withdraw",
+      "directory": "overlays/child-authored-insert10-remove1-withdraw",
+      "operations": []
+    },
+    {
+      "name": "child-authored-insert10-remove1-version",
+      "directory": "overlays/child-authored-insert10-remove1-version",
+      "operations": []
+    },
+    {
+      "name": "runtime-omitted",
+      "directory": "overlays/runtime-omitted",
+      "operations": []
+    },
+    {
+      "name": "runtime-explicit",
+      "directory": "overlays/runtime-explicit",
+      "operations": []
+    },
+    {
+      "name": "runtime-chart-value-forward",
+      "directory": "overlays/runtime-chart-value-forward",
+      "operations": []
+    },
+    {
+      "name": "runtime-chart-value-reverse",
+      "directory": "overlays/runtime-chart-value-reverse",
+      "operations": []
+    },
+    {
+      "name": "runtime-authored-namespace-forward",
+      "directory": "overlays/runtime-authored-namespace-forward",
+      "operations": []
+    },
+    {
+      "name": "runtime-authored-namespace-reverse",
+      "directory": "overlays/runtime-authored-namespace-reverse",
+      "operations": []
+    },
+    {
+      "name": "bootstrap-sibling-projection",
+      "directory": "overlays/bootstrap-sibling-projection",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "child-bare",
+      "description": "child bare",
+      "setup": [
+        {
+          "overlay": "child-bare"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-bare-get.stdout",
+              "stderr": "expect/child-bare-get.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-bare-build.stdout",
+              "stderr": "expect/child-bare-build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-bare-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-target",
+      "description": "child target",
+      "setup": [
+        {
+          "overlay": "child-target"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-target-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-target-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-target-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-authored",
+      "description": "child authored",
+      "setup": [
+        {
+          "overlay": "child-authored"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-authored-insert01-remove0",
+      "description": "child authored insert01 remove0",
+      "setup": [
+        {
+          "overlay": "child-authored-insert01-remove0"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert01-remove0-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "withdraw",
+          "edit": {
+            "overlay": "child-authored-insert01-remove0-withdraw"
+          }
+        },
+        {
+          "id": "withdraw-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert01-remove0-withdraw-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "version",
+          "edit": {
+            "overlay": "child-authored-insert01-remove0-version"
+          }
+        },
+        {
+          "id": "version-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert01-remove0-version-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-authored-insert01-remove1",
+      "description": "child authored insert01 remove1",
+      "setup": [
+        {
+          "overlay": "child-authored-insert01-remove1"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert01-remove1-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "withdraw",
+          "edit": {
+            "overlay": "child-authored-insert01-remove1-withdraw"
+          }
+        },
+        {
+          "id": "withdraw-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert01-remove1-withdraw-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "version",
+          "edit": {
+            "overlay": "child-authored-insert01-remove1-version"
+          }
+        },
+        {
+          "id": "version-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert01-remove1-version-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-authored-insert10-remove0",
+      "description": "child authored insert10 remove0",
+      "setup": [
+        {
+          "overlay": "child-authored-insert10-remove0"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert10-remove0-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "withdraw",
+          "edit": {
+            "overlay": "child-authored-insert10-remove0-withdraw"
+          }
+        },
+        {
+          "id": "withdraw-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert10-remove0-withdraw-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "version",
+          "edit": {
+            "overlay": "child-authored-insert10-remove0-version"
+          }
+        },
+        {
+          "id": "version-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert10-remove0-version-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "child-authored-insert10-remove1",
+      "description": "child authored insert10 remove1",
+      "setup": [
+        {
+          "overlay": "child-authored-insert10-remove1"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert10-remove1-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "withdraw",
+          "edit": {
+            "overlay": "child-authored-insert10-remove1-withdraw"
+          }
+        },
+        {
+          "id": "withdraw-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert10-remove1-withdraw-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "version",
+          "edit": {
+            "overlay": "child-authored-insert10-remove1-version"
+          }
+        },
+        {
+          "id": "version-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/child-authored-insert10-remove1-version-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "runtime-omitted",
+      "description": "runtime omitted",
+      "setup": [
+        {
+          "overlay": "runtime-omitted"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-omitted-root-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-omitted-root-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flux-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-omitted-flux-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flux-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-omitted-flux-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "runtime-explicit",
+      "description": "runtime explicit",
+      "setup": [
+        {
+          "overlay": "runtime-explicit"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "root-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-explicit-root-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-explicit-root-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flux-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-explicit-flux-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "flux-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-explicit-flux-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "runtime-chart-value-forward",
+      "description": "runtime chart value forward",
+      "setup": [
+        {
+          "overlay": "runtime-chart-value-forward"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-chart-value-forward-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-chart-value-forward-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "runtime-chart-value-reverse",
+      "description": "runtime chart value reverse",
+      "setup": [
+        {
+          "overlay": "runtime-chart-value-reverse"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-chart-value-reverse-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-chart-value-reverse-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "runtime-authored-namespace-forward",
+      "description": "runtime authored namespace forward",
+      "setup": [
+        {
+          "overlay": "runtime-authored-namespace-forward"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-authored-namespace-forward-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-authored-namespace-forward-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "runtime-authored-namespace-reverse",
+      "description": "runtime authored namespace reverse",
+      "setup": [
+        {
+          "overlay": "runtime-authored-namespace-reverse"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-authored-namespace-reverse-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/runtime-authored-namespace-reverse-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "bootstrap-sibling-projection",
+      "description": "bootstrap sibling projection",
+      "setup": [
+        {
+          "overlay": "bootstrap-sibling-projection"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/app",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/bootstrap-sibling-projection-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/bootstrap-sibling-projection-build.stdout",
+      "cases": [
+        "bootstrap-sibling-projection"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-build.stdout",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-get.stdout",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert01-remove0-before.stdout",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert01-remove0-version-build.stdout",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert01-remove0-withdraw-build.stdout",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert01-remove1-before.stdout",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert01-remove1-version-build.stdout",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert01-remove1-withdraw-build.stdout",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert10-remove0-before.stdout",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert10-remove0-version-build.stdout",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert10-remove0-withdraw-build.stdout",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert10-remove1-before.stdout",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert10-remove1-version-build.stdout",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-insert10-remove1-withdraw-build.stdout",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-authored-test.stdout",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-bare-build.stderr",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-bare-build.stdout",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-bare-get.stderr",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-bare-get.stdout",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-bare-test.stdout",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-target-build.stdout",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-target-get.stdout",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/child-target-test.stdout",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-authored-namespace-forward-build.stdout",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-authored-namespace-forward-diff.stdout",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-authored-namespace-reverse-build.stdout",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-authored-namespace-reverse-diff.stdout",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-chart-value-forward-build.stdout",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-chart-value-forward-diff.stdout",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-chart-value-reverse-build.stdout",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-chart-value-reverse-diff.stdout",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-explicit-flux-build.stdout",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-explicit-flux-get.stdout",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-explicit-root-build.stdout",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-explicit-root-get.stdout",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-omitted-flux-build.stdout",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-omitted-flux-get.stdout",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-omitted-root-build.stdout",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/runtime-omitted-root-get.stdout",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/bootstrap-sibling-projection/repo/app/kustomization.yaml",
+      "cases": [
+        "bootstrap-sibling-projection"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/bootstrap-sibling-projection/repo/app/sibling.yaml",
+      "cases": [
+        "bootstrap-sibling-projection"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/bootstrap-sibling-projection/repo/app/transformers/kustomization.yaml",
+      "cases": [
+        "bootstrap-sibling-projection"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/bootstrap-sibling-projection/repo/leaf/cm.yaml",
+      "cases": [
+        "bootstrap-sibling-projection"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/bootstrap-sibling-projection/repo/leaf/kustomization.yaml",
+      "cases": [
+        "bootstrap-sibling-projection"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/bootstrap-sibling-projection/repo/transformers/kustomization.yaml",
+      "cases": [
+        "bootstrap-sibling-projection"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/bootstrap-sibling-projection/repo/transformers/transformer.yaml",
+      "cases": [
+        "bootstrap-sibling-projection"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0-version/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0-withdraw/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0/repo/apps/child.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0/repo/apps/child/cm.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0/repo/apps/kustomization.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0/repo/flux/parent.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove0/repo/flux/repo.yaml",
+      "cases": [
+        "child-authored-insert01-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1-version/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1-withdraw/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1/repo/apps/child.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1/repo/apps/child/cm.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1/repo/apps/kustomization.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1/repo/flux/parent.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert01-remove1/repo/flux/repo.yaml",
+      "cases": [
+        "child-authored-insert01-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0-version/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0-withdraw/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0/repo/apps/child.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0/repo/apps/child/cm.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0/repo/apps/kustomization.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0/repo/flux/parent.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove0/repo/flux/repo.yaml",
+      "cases": [
+        "child-authored-insert10-remove0"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1-version/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1-withdraw/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1/repo/apps/child.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1/repo/apps/child/cm.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1/repo/apps/kustomization.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1/repo/flux/parent.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored-insert10-remove1/repo/flux/repo.yaml",
+      "cases": [
+        "child-authored-insert10-remove1"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored/repo/apps/child.yaml",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored/repo/apps/child/cm.yaml",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored/repo/apps/kustomization.yaml",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored/repo/apps/raw.yaml",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored/repo/flux/parent.yaml",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-authored/repo/flux/repo.yaml",
+      "cases": [
+        "child-authored"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-bare/repo/apps/child.yaml",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-bare/repo/apps/child/cm.yaml",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-bare/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-bare/repo/apps/kustomization.yaml",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-bare/repo/apps/raw.yaml",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-bare/repo/flux/parent.yaml",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-bare/repo/flux/repo.yaml",
+      "cases": [
+        "child-bare"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-target/repo/apps/child.yaml",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-target/repo/apps/child/cm.yaml",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-target/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-target/repo/apps/kustomization.yaml",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-target/repo/apps/raw.yaml",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-target/repo/flux/parent.yaml",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/child-target/repo/flux/repo.yaml",
+      "cases": [
+        "child-target"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/baseline/apps/ks.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/baseline/flux/owners.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/baseline/flux/repo.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/baseline/workload/hr.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/baseline/workload/kustomization.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/repo/apps/ks.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/repo/flux/owners.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/repo/flux/repo.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/repo/workload/hr.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-forward/repo/workload/kustomization.yaml",
+      "cases": [
+        "runtime-authored-namespace-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/baseline/apps/ks.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/baseline/flux/owners.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/baseline/flux/repo.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/baseline/workload/hr.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/baseline/workload/kustomization.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/repo/apps/ks.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/repo/flux/owners.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/repo/flux/repo.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/repo/workload/hr.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-authored-namespace-reverse/repo/workload/kustomization.yaml",
+      "cases": [
+        "runtime-authored-namespace-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/baseline/apps/ks.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/baseline/flux/owners.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/baseline/flux/repo.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/baseline/workload/hr.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/baseline/workload/kustomization.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/repo/apps/ks.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/repo/flux/owners.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/repo/flux/repo.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/repo/workload/hr.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-forward/repo/workload/kustomization.yaml",
+      "cases": [
+        "runtime-chart-value-forward"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/baseline/apps/ks.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/baseline/flux/owners.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/baseline/flux/repo.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/baseline/workload/hr.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/baseline/workload/kustomization.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/repo/apps/ks.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/repo/flux/owners.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/repo/flux/repo.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/repo/workload/hr.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-chart-value-reverse/repo/workload/kustomization.yaml",
+      "cases": [
+        "runtime-chart-value-reverse"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-explicit/repo/apps/ks.yaml",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-explicit/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-explicit/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-explicit/repo/flux/owners.yaml",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-explicit/repo/flux/repo.yaml",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-explicit/repo/workload/hr.yaml",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-explicit/repo/workload/kustomization.yaml",
+      "cases": [
+        "runtime-explicit"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-omitted/repo/apps/ks.yaml",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-omitted/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-omitted/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-omitted/repo/flux/owners.yaml",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-omitted/repo/flux/repo.yaml",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-omitted/repo/workload/hr.yaml",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/runtime-omitted/repo/workload/kustomization.yaml",
+      "cases": [
+        "runtime-omitted"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "bootstrap-sibling-projection",
+        "child-authored",
+        "child-authored-insert01-remove0",
+        "child-authored-insert01-remove1",
+        "child-authored-insert10-remove0",
+        "child-authored-insert10-remove1",
+        "child-bare",
+        "child-target",
+        "runtime-authored-namespace-forward",
+        "runtime-authored-namespace-reverse",
+        "runtime-chart-value-forward",
+        "runtime-chart-value-reverse",
+        "runtime-explicit",
+        "runtime-omitted"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

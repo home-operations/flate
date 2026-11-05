@@ -1,0 +1,214 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "baseline-self-ref-base",
+      "repository": "repo",
+      "overlay": "baseline-self-ref-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/baseline-self-ref-base"
+      ]
+    },
+    {
+      "name": "baseline-self-ref-baseline",
+      "repository": "baseline",
+      "overlay": "baseline-self-ref-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/baseline-self-ref-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "baseline-self-ref-base",
+      "directory": "overlays/baseline-self-ref-base",
+      "operations": []
+    },
+    {
+      "name": "baseline-self-ref-baseline",
+      "directory": "overlays/baseline-self-ref-baseline",
+      "operations": []
+    },
+    {
+      "name": "baseline-self-ref-after",
+      "directory": "overlays/baseline-self-ref-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "baseline-self-ref",
+      "description": "baseline self ref.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "baseline-self-ref-baseline"
+        },
+        {
+          "commit": "baseline-self-ref-base"
+        },
+        {
+          "overlay": "baseline-self-ref-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/k8s/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--base",
+              "HEAD",
+              "--allow-missing-kinds",
+              "Secret,ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/baseline-self-ref-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/baseline-self-ref-diff.stdout",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/baseline-self-ref-after/repo/k8s/apps/cm.yaml",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-self-ref-base/repo/k8s/apps/cm.yaml",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-self-ref-base/repo/k8s/apps/kustomization.yaml",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-self-ref-base/repo/k8s/flux/cluster.yaml",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-self-ref-baseline/baseline/k8s/apps/cm.yaml",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-self-ref-baseline/baseline/k8s/apps/kustomization.yaml",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-self-ref-baseline/baseline/k8s/flux/cluster.yaml",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "baseline-self-ref"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "inputs": ""
+}

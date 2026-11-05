@@ -1,0 +1,14 @@
+--- ConfigMap apps/hello (kubernetes/apps)
++++ ConfigMap apps/hello (kubernetes/apps)
+@@ -1,11 +1 @@
+-apiVersion: v1
+-data:
+-  value: original
+-kind: ConfigMap
+-metadata:
+-  labels:
+-    kustomize.toolkit.fluxcd.io/name: apps
+-    kustomize.toolkit.fluxcd.io/namespace: flux-system
+-  name: hello
+-  namespace: apps
+ 

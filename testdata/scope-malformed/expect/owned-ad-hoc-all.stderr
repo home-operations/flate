@@ -1,0 +1,5 @@
+
+  ✗  Kustomization  flux-system/owner  flux kustomize generator: failed to decode Kubernetes YAML from @@repo@@/monitoring/blackbox-exporter.yaml: MalformedYAMLError: yaml: line 6: did not find expected ',' or ']'
+         blocks flux-system/dependent
+
+  ✗ 1 failed · 1 blocked

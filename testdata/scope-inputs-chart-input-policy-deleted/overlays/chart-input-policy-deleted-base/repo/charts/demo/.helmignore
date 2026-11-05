@@ -1,0 +1,6 @@
+.git/
+flux/
+unrelated/
+excluded/
+.helmignore
+templates/cm.yaml

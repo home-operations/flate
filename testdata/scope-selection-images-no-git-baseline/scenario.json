@@ -1,0 +1,190 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "images-no-git-baseline-base",
+      "repository": "repo",
+      "overlay": "images-no-git-baseline-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/images-no-git-baseline-base"
+      ]
+    },
+    {
+      "name": "images-no-git-baseline-baseline",
+      "repository": "baseline",
+      "overlay": "images-no-git-baseline-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/images-no-git-baseline-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "images-no-git-baseline-base",
+      "directory": "overlays/images-no-git-baseline-base",
+      "operations": []
+    },
+    {
+      "name": "images-no-git-baseline-baseline",
+      "directory": "overlays/images-no-git-baseline-baseline",
+      "operations": []
+    },
+    {
+      "name": "images-no-git-baseline-after",
+      "directory": "overlays/images-no-git-baseline-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "images-no-git-baseline",
+      "description": "images no git baseline.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "images-no-git-baseline-baseline"
+        },
+        {
+          "commit": "images-no-git-baseline-base"
+        },
+        {
+          "overlay": "images-no-git-baseline-after"
+        },
+        {
+          "noGit": "repo"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--path",
+              "@@repo@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/images-no-git-baseline-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/images-no-git-baseline-diff.stderr",
+      "cases": [
+        "images-no-git-baseline"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/images-no-git-baseline-base/repo/cm.yaml",
+      "cases": [
+        "images-no-git-baseline"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/images-no-git-baseline-base/repo/kustomization.yaml",
+      "cases": [
+        "images-no-git-baseline"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/images-no-git-baseline-baseline/baseline/cm.yaml",
+      "cases": [
+        "images-no-git-baseline"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/images-no-git-baseline-baseline/baseline/kustomization.yaml",
+      "cases": [
+        "images-no-git-baseline"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "images-no-git-baseline"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "inputs": ""
+}

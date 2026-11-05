@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/owner  document 1 (Kustomization.kustomize.toolkit.fluxcd.io/flux-system/invalid): Kustomization decode: json: cannot unmarshal array into Go value of type string
+
+  ✗ 1 failed

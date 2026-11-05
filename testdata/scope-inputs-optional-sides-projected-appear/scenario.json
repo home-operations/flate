@@ -1,0 +1,366 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "optional-sides-projected-appear-base",
+      "repository": "repo",
+      "overlay": "optional-sides-projected-appear-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/optional-sides-projected-appear-base"
+      ]
+    },
+    {
+      "name": "optional-sides-projected-appear-baseline",
+      "repository": "baseline",
+      "overlay": "optional-sides-projected-appear-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/optional-sides-projected-appear-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "optional-sides-projected-appear-base",
+      "directory": "overlays/optional-sides-projected-appear-base",
+      "operations": []
+    },
+    {
+      "name": "optional-sides-projected-appear-baseline",
+      "directory": "overlays/optional-sides-projected-appear-baseline",
+      "operations": []
+    },
+    {
+      "name": "optional-sides-projected-appear-after",
+      "directory": "overlays/optional-sides-projected-appear-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "optional-sides-projected-appear",
+      "description": "optional sides projected appear.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "optional-sides-projected-appear-baseline"
+        },
+        {
+          "commit": "optional-sides-projected-appear-base"
+        },
+        {
+          "overlay": "optional-sides-projected-appear-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/optional-sides-projected-appear-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/optional-sides-projected-appear-full-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/optional-sides-projected-appear-scoped-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/optional-sides-projected-appear-full-after.stdout",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/optional-sides-projected-appear-full-before.stdout",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/optional-sides-projected-appear-scoped-diff.stdout",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-after/repo/inputs/kustomization.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-after/repo/inputs/optional.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/apps/app/kustomization.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/apps/app/output.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/apps/other/kustomization.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/apps/other/output.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/flux/cluster.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/flux/inputs.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/flux/other.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/inputs/kustomization.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-base/repo/inputs/sentinel.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/apps/app/kustomization.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/apps/app/output.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/apps/other/kustomization.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/apps/other/output.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/flux/cluster.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/flux/inputs.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/flux/other.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/inputs/kustomization.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-projected-appear-baseline/baseline/inputs/sentinel.yaml",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "optional-sides-projected-appear"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

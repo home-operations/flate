@@ -1,0 +1,63 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "sentinel": "active",
+      "value": "available"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "app",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "rendered",
+      "namespace": "flux-system"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "unchanged"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "inputs",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "input-sentinel",
+      "namespace": "flux-system"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "VALUE": "available"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "inputs",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "optional",
+      "namespace": "flux-system"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "fallback"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "other",
+        "kustomize.toolkit.fluxcd.io/namespace": "other"
+      },
+      "name": "unaffected",
+      "namespace": "other"
+    }
+  }
+]

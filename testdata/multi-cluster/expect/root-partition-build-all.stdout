@@ -1,0 +1,107 @@
+[
+  {
+    "cluster": "main",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "data": {
+          "value": "main"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "shared",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "shared",
+          "namespace": "apps"
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "shared",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./main/app",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "cluster": "test",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "data": {
+          "value": "test"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "shared",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "shared",
+          "namespace": "apps"
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "shared",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./test/app",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "cluster": "utility",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "data": {
+          "value": "utility"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "shared",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "shared",
+          "namespace": "apps"
+        }
+      },
+      {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "shared",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./utility/app",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system"
+          }
+        }
+      }
+    ]
+  }
+]

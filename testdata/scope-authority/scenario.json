@@ -1,0 +1,725 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/authoritative_manifest_failures_test.go"
+    ],
+    "reductions": "Retain every authority variant, independent sibling and exact failing producer."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "typed-release",
+      "directory": "overlays/typed-release"
+    },
+    {
+      "name": "typed-kustomization",
+      "directory": "overlays/typed-kustomization"
+    },
+    {
+      "name": "generated-release",
+      "directory": "overlays/generated-release"
+    },
+    {
+      "name": "patch-created-release",
+      "directory": "overlays/patch-created-release"
+    },
+    {
+      "name": "required-syntax",
+      "directory": "overlays/required-syntax"
+    },
+    {
+      "name": "repaired-raw-release",
+      "directory": "overlays/repaired-raw-release"
+    },
+    {
+      "name": "incidental-malformed-and-scalar",
+      "directory": "overlays/incidental-malformed-and-scalar"
+    }
+  ],
+  "cases": [
+    {
+      "name": "typed-release",
+      "description": "typed release.",
+      "setup": [
+        {
+          "overlay": "typed-release"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/typed-release.stdout",
+              "stderr": "expect/typed-release.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "second",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/typed-release.stdout",
+              "stderr": "expect/typed-release.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "typed-kustomization",
+      "description": "typed kustomization.",
+      "setup": [
+        {
+          "overlay": "typed-kustomization"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/typed-kustomization.stdout",
+              "stderr": "expect/typed-kustomization.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "second",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/typed-kustomization.stdout",
+              "stderr": "expect/typed-kustomization.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generated-release",
+      "description": "generated release.",
+      "setup": [
+        {
+          "overlay": "generated-release"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/generated-release.stdout",
+              "stderr": "expect/generated-release.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "second",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/generated-release.stdout",
+              "stderr": "expect/generated-release.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "patch-created-release",
+      "description": "patch created release.",
+      "setup": [
+        {
+          "overlay": "patch-created-release"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/patch-created-release.stdout",
+              "stderr": "expect/patch-created-release.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "second",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/patch-created-release.stdout",
+              "stderr": "expect/patch-created-release.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "required-syntax",
+      "description": "required syntax.",
+      "setup": [
+        {
+          "overlay": "required-syntax"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/required-syntax.stdout",
+              "stderr": "expect/required-syntax.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "second",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/required-syntax.stdout",
+              "stderr": "expect/required-syntax.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "repaired-raw-release",
+      "description": "repaired raw release.",
+      "setup": [
+        {
+          "overlay": "repaired-raw-release"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/repaired-raw-release.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "second",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/repaired-raw-release.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "incidental-malformed-and-scalar",
+      "description": "incidental malformed and scalar.",
+      "setup": [
+        {
+          "overlay": "incidental-malformed-and-scalar"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "first",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/incidental-malformed-and-scalar.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "second",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/incidental-malformed-and-scalar.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/generated-release.stderr",
+      "cases": [
+        "generated-release"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/generated-release.stdout",
+      "cases": [
+        "generated-release"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/incidental-malformed-and-scalar.stdout",
+      "cases": [
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/patch-created-release.stderr",
+      "cases": [
+        "patch-created-release"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/patch-created-release.stdout",
+      "cases": [
+        "patch-created-release"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/repaired-raw-release.stdout",
+      "cases": [
+        "repaired-raw-release"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/required-syntax.stderr",
+      "cases": [
+        "required-syntax"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/required-syntax.stdout",
+      "cases": [
+        "required-syntax"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/typed-kustomization.stderr",
+      "cases": [
+        "typed-kustomization"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/typed-kustomization.stdout",
+      "cases": [
+        "typed-kustomization"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/typed-release.stderr",
+      "cases": [
+        "typed-release"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "expect/typed-release.stdout",
+      "cases": [
+        "typed-release"
+      ],
+      "purpose": "Independently authored complete output."
+    },
+    {
+      "path": "overlays/generated-release/repo/app/child.yaml",
+      "cases": [
+        "generated-release"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/incidental-malformed-and-scalar/repo/app/child.yaml",
+      "cases": [
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/incidental-malformed-and-scalar/repo/app/kustomization.yaml",
+      "cases": [
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/patch-created-release/repo/app/child.yaml",
+      "cases": [
+        "patch-created-release"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/patch-created-release/repo/app/kustomization.yaml",
+      "cases": [
+        "patch-created-release"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/repaired-raw-release/repo/app/child.yaml",
+      "cases": [
+        "repaired-raw-release"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/repaired-raw-release/repo/app/kustomization.yaml",
+      "cases": [
+        "repaired-raw-release"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/required-syntax/repo/app/child.yaml",
+      "cases": [
+        "required-syntax"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/required-syntax/repo/app/kustomization.yaml",
+      "cases": [
+        "required-syntax"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/typed-kustomization/repo/app/child.yaml",
+      "cases": [
+        "typed-kustomization"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "overlays/typed-release/repo/app/child.yaml",
+      "cases": [
+        "typed-release"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "repo/app/kustomization.yaml",
+      "cases": [
+        "typed-release",
+        "typed-kustomization",
+        "generated-release",
+        "patch-created-release",
+        "required-syntax",
+        "repaired-raw-release",
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "repo/app/settings.yaml",
+      "cases": [
+        "typed-release",
+        "typed-kustomization",
+        "generated-release",
+        "patch-created-release",
+        "required-syntax",
+        "repaired-raw-release",
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "repo/app/unrelated.yaml",
+      "cases": [
+        "typed-release",
+        "typed-kustomization",
+        "generated-release",
+        "patch-created-release",
+        "required-syntax",
+        "repaired-raw-release",
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "repo/flux/drivers.yaml",
+      "cases": [
+        "typed-release",
+        "typed-kustomization",
+        "generated-release",
+        "patch-created-release",
+        "required-syntax",
+        "repaired-raw-release",
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "repo/flux/kustomization.yaml",
+      "cases": [
+        "typed-release",
+        "typed-kustomization",
+        "generated-release",
+        "patch-created-release",
+        "required-syntax",
+        "repaired-raw-release",
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "repo/healthy/cm.yaml",
+      "cases": [
+        "typed-release",
+        "typed-kustomization",
+        "generated-release",
+        "patch-created-release",
+        "required-syntax",
+        "repaired-raw-release",
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "repo/healthy/kustomization.yaml",
+      "cases": [
+        "typed-release",
+        "typed-kustomization",
+        "generated-release",
+        "patch-created-release",
+        "required-syntax",
+        "repaired-raw-release",
+        "incidental-malformed-and-scalar"
+      ],
+      "purpose": "Authority witness, required failure, or independent sibling control."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "incidental-malformed-and-scalar",
+        "repaired-raw-release"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

@@ -1,0 +1,152 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/entry_packages_test.go",
+      "test/e2e/scope/literal_root_layers_test.go",
+      "test/e2e/scope/entry_prerequisite_sides_test.go"
+    ],
+    "reductions": "Authored from the scope witnesses. Preserve every dynamic shape, independent negative control, transformed identity and complete CLI result."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "repository": "repo",
+      "name": "entry-build-base",
+      "overlay": "entry-package-json-build",
+      "author": "t",
+      "email": "t@example",
+      "time": "1970-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/entry-build"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "entry-package-json-build",
+      "directory": "overlays/entry-package-json-build"
+    },
+    {
+      "name": "entry-package-json-build-entry-package-json-build-after",
+      "directory": "overlays/entry-package-json-build-entry-package-json-build-after"
+    }
+  ],
+  "cases": [
+    {
+      "name": "entry-package-json-build",
+      "description": "entry package json build.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "entry-build-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "entry-package-json-build-entry-package-json-build-after",
+          "edit": {
+            "overlay": "entry-package-json-build-entry-package-json-build-after"
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "--path",
+              ".",
+              "-o",
+              "json",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/entry-package-json-build-build.stdout",
+              "stderr": "expect/entry-package-json-build-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ],
+      "directory": "@@repo@@"
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/entry-package-json-build/repo/kustomization.yaml",
+      "cases": [
+        "entry-package-json-build"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-package-json-build/repo/cm.yaml",
+      "cases": [
+        "entry-package-json-build"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-package-json-build-entry-package-json-build-after/repo/cm.yaml",
+      "cases": [
+        "entry-package-json-build"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/entry-package-json-build-build.stdout",
+      "cases": [
+        "entry-package-json-build"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/entry-package-json-build-build.stderr",
+      "cases": [
+        "entry-package-json-build"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    }
+  ]
+}

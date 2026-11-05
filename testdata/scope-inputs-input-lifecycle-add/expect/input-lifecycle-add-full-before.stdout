@@ -1,0 +1,27 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "plain"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "owner",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "changed-input"
+    }
+  },
+  {
+    "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+    "kind": "Kustomization",
+    "metadata": {
+      "name": "owner",
+      "namespace": "flux-system"
+    },
+    "spec": {
+      "path": "./apps"
+    }
+  }
+]

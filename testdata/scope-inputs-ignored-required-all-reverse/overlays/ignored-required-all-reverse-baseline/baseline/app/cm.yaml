@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  flag: ${FLAG}
+kind: ConfigMap
+metadata:
+  name: consumed
+  namespace: apps

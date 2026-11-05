@@ -1,0 +1,5 @@
+
+  ⚠ warnings (2)
+    [OrphanedResource] Kustomization flux-system/orphan: resource orphaned
+      kubernetes/apps/orphan/ks.yaml, kustomization path is not a directory: ./missing: resolve ./missing: stat missing: file does not exist
+    [SourceCredentialsUnavailable] GitRepository flux-system/external: secret flux-system/missing-auth not found

@@ -1,0 +1,384 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "chart-input-template-committed-base",
+      "repository": "repo",
+      "overlay": "chart-input-template-committed-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/chart-input-template-committed-base"
+      ]
+    },
+    {
+      "name": "chart-input-template-committed-baseline",
+      "repository": "baseline",
+      "overlay": "chart-input-template-committed-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/chart-input-template-committed-baseline"
+      ]
+    },
+    {
+      "name": "chart-input-template-committed-after",
+      "repository": "repo",
+      "overlay": "chart-input-template-committed-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "chart-input-template-committed-base"
+      ],
+      "refs": [
+        "refs/heads/chart-input-template-committed-after"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "chart-input-template-committed-base",
+      "directory": "overlays/chart-input-template-committed-base",
+      "operations": []
+    },
+    {
+      "name": "chart-input-template-committed-baseline",
+      "directory": "overlays/chart-input-template-committed-baseline",
+      "operations": []
+    },
+    {
+      "name": "chart-input-template-committed-after",
+      "directory": "overlays/chart-input-template-committed-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "chart-input-template-committed",
+      "description": "chart input template committed.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "chart-input-template-committed-baseline"
+        },
+        {
+          "commit": "chart-input-template-committed-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/chart-input-template-committed-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/chart-input-template-committed-full-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:chart-input-template-committed-base@@"
+            ],
+            "expect": {
+              "stdout": "expect/chart-input-template-committed-scoped-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/chart-input-template-committed-full-after.stdout",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/chart-input-template-committed-full-before.stdout",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/chart-input-template-committed-scoped-diff.stdout",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-after/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/charts/demo/.helmignore",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/charts/demo/excluded/unused",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/charts/demo/values.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/flux/hr.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/flux/unrelated.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/unrelated/cm.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-base/repo/unrelated/kustomization.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/charts/demo/.helmignore",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/charts/demo/excluded/unused",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/charts/demo/values.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/flux/hr.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/flux/unrelated.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/unrelated/cm.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-template-committed-baseline/baseline/unrelated/kustomization.yaml",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "chart-input-template-committed"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

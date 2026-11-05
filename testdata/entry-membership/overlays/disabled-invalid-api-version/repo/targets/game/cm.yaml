@@ -1,0 +1,4 @@
+apiVersion: source.toolkit.fluxcd.io/
+kind: GitRepository
+metadata: {name: invalid, namespace: apps}
+spec: {url: https://fixture.invalid/repo}

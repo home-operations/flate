@@ -1,0 +1,10 @@
+{
+  "apiVersion": "v1",
+  "data": {
+    "value": "new"
+  },
+  "kind": "ConfigMap",
+  "metadata": {
+    "name": "independent-output"
+  }
+}

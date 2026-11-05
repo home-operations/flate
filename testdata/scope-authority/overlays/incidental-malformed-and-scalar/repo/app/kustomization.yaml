@@ -1,0 +1,4 @@
+resources: [child.yaml]
+configMapGenerator:
+- name: settings
+  files: [settings.yaml]

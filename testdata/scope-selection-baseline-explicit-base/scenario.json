@@ -1,0 +1,212 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "baseline-explicit-base-base",
+      "repository": "repo",
+      "overlay": "baseline-explicit-base-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/baseline-explicit-base-base"
+      ]
+    },
+    {
+      "name": "baseline-explicit-base-baseline",
+      "repository": "baseline",
+      "overlay": "baseline-explicit-base-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/baseline-explicit-base-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "baseline-explicit-base-base",
+      "directory": "overlays/baseline-explicit-base-base",
+      "operations": []
+    },
+    {
+      "name": "baseline-explicit-base-baseline",
+      "directory": "overlays/baseline-explicit-base-baseline",
+      "operations": []
+    },
+    {
+      "name": "baseline-explicit-base-after",
+      "directory": "overlays/baseline-explicit-base-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "baseline-explicit-base",
+      "description": "baseline explicit base.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "baseline-explicit-base-baseline"
+        },
+        {
+          "commit": "baseline-explicit-base-base"
+        },
+        {
+          "overlay": "baseline-explicit-base-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--base",
+              "HEAD"
+            ],
+            "expect": {
+              "stdout": "expect/baseline-explicit-base-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/baseline-explicit-base-diff.stdout",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/baseline-explicit-base-after/repo/kubernetes/apps/cm.yaml",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-explicit-base-base/repo/kubernetes/apps/cm.yaml",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-explicit-base-base/repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-explicit-base-base/repo/kubernetes/flux/cluster.yaml",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-explicit-base-baseline/baseline/kubernetes/apps/cm.yaml",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-explicit-base-baseline/baseline/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/baseline-explicit-base-baseline/baseline/kubernetes/flux/cluster.yaml",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "baseline-explicit-base"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "inputs": ""
+}

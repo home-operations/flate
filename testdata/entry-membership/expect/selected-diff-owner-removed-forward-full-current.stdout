@@ -1,0 +1,8 @@
+---
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  name: root-output
+  namespace: apps

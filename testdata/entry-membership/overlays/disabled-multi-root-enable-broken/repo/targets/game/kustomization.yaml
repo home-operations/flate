@@ -1,0 +1,2 @@
+resources: [cm.yaml]
+configMapGenerator: [{name: broken, files: [missing.txt]}]

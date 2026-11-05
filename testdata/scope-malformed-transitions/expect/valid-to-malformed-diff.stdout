@@ -1,0 +1,74 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "healthy",
+        "path": "healthy"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "",
+      "name": "independent-output",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "old"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "healthy",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "independent-output"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "new"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "healthy",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "independent-output"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "flux-system",
+        "name": "child",
+        "path": ""
+      },
+      "side": "both",
+      "count": 0,
+      "reason": "suspended on orig; current: document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string"
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "owner",
+        "path": "app"
+      },
+      "side": "current",
+      "count": 1,
+      "reason": "document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string"
+    }
+  ]
+}

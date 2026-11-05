@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
@@ -19,17 +22,58 @@ import (
 	"github.com/home-operations/flate/internal/testfixture"
 )
 
-func serve(t *testing.T, f *testfixture.Fixture) {
+type fixtureTransport struct {
+	fixture   *testfixture.Fixture
+	responses atomic.Pointer[[]testfixture.Response]
+}
+
+func (f *fixtureTransport) update(t *testing.T, changes []testfixture.Response) {
+	t.Helper()
+	var responses []testfixture.Response
+	if changes == nil {
+		changes = f.fixture.Responses
+	} else if current := f.responses.Load(); current != nil {
+		responses = slices.Clone(*current)
+	}
+	for _, response := range changes {
+		if response.Error == "" {
+			response.Body = f.fixture.Read(t, response.Body, "")
+		}
+		i := slices.IndexFunc(responses, func(r testfixture.Response) bool {
+			return r.Host == response.Host && r.Method == response.Method && r.Path == response.Path
+		})
+		if i < 0 {
+			responses = append(responses, response)
+		} else {
+			responses[i] = response
+		}
+	}
+	f.responses.Store(&responses)
+}
+
+type fixtureConnection struct {
+	net.Conn
+
+	reset atomic.Bool
+}
+
+func (c *fixtureConnection) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if err != nil && c.reset.Load() {
+		return n, syscall.ECONNRESET
+	}
+	return n, err //nolint:wrapcheck // net.Conn.Read must preserve EOF and concrete transport error identity.
+}
+
+func serve(t *testing.T, f *testfixture.Fixture) *fixtureTransport {
 	t.Helper()
 	git := server.NewClient(f)
 	for protocol, previous := range client.Protocols {
 		client.InstallProtocol(protocol, git)
 		t.Cleanup(func() { client.InstallProtocol(protocol, previous) })
 	}
-	responses := slices.Clone(f.Responses)
-	for i := range responses {
-		responses[i].Body = f.Read(t, responses[i].Body, "")
-	}
+	fixture := &fixtureTransport{fixture: f}
+	fixture.update(t, nil)
 	old := http.DefaultTransport
 	original, ok := old.(*http.Transport)
 	if !ok {
@@ -59,7 +103,7 @@ func serve(t *testing.T, f *testfixture.Fixture) {
 			return nil, fmt.Errorf("fixture host: %w", err)
 		}
 		allowed := false
-		for _, r := range responses {
+		for _, r := range *fixture.responses.Load() {
 			if r.Host == host {
 				allowed = true
 				break
@@ -68,7 +112,8 @@ func serve(t *testing.T, f *testfixture.Fixture) {
 		if !allowed {
 			return nil, fmt.Errorf("undeclared fixture host %q", host)
 		}
-		client, server := net.Pipe()
+		pipe, server := net.Pipe()
+		client := &fixtureConnection{Conn: pipe}
 		mu.Lock()
 		connections = append(connections, client, server)
 		mu.Unlock()
@@ -79,7 +124,11 @@ func serve(t *testing.T, f *testfixture.Fixture) {
 				return
 			}
 			defer request.Body.Close()
-			response := reply(t, responses, request)
+			response, err := reply(t, *fixture.responses.Load(), request)
+			if errors.Is(err, syscall.ECONNRESET) {
+				client.reset.Store(true)
+				return
+			}
 			defer response.Body.Close()
 			_ = response.Write(server)
 		})
@@ -97,9 +146,10 @@ func serve(t *testing.T, f *testfixture.Fixture) {
 		http.DefaultTransport = old    //nolint:reassign // Restore the process transport after joining fixture workers.
 		net.DefaultResolver = resolver //nolint:reassign // Restore the process resolver after joining fixture workers.
 	})
+	return fixture
 }
 
-func reply(t *testing.T, responses []testfixture.Response, request *http.Request) *http.Response {
+func reply(t *testing.T, responses []testfixture.Response, request *http.Request) (*http.Response, error) {
 	t.Helper()
 	response := &http.Response{
 		StatusCode: http.StatusNotFound,
@@ -111,6 +161,9 @@ func reply(t *testing.T, responses []testfixture.Response, request *http.Request
 		if r.Host != request.Host || r.Method != request.Method || r.Path != request.URL.RequestURI() {
 			continue
 		}
+		if r.Error == "connection-reset" {
+			return nil, syscall.ECONNRESET
+		}
 		body := []byte(r.Body)
 		response.StatusCode = r.Status
 		response.Body = io.NopCloser(bytes.NewReader(body))
@@ -118,8 +171,8 @@ func reply(t *testing.T, responses []testfixture.Response, request *http.Request
 		for key, value := range r.Headers {
 			response.Header.Set(key, value)
 		}
-		return response
+		return response, nil
 	}
 	t.Errorf("undeclared fixture request: %s %s%s", request.Method, request.Host, request.URL.RequestURI())
-	return response
+	return response, nil
 }

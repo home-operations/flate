@@ -1,0 +1,268 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "testdata/components",
+      "test/e2e/scope/component_propagation_test.go"
+    ],
+    "reductions": "Retain both namespaced consumers and the shared Component. Preserve independent baseline stores, both shared outputs and the app-local exclusion control."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline"
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "component-change-propagates-to-all-consumers",
+      "directory": "overlays/component-change-propagates-to-all-consumers"
+    },
+    {
+      "name": "non-shared-change-does-not-propagate",
+      "directory": "overlays/non-shared-change-does-not-propagate"
+    }
+  ],
+  "cases": [
+    {
+      "name": "component-change-propagates-to-all-consumers",
+      "description": "A shared Component selects both consumers.",
+      "setup": [
+        {
+          "overlay": "component-change-propagates-to-all-consumers"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/cluster",
+              "--path-orig",
+              "@@baseline@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "github"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/component-change-propagates-to-all-consumers.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "non-shared-change-does-not-propagate",
+      "description": "An app-local edit excludes the unchanged sibling.",
+      "setup": [
+        {
+          "overlay": "non-shared-change-does-not-propagate"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/cluster",
+              "--path-orig",
+              "@@baseline@@/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/non-shared-change-does-not-propagate.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/apps/app-a/cm.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "baseline/apps/app-a/kustomization.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "baseline/apps/app-b/cm.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "baseline/apps/app-b/kustomization.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "baseline/cluster/flux-system.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "baseline/components/shared/kustomization.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control.",
+      "package": "component",
+      "consumer": "baseline/apps/app-a"
+    },
+    {
+      "path": "baseline/components/shared/shared-cm.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "expect/component-change-propagates-to-all-consumers.stdout",
+      "cases": [
+        "component-change-propagates-to-all-consumers"
+      ],
+      "purpose": "Independently authored complete dyff expectation."
+    },
+    {
+      "path": "expect/non-shared-change-does-not-propagate.stdout",
+      "cases": [
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Independently authored complete dyff expectation."
+    },
+    {
+      "path": "overlays/component-change-propagates-to-all-consumers/repo/components/shared/shared-cm.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "overlays/non-shared-change-does-not-propagate/repo/apps/app-a/cm.yaml",
+      "cases": [
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "repo/apps/app-a/cm.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "repo/apps/app-a/kustomization.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "repo/apps/app-b/cm.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "repo/apps/app-b/kustomization.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "repo/cluster/flux-system.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "repo/components/shared/kustomization.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control.",
+      "package": "component",
+      "consumer": "repo/apps/app-a"
+    },
+    {
+      "path": "repo/components/shared/shared-cm.yaml",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "Two consumers, a shared Component, or the app-local exclusion control."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "component-change-propagates-to-all-consumers",
+        "non-shared-change-does-not-propagate"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

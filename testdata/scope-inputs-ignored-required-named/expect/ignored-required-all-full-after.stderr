@@ -1,0 +1,5 @@
+
+  ✗  ConfigMap  flux-system/vars  not found
+         required by flux-system/consumer
+
+  ✗ 1 failed · 1 blocked

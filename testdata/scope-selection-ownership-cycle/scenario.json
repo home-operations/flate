@@ -1,0 +1,240 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "ownership-cycle-base",
+      "repository": "repo",
+      "overlay": "ownership-cycle-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/ownership-cycle-base"
+      ]
+    },
+    {
+      "name": "ownership-cycle-baseline",
+      "repository": "baseline",
+      "overlay": "ownership-cycle-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/ownership-cycle-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "ownership-cycle-base",
+      "directory": "overlays/ownership-cycle-base",
+      "operations": []
+    },
+    {
+      "name": "ownership-cycle-baseline",
+      "directory": "overlays/ownership-cycle-baseline",
+      "operations": []
+    },
+    {
+      "name": "ownership-cycle-after",
+      "directory": "overlays/ownership-cycle-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "ownership-cycle",
+      "description": "ownership cycle.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "ownership-cycle-baseline"
+        },
+        {
+          "commit": "ownership-cycle-base"
+        },
+        {
+          "overlay": "ownership-cycle-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@"
+            ],
+            "expect": {
+              "stdout": "expect/ownership-cycle-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/ownership-cycle-diff.stdout",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/ownership-cycle-after/repo/shared/cm.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-base/repo/flux/source.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-base/repo/shared/a.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-base/repo/shared/b.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-base/repo/shared/cm.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-base/repo/shared/kustomization.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-baseline/baseline/flux/source.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-baseline/baseline/shared/a.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-baseline/baseline/shared/b.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-baseline/baseline/shared/cm.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/ownership-cycle-baseline/baseline/shared/kustomization.yaml",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "ownership-cycle"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "inputs": ""
+}

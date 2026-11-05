@@ -1,0 +1,94 @@
+{
+  "source": {
+    "repository": "tyzbit/fleet-infra",
+    "revision": "87c199e34e96df4e475c5bb1a29b9aff035730e3",
+    "paths": [
+      "clusters/corpus/_disabled/project-zomboid/ks.yaml"
+    ],
+    "reductions": "Reduced from the pinned namespaced project-zomboid declaration while preserving its _disabled source path, application path and GitRepository reference. Remove unrelated Secret and readiness edges and replace the chart with one ConfigMap. Selecting the declaration directory without an owning Kustomize package is an authored static-root variant; the source repository does not claim this flate-only offline behavior."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "pinned-namespaced-static-root",
+      "description": "Reduced from the pinned namespaced project-zomboid declaration while preserving its _disabled source path, application path and GitRepository reference. Remove unrelated Secret and readiness edges and replace the chart with one ConfigMap. Selecting the declaration directory without an owning Kustomize package is an authored static-root variant; the source repository does not claim this flate-only offline behavior.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "namespaced-static-root",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/clusters/corpus/_disabled",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/namespaced-static-root.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/clusters/corpus/_disabled/project-zomboid/ks.yaml",
+      "cases": [
+        "pinned-namespaced-static-root"
+      ],
+      "purpose": "Reduced pinned source declaration retains identity, sourceRef, timing and the original application path."
+    },
+    {
+      "path": "repo/clusters/corpus/apps/games/project-zomboid/kustomization.yaml",
+      "cases": [
+        "pinned-namespaced-static-root"
+      ],
+      "purpose": "Tiny replacement for the application chart at the original source target path."
+    },
+    {
+      "path": "repo/clusters/corpus/apps/games/project-zomboid/configmap.yaml",
+      "cases": [
+        "pinned-namespaced-static-root"
+      ],
+      "purpose": "Meaningful local application output makes source-declaration membership observable."
+    },
+    {
+      "path": "expect/namespaced-static-root.stdout",
+      "cases": [
+        "pinned-namespaced-static-root"
+      ],
+      "purpose": "Independently authored complete stdout for namespaced-static-root."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "pinned-namespaced-static-root"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

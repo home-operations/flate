@@ -1,0 +1,12 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "before"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "name": "input-dev"
+    }
+  }
+]

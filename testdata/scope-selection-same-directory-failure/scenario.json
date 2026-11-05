@@ -1,0 +1,302 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "same-directory-failure-base",
+      "repository": "repo",
+      "overlay": "same-directory-failure-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/same-directory-failure-base"
+      ]
+    },
+    {
+      "name": "same-directory-failure-baseline",
+      "repository": "baseline",
+      "overlay": "same-directory-failure-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/same-directory-failure-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "same-directory-failure-base",
+      "directory": "overlays/same-directory-failure-base",
+      "operations": []
+    },
+    {
+      "name": "same-directory-failure-baseline",
+      "directory": "overlays/same-directory-failure-baseline",
+      "operations": []
+    },
+    {
+      "name": "same-directory-failure-after",
+      "directory": "overlays/same-directory-failure-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "same-directory-failure",
+      "description": "same directory failure.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "same-directory-failure-baseline"
+        },
+        {
+          "commit": "same-directory-failure-base"
+        },
+        {
+          "overlay": "same-directory-failure-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@repo@@"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/same-directory-failure-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "html",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "html",
+              "--path-orig",
+              "@@repo@@"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/same-directory-failure-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "json",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@repo@@"
+            ],
+            "expect": {
+              "stdout": "expect/same-directory-failure-json.stdout",
+              "stderr": "expect/same-directory-failure-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "images",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--path",
+              "@@repo@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@repo@@"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-missing-selected.stdout",
+              "stderr": "expect/same-directory-failure-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/auxiliary-supplied-missing-selected.stdout",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/same-directory-failure-diff.stderr",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/same-directory-failure-json.stdout",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/same-directory-failure-base/repo/apps/kustomization.yaml",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/same-directory-failure-base/repo/flux/apps.yaml",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/same-directory-failure-base/repo/kustomization.yaml",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/same-directory-failure-baseline/baseline/apps/kustomization.yaml",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/same-directory-failure-baseline/baseline/flux/apps.yaml",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/same-directory-failure-baseline/baseline/kustomization.yaml",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "same-directory-failure"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "inputs": ""
+}

@@ -1,0 +1,2 @@
+nameSuffix: -dev
+resources: [child.yaml, cm.yaml, nested]

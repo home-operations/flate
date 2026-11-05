@@ -1,0 +1,171 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/entry_packages_test.go",
+      "test/e2e/scope/literal_root_layers_test.go",
+      "test/e2e/scope/entry_prerequisite_sides_test.go"
+    ],
+    "reductions": "Authored from the scope witnesses. Preserve every dynamic shape, independent negative control, transformed identity and complete CLI result."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "entry-package-failure-test",
+      "directory": "overlays/entry-package-failure-test"
+    }
+  ],
+  "cases": [
+    {
+      "name": "entry-package-failure-diff-json",
+      "description": "entry package failure diff json.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "overlay": "entry-package-failure-test"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/entry",
+              "--path-orig",
+              "@@baseline@@/entry",
+              "-o",
+              "json",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/entry-package-failure-diff-json-diff.stdout",
+              "stderr": "expect/entry-package-failure-diff-json-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/entry-package-failure-test/baseline/entry/kustomization.yaml",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/entry-package-failure-test/baseline/entry/child.yaml",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-package-failure-test/baseline/workload/kustomization.yaml",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/entry-package-failure-test/baseline/workload/cm.yaml",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-package-failure-test/repo/entry/kustomization.yaml",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/entry-package-failure-test/repo/entry/child.yaml",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/entry-package-failure-test/repo/workload/kustomization.yaml",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/entry-package-failure-test/repo/workload/cm.yaml",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/entry-package-failure-diff-json-diff.stdout",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/entry-package-failure-diff-json-diff.stderr",
+      "cases": [
+        "entry-package-failure-diff-json"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    }
+  ]
+}

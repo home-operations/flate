@@ -1,9 +1,12 @@
 package base
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log" //nolint:depguard // Restoring slog.SetDefault also requires restoring the standard logger.
+	"log/slog"
 	"net/http"
 	"slices"
 	"testing"
@@ -44,6 +47,74 @@ func TestAcquire_Outcomes(t *testing.T) {
 			tc.name,
 			func(t *testing.T) { t.Parallel(); testAcquireOutcomesCase(t, &tc) },
 		)
+	}
+}
+
+//nolint:paralleltest // The test changes the process-wide logger.
+func TestAcquire_UnavailableCredentialsLog(t *testing.T) {
+	var logs bytes.Buffer
+	prior, writer, flags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+			if attr.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return attr
+		},
+	})))
+	t.Cleanup(func() {
+		slog.SetDefault(prior)
+		log.SetOutput(writer)
+		log.SetFlags(flags)
+	})
+
+	st := store.New()
+	tasks := task.NewBounded(2)
+	t.Cleanup(tasks.BlockTillDone)
+	repo := &manifest.GitRepository{Name: "external", Namespace: "flux-system"}
+	st.AddObject(repo)
+	run := gateExecution(New(st, tasks), repo.Named())
+	defer run.Close()
+	missing := source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "unavailable-auth", "not found")
+	var got error
+	completed := 0
+	tasks.Go(t.Context(), "acquire", func(ctx context.Context) {
+		run.Dispatch(ctx, manifest.DrainCascade, t,
+			func(t *testing.T, ctx context.Context, current *manifest.GitRepository, level manifest.DrainLevel) error {
+				t.Helper()
+				got = run.Acquire(ctx, current, Acquisition{
+					AllowMissingSecrets: true,
+					Fetch: func(context.Context) (*store.SourceArtifact, error) {
+						run.Reads.GetObject(repo.Named())
+						source.SecretLookup(&run.Reads)(repo.Namespace, "unavailable-auth")
+						return nil, missing
+					},
+					Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
+						completed++
+						if artifact != nil || !errors.Is(unavailable, missing) || level != manifest.DrainCascade {
+							t.Errorf("completion artifact=%v unavailable=%v level=%d", artifact, unavailable, level)
+						}
+						return nil
+					},
+				}, level)
+				return got
+			})
+	})
+	tasks.BlockTillDone()
+	if got != nil || completed != 1 {
+		t.Fatalf("acquisition error=%v completions=%d", got, completed)
+	}
+	want := `{"level":"INFO","msg":"base: credentials unavailable",` +
+		`"id":"GitRepository.source.toolkit.fluxcd.io/flux-system/external",` +
+		`"err":"secret flux-system/unavailable-auth not found"}` + "\n"
+	if logs.String() != want {
+		t.Errorf("log = %q, want %q", logs.String(), want)
+	}
+	warnings := st.Warnings()
+	if len(warnings) != 1 || warnings[0].Category != manifest.WarnSourceCredentialsUnavailable ||
+		warnings[0].Resource != repo.Named() || warnings[0].Message != missing.Error() {
+		t.Errorf("credential warnings = %+v", warnings)
 	}
 }
 

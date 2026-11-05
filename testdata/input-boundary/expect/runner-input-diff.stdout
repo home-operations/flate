@@ -1,0 +1,57 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "arc-runners",
+        "path": "kubernetes/apps/actions-runner-system/arc/runners"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "actions-runner-system",
+      "name": "runner-settings",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "RUNNER_GROUP": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "annotations": {
+            "config.kubernetes.io/origin": "configuredIn: kustomization.yaml\nconfiguredBy:\n  apiVersion: builtin\n  kind: ConfigMapGenerator\n"
+          },
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "arc-runners",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "runner-settings",
+          "namespace": "actions-runner-system"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "RUNNER_GROUP": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "annotations": {
+            "config.kubernetes.io/origin": "configuredIn: kustomization.yaml\nconfiguredBy:\n  apiVersion: builtin\n  kind: ConfigMapGenerator\n"
+          },
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "arc-runners",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "runner-settings",
+          "namespace": "actions-runner-system"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

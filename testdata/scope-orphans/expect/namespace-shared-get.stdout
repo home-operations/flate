@@ -1,0 +1,30 @@
+[
+  {
+    "chart": "charts-demo-a-demo/demo",
+    "kind": "HelmRelease",
+    "name": "demo",
+    "namespace": "demo-a",
+    "releaseName": "demo",
+    "source": "demo-a-demo",
+    "sourceRef": {
+      "kind": "HelmChart",
+      "name": "demo-a-demo",
+      "namespace": "charts"
+    },
+    "version": "0.1.0"
+  },
+  {
+    "chart": "charts-demo-b-demo/demo",
+    "kind": "HelmRelease",
+    "name": "demo",
+    "namespace": "demo-b",
+    "releaseName": "demo",
+    "source": "demo-b-demo",
+    "sourceRef": {
+      "kind": "HelmChart",
+      "name": "demo-b-demo",
+      "namespace": "charts"
+    },
+    "version": "0.1.0"
+  }
+]

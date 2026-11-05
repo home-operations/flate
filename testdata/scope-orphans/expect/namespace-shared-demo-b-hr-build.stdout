@@ -1,0 +1,17 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "fixture"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "helm.toolkit.fluxcd.io/name": "demo",
+        "helm.toolkit.fluxcd.io/namespace": "demo-b"
+      },
+      "name": "demo-chart",
+      "namespace": "demo-b"
+    }
+  }
+]

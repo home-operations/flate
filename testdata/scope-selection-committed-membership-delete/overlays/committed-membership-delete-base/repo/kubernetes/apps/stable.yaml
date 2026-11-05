@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: fixed
+kind: ConfigMap
+metadata:
+  name: membership-control
+  namespace: apps

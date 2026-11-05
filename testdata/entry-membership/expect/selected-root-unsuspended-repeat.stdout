@@ -1,0 +1,48 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: child-dev
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: leaf-output
+---
+apiVersion: v1
+data:
+  value: root-value
+kind: ConfigMap
+metadata:
+  name: root-output-dev
+  namespace: apps
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: podinfo-dev
+  namespace: apps
+spec:
+  chart:
+    spec:
+      chart: podinfo
+      sourceRef:
+        kind: HelmRepository
+        name: podinfo
+      version: 6.5.0
+  suspend: true
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: podinfo-dev
+  namespace: apps
+spec:
+  suspend: true
+  url: https://fixture.invalid/charts
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: child-dev
+  namespace: apps
+spec:
+  path: ./leaf

@@ -1,0 +1,14 @@
+{
+  "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "child"
+  },
+  "spec": {
+    "path": "./apps/child",
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system"
+    }
+  }
+}

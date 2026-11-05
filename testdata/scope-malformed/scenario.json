@@ -1,0 +1,1334 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/malformed_manifest_scope_test.go"
+    ],
+    "reductions": "Preserve the existing namespace, raw identity, cache replay and orphan authority witnesses as disk scenarios."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "owned-graph",
+      "directory": "overlays/owned-graph",
+      "operations": []
+    },
+    {
+      "name": "shared-graph",
+      "directory": "overlays/shared-graph",
+      "operations": []
+    },
+    {
+      "name": "owned-ad-hoc",
+      "directory": "overlays/owned-ad-hoc",
+      "operations": []
+    },
+    {
+      "name": "owned-ad-hoc-wide",
+      "directory": "overlays/owned-ad-hoc-wide",
+      "operations": []
+    },
+    {
+      "name": "suspended-owner",
+      "directory": "overlays/suspended-owner",
+      "operations": []
+    },
+    {
+      "name": "changed-unselected-owner",
+      "directory": "overlays/changed-unselected-owner",
+      "operations": []
+    },
+    {
+      "name": "generated-owner",
+      "directory": "overlays/generated-owner",
+      "operations": []
+    },
+    {
+      "name": "suspended-generated-owner",
+      "directory": "overlays/suspended-generated-owner",
+      "operations": []
+    },
+    {
+      "name": "external-source-owner",
+      "directory": "overlays/external-source-owner",
+      "operations": []
+    },
+    {
+      "name": "unowned-graph",
+      "directory": "overlays/unowned-graph",
+      "operations": []
+    },
+    {
+      "name": "unowned-ad-hoc",
+      "directory": "overlays/unowned-ad-hoc",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "owned-graph",
+      "description": "owned graph",
+      "setup": [
+        {
+          "overlay": "owned-graph"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/owned-graph-all.stdout",
+              "stderr": "expect/owned-graph-all.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "sibling",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "sibling",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/owned-graph-sibling.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared-graph",
+      "description": "shared graph",
+      "setup": [
+        {
+          "overlay": "shared-graph"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/shared-graph-all.stdout",
+              "stderr": "expect/shared-graph-all.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "sibling",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "sibling",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/shared-graph-sibling.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "owned-ad-hoc",
+      "description": "owned ad hoc",
+      "setup": [
+        {
+          "overlay": "owned-ad-hoc"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/owned-ad-hoc-all.stdout",
+              "stderr": "expect/owned-ad-hoc-all.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "sibling",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "sibling",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/owned-ad-hoc-sibling.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "owned-ad-hoc-wide",
+      "description": "owned ad hoc wide",
+      "setup": [
+        {
+          "overlay": "owned-ad-hoc-wide"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/owned-ad-hoc-wide-all.stdout",
+              "stderr": "expect/owned-ad-hoc-wide-all.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "sibling",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "sibling",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/owned-ad-hoc-wide-sibling.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "suspended-owner",
+      "description": "suspended owner",
+      "setup": [
+        {
+          "overlay": "suspended-owner"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/suspended-owner-all.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-unselected-owner",
+      "description": "changed unselected owner",
+      "setup": [
+        {
+          "overlay": "changed-unselected-owner"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/changed-unselected-owner-all.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "generated-owner",
+      "description": "generated owner",
+      "setup": [
+        {
+          "overlay": "generated-owner"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/generated-owner-all.stdout",
+              "stderr": "expect/generated-owner-all.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "sibling",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "sibling",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/generated-owner-sibling.stdout",
+              "stderr": "expect/generated-owner-sibling.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "suspended-generated-owner",
+      "description": "suspended generated owner",
+      "setup": [
+        {
+          "overlay": "suspended-generated-owner"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/suspended-generated-owner-all.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "external-source-owner",
+      "description": "external source owner",
+      "setup": [
+        {
+          "overlay": "external-source-owner"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path-orig",
+              "@@baseline@@"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/external-source-owner-all.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unowned-graph",
+      "description": "unowned graph",
+      "setup": [
+        {
+          "overlay": "unowned-graph"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/monitoring",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/unowned-graph-all.stdout",
+              "stderr": "expect/unowned-graph-all.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unowned-ad-hoc",
+      "description": "unowned ad hoc",
+      "setup": [
+        {
+          "overlay": "unowned-ad-hoc"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/monitoring",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/unowned-ad-hoc-all.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/changed-unselected-owner-all.stdout",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/external-source-owner-all.stderr",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/generated-owner-all.stderr",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/generated-owner-all.stdout",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/generated-owner-sibling.stdout",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-ad-hoc-all.stderr",
+      "cases": [
+        "owned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-ad-hoc-all.stdout",
+      "cases": [
+        "owned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-ad-hoc-sibling.stdout",
+      "cases": [
+        "owned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-ad-hoc-wide-all.stderr",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-ad-hoc-wide-all.stdout",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-ad-hoc-wide-sibling.stdout",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-graph-all.stderr",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-graph-all.stdout",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-graph-sibling.stdout",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-graph-all.stderr",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-graph-all.stdout",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/shared-graph-sibling.stdout",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/suspended-generated-owner-all.stdout",
+      "cases": [
+        "suspended-generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/suspended-owner-all.stdout",
+      "cases": [
+        "suspended-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unowned-ad-hoc-all.stderr",
+      "cases": [
+        "unowned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unowned-graph-all.stderr",
+      "cases": [
+        "unowned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unowned-graph-all.stdout",
+      "cases": [
+        "unowned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/baseline/flux/ks.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/baseline/flux/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/baseline/healthy/configmap.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/baseline/healthy/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/baseline/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/baseline/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/repo/flux/ks.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/repo/flux/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/repo/healthy/configmap.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/repo/healthy/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/repo/kustomization.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/changed-unselected-owner/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "changed-unselected-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/baseline/flux/ks.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/baseline/flux/kustomization.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/baseline/healthy/configmap.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/baseline/healthy/kustomization.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/baseline/kustomization.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/baseline/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/repo/flux/ks.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/repo/flux/kustomization.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/repo/healthy/configmap.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/repo/healthy/kustomization.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/repo/kustomization.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/external-source-owner/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "external-source-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/generated-owner/repo/flux/ks.yaml",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/generated-owner/repo/flux/kustomization.yaml",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/generated-owner/repo/healthy/configmap.yaml",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/generated-owner/repo/healthy/kustomization.yaml",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/generated-owner/repo/kustomization.yaml",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/generated-owner/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc-wide/repo/flux/ks.yaml",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc-wide/repo/flux/kustomization.yaml",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc-wide/repo/healthy/configmap.yaml",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc-wide/repo/healthy/kustomization.yaml",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc-wide/repo/kustomization.yaml",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc-wide/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "owned-ad-hoc-wide"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc/repo/flux/ks.yaml",
+      "cases": [
+        "owned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc/repo/flux/kustomization.yaml",
+      "cases": [
+        "owned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc/repo/healthy/configmap.yaml",
+      "cases": [
+        "owned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc/repo/healthy/kustomization.yaml",
+      "cases": [
+        "owned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-ad-hoc/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "owned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-graph/repo/flux/ks.yaml",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-graph/repo/flux/kustomization.yaml",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-graph/repo/healthy/configmap.yaml",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-graph/repo/healthy/kustomization.yaml",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-graph/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-graph/repo/monitoring/kustomization.yaml",
+      "cases": [
+        "owned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/shared-graph/repo/flux/ks.yaml",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-graph/repo/flux/kustomization.yaml",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-graph/repo/flux/peer.yaml",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-graph/repo/healthy/configmap.yaml",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-graph/repo/healthy/kustomization.yaml",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-graph/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/shared-graph/repo/monitoring/kustomization.yaml",
+      "cases": [
+        "shared-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/suspended-generated-owner/repo/flux/ks.yaml",
+      "cases": [
+        "suspended-generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-generated-owner/repo/flux/kustomization.yaml",
+      "cases": [
+        "suspended-generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-generated-owner/repo/healthy/configmap.yaml",
+      "cases": [
+        "suspended-generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-generated-owner/repo/healthy/kustomization.yaml",
+      "cases": [
+        "suspended-generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-generated-owner/repo/kustomization.yaml",
+      "cases": [
+        "suspended-generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-generated-owner/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "suspended-generated-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-owner/repo/flux/ks.yaml",
+      "cases": [
+        "suspended-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-owner/repo/flux/kustomization.yaml",
+      "cases": [
+        "suspended-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-owner/repo/healthy/configmap.yaml",
+      "cases": [
+        "suspended-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-owner/repo/healthy/kustomization.yaml",
+      "cases": [
+        "suspended-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-owner/repo/kustomization.yaml",
+      "cases": [
+        "suspended-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/suspended-owner/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "suspended-owner"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-ad-hoc/repo/healthy/configmap.yaml",
+      "cases": [
+        "unowned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-ad-hoc/repo/healthy/kustomization.yaml",
+      "cases": [
+        "unowned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-ad-hoc/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "unowned-ad-hoc"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-graph/repo/healthy/configmap.yaml",
+      "cases": [
+        "unowned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-graph/repo/healthy/kustomization.yaml",
+      "cases": [
+        "unowned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-graph/repo/monitoring/blackbox-exporter.yaml",
+      "cases": [
+        "unowned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-graph/repo/monitoring/kustomization.yaml",
+      "cases": [
+        "unowned-graph"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "failure"
+    },
+    {
+      "path": "expect/generated-owner-sibling.stderr",
+      "cases": [
+        "generated-owner"
+      ],
+      "purpose": "The named healthy sibling retains the unrelated failed owner and its dependent."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "changed-unselected-owner",
+        "owned-ad-hoc",
+        "owned-ad-hoc-wide",
+        "owned-graph",
+        "shared-graph",
+        "suspended-generated-owner",
+        "suspended-owner"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "external-source-owner",
+        "unowned-ad-hoc"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

@@ -1,0 +1,296 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "input-lifecycle-add-base",
+      "repository": "repo",
+      "overlay": "input-lifecycle-add-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/input-lifecycle-add-base"
+      ]
+    },
+    {
+      "name": "input-lifecycle-add-baseline",
+      "repository": "baseline",
+      "overlay": "input-lifecycle-add-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/input-lifecycle-add-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "input-lifecycle-add-base",
+      "directory": "overlays/input-lifecycle-add-base",
+      "operations": []
+    },
+    {
+      "name": "input-lifecycle-add-baseline",
+      "directory": "overlays/input-lifecycle-add-baseline",
+      "operations": []
+    },
+    {
+      "name": "input-lifecycle-add-after",
+      "directory": "overlays/input-lifecycle-add-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "input-lifecycle-add",
+      "description": "input lifecycle add.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "input-lifecycle-add-baseline"
+        },
+        {
+          "commit": "input-lifecycle-add-base"
+        },
+        {
+          "overlay": "input-lifecycle-add-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/input-lifecycle-add-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/input-lifecycle-add-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/input-lifecycle-add-full-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/input-lifecycle-add-diff.stdout",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/input-lifecycle-add-full-after.stdout",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/input-lifecycle-add-full-before.stdout",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-after/repo/apps/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-after/repo/inputs/patch",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-base/repo/apps/cm.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-base/repo/apps/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-base/repo/flux/owner.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-baseline/baseline/apps/cm.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-baseline/baseline/apps/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/input-lifecycle-add-baseline/baseline/flux/owner.yaml",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "input-lifecycle-add"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

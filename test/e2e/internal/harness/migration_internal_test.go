@@ -14,38 +14,7 @@ import (
 )
 
 // Each migration removes its files from this fixed list. New files receive no exemption.
-const unmigratedFiles = `scope/authoritative_manifest_failures_test.go
-scope/bootstrap_namespace_projection_test.go
-scope/cache_diff_test.go
-scope/child_kustomization_identity_test.go
-scope/component_propagation_test.go
-scope/disabled_application_sides_test.go
-scope/disabled_apps_test.go
-scope/entry_packages_test.go
-scope/entry_prerequisite_sides_test.go
-scope/git_fixture_test.go
-scope/ignored_substitution_test.go
-scope/inputs_test.go
-scope/literal_root_layers_test.go
-scope/local_chart_inputs_test.go
-scope/malformed_manifest_scope_test.go
-scope/malformed_manifest_transitions_test.go
-scope/namespace_diff_test.go
-scope/namespace_orphan_authority_test.go
-scope/namespace_orphans_test.go
-scope/optional_input_test.go
-scope/orphan_order_test.go
-scope/orphan_selection_test.go
-scope/runtime_owner_namespace_test.go
-scope/selected_root_classification_test.go
-scope/selected_root_diff_test.go
-scope/selected_root_ownership_test.go
-scope/selection_auxiliary_test.go
-scope/selection_test.go
-scope/unclaimed_test.go
-scope/unowned_entry_authority_test.go
-scope/unreadable_manifest_scope_test.go
-sourceref/checkout_preservation_test.go
+const unmigratedFiles = `sourceref/checkout_preservation_test.go
 sourceref/discovery_index_test.go
 sourceref/empty_source_path_test.go
 sourceref/held_source_failures_test.go

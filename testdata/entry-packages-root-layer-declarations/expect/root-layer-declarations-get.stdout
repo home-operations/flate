@@ -1,0 +1,28 @@
+[
+  {
+    "kind": "Kustomization",
+    "name": "first",
+    "namespace": "apps",
+    "path": "./workloads/first",
+    "prune": false,
+    "sourceRef": {
+      "kind": "",
+      "name": "",
+      "namespace": "apps"
+    },
+    "wait": false
+  },
+  {
+    "kind": "Kustomization",
+    "name": "second",
+    "namespace": "apps",
+    "path": "./workloads/second",
+    "prune": false,
+    "sourceRef": {
+      "kind": "",
+      "name": "",
+      "namespace": "apps"
+    },
+    "wait": false
+  }
+]

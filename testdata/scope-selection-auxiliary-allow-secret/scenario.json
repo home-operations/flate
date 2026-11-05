@@ -1,0 +1,422 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "auxiliary-allow-secret-base",
+      "repository": "repo",
+      "overlay": "auxiliary-allow-secret-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/auxiliary-allow-secret-base"
+      ]
+    },
+    {
+      "name": "auxiliary-allow-secret-baseline",
+      "repository": "baseline",
+      "overlay": "auxiliary-allow-secret-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/auxiliary-allow-secret-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "auxiliary-allow-secret-base",
+      "directory": "overlays/auxiliary-allow-secret-base",
+      "operations": []
+    },
+    {
+      "name": "auxiliary-allow-secret-baseline",
+      "directory": "overlays/auxiliary-allow-secret-baseline",
+      "operations": []
+    },
+    {
+      "name": "auxiliary-allow-secret-after",
+      "directory": "overlays/auxiliary-allow-secret-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "auxiliary-allow-secret",
+      "description": "auxiliary allow secret.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "auxiliary-allow-secret-baseline"
+        },
+        {
+          "commit": "auxiliary-allow-secret-base"
+        },
+        {
+          "overlay": "auxiliary-allow-secret-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-selected",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "selected",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-missing-selected.stdout",
+              "stderr": "expect/auxiliary-allow-secret-missing-selected.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "named-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "selected",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-allow-configmap-named-build.stdout",
+              "stderr": "expect/auxiliary-allow-secret-named-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "named-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "selected",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-named-test.stdout",
+              "stderr": "expect/auxiliary-allow-secret-named-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "namespace-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-allow-configmap-named-build.stdout",
+              "stderr": "expect/auxiliary-allow-secret-named-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "namespace-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-named-test.stdout",
+              "stderr": "expect/auxiliary-allow-secret-named-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-unrelated-failure",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-allow-secret-full-unrelated-failure.stdout",
+              "stderr": "expect/auxiliary-allow-secret-full-unrelated-failure.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/auxiliary-allow-configmap-named-build.stdout",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-allow-secret-full-unrelated-failure.stderr",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-allow-secret-full-unrelated-failure.stdout",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-allow-secret-missing-selected.stderr",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-allow-secret-named-build.stderr",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-supplied-missing-selected.stdout",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-supplied-named-test.stdout",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-base/repo/charts/app/Chart.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-base/repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-base/repo/charts/app/values.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-base/repo/flux/selected.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-base/repo/flux/unrelated.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-baseline/baseline/charts/app/Chart.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-baseline/baseline/charts/app/templates/cm.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-baseline/baseline/charts/app/values.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-baseline/baseline/flux/selected.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-allow-secret-baseline/baseline/flux/unrelated.yaml",
+      "cases": [
+        "auxiliary-allow-secret"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    }
+  ],
+  "inputs": ""
+}

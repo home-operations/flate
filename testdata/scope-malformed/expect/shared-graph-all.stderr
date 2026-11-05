@@ -1,0 +1,6 @@
+
+  ✗  Kustomization  flux-system/owner  kustomize build ./monitoring: accumulating resources: accumulating resources from 'blackbox-exporter.yaml': MalformedYAMLError: yaml: line 6: did not find expected ',' or ']' in File: blackbox-exporter.yaml
+         blocks flux-system/dependent
+  ✗  Kustomization  flux-system/peer  kustomize build ./monitoring: accumulating resources: accumulating resources from 'blackbox-exporter.yaml': MalformedYAMLError: yaml: line 6: did not find expected ',' or ']' in File: blackbox-exporter.yaml
+
+  ✗ 2 failed · 1 blocked

@@ -1,0 +1,6 @@
+
+  ✓  GitRepository  apps/flux-system
+  ✗  entry          path "."  kustomize build .: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve missing.yaml: stat missing.yaml: file does not exist': must build at directory: not a valid directory: resolve missing.yaml: stat missing.yaml: file does not exist
+  ⊘  Kustomization  apps/child  blocked by apps/unavailable-input (not found)
+
+  ✗ 1 passed · 1 failed · 1 blocked   <DUR>

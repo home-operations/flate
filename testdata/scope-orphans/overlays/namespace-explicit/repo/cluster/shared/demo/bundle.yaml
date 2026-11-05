@@ -1,0 +1,34 @@
+{
+  "apiVersion": "helm.toolkit.fluxcd.io/v2",
+  "kind": "HelmRelease",
+  "metadata": {
+    "name": "demo",
+    "namespace": "demo"
+  },
+  "spec": {
+    "chart": {
+      "spec": {
+        "chart": "demo",
+        "sourceRef": {
+          "kind": "HelmRepository",
+          "name": "demo"
+        },
+        "version": "0.1.0"
+      }
+    },
+    "interval": "10m"
+  }
+}
+---
+{
+  "apiVersion": "source.toolkit.fluxcd.io/v1",
+  "kind": "HelmRepository",
+  "metadata": {
+    "name": "demo",
+    "namespace": "demo"
+  },
+  "spec": {
+    "interval": "24h",
+    "url": "https://charts.example.invalid"
+  }
+}

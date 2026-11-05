@@ -1,0 +1,8 @@
+
+  ✓  Kustomization   flux-system/owner-demo-a
+  ✓  Kustomization   flux-system/owner-demo-b
+  ✓  HelmRelease     demo-a/demo
+  ✓  HelmRelease     demo-b/demo
+  ✓  HelmRepository  charts/demo
+
+  ✓ 5 passed   <DUR>

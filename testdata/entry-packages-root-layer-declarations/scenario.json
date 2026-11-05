@@ -1,0 +1,410 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/entry_packages_test.go",
+      "test/e2e/scope/literal_root_layers_test.go",
+      "test/e2e/scope/entry_prerequisite_sides_test.go"
+    ],
+    "reductions": "Authored from the scope witnesses. Preserve every dynamic shape, independent negative control, transformed identity and complete CLI result."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "root-layer-declarations",
+      "directory": "overlays/root-layer-declarations"
+    },
+    {
+      "name": "root-layer-declarations-interval-edit",
+      "directory": "overlays/root-layer-declarations-interval-edit"
+    }
+  ],
+  "cases": [
+    {
+      "name": "root-layer-declarations",
+      "description": "root layer declarations.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "overlay": "root-layer-declarations"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/apps",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/root-layer-declarations-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/apps",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/root-layer-declarations-build-repeat.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/apps",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/root-layer-declarations-get.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "root-layer-declarations-interval-edit",
+          "edit": {
+            "overlay": "root-layer-declarations-interval-edit"
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/apps",
+              "--path-orig",
+              "@@baseline@@/apps",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/root-layer-declarations-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selected",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "--path",
+              "@@repo@@/apps",
+              "--path-orig",
+              "@@baseline@@/apps",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "shared"
+            },
+            "expect": {
+              "stdout": "expect/root-layer-declarations-selected.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "overlays/root-layer-declarations/repo/apps/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/apps/first/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/apps/first/ks.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/apps/first/plain.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/workloads/first/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/workloads/first/cm.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/apps/second/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/apps/second/ks.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/apps/second/plain.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/workloads/second/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/repo/workloads/second/cm.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/apps/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/apps/first/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/apps/first/ks.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/apps/first/plain.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/workloads/first/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/workloads/first/cm.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/apps/second/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/apps/second/ks.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/apps/second/plain.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/workloads/second/kustomization.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations/baseline/workloads/second/cm.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/root-layer-declarations-build.stdout",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/root-layer-declarations-build-repeat.stdout",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/root-layer-declarations-get.stdout",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "overlays/root-layer-declarations-interval-edit/repo/apps/first/ks.yaml",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/root-layer-declarations-diff.stdout",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/root-layer-declarations-selected.stdout",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "Authored fixture or independently derived complete expectation."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "root-layer-declarations"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

@@ -1,0 +1,367 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/malformed_manifest_transitions_test.go"
+    ],
+    "reductions": "Preserve the existing namespace, raw identity, cache replay and orphan authority witnesses as disk scenarios."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "malformed-to-valid",
+      "directory": "overlays/malformed-to-valid",
+      "operations": []
+    },
+    {
+      "name": "valid-to-malformed",
+      "directory": "overlays/valid-to-malformed",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "malformed-to-valid",
+      "description": "malformed to valid",
+      "setup": [
+        {
+          "overlay": "malformed-to-valid"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/malformed-to-valid-diff.stdout",
+              "stderr": "expect/malformed-to-valid-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "repeat",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/malformed-to-valid-repeat.stdout",
+              "stderr": "expect/malformed-to-valid-repeat.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "valid-to-malformed",
+      "description": "valid to malformed",
+      "setup": [
+        {
+          "overlay": "valid-to-malformed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/valid-to-malformed-diff.stdout",
+              "stderr": "expect/valid-to-malformed-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "repeat",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/valid-to-malformed-repeat.stdout",
+              "stderr": "expect/valid-to-malformed-repeat.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/malformed-to-valid-diff.stderr",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/malformed-to-valid-diff.stdout",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/malformed-to-valid-repeat.stderr",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/malformed-to-valid-repeat.stdout",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/valid-to-malformed-diff.stderr",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/valid-to-malformed-diff.stdout",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/valid-to-malformed-repeat.stderr",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/valid-to-malformed-repeat.stdout",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/baseline/app/child.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/baseline/app/kustomization.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/baseline/flux/ks.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/baseline/healthy/cm.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/baseline/healthy/kustomization.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/repo/app/child.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/repo/app/kustomization.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/repo/flux/ks.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/repo/healthy/cm.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/malformed-to-valid/repo/healthy/kustomization.yaml",
+      "cases": [
+        "malformed-to-valid"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/baseline/app/child.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/baseline/app/kustomization.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/baseline/flux/ks.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/baseline/healthy/cm.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/baseline/healthy/kustomization.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/repo/app/child.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/repo/app/kustomization.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/repo/flux/ks.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/repo/healthy/cm.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/valid-to-malformed/repo/healthy/kustomization.yaml",
+      "cases": [
+        "valid-to-malformed"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    }
+  ]
+}

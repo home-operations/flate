@@ -1,0 +1,429 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "auxiliary-supplied-base",
+      "repository": "repo",
+      "overlay": "auxiliary-supplied-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/auxiliary-supplied-base"
+      ]
+    },
+    {
+      "name": "auxiliary-supplied-baseline",
+      "repository": "baseline",
+      "overlay": "auxiliary-supplied-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/auxiliary-supplied-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "auxiliary-supplied-base",
+      "directory": "overlays/auxiliary-supplied-base",
+      "operations": []
+    },
+    {
+      "name": "auxiliary-supplied-baseline",
+      "directory": "overlays/auxiliary-supplied-baseline",
+      "operations": []
+    },
+    {
+      "name": "auxiliary-supplied-after",
+      "directory": "overlays/auxiliary-supplied-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "auxiliary-supplied",
+      "description": "auxiliary supplied.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "auxiliary-supplied-baseline"
+        },
+        {
+          "commit": "auxiliary-supplied-base"
+        },
+        {
+          "overlay": "auxiliary-supplied-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing-selected",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "selected",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-missing-selected.stdout",
+              "stderr": "expect/auxiliary-supplied-missing-selected.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "named-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "selected",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--supply",
+              "@@inputs@@/values.yaml",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-named-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "named-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "selected",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "--supply",
+              "@@inputs@@/values.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-named-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "namespace-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--supply",
+              "@@inputs@@/values.yaml",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-named-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "namespace-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "-n",
+              "apps",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "--supply",
+              "@@inputs@@/values.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-named-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-unrelated-failure",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json",
+              "--supply",
+              "@@inputs@@/values.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/auxiliary-supplied-full-unrelated-failure.stdout",
+              "stderr": "expect/auxiliary-supplied-full-unrelated-failure.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/auxiliary-supplied-full-unrelated-failure.stderr",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-supplied-full-unrelated-failure.stdout",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-supplied-missing-selected.stderr",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-supplied-missing-selected.stdout",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-supplied-named-build.stdout",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/auxiliary-supplied-named-test.stdout",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-base/repo/charts/app/Chart.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-base/repo/charts/app/templates/cm.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-base/repo/charts/app/values.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-base/repo/flux/selected.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-base/repo/flux/unrelated.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-baseline/baseline/charts/app/Chart.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-baseline/baseline/charts/app/templates/cm.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-baseline/baseline/charts/app/values.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-baseline/baseline/flux/selected.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/auxiliary-supplied-baseline/baseline/flux/unrelated.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "supplied/values.yaml",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "auxiliary-supplied"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ],
+  "inputs": "supplied"
+}

@@ -1,0 +1,49 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "apps",
+        "name": "owner",
+        "path": "app"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "",
+      "name": "excluded",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "owner",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "excluded"
+        }
+      },
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "after"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "owner",
+            "kustomize.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "excluded"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

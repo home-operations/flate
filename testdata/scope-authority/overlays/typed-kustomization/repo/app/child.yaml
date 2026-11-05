@@ -1,0 +1,12 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: invalid
+  namespace: flux-system
+spec:
+  interval: []
+  path: ./child
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

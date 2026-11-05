@@ -1,0 +1,15 @@
+{
+  "changes": [],
+  "suppressed": [
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "entry"
+      },
+      "side": "both",
+      "count": 0,
+      "reason": "failed on both sides: orig: kustomize build entry: loading KV pairs: env source files: [.cluster-vars.env]: resolve entry/.cluster-vars.env: stat entry/.cluster-vars.env: file does not exist; current: kustomize build entry: loading KV pairs: env source files: [.cluster-vars.env]: resolve entry/.cluster-vars.env: stat entry/.cluster-vars.env: file does not exist"
+    }
+  ]
+}

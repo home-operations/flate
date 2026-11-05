@@ -1,0 +1,8 @@
+
+  ✗  current snapshot: Kustomization  flux-system/owner  document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string
+
+  ⚠ warnings (2)
+    [DiffSuppressed] HelmRelease flux-system/child: 0 objects withheld; diff suppressed (suspended on orig; current: document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string)
+    [DiffSuppressed] Kustomization flux-system/owner: 1 object not rendered on the current side; diff suppressed (document 1 (HelmRelease.helm.toolkit.fluxcd.io/flux-system/child): HelmRelease decode: json: cannot unmarshal array into Go value of type string)
+
+  ✗ 1 failed

@@ -1,0 +1,3 @@
+
+  ⚠ warnings (1)
+    [SourceCredentialsUnavailable] GitRepository flux-system/external: secret flux-system/unavailable-auth not found

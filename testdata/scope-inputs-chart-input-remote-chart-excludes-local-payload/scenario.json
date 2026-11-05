@@ -1,0 +1,366 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "chart-input-remote-chart-excludes-local-payload-base",
+      "repository": "repo",
+      "overlay": "chart-input-remote-chart-excludes-local-payload-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/chart-input-remote-chart-excludes-local-payload-base"
+      ]
+    },
+    {
+      "name": "chart-input-remote-chart-excludes-local-payload-baseline",
+      "repository": "baseline",
+      "overlay": "chart-input-remote-chart-excludes-local-payload-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/chart-input-remote-chart-excludes-local-payload-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "chart-input-remote-chart-excludes-local-payload-base",
+      "directory": "overlays/chart-input-remote-chart-excludes-local-payload-base",
+      "operations": []
+    },
+    {
+      "name": "chart-input-remote-chart-excludes-local-payload-baseline",
+      "directory": "overlays/chart-input-remote-chart-excludes-local-payload-baseline",
+      "operations": []
+    },
+    {
+      "name": "chart-input-remote-chart-excludes-local-payload-after",
+      "directory": "overlays/chart-input-remote-chart-excludes-local-payload-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "chart-input-remote-chart-excludes-local-payload",
+      "description": "chart input remote chart excludes local payload.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "chart-input-remote-chart-excludes-local-payload-baseline"
+        },
+        {
+          "commit": "chart-input-remote-chart-excludes-local-payload-base"
+        },
+        {
+          "overlay": "chart-input-remote-chart-excludes-local-payload-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/chart-input-remote-chart-excludes-local-payload-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/chart-input-remote-chart-excludes-local-payload-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/chart-input-remote-chart-excludes-local-payload-full-before.stdout",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-after/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/charts/demo/.helmignore",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/charts/demo/excluded/unused",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/charts/demo/values.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/flux/hr.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/flux/unrelated.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/unrelated/cm.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-base/repo/unrelated/kustomization.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/charts/demo/.helmignore",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/charts/demo/excluded/unused",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/charts/demo/values.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/flux/hr.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/flux/unrelated.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/unrelated/cm.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-remote-chart-excludes-local-payload-baseline/baseline/unrelated/kustomization.yaml",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "chart-input-remote-chart-excludes-local-payload"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

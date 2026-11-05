@@ -70,19 +70,35 @@ type token struct {
 }
 
 type operation struct {
-	Overlay     string     `json:"overlay,omitempty"`
-	Commit      string     `json:"commit,omitempty"`
-	Delete      string     `json:"delete,omitempty"`
-	Rename      *rename    `json:"rename,omitempty"`
-	Chmod       *mode      `json:"chmod,omitempty"`
-	Shallow     string     `json:"shallow,omitempty"`
-	MissingBlob *blob      `json:"missingBlob,omitempty"`
-	Ref         *reference `json:"ref,omitempty"`
+	Overlay      string        `json:"overlay,omitempty"`
+	Commit       string        `json:"commit,omitempty"`
+	Delete       string        `json:"delete,omitempty"`
+	Rename       *rename       `json:"rename,omitempty"`
+	Chmod        *mode         `json:"chmod,omitempty"`
+	Symlink      *symlink      `json:"symlink,omitempty"`
+	CacheFailure *cacheFailure `json:"cacheFailure,omitempty"`
+	Shallow      string        `json:"shallow,omitempty"`
+	MissingBlob  *blob         `json:"missingBlob,omitempty"`
+	Ref          *reference    `json:"ref,omitempty"`
+	NoGit        string        `json:"noGit,omitempty"`
 }
 
 type rename struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+}
+
+type cacheFailure struct {
+	Cache      string `json:"cache"`
+	Repository string `json:"repository"`
+	Chart      string `json:"chart"`
+	Version    string `json:"version"`
+	Attempts   int    `json:"attempts"`
+}
+
+type symlink struct {
+	Path   string `json:"path"`
+	Target string `json:"target"`
 }
 
 type mode struct {
@@ -102,9 +118,11 @@ type reference struct {
 }
 
 type fileUse struct {
-	Path    string   `json:"path"`
-	Cases   []string `json:"cases"`
-	Purpose string   `json:"purpose"`
+	Path     string   `json:"path"`
+	Cases    []string `json:"cases"`
+	Purpose  string   `json:"purpose"`
+	Package  string   `json:"package,omitempty"`
+	Consumer string   `json:"consumer,omitempty"`
 }
 
 // Case requires an explicit cache policy and ordered edits or invocations.
@@ -131,10 +149,11 @@ type Step struct {
 
 // Invocation requires complete output and exit-code expectations.
 type Invocation struct {
-	Argv   []string          `json:"argv"`
-	Env    map[string]string `json:"env,omitempty"`
-	Cache  cacheSelection    `json:"cache"`
-	Expect expectation       `json:"expect"`
+	Argv      []string          `json:"argv"`
+	Transport []Response        `json:"transport,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	Cache     cacheSelection    `json:"cache"`
+	Expect    expectation       `json:"expect"`
 }
 
 type cacheSelection struct {
@@ -153,9 +172,10 @@ type Response struct {
 	Host    string            `json:"host"`
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
-	Status  int               `json:"status"`
+	Status  int               `json:"status,omitempty"`
+	Error   string            `json:"error,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
-	Body    string            `json:"body"`
+	Body    string            `json:"body,omitempty"`
 }
 
 func load(dir string) (*scenario, error) {
@@ -216,27 +236,41 @@ func (s *scenario) validate(dir string) error {
 }
 
 func (s *scenario) validateInputs(names, repos map[string]bool) error {
+	if err := s.validateFileUses(names, repos); err != nil {
+		return err
+	}
+	if err := validateResponses(s.Transport); err != nil {
+		return err
+	}
+	for _, token := range s.Tokens {
+		if !treePath(token.File, repos) || token.Sentinel == "" || token.Value == "" {
+			return fmt.Errorf("invalid source token %q", token.File)
+		}
+	}
+	return nil
+}
+
+func (s *scenario) validateFileUses(names, repos map[string]bool) error {
 	for _, f := range s.Files {
 		if !local(f.Path) || len(f.Cases) == 0 || f.Purpose == "" {
 			return fmt.Errorf("invalid file use %q", f.Path)
+		}
+		switch f.Package {
+		case "", "failure", "excluded":
+			if f.Consumer != "" {
+				return fmt.Errorf("only a component declares a consumer")
+			}
+		case "component":
+			if !treePath(f.Consumer, repos) {
+				return fmt.Errorf("component consumer escapes fixture")
+			}
+		default:
+			return fmt.Errorf("invalid package role %q", f.Package)
 		}
 		for _, name := range f.Cases {
 			if !names[name] {
 				return fmt.Errorf("unknown file-use case %q", name)
 			}
-		}
-	}
-	for _, r := range s.Transport {
-		if r.Host == "" || r.Method == "" || !strings.HasPrefix(r.Path, "/") || !local(r.Body) {
-			return fmt.Errorf("invalid transport response")
-		}
-		if r.Status < 100 || r.Status > 599 {
-			return fmt.Errorf("invalid response status %d", r.Status)
-		}
-	}
-	for _, token := range s.Tokens {
-		if !treePath(token.File, repos) || token.Sentinel == "" || token.Value == "" {
-			return fmt.Errorf("invalid source token %q", token.File)
 		}
 	}
 	return nil
@@ -249,7 +283,7 @@ func (s *scenario) validateRepositories() (map[string]bool, error) {
 		if !local(r.Name) || r.Name == "." || strings.ContainsAny(r.Name, "/\\") || reserved {
 			return nil, fmt.Errorf("invalid repository name %q", r.Name)
 		}
-		if !local(r.Directory) || repos[r.Name] {
+		if (r.Directory != "" && !local(r.Directory)) || repos[r.Name] {
 			return nil, fmt.Errorf("invalid repository %q", r.Name)
 		}
 		repos[r.Name] = true
@@ -313,11 +347,13 @@ func (s *scenario) validateOverlayOperations(
 	repos map[string]bool,
 ) error {
 	for _, o := range s.Overlays {
-		for _, op := range o.Operations {
-			if op.Overlay != "" || op.Commit != "" || op.Shallow != "" || op.MissingBlob != nil || op.Ref != nil {
-				return fmt.Errorf("overlay operations require delete, rename or chmod")
+		for i := range o.Operations {
+			op := &o.Operations[i]
+			if op.Overlay != "" || op.Commit != "" || op.Shallow != "" || op.MissingBlob != nil || op.Ref != nil ||
+				op.NoGit != "" {
+				return fmt.Errorf("overlay operations require delete, rename, chmod, symlink or cacheFailure")
 			}
-			if err := validateOperation(&op, overlays, commitRepos, repos); err != nil {
+			if err := validateOperation(op, overlays, commitRepos, repos); err != nil {
 				return err
 			}
 		}
@@ -340,8 +376,8 @@ func (s *scenario) validateCases(
 		if c.Cache.Repeat != "reset" && c.Cache.Repeat != "reuse" {
 			return nil, fmt.Errorf("case %s requires cache repeat reset or reuse", c.Name)
 		}
-		for _, op := range c.Setup {
-			if err := validateOperation(&op, overlays, commitRepos, repos); err != nil {
+		for i := range c.Setup {
+			if err := validateOperation(&c.Setup[i], overlays, commitRepos, repos); err != nil {
 				return nil, err
 			}
 		}
@@ -380,6 +416,9 @@ func (c *Case) validateSteps(dir string, overlays map[string]bool) error {
 }
 
 func validateInvocation(dir string, inv *Invocation) error {
+	if err := validateResponses(inv.Transport); err != nil {
+		return err
+	}
 	if len(inv.Argv) == 0 || inv.Expect.Code == nil || inv.Expect.Stdout == "" || inv.Expect.Stderr == "" {
 		return fmt.Errorf("invocation requires argv and complete expectations")
 	}
@@ -403,14 +442,11 @@ func validateOperation(
 	commits map[string]string,
 	repos map[string]bool,
 ) error {
-	count := 0
-	for _, set := range []bool{op.Overlay != "", op.Commit != "", op.Delete != "", op.Rename != nil, op.Chmod != nil, op.Shallow != "", op.MissingBlob != nil, op.Ref != nil} {
-		if set {
-			count++
-		}
+	if err := validateOperationAction(op); err != nil {
+		return err
 	}
-	if count != 1 {
-		return fmt.Errorf("setup operation requires exactly one action")
+	if op.NoGit != "" && !repos[op.NoGit] {
+		return fmt.Errorf("unknown repository %q", op.NoGit)
 	}
 	if op.Overlay != "" && !overlays[op.Overlay] {
 		return fmt.Errorf("unknown overlay %q", op.Overlay)
@@ -434,8 +470,36 @@ func validateOperation(
 	return nil
 }
 
+func validateOperationAction(op *operation) error {
+	count := 0
+	for _, set := range []bool{op.Overlay != "", op.Commit != "", op.Delete != "", op.Rename != nil, op.Chmod != nil, op.Symlink != nil, op.CacheFailure != nil, op.Shallow != "", op.MissingBlob != nil, op.Ref != nil, op.NoGit != ""} {
+		if set {
+			count++
+		}
+	}
+	if count != 1 {
+		return fmt.Errorf("setup operation requires exactly one action")
+	}
+	if failure := op.CacheFailure; failure != nil {
+		if !local(failure.Cache) || failure.Repository == "" || failure.Chart == "" || failure.Version == "" ||
+			failure.Attempts < 1 ||
+			failure.Attempts > 12 {
+			return fmt.Errorf("invalid cache failure operation")
+		}
+	}
+	return nil
+}
+
 func validateOperationPaths(op *operation, commits map[string]string, repos map[string]bool) error {
 	paths := []string{op.Delete}
+	if op.Symlink != nil {
+		link := op.Symlink
+		if link.Target == "" || filepath.IsAbs(link.Target) || strings.Contains(link.Target, "\\") ||
+			!treePath(filepath.Join(filepath.Dir(link.Path), link.Target), repos) {
+			return fmt.Errorf("symlink target escapes fixture")
+		}
+		paths = append(paths, link.Path)
+	}
 	if op.Rename != nil {
 		paths = append(paths, op.Rename.From, op.Rename.To)
 	}
@@ -459,4 +523,20 @@ func treePath(path string, repos map[string]bool) bool {
 	}
 	root, _, ok := strings.Cut(filepath.ToSlash(filepath.Clean(path)), "/")
 	return ok && (repos[root] || root == inputsDirectory) && !strings.Contains(path, ".git")
+}
+
+func validateResponses(responses []Response) error {
+	for _, r := range responses {
+		if r.Host == "" || r.Method == "" || !strings.HasPrefix(r.Path, "/") {
+			return fmt.Errorf("invalid transport response")
+		}
+		if r.Error != "" {
+			if r.Error != "connection-reset" || r.Status != 0 || r.Body != "" || len(r.Headers) != 0 {
+				return fmt.Errorf("invalid transport error %q", r.Error)
+			}
+		} else if r.Status < 100 || r.Status > 599 || !local(r.Body) {
+			return fmt.Errorf("invalid transport response status or body")
+		}
+	}
+	return nil
 }

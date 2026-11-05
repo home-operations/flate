@@ -1,0 +1,8 @@
+apiVersion: v1
+data:
+  sentinel: ${SENTINEL}
+  value: ${VALUE:-fallback}
+kind: ConfigMap
+metadata:
+  name: rendered
+  namespace: flux-system

@@ -3,6 +3,7 @@ package testfixture
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,17 +23,19 @@ const (
 
 // Fixture isolates materialized state from the immutable disk scenario.
 type Fixture struct {
-	Plan         Case
-	Repo         string
-	Inputs       string
-	Home         string
-	Responses    []Response
-	root         string
-	dir          string
-	schema       *scenario
-	commits      map[string]plumbing.Hash
-	repositories map[string]*git.Repository
-	runs         int
+	Plan          Case
+	Repo          string
+	Inputs        string
+	Home          string
+	Responses     []Response
+	root          string
+	dir           string
+	schema        *scenario
+	commits       map[string]plumbing.Hash
+	repositories  map[string]*git.Repository
+	origins       map[string]string
+	commitOrigins map[string]map[string]string
+	runs          int
 }
 
 // Materialize locates scenarios independently of the current working directory.
@@ -94,12 +97,14 @@ func (f *Fixture) Restore(tb testing.TB) {
 
 func (f *Fixture) restore(tb testing.TB) {
 	tb.Helper()
+	f.origins = make(map[string]string)
+	f.commitOrigins = make(map[string]map[string]string)
 	f.commits = make(map[string]plumbing.Hash)
 	f.repositories = make(map[string]*git.Repository)
 	for _, r := range f.schema.Repositories {
 		target := filepath.Join(f.root, r.Name)
 		must(tb, os.RemoveAll(target))
-		must(tb, copyTree(filepath.Join(f.dir, r.Directory), target))
+		f.copyRepository(tb, r, target)
 		repo, err := git.PlainInit(target, false)
 		must(tb, err)
 		f.repositories[r.Name] = repo
@@ -113,13 +118,13 @@ func (f *Fixture) restore(tb testing.TB) {
 	must(tb, os.RemoveAll(f.Inputs))
 	must(tb, os.MkdirAll(f.Inputs, 0o700))
 	if f.schema.Inputs != "" {
-		must(tb, copyTree(filepath.Join(f.dir, f.schema.Inputs), f.Inputs))
+		must(tb, copyTree(filepath.Join(f.dir, f.schema.Inputs), f.Inputs, f.origins))
 	}
 	for i := range f.schema.Commits {
 		f.createCommit(tb, &f.schema.Commits[i])
 	}
-	for _, op := range f.Plan.Setup {
-		f.apply(tb, &op)
+	for i := range f.Plan.Setup {
+		f.apply(tb, &f.Plan.Setup[i])
 	}
 }
 
@@ -186,7 +191,17 @@ func (f *Fixture) Read(tb testing.TB, path, cache string) string {
 	return f.Resolve(tb, string(body), cache)
 }
 
-func copyTree(source, target string) error {
+func (f *Fixture) copyRepository(tb testing.TB, r repository, target string) {
+	tb.Helper()
+	f.forgetOrigins(target)
+	if r.Directory == "" {
+		must(tb, os.MkdirAll(target, 0o700))
+		return
+	}
+	must(tb, copyTree(filepath.Join(f.dir, r.Directory), target, f.origins))
+}
+
+func copyTree(source, target string, origins map[string]string) error {
 	err := filepath.WalkDir(source, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("walk fixture: %w", err)
@@ -210,7 +225,11 @@ func copyTree(source, target string) error {
 		if err != nil {
 			return fmt.Errorf("fixture mode: %w", err)
 		}
-		return os.WriteFile(dest, data, info.Mode().Perm())
+		if err := os.WriteFile(dest, data, info.Mode().Perm()); err != nil {
+			return fmt.Errorf("write fixture: %w", err)
+		}
+		origins[dest] = path
+		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("copy fixture: %w", err)
@@ -223,4 +242,28 @@ func must(tb testing.TB, err error) {
 	if err != nil {
 		tb.Fatal(err)
 	}
+}
+
+func (f *Fixture) forgetOrigins(path string) {
+	for current := range f.origins {
+		if current == path || strings.HasPrefix(current, path+string(filepath.Separator)) {
+			delete(f.origins, current)
+		}
+	}
+}
+
+func (f *Fixture) repositoryOrigins(name string) map[string]string {
+	origins := make(map[string]string)
+	prefix := filepath.Join(f.root, name) + string(filepath.Separator)
+	for path, source := range f.origins {
+		if strings.HasPrefix(path, prefix) {
+			origins[path] = source
+		}
+	}
+	return origins
+}
+
+func (f *Fixture) useCommitOrigins(repository, name string) {
+	f.forgetOrigins(filepath.Join(f.root, repository))
+	maps.Copy(f.origins, f.commitOrigins[name])
 }

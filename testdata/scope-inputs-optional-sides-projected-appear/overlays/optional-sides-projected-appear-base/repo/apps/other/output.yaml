@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: ${VALUE:-fallback}
+kind: ConfigMap
+metadata:
+  name: unaffected
+  namespace: other

@@ -1,0 +1,17 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "state": "enabled"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "project-zomboid-primary",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "project-zomboid-settings",
+      "namespace": "flux-system"
+    }
+  }
+]

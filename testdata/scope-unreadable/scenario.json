@@ -1,0 +1,312 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/unreadable_manifest_scope_test.go"
+    ],
+    "reductions": "Preserve the existing namespace, raw identity, cache replay and orphan authority witnesses as disk scenarios."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "owned-independent-sibling",
+      "directory": "overlays/owned-independent-sibling",
+      "operations": [
+        {
+          "symlink": {
+            "path": "repo/incidental/nested/unreadable.yaml",
+            "target": "missing.yaml"
+          }
+        }
+      ]
+    },
+    {
+      "name": "unowned-nested-census",
+      "directory": "overlays/unowned-nested-census",
+      "operations": [
+        {
+          "symlink": {
+            "path": "repo/incidental/nested/unreadable.yaml",
+            "target": "missing.yaml"
+          }
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "owned-independent-sibling",
+      "description": "owned independent sibling",
+      "setup": [
+        {
+          "overlay": "owned-independent-sibling"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/owned-independent-sibling-build.stdout",
+              "stderr": "expect/owned-independent-sibling-build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/owned-independent-sibling-repeat.stdout",
+              "stderr": "expect/owned-independent-sibling-repeat.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unowned-nested-census",
+      "description": "unowned nested census",
+      "setup": [
+        {
+          "overlay": "unowned-nested-census"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/unowned-nested-census-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "repeat",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/unowned-nested-census-repeat.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/owned-independent-sibling-build.stderr",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-independent-sibling-build.stdout",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-independent-sibling-repeat.stderr",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/owned-independent-sibling-repeat.stdout",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unowned-nested-census-build.stdout",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/unowned-nested-census-repeat.stdout",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-independent-sibling/repo/flux/drivers.yaml",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-independent-sibling/repo/flux/kustomization.yaml",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-independent-sibling/repo/healthy/cm.yaml",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-independent-sibling/repo/healthy/kustomization.yaml",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/owned-independent-sibling/repo/incidental/nested/kustomization.yaml",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "failure"
+    },
+    {
+      "path": "overlays/owned-independent-sibling/repo/kustomization.yaml",
+      "cases": [
+        "owned-independent-sibling"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-nested-census/repo/flux/drivers.yaml",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-nested-census/repo/flux/kustomization.yaml",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-nested-census/repo/healthy/cm.yaml",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-nested-census/repo/healthy/kustomization.yaml",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "overlays/unowned-nested-census/repo/incidental/nested/kustomization.yaml",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/unowned-nested-census/repo/kustomization.yaml",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "Authored scenario input or independently derived complete result."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "unowned-nested-census"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

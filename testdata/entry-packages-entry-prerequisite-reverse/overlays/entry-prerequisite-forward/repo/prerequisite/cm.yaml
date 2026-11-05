@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: changed
+kind: ConfigMap
+metadata:
+  name: prerequisite-output
+  namespace: apps

@@ -1,0 +1,7 @@
+resources: [child.yaml]
+patches:
+- target: {kind: HelmRelease, name: invalid}
+  patch: |-
+    - op: replace
+      path: /spec/interval
+      value: 10m

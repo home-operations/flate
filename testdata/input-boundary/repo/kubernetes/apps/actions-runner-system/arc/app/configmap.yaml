@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  role: controller
+kind: ConfigMap
+metadata:
+  name: arc-controller
+  namespace: actions-runner-system

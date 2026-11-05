@@ -1,0 +1,275 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "optional-sides-appear-base",
+      "repository": "repo",
+      "overlay": "optional-sides-appear-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/optional-sides-appear-base"
+      ]
+    },
+    {
+      "name": "optional-sides-appear-baseline",
+      "repository": "baseline",
+      "overlay": "optional-sides-appear-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/optional-sides-appear-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "optional-sides-appear-base",
+      "directory": "overlays/optional-sides-appear-base",
+      "operations": []
+    },
+    {
+      "name": "optional-sides-appear-baseline",
+      "directory": "overlays/optional-sides-appear-baseline",
+      "operations": []
+    },
+    {
+      "name": "optional-sides-appear-after",
+      "directory": "overlays/optional-sides-appear-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "optional-sides-appear",
+      "description": "optional sides appear.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "optional-sides-appear-baseline"
+        },
+        {
+          "commit": "optional-sides-appear-base"
+        },
+        {
+          "overlay": "optional-sides-appear-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/optional-sides-appear-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/optional-changed-directory-full.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/optional-sides-appear-scoped-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/optional-changed-directory-full.stdout",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/optional-sides-appear-full-before.stdout",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/optional-sides-appear-scoped-diff.stdout",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/optional-sides-appear-after/repo/flux/optional.yaml",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-appear-base/repo/apps/app/kustomization.yaml",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-appear-base/repo/apps/app/output.yaml",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-appear-base/repo/flux/cluster.yaml",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-appear-baseline/baseline/apps/app/kustomization.yaml",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-appear-baseline/baseline/apps/app/output.yaml",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/optional-sides-appear-baseline/baseline/flux/cluster.yaml",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "optional-sides-appear"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+---
+kind: Kustomization
+name: app
+namespace: apps
+path: ./apps
+prune: true
+sourceRef:
+  kind: GitRepository
+  name: flux-system
+  namespace: flux-system
+wait: false

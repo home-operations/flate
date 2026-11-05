@@ -1,0 +1,373 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "cf0821e638c7bcb146d6e5b784bef2509c1a1331",
+    "paths": [
+      "test/e2e/scope/inputs_test.go",
+      "test/e2e/scope/selection_test.go"
+    ],
+    "reductions": "Preserve authored scope regressions as complete disk trees and independently specified output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "fixture-repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "fixture-baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z"
+    },
+    {
+      "name": "chart-input-packaged-subchart-base",
+      "repository": "repo",
+      "overlay": "chart-input-packaged-subchart-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/chart-input-packaged-subchart-base"
+      ]
+    },
+    {
+      "name": "chart-input-packaged-subchart-baseline",
+      "repository": "baseline",
+      "overlay": "chart-input-packaged-subchart-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/chart-input-packaged-subchart-baseline"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "chart-input-packaged-subchart-base",
+      "directory": "overlays/chart-input-packaged-subchart-base",
+      "operations": []
+    },
+    {
+      "name": "chart-input-packaged-subchart-baseline",
+      "directory": "overlays/chart-input-packaged-subchart-baseline",
+      "operations": []
+    },
+    {
+      "name": "chart-input-packaged-subchart-after",
+      "directory": "overlays/chart-input-packaged-subchart-after",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "chart-input-packaged-subchart",
+      "description": "chart input packaged subchart.",
+      "setup": [
+        {
+          "commit": "fixture-repo-base"
+        },
+        {
+          "commit": "fixture-baseline-base"
+        },
+        {
+          "commit": "chart-input-packaged-subchart-baseline"
+        },
+        {
+          "commit": "chart-input-packaged-subchart-base"
+        },
+        {
+          "overlay": "chart-input-packaged-subchart-after"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/chart-input-template-committed-full-before.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/chart-input-template-committed-full-after.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "scoped-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--log-level",
+              "error",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/chart-input-template-committed-scoped-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/chart-input-template-committed-full-after.stdout",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/chart-input-template-committed-full-before.stdout",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "expect/chart-input-template-committed-scoped-diff.stdout",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Complete independently authored result."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-after/repo/charts/demo/charts/child-1.0.0.tgz",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/charts/demo/.helmignore",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/charts/demo/charts/child-1.0.0.tgz",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/charts/demo/excluded/unused",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/charts/demo/values.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/flux/hr.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/flux/kustomization.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/flux/unrelated.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/unrelated/cm.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-base/repo/unrelated/kustomization.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/charts/demo/.helmignore",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/charts/demo/charts/child-1.0.0.tgz",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/charts/demo/excluded/unused",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/charts/demo/values.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/flux/hr.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/flux/kustomization.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/flux/unrelated.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/unrelated/cm.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "overlays/chart-input-packaged-subchart-baseline/baseline/unrelated/kustomization.yaml",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "Declared input, history replacement, or exclusion witness for the named cases."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "chart-input-packaged-subchart"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    }
+  ]
+}

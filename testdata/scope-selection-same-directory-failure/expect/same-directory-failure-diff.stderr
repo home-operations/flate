@@ -1,0 +1,13 @@
+
+  ✗  orig snapshot: Kustomization  flux-system/apps  kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist
+
+  ✗  current snapshot: Kustomization  flux-system/apps  kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist
+
+  ⚠ warnings (3)
+    [PathConfig] orig snapshot: --path and --path-orig resolve to the same root; ignoring --path-orig
+      @@repo@@
+    [PathConfig] current snapshot: --path and --path-orig resolve to the same root; ignoring --path-orig
+      @@repo@@
+    [DiffSuppressed] Kustomization flux-system/apps: 0 objects withheld; diff suppressed (failed on both sides: orig: kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist; current: kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'missing.yaml': resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/missing.yaml: stat apps/missing.yaml: file does not exist)
+
+  ✗ 2 failed

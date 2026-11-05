@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: b
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: root-output
+  namespace: apps
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: b
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: b
+  namespace: apps
+spec:
+  path: ./app

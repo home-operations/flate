@@ -1,0 +1,9 @@
+
+  ✗  Kustomization  flux-system/a  dependency cycle detected: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a
+  ✗  Kustomization  flux-system/b  dependency cycle detected: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a
+
+  ⚠ warnings (1)
+    [DependencyCycle] dependency cycle detected
+      dependency cycle detected: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a
+
+  ✗ 2 failed

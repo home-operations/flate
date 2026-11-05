@@ -1,0 +1,7 @@
+resources: [ks.yaml]
+generatorOptions: {disableNameSuffixHash: true}
+configMapGenerator:
+- name: bootstrap-values
+  envs: [../settings.env]
+  files: [FROM_FILE=../payload.txt]
+  literals: [FROM_LITERAL=literal-value]

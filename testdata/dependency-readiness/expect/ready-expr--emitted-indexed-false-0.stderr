@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [OrphanedResource] Kustomization apps/config: resource orphaned
+      kubernetes/hegira/indexed/config.yaml, dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/indexer: declaration not emitted

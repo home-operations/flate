@@ -1,0 +1,61 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "kubernetes/hegira/flux"
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "apps",
+      "name": "consumer",
+      "status": "changed",
+      "old": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "consumer",
+          "namespace": "apps"
+        },
+        "spec": {
+          "interval": "1h",
+          "path": "./kubernetes/hegira/app",
+          "postBuild": {
+            "substitute": {
+              "VALUE": "before"
+            }
+          },
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "input"
+          }
+        }
+      },
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "consumer",
+          "namespace": "apps"
+        },
+        "spec": {
+          "interval": "2h",
+          "path": "./kubernetes/hegira/app",
+          "postBuild": {
+            "substitute": {
+              "VALUE": "before"
+            }
+          },
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "input"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

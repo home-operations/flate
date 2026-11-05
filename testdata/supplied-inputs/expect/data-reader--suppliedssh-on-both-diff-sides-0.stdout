@@ -1,0 +1,32 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: credentials
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: ursa-major-ssh
+  namespace: flux-system
+stringData: {}
+---
+apiVersion: v1
+data:
+  value: before
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: one
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: one
+  namespace: apps
+---
+apiVersion: v1
+data:
+  value: before
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: two
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: two
+  namespace: apps

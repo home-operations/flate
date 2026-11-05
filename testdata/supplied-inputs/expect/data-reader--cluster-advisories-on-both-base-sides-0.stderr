@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [SuppliedPrecedence] repository data takes precedence over supplied data
+      ConfigMap/flux-system/settings: OVERRIDE (@@inputs@@/data-reader--cluster-advisories-on-both-base-sides/supply-0.yaml)

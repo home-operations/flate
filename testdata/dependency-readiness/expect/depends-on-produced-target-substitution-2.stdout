@@ -1,0 +1,67 @@
+---
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: consumer-output
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: generated-raw-done
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: dependency-ready
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: producer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: generated-raw-done
+  namespace: apps
+spec:
+  path: ./kubernetes/hegira/dependency
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: unrelated
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: unrelated-output
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  dependsOn:
+  - name: generated-raw-done
+  interval: 1h
+  path: ./kubernetes/hegira/app
+  postBuild:
+    substitute:
+      VALUE: after
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: producer
+  namespace: apps
+spec:
+  path: ./kubernetes/hegira/producer
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unrelated
+  namespace: apps
+spec:
+  path: ./kubernetes/hegira/unrelated

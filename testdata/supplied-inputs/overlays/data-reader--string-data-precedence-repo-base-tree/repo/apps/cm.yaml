@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: result}
+data: {value: '${VALUE}', empty: '${EMPTY:=fallback}'}

@@ -62,14 +62,7 @@ sourceref/source_diff_assertions_test.go
 sourceref/source_fixture_test.go
 sourceref/source_ref_test.go
 sourceref/source_transport_fixtures_test.go
-sourceref/warnings_test.go
-substitution/data_reader_test.go
-substitution/depends_on_test.go
-substitution/patches_sops_internal_test.go
-substitution/patches_test.go
-substitution/produced_dependency_edits_test.go
-substitution/sops_sops_internal_test.go
-substitution/substitution_producer_test.go`
+sourceref/warnings_test.go`
 
 func TestMigrationGuard_E2EBoundary(t *testing.T) {
 	t.Parallel()

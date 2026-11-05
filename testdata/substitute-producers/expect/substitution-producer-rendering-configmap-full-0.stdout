@@ -1,0 +1,68 @@
+---
+apiVersion: v1
+data:
+  version: 4.6.2
+kind: ConfigMap
+metadata:
+  labels:
+    changed: consumer
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: output
+  namespace: flux-system
+---
+apiVersion: v1
+data:
+  VERSION: 4.6.2
+kind: ConfigMap
+metadata:
+  annotations:
+    config.kubernetes.io/origin: |
+      configuredIn: kustomization.yaml
+      configuredBy:
+        apiVersion: builtin
+        kind: ConfigMapGenerator
+  labels:
+    kustomize.toolkit.fluxcd.io/name: producer
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: settings
+  namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: flux-system
+spec:
+  dependsOn:
+  - name: producer
+  path: ./kubernetes/cluster/app
+  postBuild:
+    substituteFrom:
+    - kind: ConfigMap
+      name: settings
+      optional: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: producer
+  namespace: flux-system
+spec:
+  patches:
+  - patch: |-
+      - op: replace
+        path: /data/VERSION
+        value: 4.6.2
+    target:
+      kind: ConfigMap
+      name: settings
+  path: ./kubernetes/cluster/data
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system

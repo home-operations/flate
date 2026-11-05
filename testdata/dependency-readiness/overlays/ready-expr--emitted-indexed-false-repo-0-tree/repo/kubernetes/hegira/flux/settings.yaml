@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: settings, namespace: apps}
+data: {FLAVOR: promoted}

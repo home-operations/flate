@@ -1,0 +1,6 @@
+
+  ✓  Kustomization  flux-system/consumer
+  ‒  Kustomization  flux-system/prod-config  unchanged
+  ‒  Kustomization  flux-system/unrelated  unchanged
+
+  ✓ 1 passed · 2 skipped   <DUR>

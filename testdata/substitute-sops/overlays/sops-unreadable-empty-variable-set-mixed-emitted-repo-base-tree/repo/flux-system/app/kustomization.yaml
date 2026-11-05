@@ -1,0 +1,1 @@
+resources: [secret.yaml, cm.yaml, settings.yaml]

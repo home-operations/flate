@@ -1,0 +1,2 @@
+namespace: apps
+resources: [child.yaml]

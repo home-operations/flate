@@ -1,0 +1,3 @@
+resources: [dependency.yaml]
+namePrefix: generated-
+nameSuffix: -done

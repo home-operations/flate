@@ -1,0 +1,4 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: input, namespace: apps}
+spec: {interval: 1h, url: 'file:///__flate_fixture__/u5-input.git'}

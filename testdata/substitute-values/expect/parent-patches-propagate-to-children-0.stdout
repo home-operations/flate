@@ -1,0 +1,5 @@
+
+  ✓  Kustomization  flux-system/cluster-apps
+  ✓  Kustomization  flux-system/leaf
+
+  ✓ 2 passed   <DUR>

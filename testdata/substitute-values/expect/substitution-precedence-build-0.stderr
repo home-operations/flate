@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [SuppliedPrecedence] repository data takes precedence over supplied data
+      ConfigMap/apps/settings: VALUE (@@inputs@@/substitution-precedence-build/supply-0.yaml)

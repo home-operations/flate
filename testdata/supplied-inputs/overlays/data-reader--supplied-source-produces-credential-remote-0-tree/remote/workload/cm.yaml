@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: source-produced, namespace: apps}
+data: {value: complete}

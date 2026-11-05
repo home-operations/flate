@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-cm
+data:
+  a: ${VAR_A}
+  b: ${VAR_B}

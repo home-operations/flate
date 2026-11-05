@@ -1,0 +1,2565 @@
+{
+  "source": {
+    "repository": "jfroy/flatops",
+    "revision": "a2e1cbf6cae6742b624ea66db20ce064f9a2f014",
+    "paths": [
+      "kubernetes/apps/actions-runner-system/arc/ks.yaml"
+    ],
+    "reductions": "Minimal authored reductions of the pinned source topology. Keep parent patches, source references and dependency ownership. Workloads are local ConfigMaps and authored negative variants."
+  },
+  "repositories": [
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": []
+    },
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://local.invalid/cluster"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "bootstrap-generator-env-and-file-substitution-repo-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/bootstrap-generator-env-and-file-substitution-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-configmap-full-repo-0",
+      "overlay": "substitution-producer-rendering-configmap-full-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-configmap-full-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-configmap-direct-repo-0",
+      "overlay": "substitution-producer-rendering-configmap-full-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-configmap-direct-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-configmap-inherited-repo-0",
+      "overlay": "substitution-producer-rendering-configmap-inherited-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-configmap-inherited-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-configmap-env-repo-0",
+      "overlay": "substitution-producer-rendering-configmap-full-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-configmap-env-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-configmap-path-orig-repo-0",
+      "overlay": "substitution-producer-rendering-configmap-full-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-configmap-path-orig-repo-0"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "substitution-producer-rendering-configmap-path-orig-baseline-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-rendering-configmap-path-orig-baseline-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-configmap-diff-repo-0",
+      "overlay": "substitution-producer-rendering-configmap-diff-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-configmap-diff-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-secret-full-repo-0",
+      "overlay": "substitution-producer-rendering-secret-full-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-secret-full-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-secret-direct-repo-0",
+      "overlay": "substitution-producer-rendering-secret-full-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-secret-direct-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-rendering-secret-inherited-repo-0",
+      "overlay": "substitution-producer-rendering-secret-inherited-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/substitution-producer-rendering-secret-inherited-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-transformed-namespace-configmap-full-repo-base",
+      "overlay": "substitution-producer-transformed-namespace-configmap-full-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-transformed-namespace-configmap-full-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-transformed-namespace-configmap-changed-repo-base",
+      "overlay": "substitution-producer-transformed-namespace-configmap-full-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-transformed-namespace-configmap-changed-repo-base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "substitution-producer-transformed-namespace-configmap-changed-baseline-base",
+      "overlay": "substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-transformed-namespace-configmap-changed-baseline-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-transformed-namespace-secret-full-repo-base",
+      "overlay": "substitution-producer-transformed-namespace-secret-full-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-transformed-namespace-secret-full-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-producer-transformed-namespace-secret-changed-repo-base",
+      "overlay": "substitution-producer-transformed-namespace-secret-full-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-transformed-namespace-secret-changed-repo-base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "substitution-producer-transformed-namespace-secret-changed-baseline-base",
+      "overlay": "substitution-producer-transformed-namespace-secret-changed-baseline-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-producer-transformed-namespace-secret-changed-baseline-base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "substitution-producer-rendering-configmap-full-repo-0-tree",
+      "directory": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/cluster/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/apps/result.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/payload.txt"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/settings.env"
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-configmap-inherited-repo-0-tree",
+      "directory": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/cluster/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/apps/result.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/payload.txt"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/settings.env"
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-configmap-diff-repo-0-tree",
+      "directory": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/cluster/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/apps/result.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/payload.txt"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/settings.env"
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-secret-full-repo-0-tree",
+      "directory": "overlays/substitution-producer-rendering-secret-full-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/cluster/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/apps/result.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/payload.txt"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/settings.env"
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-secret-inherited-repo-0-tree",
+      "directory": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/cluster/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/apps/result.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/payload.txt"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/settings.env"
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-transformed-namespace-configmap-full-repo-base-tree",
+      "directory": "overlays/substitution-producer-transformed-namespace-configmap-full-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/cluster/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/apps/result.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/payload.txt"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/settings.env"
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree",
+      "directory": "overlays/substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree",
+      "operations": [
+        {
+          "delete": "baseline/kubernetes/cluster/data/version.env"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/flux/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/flux/unrelated.yaml"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/unrelated/deployment.yaml"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/unrelated/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-transformed-namespace-secret-full-repo-base-tree",
+      "directory": "overlays/substitution-producer-transformed-namespace-secret-full-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/cluster/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/apps/result.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/bootstrap/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/payload.txt"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/settings.env"
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-transformed-namespace-secret-changed-baseline-base-tree",
+      "directory": "overlays/substitution-producer-transformed-namespace-secret-changed-baseline-base-tree",
+      "operations": [
+        {
+          "delete": "baseline/kubernetes/cluster/data/version.env"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/flux/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/flux/unrelated.yaml"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/unrelated/deployment.yaml"
+        },
+        {
+          "delete": "baseline/kubernetes/cluster/unrelated/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "setup-substitution-producer-rendering-configmap-full-2",
+      "directory": "overlays/setup-substitution-producer-rendering-configmap-full-2"
+    },
+    {
+      "name": "setup-substitution-producer-rendering-configmap-direct-2",
+      "directory": "overlays/setup-substitution-producer-rendering-configmap-direct-2"
+    },
+    {
+      "name": "setup-substitution-producer-rendering-configmap-inherited-2",
+      "directory": "overlays/setup-substitution-producer-rendering-configmap-inherited-2"
+    },
+    {
+      "name": "setup-substitution-producer-rendering-configmap-env-2",
+      "directory": "overlays/setup-substitution-producer-rendering-configmap-env-2"
+    },
+    {
+      "name": "setup-substitution-producer-rendering-configmap-path-orig-4",
+      "directory": "overlays/setup-substitution-producer-rendering-configmap-path-orig-4"
+    },
+    {
+      "name": "setup-substitution-producer-rendering-configmap-diff-2",
+      "directory": "overlays/setup-substitution-producer-rendering-configmap-diff-2"
+    },
+    {
+      "name": "setup-substitution-producer-rendering-secret-full-2",
+      "directory": "overlays/setup-substitution-producer-rendering-secret-full-2"
+    },
+    {
+      "name": "setup-substitution-producer-rendering-secret-direct-2",
+      "directory": "overlays/setup-substitution-producer-rendering-secret-direct-2"
+    },
+    {
+      "name": "setup-substitution-producer-rendering-secret-inherited-2",
+      "directory": "overlays/setup-substitution-producer-rendering-secret-inherited-2"
+    }
+  ],
+  "tokens": [],
+  "cases": [
+    {
+      "name": "bootstrap-generator-env-and-file-substitution",
+      "description": "Preserve TestE2E_BootstrapGeneratorEnvAndFileSubstitution and its ordered edits.",
+      "setup": [
+        {
+          "commit": "bootstrap-generator-env-and-file-substitution-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "bootstrap-generator-env-and-file-substitution-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/bootstrap-generator-env-and-file-substitution-0.stdout",
+              "stderr": "expect/bootstrap-generator-env-and-file-substitution-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "invoke-1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--concurrency",
+              "8",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/bootstrap-generator-env-and-file-substitution-1.stdout",
+              "stderr": "expect/bootstrap-generator-env-and-file-substitution-1.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-configmap-full",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/ConfigMap/full and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-configmap-full-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-configmap-full-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-configmap-full-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-configmap-full-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-configmap-full-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-configmap-direct",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/ConfigMap/direct and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-configmap-direct-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-configmap-direct-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-configmap-direct-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "HEAD"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-configmap-direct-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-configmap-direct-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-configmap-inherited",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/ConfigMap/inherited and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-configmap-inherited-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-configmap-inherited-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-configmap-inherited-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "HEAD"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-configmap-inherited-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-configmap-inherited-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-configmap-env",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/ConfigMap/env and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-configmap-env-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-configmap-env-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-configmap-env-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {
+              "FLATE_BASE": "HEAD"
+            },
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-configmap-env-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-configmap-env-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-configmap-path-orig",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/ConfigMap/path-orig and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-configmap-path-orig-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-configmap-path-orig-repo-0"
+          }
+        },
+        {
+          "commit": "substitution-producer-rendering-configmap-path-orig-baseline-base"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-configmap-path-orig-baseline-base"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-configmap-path-orig-4"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path-orig",
+              "@@baseline@@/kubernetes/cluster"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-configmap-path-orig-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-configmap-path-orig-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-configmap-diff",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/ConfigMap/diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-configmap-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-configmap-diff-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-configmap-diff-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-configmap-diff-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-configmap-diff-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-secret-full",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/Secret/full and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-secret-full-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-secret-full-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-secret-full-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-secret-full-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-secret-full-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-secret-direct",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/Secret/direct and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-secret-direct-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-secret-direct-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-secret-direct-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "HEAD"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-secret-direct-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-secret-direct-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-rendering-secret-inherited",
+      "description": "Preserve TestE2E_SubstitutionProducerRendering/Secret/inherited and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-rendering-secret-inherited-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-rendering-secret-inherited-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-substitution-producer-rendering-secret-inherited-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "HEAD"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-secret-inherited-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-secret-inherited-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-transformed-namespace-configmap-full",
+      "description": "Preserve TestE2E_SubstitutionProducerTransformedNamespace/ConfigMap/full and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-transformed-namespace-configmap-full-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-transformed-namespace-configmap-full-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-transformed-namespace-configmap-full-0.stdout",
+              "stderr": "expect/substitution-producer-transformed-namespace-configmap-full-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-transformed-namespace-configmap-changed",
+      "description": "Preserve TestE2E_SubstitutionProducerTransformedNamespace/ConfigMap/changed and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-transformed-namespace-configmap-changed-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-transformed-namespace-configmap-changed-repo-base"
+          }
+        },
+        {
+          "commit": "substitution-producer-transformed-namespace-configmap-changed-baseline-base"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-transformed-namespace-configmap-changed-baseline-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path-orig",
+              "@@baseline@@/kubernetes/cluster"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-transformed-namespace-configmap-changed-0.stdout",
+              "stderr": "expect/substitution-producer-transformed-namespace-configmap-changed-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-transformed-namespace-secret-full",
+      "description": "Preserve TestE2E_SubstitutionProducerTransformedNamespace/Secret/full and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-transformed-namespace-secret-full-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-transformed-namespace-secret-full-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-transformed-namespace-secret-full-0.stdout",
+              "stderr": "expect/substitution-producer-transformed-namespace-secret-full-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-producer-transformed-namespace-secret-changed",
+      "description": "Preserve TestE2E_SubstitutionProducerTransformedNamespace/Secret/changed and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-producer-transformed-namespace-secret-changed-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-transformed-namespace-secret-changed-repo-base"
+          }
+        },
+        {
+          "commit": "substitution-producer-transformed-namespace-secret-changed-baseline-base"
+        },
+        {
+          "ref": {
+            "repository": "baseline",
+            "name": "refs/heads/master",
+            "commit": "substitution-producer-transformed-namespace-secret-changed-baseline-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path-orig",
+              "@@baseline@@/kubernetes/cluster"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-transformed-namespace-secret-changed-0.stdout",
+              "stderr": "expect/substitution-producer-transformed-namespace-secret-changed-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/data/version.env",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/flux/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/flux/unrelated.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/unrelated/deployment.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "baseline/kubernetes/cluster/unrelated/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/bootstrap-generator-env-and-file-substitution-0.stderr",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/bootstrap-generator-env-and-file-substitution-0.stdout",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/bootstrap-generator-env-and-file-substitution-1.stderr",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/bootstrap-generator-env-and-file-substitution-1.stdout",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-diff-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-diff-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-direct-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-direct-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-env-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-configmap-env"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-env-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-configmap-env"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-full-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-configmap-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-full-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-configmap-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-inherited-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-inherited-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-path-orig-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-configmap-path-orig-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-secret-direct-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-secret-direct"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-secret-direct-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-secret-direct"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-secret-full-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-secret-full-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-secret-inherited-0.stderr",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-rendering-secret-inherited-0.stdout",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-transformed-namespace-configmap-changed-0.stderr",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-transformed-namespace-configmap-changed-0.stdout",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-transformed-namespace-configmap-full-0.stderr",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-transformed-namespace-configmap-full-0.stdout",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-transformed-namespace-secret-changed-0.stderr",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-transformed-namespace-secret-changed-0.stdout",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-transformed-namespace-secret-full-0.stderr",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-producer-transformed-namespace-secret-full-0.stdout",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/apps/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/apps/result.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/bootstrap/ks.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/bootstrap/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/payload.txt",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/settings.env",
+      "cases": [
+        "bootstrap-generator-env-and-file-substitution",
+        "substitution-producer-rendering-configmap-diff",
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-inherited",
+        "substitution-producer-rendering-configmap-path-orig",
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full",
+        "substitution-producer-rendering-secret-inherited",
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full",
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-configmap-diff-2/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-configmap-direct-2/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-configmap-env-2/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-env"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-configmap-full-2/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-configmap-inherited-2/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-configmap-path-orig-4/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-secret-direct-2/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-secret-full-2/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-substitution-producer-rendering-secret-inherited-2/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/data/version.env",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/flux/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/flux/unrelated.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/unrelated/deployment.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-diff-repo-0-tree/repo/kubernetes/cluster/unrelated/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/data/version.env",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/flux/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/flux/unrelated.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/unrelated/deployment.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-full-repo-0-tree/repo/kubernetes/cluster/unrelated/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-direct",
+        "substitution-producer-rendering-configmap-env",
+        "substitution-producer-rendering-configmap-full",
+        "substitution-producer-rendering-configmap-path-orig"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/children/consumer.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/children/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/data/version.env",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/flux/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/flux/unrelated.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/unrelated/deployment.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-configmap-inherited-repo-0-tree/repo/kubernetes/cluster/unrelated/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-configmap-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/data/version.env",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/flux/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/flux/unrelated.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/unrelated/deployment.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-full-repo-0-tree/repo/kubernetes/cluster/unrelated/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-direct",
+        "substitution-producer-rendering-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/children/consumer.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/children/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/data/version.env",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/flux/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/flux/unrelated.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/unrelated/deployment.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-rendering-secret-inherited-repo-0-tree/repo/kubernetes/cluster/unrelated/kustomization.yaml",
+      "cases": [
+        "substitution-producer-rendering-secret-inherited"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree/baseline/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree/baseline/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree/baseline/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree/baseline/kubernetes/cluster/data/settings.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree/baseline/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-changed-baseline-base-tree/baseline/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-full-repo-base-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-full-repo-base-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-full-repo-base-tree/repo/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-full-repo-base-tree/repo/kubernetes/cluster/data/settings.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-full-repo-base-tree/repo/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-configmap-full-repo-base-tree/repo/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-configmap-changed",
+        "substitution-producer-transformed-namespace-configmap-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-changed-baseline-base-tree/baseline/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-changed-baseline-base-tree/baseline/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-changed-baseline-base-tree/baseline/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-changed-baseline-base-tree/baseline/kubernetes/cluster/data/settings.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-changed-baseline-base-tree/baseline/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-changed-baseline-base-tree/baseline/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-full-repo-base-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-full-repo-base-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-full-repo-base-tree/repo/kubernetes/cluster/data/kustomization.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-full-repo-base-tree/repo/kubernetes/cluster/data/settings.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-full-repo-base-tree/repo/kubernetes/cluster/flux/consumer.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-producer-transformed-namespace-secret-full-repo-base-tree/repo/kubernetes/cluster/flux/producer.yaml",
+      "cases": [
+        "substitution-producer-transformed-namespace-secret-changed",
+        "substitution-producer-transformed-namespace-secret-full"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    }
+  ]
+}

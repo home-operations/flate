@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: settings, namespace: apps}
+data: {CONFIG_PLAIN: supplied, CONFIG_EMPTY: supplied, CONFIG_ENCRYPTED: supplied, CONFIG_ONLY: supplied}

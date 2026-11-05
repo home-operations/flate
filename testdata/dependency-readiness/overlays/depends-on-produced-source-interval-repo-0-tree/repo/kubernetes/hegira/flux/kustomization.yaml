@@ -1,0 +1,1 @@
+resources: [consumer.yaml, producer.yaml, unrelated.yaml]

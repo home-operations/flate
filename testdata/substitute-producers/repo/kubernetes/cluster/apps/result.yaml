@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: result}
+data:
+  env: "${FROM_ENV}"
+  file: "${FROM_FILE}"
+  literal: "${FROM_LITERAL}"

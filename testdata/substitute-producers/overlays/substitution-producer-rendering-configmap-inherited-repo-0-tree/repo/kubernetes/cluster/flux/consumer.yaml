@@ -1,0 +1,18 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: parent
+  namespace: flux-system
+spec:
+  path: ./kubernetes/cluster/children
+  sourceRef: {kind: GitRepository, name: flux-system}
+  dependsOn: [{name: producer}]
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings, optional: true}]}
+  patches:
+  - target: {kind: Kustomization}
+    patch: |-
+      apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata: {name: ignored}
+      spec:
+        postBuild: {substituteFrom: [{kind: ConfigMap, name: settings, optional: true}]}

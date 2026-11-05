@@ -1,0 +1,6 @@
+resources: [flux]
+generatorOptions: {disableNameSuffixHash: true}
+configMapGenerator:
+- name: creds
+  namespace: flux-system
+  files: [VALUE=values.yaml]

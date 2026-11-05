@@ -1,0 +1,1515 @@
+{
+  "source": {
+    "repository": "bjw-s-labs/home-ops",
+    "revision": "656b3515052fcdb0450ca56151809852e383200d",
+    "paths": [
+      "kubernetes/flux/cluster/ks.yaml"
+    ],
+    "reductions": "Minimal authored reductions of the pinned source topology. Keep parent patches, source references and dependency ownership. Workloads are local ConfigMaps and authored negative variants."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://local.invalid/cluster"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "parent-patches-propagate-to-children-repo-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/parent-patches-propagate-to-children-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitute-disabled-annotation-repo-base",
+      "overlay": "",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitute-disabled-annotation-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-precedence-build-repo-base",
+      "overlay": "substitution-precedence-build-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-precedence-build-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "substitution-precedence-test-repo-base",
+      "overlay": "substitution-precedence-build-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/substitution-precedence-test-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "unapplied-package-patches-unapplied-repo-base",
+      "overlay": "unapplied-package-patches-unapplied-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/unapplied-package-patches-unapplied-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "unapplied-package-patches-applied-repo-base",
+      "overlay": "unapplied-package-patches-applied-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/unapplied-package-patches-applied-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "literal-kustomization-path-full-build-repo-base",
+      "overlay": "literal-kustomization-path-full-build-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/literal-kustomization-path-full-build-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "literal-kustomization-path-own-postbuild-repo-base",
+      "overlay": "literal-kustomization-path-own-postbuild-repo-base-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/literal-kustomization-path-own-postbuild-repo-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "literal-kustomization-path-changed-only-repo-0",
+      "overlay": "literal-kustomization-path-changed-only-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/literal-kustomization-path-changed-only-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "literal-kustomization-path-paired-diff-repo-0",
+      "overlay": "literal-kustomization-path-changed-only-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/literal-kustomization-path-paired-diff-repo-0"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "literal-kustomization-path-reverse-diff-repo-0",
+      "overlay": "literal-kustomization-path-reverse-diff-repo-0-tree",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/literal-kustomization-path-reverse-diff-repo-0"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "substitution-precedence-build-repo-base-tree",
+      "directory": "overlays/substitution-precedence-build-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        }
+      ]
+    },
+    {
+      "name": "unapplied-package-patches-unapplied-repo-base-tree",
+      "directory": "overlays/unapplied-package-patches-unapplied-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        }
+      ]
+    },
+    {
+      "name": "unapplied-package-patches-applied-repo-base-tree",
+      "directory": "overlays/unapplied-package-patches-applied-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-full-build-repo-base-tree",
+      "directory": "overlays/literal-kustomization-path-full-build-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-own-postbuild-repo-base-tree",
+      "directory": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-changed-only-repo-0-tree",
+      "directory": "overlays/literal-kustomization-path-changed-only-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-reverse-diff-repo-0-tree",
+      "directory": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        }
+      ]
+    },
+    {
+      "name": "setup-literal-kustomization-path-changed-only-2",
+      "directory": "overlays/setup-literal-kustomization-path-changed-only-2"
+    },
+    {
+      "name": "setup-literal-kustomization-path-paired-diff-2",
+      "directory": "overlays/setup-literal-kustomization-path-paired-diff-2"
+    },
+    {
+      "name": "setup-literal-kustomization-path-reverse-diff-2",
+      "directory": "overlays/setup-literal-kustomization-path-reverse-diff-2"
+    }
+  ],
+  "inputs": "inputs",
+  "tokens": [],
+  "cases": [
+    {
+      "name": "parent-patches-propagate-to-children",
+      "description": "Preserve TestE2E_ParentPatchesPropagateToChildren and its ordered edits.",
+      "setup": [
+        {
+          "commit": "parent-patches-propagate-to-children-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "parent-patches-propagate-to-children-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "--path",
+              "@@repo@@/kubernetes"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/parent-patches-propagate-to-children-0.stdout",
+              "stderr": "expect/parent-patches-propagate-to-children-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitute-disabled-annotation",
+      "description": "Preserve TestE2E_SubstituteDisabledAnnotation and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitute-disabled-annotation-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitute-disabled-annotation-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "--path",
+              "@@repo@@/kubernetes"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/substitute-disabled-annotation-0.stdout",
+              "stderr": "expect/substitute-disabled-annotation-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-precedence-build",
+      "description": "Preserve TestE2E_SubstitutionPrecedence/build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-precedence-build-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-precedence-build-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--supply",
+              "@@inputs@@/substitution-precedence-build/supply-0.yaml",
+              "--concurrency=2",
+              "--log-level=info"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/substitution-precedence-build-0.stdout",
+              "stderr": "expect/substitution-precedence-build-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "substitution-precedence-test",
+      "description": "Preserve TestE2E_SubstitutionPrecedence/test and its ordered edits.",
+      "setup": [
+        {
+          "commit": "substitution-precedence-test-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "substitution-precedence-test-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--supply",
+              "@@inputs@@/substitution-precedence-test/supply-0.yaml",
+              "--concurrency=2",
+              "--log-level=info"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/substitution-precedence-test-0.stdout",
+              "stderr": "expect/substitution-precedence-test-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unapplied-package-patches-unapplied",
+      "description": "Preserve TestE2E_UnappliedPackagePatches/unapplied and its ordered edits.",
+      "setup": [
+        {
+          "commit": "unapplied-package-patches-unapplied-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "unapplied-package-patches-unapplied-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/unapplied-package-patches-unapplied-0.stdout",
+              "stderr": "expect/unapplied-package-patches-unapplied-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unapplied-package-patches-applied",
+      "description": "Preserve TestE2E_UnappliedPackagePatches/applied and its ordered edits.",
+      "setup": [
+        {
+          "commit": "unapplied-package-patches-applied-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "unapplied-package-patches-applied-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "app",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/unapplied-package-patches-applied-0.stdout",
+              "stderr": "expect/unapplied-package-patches-applied-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-full-build",
+      "description": "Preserve TestE2E_LiteralKustomizationPath/full-build and its ordered edits.",
+      "setup": [
+        {
+          "commit": "literal-kustomization-path-full-build-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "literal-kustomization-path-full-build-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/literal-kustomization-path-full-build-0.stdout",
+              "stderr": "expect/literal-kustomization-path-full-build-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-own-postbuild",
+      "description": "Preserve TestE2E_LiteralKustomizationPath/own-postBuild and its ordered edits.",
+      "setup": [
+        {
+          "commit": "literal-kustomization-path-own-postbuild-repo-base"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "literal-kustomization-path-own-postbuild-repo-base"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/literal-kustomization-path-own-postbuild-0.stdout",
+              "stderr": "expect/literal-kustomization-path-own-postbuild-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-changed-only",
+      "description": "Preserve TestE2E_LiteralKustomizationPath/changed-only and its ordered edits.",
+      "setup": [
+        {
+          "commit": "literal-kustomization-path-changed-only-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "literal-kustomization-path-changed-only-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-literal-kustomization-path-changed-only-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "HEAD"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/literal-kustomization-path-changed-only-0.stdout",
+              "stderr": "expect/literal-kustomization-path-changed-only-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-paired-diff",
+      "description": "Preserve TestE2E_LiteralKustomizationPath/paired-diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "literal-kustomization-path-paired-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "literal-kustomization-path-paired-diff-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-literal-kustomization-path-paired-diff-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/literal-kustomization-path-paired-diff-0.stdout",
+              "stderr": "expect/literal-kustomization-path-paired-diff-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "literal-kustomization-path-reverse-diff",
+      "description": "Preserve TestE2E_LiteralKustomizationPath/reverse-diff and its ordered edits.",
+      "setup": [
+        {
+          "commit": "literal-kustomization-path-reverse-diff-repo-0"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "literal-kustomization-path-reverse-diff-repo-0"
+          }
+        },
+        {
+          "overlay": "setup-literal-kustomization-path-reverse-diff-2"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invoke-0",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/literal-kustomization-path-reverse-diff-0.stdout",
+              "stderr": "expect/literal-kustomization-path-reverse-diff-0.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/literal-kustomization-path-changed-only-0.stderr",
+      "cases": [
+        "literal-kustomization-path-changed-only"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-changed-only-0.stdout",
+      "cases": [
+        "literal-kustomization-path-changed-only"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-full-build-0.stderr",
+      "cases": [
+        "literal-kustomization-path-full-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-full-build-0.stdout",
+      "cases": [
+        "literal-kustomization-path-full-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-own-postbuild-0.stderr",
+      "cases": [
+        "literal-kustomization-path-own-postbuild"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-own-postbuild-0.stdout",
+      "cases": [
+        "literal-kustomization-path-own-postbuild"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-paired-diff-0.stderr",
+      "cases": [
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-paired-diff-0.stdout",
+      "cases": [
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-reverse-diff-0.stderr",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/literal-kustomization-path-reverse-diff-0.stdout",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/parent-patches-propagate-to-children-0.stderr",
+      "cases": [
+        "parent-patches-propagate-to-children"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/parent-patches-propagate-to-children-0.stdout",
+      "cases": [
+        "parent-patches-propagate-to-children"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitute-disabled-annotation-0.stderr",
+      "cases": [
+        "substitute-disabled-annotation"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitute-disabled-annotation-0.stdout",
+      "cases": [
+        "substitute-disabled-annotation"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-precedence-build-0.stderr",
+      "cases": [
+        "substitution-precedence-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-precedence-build-0.stdout",
+      "cases": [
+        "substitution-precedence-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-precedence-test-0.stderr",
+      "cases": [
+        "substitution-precedence-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/substitution-precedence-test-0.stdout",
+      "cases": [
+        "substitution-precedence-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/unapplied-package-patches-applied-0.stderr",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/unapplied-package-patches-applied-0.stdout",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/unapplied-package-patches-unapplied-0.stderr",
+      "cases": [
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "expect/unapplied-package-patches-unapplied-0.stdout",
+      "cases": [
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/substitution-precedence-build/supply-0.yaml",
+      "cases": [
+        "substitution-precedence-build"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "inputs/substitution-precedence-test/supply-0.yaml",
+      "cases": [
+        "substitution-precedence-test"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/apps/cluster-secrets.sops.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-full-build",
+        "literal-kustomization-path-own-postbuild",
+        "literal-kustomization-path-paired-diff",
+        "literal-kustomization-path-reverse-diff",
+        "parent-patches-propagate-to-children",
+        "substitute-disabled-annotation",
+        "substitution-precedence-build",
+        "substitution-precedence-test",
+        "unapplied-package-patches-applied",
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/apps/cluster-settings.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-full-build",
+        "literal-kustomization-path-own-postbuild",
+        "literal-kustomization-path-paired-diff",
+        "literal-kustomization-path-reverse-diff",
+        "parent-patches-propagate-to-children",
+        "substitute-disabled-annotation",
+        "substitution-precedence-build",
+        "substitution-precedence-test",
+        "unapplied-package-patches-applied",
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-full-build",
+        "literal-kustomization-path-own-postbuild",
+        "literal-kustomization-path-paired-diff",
+        "literal-kustomization-path-reverse-diff",
+        "parent-patches-propagate-to-children",
+        "substitute-disabled-annotation",
+        "substitution-precedence-build",
+        "substitution-precedence-test",
+        "unapplied-package-patches-applied",
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/apps/leaf/app/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-full-build",
+        "literal-kustomization-path-own-postbuild",
+        "literal-kustomization-path-paired-diff",
+        "literal-kustomization-path-reverse-diff",
+        "parent-patches-propagate-to-children",
+        "substitute-disabled-annotation",
+        "substitution-precedence-build",
+        "substitution-precedence-test",
+        "unapplied-package-patches-applied",
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/apps/leaf/app/kustomization.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-full-build",
+        "literal-kustomization-path-own-postbuild",
+        "literal-kustomization-path-paired-diff",
+        "literal-kustomization-path-reverse-diff",
+        "parent-patches-propagate-to-children",
+        "substitute-disabled-annotation",
+        "substitution-precedence-build",
+        "substitution-precedence-test",
+        "unapplied-package-patches-applied",
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/apps/leaf/app/script-cm.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-full-build",
+        "literal-kustomization-path-own-postbuild",
+        "literal-kustomization-path-paired-diff",
+        "literal-kustomization-path-reverse-diff",
+        "parent-patches-propagate-to-children",
+        "substitute-disabled-annotation",
+        "substitution-precedence-build",
+        "substitution-precedence-test",
+        "unapplied-package-patches-applied",
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/apps/leaf/ks.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-full-build",
+        "literal-kustomization-path-own-postbuild",
+        "literal-kustomization-path-paired-diff",
+        "literal-kustomization-path-reverse-diff",
+        "parent-patches-propagate-to-children",
+        "substitute-disabled-annotation",
+        "substitution-precedence-build",
+        "substitution-precedence-test",
+        "unapplied-package-patches-applied",
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "repo/kubernetes/cluster/flux-system.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-full-build",
+        "literal-kustomization-path-own-postbuild",
+        "literal-kustomization-path-paired-diff",
+        "literal-kustomization-path-reverse-diff",
+        "parent-patches-propagate-to-children",
+        "substitute-disabled-annotation",
+        "substitution-precedence-build",
+        "substitution-precedence-test",
+        "unapplied-package-patches-applied",
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/flux/root.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/flux/unrelated.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/unrelated/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/unrelated/kustomization.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only",
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-full-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "cases": [
+        "literal-kustomization-path-full-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/root.yaml",
+      "cases": [
+        "literal-kustomization-path-full-build"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-own-postbuild"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "cases": [
+        "literal-kustomization-path-own-postbuild"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/root.yaml",
+      "cases": [
+        "literal-kustomization-path-own-postbuild"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/flux/root.yaml",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/flux/unrelated.yaml",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/unrelated/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/unrelated/kustomization.yaml",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-literal-kustomization-path-changed-only-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-changed-only"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-literal-kustomization-path-paired-diff-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-paired-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/setup-literal-kustomization-path-reverse-diff-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "cases": [
+        "literal-kustomization-path-reverse-diff"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-precedence-build-repo-base-tree/repo/kubernetes/app/cm.yaml",
+      "cases": [
+        "substitution-precedence-build",
+        "substitution-precedence-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-precedence-build-repo-base-tree/repo/kubernetes/app/kustomization.yaml",
+      "cases": [
+        "substitution-precedence-build",
+        "substitution-precedence-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-precedence-build-repo-base-tree/repo/kubernetes/flux/consumer.yaml",
+      "cases": [
+        "substitution-precedence-build",
+        "substitution-precedence-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/substitution-precedence-build-repo-base-tree/repo/kubernetes/flux/settings.yaml",
+      "cases": [
+        "substitution-precedence-build",
+        "substitution-precedence-test"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-applied-repo-base-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-applied-repo-base-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-applied-repo-base-tree/repo/kubernetes/cluster/ks.yaml",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-applied-repo-base-tree/repo/kubernetes/cluster/vars-ks.yaml",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-applied-repo-base-tree/repo/kubernetes/cluster/vars/base.yaml",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-applied-repo-base-tree/repo/kubernetes/cluster/vars/kustomization.yaml",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-applied-repo-base-tree/repo/kubernetes/cluster/vars/patch.yaml",
+      "cases": [
+        "unapplied-package-patches-applied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-unapplied-repo-base-tree/repo/kubernetes/cluster/app/cm.yaml",
+      "cases": [
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-unapplied-repo-base-tree/repo/kubernetes/cluster/app/kustomization.yaml",
+      "cases": [
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-unapplied-repo-base-tree/repo/kubernetes/cluster/ks.yaml",
+      "cases": [
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-unapplied-repo-base-tree/repo/kubernetes/cluster/vars/base.yaml",
+      "cases": [
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-unapplied-repo-base-tree/repo/kubernetes/cluster/vars/kustomization.yaml",
+      "cases": [
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/unapplied-package-patches-unapplied-repo-base-tree/repo/kubernetes/cluster/vars/patch.yaml",
+      "cases": [
+        "unapplied-package-patches-unapplied"
+      ],
+      "purpose": "Shared input tree or the declared case edit."
+    }
+  ]
+}

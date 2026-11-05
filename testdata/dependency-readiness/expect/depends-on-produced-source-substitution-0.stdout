@@ -1,0 +1,61 @@
+---
+apiVersion: v1
+data:
+  value: before
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: consumer-output
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: producer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: input
+  namespace: apps
+spec:
+  interval: 1h
+  url: file:///__flate_fixture__/u5-input.git
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: unrelated
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: unrelated-output
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  interval: 1h
+  path: ./kubernetes/hegira/app
+  postBuild:
+    substitute:
+      VALUE: before
+  sourceRef:
+    kind: GitRepository
+    name: input
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: producer
+  namespace: apps
+spec:
+  path: ./kubernetes/hegira/producer
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unrelated
+  namespace: apps
+spec:
+  path: ./kubernetes/hegira/unrelated

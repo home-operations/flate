@@ -1,0 +1,5 @@
+namespace: flux-system
+generatorOptions: {disableNameSuffixHash: true}
+configMapGenerator:
+- name: settings
+  envs: [version.env]

@@ -1,0 +1,11 @@
+--- ConfigMap apps/output (app)
++++ ConfigMap apps/output (app)
+@@ -1,7 +1,7 @@
+ apiVersion: v1
+ data:
+   override: repository
+-  value: before
++  value: after
+ kind: ConfigMap
+ metadata:
+   labels:

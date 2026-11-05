@@ -1,0 +1,37 @@
+---
+apiVersion: v1
+data:
+  env: env-value
+  file: file-value
+  literal: literal-value
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: result
+---
+apiVersion: v1
+data:
+  FROM_ENV: env-value
+  FROM_FILE: file-value
+  FROM_LITERAL: literal-value
+kind: ConfigMap
+metadata:
+  name: bootstrap-values
+  namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./kubernetes/cluster/apps
+  postBuild:
+    substituteFrom:
+    - kind: ConfigMap
+      name: bootstrap-values
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

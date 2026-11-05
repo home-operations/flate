@@ -75,9 +75,15 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 	)
 	base, head := renderedTrees1[0], renderedTrees1[1]
 	assert.FatalIf(t, err != nil, "%v", err)
+	source.Obj.(*manifest.ConfigMap).Data["VALUE"] = "caller-change"
+	source.Doc["data"].(map[string]any)["VALUE"] = "caller-change"
 	consumer := testutil.KustomizationID("apps", "consumer")
 	stable := testutil.KustomizationID("apps", "stable")
 	for i, side := range []Rendered{base, head} {
+		for _, input := range side.Orchestrator.cfg.Supply {
+			assert.Equal(t, input.Obj.(*manifest.ConfigMap).Data["VALUE"], any("supplied"))
+			assert.Equal(t, input.Doc["data"].(map[string]any)["VALUE"], any("supplied"))
+		}
 		want := "supplied-base"
 		if i == 1 {
 			want = "supplied-head"

@@ -1,0 +1,5 @@
+
+  ✗  Kustomization  flux-system/a  dependency cycle detected: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a
+  ✗  Kustomization  flux-system/b  dependency cycle detected: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b → Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a
+
+  ✗ 0 passed · 2 failed   <DUR>

@@ -19,12 +19,6 @@ artifactgenerator_test.go
 crds/metadata_test.go
 crds/missing_crds_test.go
 crds/resourceset_test.go
-helm/emitted_path_test.go
-helm/helm_input_failures_test.go
-helm/helm_list_output_test.go
-helm/helm_test.go
-helm/source_values_changes_test.go
-helm/stalevalues_test.go
 scope/authoritative_manifest_failures_test.go
 scope/bootstrap_namespace_projection_test.go
 scope/cache_diff_test.go

@@ -1,0 +1,693 @@
+{
+  "source": {
+    "repository": "toboshii/home-ops",
+    "revision": "b16119e828316df78f73d378bf7c386bad9dac12",
+    "paths": [
+      "cluster/apps/database/cloudnative-pg/helm-release.yaml",
+      "cluster/apps/default/hajimari/helm-release.yaml"
+    ],
+    "reductions": "Authored local chart reductions of the pinned HelmRelease topology. Negative inputs and diff controls preserve the former regression cases."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main",
+        "refs/heads/base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "original",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "identity",
+      "overlay": "identity-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "target-namespace",
+      "directory": "overlays/target-namespace",
+      "operations": []
+    },
+    {
+      "name": "explicit-override",
+      "directory": "overlays/explicit-override",
+      "operations": []
+    },
+    {
+      "name": "identity-initial",
+      "directory": "overlays/identity-initial",
+      "operations": [
+        {
+          "delete": "repo/charts/mychart"
+        },
+        {
+          "delete": "repo/cluster/release.yaml"
+        }
+      ]
+    },
+    {
+      "name": "target-identity",
+      "directory": "overlays/target-identity",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "gethr-yaml-exposes-projected-fields-target-namespace",
+      "description": "gethr yaml exposes projected fields target namespace",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "target-namespace"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get-target-namespace",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "-o",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/get-target-namespace.stdout",
+              "stderr": "expect/get-target-namespace.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "gethr-yaml-exposes-projected-fields-explicit-override",
+      "description": "gethr yaml exposes projected fields explicit override",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "explicit-override"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get-explicit-override",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "-o",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/get-explicit-override.stdout",
+              "stderr": "expect/get-explicit-override.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-release-target-namespace-identity",
+      "description": "helm release target namespace identity",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "identity"
+        },
+        {
+          "commit": "original"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "identity-baseline",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/identity-baseline.stdout",
+              "stderr": "expect/identity-baseline.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "change-target",
+          "edit": {
+            "overlay": "target-identity"
+          }
+        },
+        {
+          "id": "identity-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/identity-full.stdout",
+              "stderr": "expect/identity-full.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "identity-changed-only",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/identity-changed-only.stdout",
+              "stderr": "expect/identity-changed-only.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "identity-diff-current",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--path-orig",
+              "@@baseline@@/cluster",
+              "-o",
+              "json",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/identity-diff-current.stdout",
+              "stderr": "expect/identity-diff-current.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "identity-diff-orig",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/cluster",
+              "--path-orig",
+              "@@repo@@/cluster",
+              "-o",
+              "json",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/identity-diff-orig.stdout",
+              "stderr": "expect/identity-diff-orig.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/apps/demo/app/kustomization.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/demo/ks.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/kustomization.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/sibling/app/kustomization.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/sibling/ks.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/jenkins-deployment/Chart.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/jenkins-deployment/templates/configmap.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/jenkins-deployment/values.prod.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/jenkins-deployment/values.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/cluster/source.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/config/prod.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/get-explicit-override.stderr",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-explicit-override"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/get-explicit-override.stdout",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-explicit-override"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/get-target-namespace.stderr",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-target-namespace"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/get-target-namespace.stdout",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-target-namespace"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-baseline.stderr",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-baseline.stdout",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-changed-only.stderr",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-changed-only.stdout",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-diff-current.stderr",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-diff-current.stdout",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-diff-orig.stderr",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-diff-orig.stdout",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-full.stderr",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/identity-full.stdout",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/explicit-override/repo/cluster/release.yaml",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-explicit-override"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/apps/demo/app/kustomization.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/apps/demo/ks.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/apps/kustomization.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/apps/sibling/app/kustomization.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/apps/sibling/ks.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/charts/jenkins-deployment/Chart.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/charts/jenkins-deployment/templates/configmap.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/charts/jenkins-deployment/values.prod.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/charts/jenkins-deployment/values.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/cluster/source.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/identity-initial/repo/config/prod.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/target-identity/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/target-namespace/repo/cluster/release.yaml",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-target-namespace"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/Chart.yaml",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-target-namespace",
+        "gethr-yaml-exposes-projected-fields-explicit-override",
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-target-namespace",
+        "gethr-yaml-exposes-projected-fields-explicit-override",
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/values.yaml",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-target-namespace",
+        "gethr-yaml-exposes-projected-fields-explicit-override",
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/release.yaml",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-target-namespace",
+        "gethr-yaml-exposes-projected-fields-explicit-override",
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/source.yaml",
+      "cases": [
+        "gethr-yaml-exposes-projected-fields-target-namespace",
+        "gethr-yaml-exposes-projected-fields-explicit-override",
+        "helm-release-target-namespace-identity"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    }
+  ]
+}

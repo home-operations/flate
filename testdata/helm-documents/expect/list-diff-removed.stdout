@@ -1,0 +1,37 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "apps",
+        "name": "demo",
+        "path": ""
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "added",
+      "status": "removed",
+      "old": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "extra"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "helm.toolkit.fluxcd.io/name": "demo",
+            "helm.toolkit.fluxcd.io/namespace": "apps"
+          },
+          "name": "added",
+          "namespace": "apps"
+        }
+      },
+      "new": null,
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

@@ -1,0 +1,36 @@
+---
+apiVersion: v1
+data:
+  greeting: hello-from-helm
+  version: ""
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: demo
+    helm.toolkit.fluxcd.io/namespace: apps
+  name: demo-output
+  namespace: apps
+---
+apiVersion: v1
+data:
+  greeting: desired-spec
+  version: v1
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: consumer
+    helm.toolkit.fluxcd.io/namespace: default
+  name: consumer-output
+  namespace: default
+---
+apiVersion: v1
+data:
+  greeting: desired-spec
+  version: v1
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: dependency
+    helm.toolkit.fluxcd.io/namespace: default
+  name: dependency-output
+  namespace: default

@@ -1,0 +1,5 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+  chartRef: {kind: OCIRepository, name: automatic, namespace: flux-system}

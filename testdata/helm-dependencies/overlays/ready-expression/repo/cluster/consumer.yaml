@@ -1,0 +1,12 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: consumer, namespace: default}
+spec:
+  chart:
+    spec:
+      chart: charts/mychart
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  dependsOn:
+  - name: dependency
+    readyExpr: dep.spec.values.releaseVersion == self.spec.values.releaseVersion && dep.spec.values.nested.replicas == 2 && dep.metadata.generation == dep.status.observedGeneration
+  values: {greeting: desired-spec, releaseVersion: v1, nested: {replicas: 2}}

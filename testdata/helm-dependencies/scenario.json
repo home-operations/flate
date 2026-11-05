@@ -1,0 +1,1424 @@
+{
+  "source": {
+    "repository": "truxnell/home-cluster",
+    "revision": "0f7b47a9fec9419a4c5d6b5c4a4ae219ad342c1c",
+    "paths": [
+      "kubernetes/hegira/apps/cert-manager/cert-manager/app/helmrelease.yaml",
+      "kubernetes/hegira/apps/cert-manager/cert-manager/ks.yaml"
+    ],
+    "reductions": "Authored minimal reduction of the observed source and HelmRelease topology. Preserve the existing regression inputs, with local charts and explicit negative controls."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main",
+        "refs/heads/base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "templated",
+      "overlay": "templated-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "templated-root",
+      "overlay": "templated-root-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "literal",
+      "overlay": "literal-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "literal-root",
+      "overlay": "literal-root-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "original",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "consumer",
+      "overlay": "consumer-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "lidarr-edited",
+      "directory": "overlays/lidarr-edited",
+      "operations": []
+    },
+    {
+      "name": "templated-initial",
+      "directory": "overlays/templated-initial",
+      "operations": [
+        {
+          "delete": "repo/apps/downloads"
+        },
+        {
+          "delete": "repo/flux/apps.yaml"
+        }
+      ]
+    },
+    {
+      "name": "templated-changed",
+      "directory": "overlays/templated-changed",
+      "operations": []
+    },
+    {
+      "name": "templated-root-initial",
+      "directory": "overlays/templated-root-initial",
+      "operations": [
+        {
+          "delete": "repo/apps/downloads"
+        }
+      ]
+    },
+    {
+      "name": "templated-root-changed",
+      "directory": "overlays/templated-root-changed",
+      "operations": []
+    },
+    {
+      "name": "literal-initial",
+      "directory": "overlays/literal-initial",
+      "operations": [
+        {
+          "delete": "repo/apps/downloads"
+        },
+        {
+          "delete": "repo/flux/apps.yaml"
+        }
+      ]
+    },
+    {
+      "name": "literal-changed",
+      "directory": "overlays/literal-changed",
+      "operations": []
+    },
+    {
+      "name": "literal-root-initial",
+      "directory": "overlays/literal-root-initial",
+      "operations": [
+        {
+          "delete": "repo/apps/downloads"
+        }
+      ]
+    },
+    {
+      "name": "literal-root-changed",
+      "directory": "overlays/literal-root-changed",
+      "operations": []
+    },
+    {
+      "name": "consumer-initial",
+      "directory": "overlays/consumer-initial",
+      "operations": [
+        {
+          "delete": "repo/apps/downloads"
+        },
+        {
+          "delete": "repo/flux/apps.yaml"
+        }
+      ]
+    },
+    {
+      "name": "consumer-changed",
+      "directory": "overlays/consumer-changed",
+      "operations": []
+    },
+    {
+      "name": "ready-expression",
+      "directory": "overlays/ready-expression",
+      "operations": [
+        {
+          "delete": "repo/apps"
+        },
+        {
+          "delete": "repo/flux"
+        },
+        {
+          "delete": "repo/charts/emitter"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "changed-onlyhr-depends-on-unchanged-dep",
+      "description": "changed onlyhr depends on unchanged dep",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "lidarr-edited"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "unchanged-dependency",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/unchanged-dependency.stdout",
+              "stderr": "expect/unchanged-dependency.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-emitted-kustomization-path-templated",
+      "description": "changed only emitted kustomization path templated",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "templated"
+        },
+        {
+          "overlay": "templated-changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "templated-cold",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/templated-cold.stdout",
+              "stderr": "expect/templated-cold.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "templated-warm",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/templated-warm.stdout",
+              "stderr": "expect/templated-warm.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-emitted-kustomization-path-templated-root",
+      "description": "changed only emitted kustomization path templated root",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "templated-root"
+        },
+        {
+          "overlay": "templated-root-changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "templated-root-cold",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/templated-root-cold.stdout",
+              "stderr": "expect/templated-root-cold.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "templated-root-warm",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/templated-root-warm.stdout",
+              "stderr": "expect/templated-root-warm.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-emitted-kustomization-path-literal",
+      "description": "changed only emitted kustomization path literal",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "literal"
+        },
+        {
+          "overlay": "literal-changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "literal-cold",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/literal-cold.stdout",
+              "stderr": "expect/literal-cold.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "literal-warm",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/literal-warm.stdout",
+              "stderr": "expect/literal-warm.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-emitted-kustomization-path-literal-root",
+      "description": "changed only emitted kustomization path literal root",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "literal-root"
+        },
+        {
+          "overlay": "literal-root-changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "literal-root-cold",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/literal-root-cold.stdout",
+              "stderr": "expect/literal-root-cold.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "literal-root-warm",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/literal-root-warm.stdout",
+              "stderr": "expect/literal-root-warm.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "changed-only-render-emitted-dependency",
+      "description": "changed only render emitted dependency",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "consumer"
+        },
+        {
+          "overlay": "consumer-changed"
+        },
+        {
+          "commit": "original"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "consumer-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/consumer-before.stdout",
+              "stderr": "expect/consumer-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "consumer-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/consumer-after.stdout",
+              "stderr": "expect/consumer-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "consumer-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--base",
+              "HEAD",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/consumer-diff.stdout",
+              "stderr": "expect/consumer-diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ready-expr--helm-release",
+      "description": "ready expr  helm release",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "ready-expression"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "desired-spec",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--log-level",
+              "warn",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/desired-spec.stdout",
+              "stderr": "expect/desired-spec.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/apps/consumer/kustomization.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/consumer/output.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/dependency/kustomization.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/dependency/output.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/emitter/Chart.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/emitter/templates/dependency.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/flux/consumer.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/flux/emitter.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/flux/source.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/consumer-after.stderr",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/consumer-after.stdout",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/consumer-before.stderr",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/consumer-before.stdout",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/consumer-diff.stderr",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/consumer-diff.stdout",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/desired-spec.stderr",
+      "cases": [
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/desired-spec.stdout",
+      "cases": [
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/literal-cold.stderr",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/literal-cold.stdout",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/literal-root-cold.stderr",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/literal-root-cold.stdout",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/literal-root-warm.stderr",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/literal-root-warm.stdout",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/literal-warm.stderr",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/literal-warm.stdout",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/templated-cold.stderr",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/templated-cold.stdout",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/templated-root-cold.stderr",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/templated-root-cold.stdout",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/templated-root-warm.stderr",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/templated-root-warm.stdout",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/templated-warm.stderr",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/templated-warm.stdout",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/unchanged-dependency.stderr",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/unchanged-dependency.stdout",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-changed/repo/flux/consumer.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/apps/consumer/kustomization.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/apps/consumer/output.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/apps/dependency/kustomization.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/apps/dependency/output.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/charts/emitter/Chart.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/charts/emitter/templates/dependency.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/flux/consumer.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/flux/emitter.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/consumer-initial/repo/flux/source.yaml",
+      "cases": [
+        "changed-only-render-emitted-dependency"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/lidarr-edited/repo/apps/downloads/lidarr/app/helmrelease.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-changed/repo/apps/child/configmap.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-initial/repo/apps/child/configmap.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-initial/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-initial/repo/charts/emitter/Chart.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-initial/repo/charts/emitter/templates/child.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-initial/repo/flux/emitter.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-initial/repo/flux/source.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-root-changed/repo/apps/child/configmap.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-root-initial/repo/apps/child/configmap.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-root-initial/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-root-initial/repo/apps/hr/emitter.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-root-initial/repo/charts/emitter/Chart.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-root-initial/repo/charts/emitter/templates/child.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-root-initial/repo/flux/apps.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/literal-root-initial/repo/flux/source.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-literal-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/ready-expression/repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/ready-expression/repo/cluster/consumer.yaml",
+      "cases": [
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/ready-expression/repo/cluster/dependency.yaml",
+      "cases": [
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/ready-expression/repo/cluster/release.yaml",
+      "cases": [
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/ready-expression/repo/cluster/source.yaml",
+      "cases": [
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-changed/repo/apps/child/configmap.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-initial/repo/apps/child/configmap.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-initial/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-initial/repo/charts/emitter/Chart.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-initial/repo/charts/emitter/templates/child.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-initial/repo/flux/emitter.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-initial/repo/flux/source.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-root-changed/repo/apps/child/configmap.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-root-initial/repo/apps/child/configmap.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-root-initial/repo/apps/child/kustomization.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-root-initial/repo/apps/hr/emitter.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-root-initial/repo/charts/emitter/Chart.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-root-initial/repo/charts/emitter/templates/child.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-root-initial/repo/flux/apps.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/templated-root-initial/repo/flux/source.yaml",
+      "cases": [
+        "changed-only-emitted-kustomization-path-templated-root"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/downloads/kustomization.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/downloads/lidarr/app/helmrelease.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/downloads/lidarr/app/kustomization.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/downloads/lidarr/ks.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/downloads/qbittorrent/app/helmrelease.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/downloads/qbittorrent/app/kustomization.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/downloads/qbittorrent/ks.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/Chart.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/values.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/flux/apps.yaml",
+      "cases": [
+        "changed-onlyhr-depends-on-unchanged-dep",
+        "changed-only-emitted-kustomization-path-templated",
+        "changed-only-emitted-kustomization-path-templated-root",
+        "changed-only-emitted-kustomization-path-literal",
+        "changed-only-emitted-kustomization-path-literal-root",
+        "changed-only-render-emitted-dependency",
+        "ready-expr--helm-release"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    }
+  ]
+}

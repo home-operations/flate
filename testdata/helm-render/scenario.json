@@ -1,0 +1,560 @@
+{
+  "source": {
+    "repository": "toboshii/home-ops",
+    "revision": "b16119e828316df78f73d378bf7c386bad9dac12",
+    "paths": [
+      "cluster/apps/database/cloudnative-pg/helm-release.yaml",
+      "cluster/apps/default/hajimari/helm-release.yaml"
+    ],
+    "reductions": "Authored local chart reductions of the pinned HelmRelease topology. Negative inputs and diff controls preserve the former regression cases."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main",
+        "refs/heads/base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "list-secret",
+      "directory": "overlays/list-secret",
+      "operations": []
+    },
+    {
+      "name": "bad-crd-omitted",
+      "directory": "overlays/bad-crd-omitted",
+      "operations": []
+    },
+    {
+      "name": "bad-crd-included",
+      "directory": "overlays/bad-crd-included",
+      "operations": []
+    },
+    {
+      "name": "duplicate-keys",
+      "directory": "overlays/duplicate-keys",
+      "operations": []
+    },
+    {
+      "name": "typed-child",
+      "directory": "overlays/typed-child",
+      "operations": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "buildhr-secret-excluded",
+      "description": "buildhr secret excluded",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "list-secret"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build-secret-excluded",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--skip-kinds=Secret",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-secret-excluded.stdout",
+              "stderr": "expect/build-secret-excluded.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "buildhr-secret-included",
+      "description": "buildhr secret included",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "list-secret"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build-secret-included",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--skip-kinds=",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/build-secret-included.stdout",
+              "stderr": "expect/build-secret-included.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "malformed-chartcrd-omitted",
+      "description": "malformed chartcrd omitted",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "bad-crd-omitted"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "bad-crd-omitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--skip-kinds=Secret,CustomResourceDefinition",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/bad-crd-omitted.stdout",
+              "stderr": "expect/bad-crd-omitted.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "malformed-chartcrd-included",
+      "description": "malformed chartcrd included",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "bad-crd-included"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "bad-crd-included",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--skip-kinds=Secret",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/bad-crd-included.stdout",
+              "stderr": "expect/bad-crd-included.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "malformed-chart-fails-producer-duplicate-keys",
+      "description": "malformed chart fails producer duplicate keys",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "duplicate-keys"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "malformed-duplicate-keys",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/malformed-duplicate-keys.stdout",
+              "stderr": "expect/malformed-duplicate-keys.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "malformed-duplicate-keys-warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/malformed-duplicate-keys.stdout",
+              "stderr": "expect/malformed-duplicate-keys.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "malformed-chart-fails-producer-typed-child",
+      "description": "malformed chart fails producer typed child",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "typed-child"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "malformed-typed-child",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/malformed-typed-child.stdout",
+              "stderr": "expect/malformed-typed-child.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "malformed-typed-child-warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/malformed-typed-child.stdout",
+              "stderr": "expect/malformed-typed-child.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/bad-crd-included.stderr",
+      "cases": [
+        "malformed-chartcrd-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/bad-crd-included.stdout",
+      "cases": [
+        "malformed-chartcrd-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/bad-crd-omitted.stderr",
+      "cases": [
+        "malformed-chartcrd-omitted"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/bad-crd-omitted.stdout",
+      "cases": [
+        "malformed-chartcrd-omitted"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/build-secret-excluded.stderr",
+      "cases": [
+        "buildhr-secret-excluded"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/build-secret-excluded.stdout",
+      "cases": [
+        "buildhr-secret-excluded"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/build-secret-included.stderr",
+      "cases": [
+        "buildhr-secret-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/build-secret-included.stdout",
+      "cases": [
+        "buildhr-secret-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/malformed-duplicate-keys.stderr",
+      "cases": [
+        "malformed-chart-fails-producer-duplicate-keys"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/malformed-duplicate-keys.stdout",
+      "cases": [
+        "malformed-chart-fails-producer-duplicate-keys"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/malformed-typed-child.stderr",
+      "cases": [
+        "malformed-chart-fails-producer-typed-child"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/malformed-typed-child.stdout",
+      "cases": [
+        "malformed-chart-fails-producer-typed-child"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/bad-crd-included/repo/charts/mychart/crds/bad.yaml",
+      "cases": [
+        "malformed-chartcrd-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/bad-crd-omitted/repo/charts/mychart/crds/bad.yaml",
+      "cases": [
+        "malformed-chartcrd-omitted"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/duplicate-keys/repo/charts/mychart/templates/invalid.yaml",
+      "cases": [
+        "malformed-chart-fails-producer-duplicate-keys"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/list-secret/repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "buildhr-secret-excluded",
+        "buildhr-secret-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/list-secret/repo/charts/mychart/templates/secret.yaml",
+      "cases": [
+        "buildhr-secret-excluded",
+        "buildhr-secret-included"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/typed-child/repo/charts/mychart/templates/invalid.yaml",
+      "cases": [
+        "malformed-chart-fails-producer-typed-child"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/Chart.yaml",
+      "cases": [
+        "buildhr-secret-excluded",
+        "buildhr-secret-included",
+        "malformed-chartcrd-omitted",
+        "malformed-chartcrd-included",
+        "malformed-chart-fails-producer-duplicate-keys",
+        "malformed-chart-fails-producer-typed-child"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/templates/configmap.yaml",
+      "cases": [
+        "buildhr-secret-excluded",
+        "buildhr-secret-included",
+        "malformed-chartcrd-omitted",
+        "malformed-chartcrd-included",
+        "malformed-chart-fails-producer-duplicate-keys",
+        "malformed-chart-fails-producer-typed-child"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/mychart/values.yaml",
+      "cases": [
+        "buildhr-secret-excluded",
+        "buildhr-secret-included",
+        "malformed-chartcrd-omitted",
+        "malformed-chartcrd-included",
+        "malformed-chart-fails-producer-duplicate-keys",
+        "malformed-chart-fails-producer-typed-child"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/release.yaml",
+      "cases": [
+        "buildhr-secret-excluded",
+        "buildhr-secret-included",
+        "malformed-chartcrd-omitted",
+        "malformed-chartcrd-included",
+        "malformed-chart-fails-producer-duplicate-keys",
+        "malformed-chart-fails-producer-typed-child"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/source.yaml",
+      "cases": [
+        "buildhr-secret-excluded",
+        "buildhr-secret-included",
+        "malformed-chartcrd-omitted",
+        "malformed-chartcrd-included",
+        "malformed-chart-fails-producer-duplicate-keys",
+        "malformed-chart-fails-producer-typed-child"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    }
+  ]
+}

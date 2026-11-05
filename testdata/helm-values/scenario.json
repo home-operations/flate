@@ -1,0 +1,780 @@
+{
+  "source": {
+    "repository": "carpenike/k8s-gitops",
+    "revision": "0b984fa43bd14a04bbd32aa3237ffec72ec32ef1",
+    "paths": [
+      "kubernetes/cluster-0/apps/cert-manager/cert-manager/app/helmrelease.yaml"
+    ],
+    "reductions": "Authored minimal reduction of the observed source and HelmRelease topology. Preserve the existing regression inputs, with local charts and explicit negative controls."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main",
+        "refs/heads/base"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "original",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "empty-required-value",
+      "directory": "overlays/empty-required-value",
+      "operations": []
+    },
+    {
+      "name": "stale-values",
+      "directory": "overlays/stale-values",
+      "operations": [
+        {
+          "delete": "repo/apps"
+        },
+        {
+          "delete": "repo/charts/jenkins-deployment"
+        },
+        {
+          "delete": "repo/cluster/source.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "unreadable-parent-does-not-fill-required-values-full",
+      "description": "unreadable parent does not fill required values full",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "empty-required-value"
+        },
+        {
+          "commit": "original"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "required-full",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--allow-missing-kinds=Secret,ConfigMap",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-full.stdout",
+              "stderr": "expect/required-full.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unreadable-parent-does-not-fill-required-values-changed-only",
+      "description": "unreadable parent does not fill required values changed only",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "empty-required-value"
+        },
+        {
+          "commit": "original"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "required-changed-only",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--allow-missing-kinds=Secret,ConfigMap",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-changed-only.stdout",
+              "stderr": "expect/required-changed-only.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unreadable-parent-does-not-fill-required-values-diff-current",
+      "description": "unreadable parent does not fill required values diff current",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "empty-required-value"
+        },
+        {
+          "commit": "original"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "required-diff-current",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--allow-missing-kinds=Secret,ConfigMap",
+              "--path-orig",
+              "@@baseline@@/cluster",
+              "-o",
+              "json",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-diff-current.stdout",
+              "stderr": "expect/required-diff-current.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unreadable-parent-does-not-fill-required-values-diff-orig",
+      "description": "unreadable parent does not fill required values diff orig",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "empty-required-value"
+        },
+        {
+          "commit": "original"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "required-diff-orig",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/cluster",
+              "--allow-missing-kinds=Secret,ConfigMap",
+              "--path-orig",
+              "@@repo@@/cluster",
+              "-o",
+              "json",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-diff-orig.stdout",
+              "stderr": "expect/required-diff-orig.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "stale-values-warning",
+      "description": "stale values warning",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "stale-values"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "stale-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/stale-build.stdout",
+              "stderr": "expect/stale-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "stale-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/stale-test.stdout",
+              "stderr": "expect/stale-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/apps/demo/app/kustomization.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/demo/app/producer.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/demo/app/release.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/demo/ks.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/kustomization.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/sibling/app/kustomization.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/sibling/app/release.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/apps/sibling/ks.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/jenkins-deployment/Chart.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/jenkins-deployment/templates/configmap.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/jenkins-deployment/values.prod.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/charts/jenkins-deployment/values.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/cluster/source.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "baseline/config/prod.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/required-changed-only.stderr",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-changed-only"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/required-changed-only.stdout",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-changed-only"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/required-diff-current.stderr",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-diff-current"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/required-diff-current.stdout",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-diff-current"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/required-diff-orig.stderr",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/required-diff-orig.stdout",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/required-full.stderr",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/required-full.stdout",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/stale-build.stderr",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/stale-build.stdout",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/stale-test.stderr",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/stale-test.stdout",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/empty-required-value/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/stale-values/repo/charts/appchart/Chart.yaml",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/stale-values/repo/charts/appchart/templates/configmap.yaml",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/stale-values/repo/charts/appchart/values.yaml",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/stale-values/repo/charts/opaquechart/Chart.yaml",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/stale-values/repo/charts/opaquechart/templates/configmap.yaml",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/stale-values/repo/charts/opaquechart/values.yaml",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/stale-values/repo/cluster/helmreleases.yaml",
+      "cases": [
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/demo/app/kustomization.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/demo/app/producer.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/demo/app/release.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/demo/ks.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/kustomization.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/sibling/app/kustomization.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/sibling/ks.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/jenkins-deployment/Chart.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/jenkins-deployment/templates/configmap.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/jenkins-deployment/values.prod.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/jenkins-deployment/values.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/source.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/config/prod.yaml",
+      "cases": [
+        "unreadable-parent-does-not-fill-required-values-full",
+        "unreadable-parent-does-not-fill-required-values-changed-only",
+        "unreadable-parent-does-not-fill-required-values-diff-current",
+        "unreadable-parent-does-not-fill-required-values-diff-orig",
+        "stale-values-warning"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    }
+  ]
+}

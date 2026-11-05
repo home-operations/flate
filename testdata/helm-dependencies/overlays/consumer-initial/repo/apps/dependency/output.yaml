@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: dependency-output, namespace: flux-system}
+data: {value: stable}

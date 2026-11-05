@@ -1,0 +1,1 @@
+resources: [demo/ks.yaml, sibling/ks.yaml]

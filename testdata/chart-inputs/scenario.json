@@ -1,0 +1,1656 @@
+{
+  "source": {
+    "repository": "jahanson/theshire",
+    "revision": "c501645fb13e4b6a53e60f65ed99d872790603ad",
+    "paths": [
+      "kubernetes/apps/ai/open-webui/app/helmrelease.yaml",
+      "kubernetes/apps/ai/open-webui/ks.yaml"
+    ],
+    "reductions": "Authored minimal reduction of the observed source and HelmRelease topology. Preserve the existing regression inputs, with local charts and explicit negative controls."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main",
+        "refs/heads/base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "template-edit",
+      "overlay": "template-edit-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "template-add",
+      "overlay": "template-add-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "template-delete",
+      "overlay": "template-delete-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "template-strict-delete",
+      "overlay": "template-strict-delete-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "chartref-edit",
+      "overlay": "chartref-edit-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "chartref-add",
+      "overlay": "chartref-add-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "chartref-delete",
+      "overlay": "chartref-delete-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "chartref-strict-delete",
+      "overlay": "chartref-strict-delete-initial",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "reported-strict",
+      "directory": "overlays/reported-strict",
+      "operations": []
+    },
+    {
+      "name": "reported-ignore-missing",
+      "directory": "overlays/reported-ignore-missing",
+      "operations": []
+    },
+    {
+      "name": "outside-chart",
+      "directory": "overlays/outside-chart",
+      "operations": []
+    },
+    {
+      "name": "template-edit-initial",
+      "directory": "overlays/template-edit-initial",
+      "operations": []
+    },
+    {
+      "name": "template-edit-change",
+      "directory": "overlays/template-edit-change",
+      "operations": []
+    },
+    {
+      "name": "template-add-initial",
+      "directory": "overlays/template-add-initial",
+      "operations": [
+        {
+          "delete": "repo/config/prod.yaml"
+        }
+      ]
+    },
+    {
+      "name": "template-add-change",
+      "directory": "overlays/template-add-change",
+      "operations": []
+    },
+    {
+      "name": "template-delete-initial",
+      "directory": "overlays/template-delete-initial",
+      "operations": []
+    },
+    {
+      "name": "template-delete-change",
+      "directory": "overlays/template-delete-change",
+      "operations": [
+        {
+          "delete": "repo/config/prod.yaml"
+        }
+      ]
+    },
+    {
+      "name": "template-strict-delete-initial",
+      "directory": "overlays/template-strict-delete-initial",
+      "operations": []
+    },
+    {
+      "name": "template-strict-delete-change",
+      "directory": "overlays/template-strict-delete-change",
+      "operations": [
+        {
+          "delete": "repo/config/prod.yaml"
+        }
+      ]
+    },
+    {
+      "name": "chartref-edit-initial",
+      "directory": "overlays/chartref-edit-initial",
+      "operations": []
+    },
+    {
+      "name": "chartref-edit-change",
+      "directory": "overlays/chartref-edit-change",
+      "operations": []
+    },
+    {
+      "name": "chartref-add-initial",
+      "directory": "overlays/chartref-add-initial",
+      "operations": [
+        {
+          "delete": "repo/config/prod.yaml"
+        }
+      ]
+    },
+    {
+      "name": "chartref-add-change",
+      "directory": "overlays/chartref-add-change",
+      "operations": []
+    },
+    {
+      "name": "chartref-delete-initial",
+      "directory": "overlays/chartref-delete-initial",
+      "operations": []
+    },
+    {
+      "name": "chartref-delete-change",
+      "directory": "overlays/chartref-delete-change",
+      "operations": [
+        {
+          "delete": "repo/config/prod.yaml"
+        }
+      ]
+    },
+    {
+      "name": "chartref-strict-delete-initial",
+      "directory": "overlays/chartref-strict-delete-initial",
+      "operations": []
+    },
+    {
+      "name": "chartref-strict-delete-change",
+      "directory": "overlays/chartref-strict-delete-change",
+      "operations": [
+        {
+          "delete": "repo/config/prod.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "helm-source-root-values-files-reported-strict",
+      "description": "helm source root values files reported strict",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "reported-strict"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "reported-strict",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/reported-strict.stdout",
+              "stderr": "expect/reported-strict.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reported-strict-warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/reported-strict.stdout",
+              "stderr": "expect/reported-strict.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-reported-ignore-missing",
+      "description": "helm source root values files reported ignore missing",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "reported-ignore-missing"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "reported-ignore-missing",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/reported-ignore-missing.stdout",
+              "stderr": "expect/reported-ignore-missing.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reported-ignore-missing-warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/reported-ignore-missing.stdout",
+              "stderr": "expect/reported-ignore-missing.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-outside-chart",
+      "description": "helm source root values files outside chart",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "outside-chart"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "outside-chart",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/outside-chart.stdout",
+              "stderr": "expect/outside-chart.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "outside-chart-warm",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/cluster",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/outside-chart.stdout",
+              "stderr": "expect/outside-chart.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-changed-only-template-edit",
+      "description": "helm source root values files changed only template edit",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "template-edit"
+        },
+        {
+          "overlay": "template-edit-change"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "template-edit-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/template-edit-build.stdout",
+              "stderr": "expect/template-edit-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "template-edit-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/template-edit-test.stdout",
+              "stderr": "expect/template-edit-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-changed-only-template-add",
+      "description": "helm source root values files changed only template add",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "template-add"
+        },
+        {
+          "overlay": "template-add-change"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "template-add-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/template-add-build.stdout",
+              "stderr": "expect/template-add-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "template-add-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/template-add-test.stdout",
+              "stderr": "expect/template-add-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-changed-only-template-delete",
+      "description": "helm source root values files changed only template delete",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "template-delete"
+        },
+        {
+          "overlay": "template-delete-change"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "template-delete-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/template-delete-build.stdout",
+              "stderr": "expect/template-delete-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "template-delete-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/template-delete-test.stdout",
+              "stderr": "expect/template-delete-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-changed-only-template-strict-delete",
+      "description": "helm source root values files changed only template strict delete",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "template-strict-delete"
+        },
+        {
+          "overlay": "template-strict-delete-change"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "template-strict-delete-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/template-strict-delete-build.stdout",
+              "stderr": "expect/template-strict-delete-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-changed-only-chartref-edit",
+      "description": "helm source root values files changed only chartref edit",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "chartref-edit"
+        },
+        {
+          "overlay": "chartref-edit-change"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "chartref-edit-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/chartref-edit-build.stdout",
+              "stderr": "expect/chartref-edit-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "chartref-edit-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/chartref-edit-test.stdout",
+              "stderr": "expect/chartref-edit-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-changed-only-chartref-add",
+      "description": "helm source root values files changed only chartref add",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "chartref-add"
+        },
+        {
+          "overlay": "chartref-add-change"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "chartref-add-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/chartref-add-build.stdout",
+              "stderr": "expect/chartref-add-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "chartref-add-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/chartref-add-test.stdout",
+              "stderr": "expect/chartref-add-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-changed-only-chartref-delete",
+      "description": "helm source root values files changed only chartref delete",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "chartref-delete"
+        },
+        {
+          "overlay": "chartref-delete-change"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "chartref-delete-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/chartref-delete-build.stdout",
+              "stderr": "expect/chartref-delete-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "chartref-delete-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/chartref-delete-test.stdout",
+              "stderr": "expect/chartref-delete-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "helm-source-root-values-files-changed-only-chartref-strict-delete",
+      "description": "helm source root values files changed only chartref strict delete",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "commit": "chartref-strict-delete"
+        },
+        {
+          "overlay": "chartref-strict-delete-change"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "chartref-strict-delete-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/cluster",
+              "--base",
+              "HEAD",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/chartref-strict-delete-build.stdout",
+              "stderr": "expect/chartref-strict-delete-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/chartref-add-build.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-add-build.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-add-test.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-add-test.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-delete-build.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-delete-build.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-delete-test.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-delete-test.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-edit-build.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-edit-build.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-edit-test.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-edit-test.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-strict-delete-build.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/chartref-strict-delete-build.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/outside-chart.stderr",
+      "cases": [
+        "helm-source-root-values-files-outside-chart"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/outside-chart.stdout",
+      "cases": [
+        "helm-source-root-values-files-outside-chart"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/reported-ignore-missing.stderr",
+      "cases": [
+        "helm-source-root-values-files-reported-ignore-missing"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/reported-ignore-missing.stdout",
+      "cases": [
+        "helm-source-root-values-files-reported-ignore-missing"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/reported-strict.stderr",
+      "cases": [
+        "helm-source-root-values-files-reported-strict"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/reported-strict.stdout",
+      "cases": [
+        "helm-source-root-values-files-reported-strict"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-add-build.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-add-build.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-add-test.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-add-test.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-delete-build.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-delete-build.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-delete-test.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-delete-test.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-edit-build.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-edit-build.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-edit-test.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-edit-test.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-strict-delete-build.stderr",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "expect/template-strict-delete-build.stdout",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-add-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-add-initial/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-add-initial/repo/cluster/demo-chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-add-initial/repo/cluster/sibling-chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-delete-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-delete-initial/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-delete-initial/repo/cluster/demo-chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-delete-initial/repo/cluster/sibling-chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-edit-change/repo/config/prod.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-edit-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-edit-initial/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-edit-initial/repo/cluster/demo-chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-edit-initial/repo/cluster/sibling-chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-strict-delete-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-strict-delete-initial/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-strict-delete-initial/repo/cluster/demo-chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/chartref-strict-delete-initial/repo/cluster/sibling-chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/outside-chart/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-outside-chart"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/reported-ignore-missing/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-ignore-missing"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/reported-ignore-missing/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-ignore-missing"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/reported-strict/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-add-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-add-initial/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-add"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-delete-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-delete-initial/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-edit-change/repo/config/prod.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-edit-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-edit-initial/repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-edit"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-strict-delete-initial/repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/demo/app/kustomization.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/demo/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/demo/ks.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/kustomization.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/sibling/app/kustomization.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/sibling/app/release.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/apps/sibling/ks.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/jenkins-deployment/Chart.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/jenkins-deployment/templates/configmap.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/jenkins-deployment/values.prod.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/charts/jenkins-deployment/values.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/cluster/source.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "repo/config/prod.yaml",
+      "cases": [
+        "helm-source-root-values-files-reported-strict",
+        "helm-source-root-values-files-reported-ignore-missing",
+        "helm-source-root-values-files-outside-chart",
+        "helm-source-root-values-files-changed-only-template-edit",
+        "helm-source-root-values-files-changed-only-template-add",
+        "helm-source-root-values-files-changed-only-template-delete",
+        "helm-source-root-values-files-changed-only-template-strict-delete",
+        "helm-source-root-values-files-changed-only-chartref-edit",
+        "helm-source-root-values-files-changed-only-chartref-add",
+        "helm-source-root-values-files-changed-only-chartref-delete",
+        "helm-source-root-values-files-changed-only-chartref-strict-delete"
+      ],
+      "purpose": "Chart input, authored regression control, or independently specified complete result for the named cases."
+    },
+    {
+      "path": "overlays/template-add-change/repo/config/prod.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-template-add"
+      ],
+      "purpose": "Restore the selected source-root values file that the base commit omits."
+    },
+    {
+      "path": "overlays/chartref-add-change/repo/config/prod.yaml",
+      "cases": [
+        "helm-source-root-values-files-changed-only-chartref-add"
+      ],
+      "purpose": "Restore the selected source-root values file that the base commit omits."
+    }
+  ]
+}

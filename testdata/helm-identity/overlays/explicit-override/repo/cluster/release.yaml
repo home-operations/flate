@@ -1,0 +1,19 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: demo
+  namespace: apps
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/mychart
+      sourceRef:
+        kind: GitRepository
+        name: flux-system
+        namespace: flux-system
+  values:
+    greeting: hello-from-helm
+    replicas: 3
+  targetNamespace: target
+  releaseName: chosen

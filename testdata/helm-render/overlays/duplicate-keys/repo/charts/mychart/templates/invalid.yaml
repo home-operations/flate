@@ -1,0 +1,12 @@
+null
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: invalid}
+data:
+  key: first
+  key: duplicate
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: chart-sibling}

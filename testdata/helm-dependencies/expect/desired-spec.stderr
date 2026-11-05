@@ -1,0 +1,8 @@
+
+  ⚠ warnings (3)
+    [StaleValues] HelmRelease apps/demo: values not used by the chart
+      replicas
+    [StaleValues] HelmRelease default/consumer: values not used by the chart
+      nested
+    [StaleValues] HelmRelease default/dependency: values not used by the chart
+      nested

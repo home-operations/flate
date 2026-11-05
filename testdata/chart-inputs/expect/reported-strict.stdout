@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+data:
+  greeting: production
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: demo
+    helm.toolkit.fluxcd.io/namespace: apps
+  name: demo-values
+  namespace: apps
+---
+apiVersion: v1
+data:
+  greeting: default
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: sibling
+    helm.toolkit.fluxcd.io/namespace: apps
+  name: sibling-values
+  namespace: apps

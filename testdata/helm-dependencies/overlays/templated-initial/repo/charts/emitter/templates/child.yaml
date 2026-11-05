@@ -1,0 +1,7 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: flux-system}
+spec:
+  interval: 10m
+  path: "{{ .Values.root }}"
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}

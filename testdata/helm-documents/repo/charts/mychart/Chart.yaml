@@ -1,0 +1,5 @@
+apiVersion: v2
+name: mychart
+description: minimal local chart used for flate E2E tests
+version: 0.1.0
+appVersion: "1.0"

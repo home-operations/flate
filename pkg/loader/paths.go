@@ -104,16 +104,27 @@ func (l *Loader) hydratePathInput(ctx context.Context, inputID manifest.NamedRes
 	if !indexed || !located || inputRecord.Path == "" {
 		return true
 	}
-	child, err := l.exactObject(ctx, new(occurrence), nil)
-	if ctx.Err() != nil {
-		return false
-	}
-	if err != nil {
-		return true
-	}
-	data, known := child.Obj.(manifest.Data)
-	if !known {
-		return true
+	file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
+	cached := l.documents.cache[file]
+	data := cached.pathInputs[inputID]
+	if data == nil {
+		child, err := l.exactObject(ctx, new(occurrence), nil)
+		if ctx.Err() != nil {
+			return false
+		}
+		if err != nil {
+			return true
+		}
+		var known bool
+		data, known = child.Obj.(manifest.Data)
+		if !known {
+			return true
+		}
+		if cached.pathInputs == nil {
+			cached.pathInputs = map[manifest.NamedResource]manifest.Data{}
+		}
+		cached.pathInputs[inputID] = data
+		l.documents.cache[file] = cached
 	}
 	{
 		productionValues := inputRecord.Productions

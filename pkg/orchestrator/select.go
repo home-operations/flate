@@ -538,7 +538,7 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifes
 
 func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []manifest.NamedResource) {
 	local := make(map[manifest.NamedResource]store.StatusInfo, len(candidates))
-	var counterpart map[manifest.NamedResource]store.StatusInfo
+	counterpart := make(map[manifest.NamedResource]store.StatusInfo)
 	var path []manifest.NamedResource
 	for _, id := range candidates {
 		actual := s.actualProducer(id)
@@ -546,24 +546,74 @@ func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []ma
 		if s.run.filter.Enabled() {
 			unavailable = s.localStatus(actual)
 		}
-		if !unavailable.IsUnavailable() {
-			owner, resolved := s.run.Orchestrator, local
-			selected := s.run.filter.Membership(actual).Selected
-			if s.run.store.GetObject(actual) == nil || s.run.filter.Enabled() && !selected {
-				// Producers outside this projection MUST use the other snapshot's ancestry cache.
-				if counterpart == nil {
-					counterpart = make(map[manifest.NamedResource]store.StatusInfo)
-				}
-				owner, resolved = other.run.Orchestrator, counterpart
+		if unavailable.IsUnavailable() {
+			s.recordUnavailable(id, unavailable)
+			continue
+		}
+		owner, resolved := s.run.Orchestrator, local
+		selected := s.run.filter.Membership(actual).Selected
+		if s.run.store.GetObject(actual) == nil || s.run.filter.Enabled() && !selected {
+			// Producers outside this projection MUST use the other snapshot's ancestry cache.
+			owner, resolved = other.run.Orchestrator, counterpart
+		}
+		start := actual
+		if owner != s.run.Orchestrator {
+			start = other.actualProducer(id)
+		}
+		unavailable, path = s.walkUnavailable(start, owner, resolved, path)
+		if !unavailable.IsUnavailable() && owner == s.run.Orchestrator {
+			if prior, found := s.unpublishedCounterpart(other, path); found {
+				unavailable, path = s.walkUnavailable(prior, other.run.Orchestrator, counterpart, path)
 			}
-			start := actual
-			if owner != s.run.Orchestrator {
-				start = other.actualProducer(id)
-			}
-			unavailable, path = s.walkUnavailable(start, owner, resolved, path)
 		}
 		s.recordUnavailable(id, unavailable)
 	}
+}
+
+func (s *selectionSide) unpublishedCounterpart(
+	other *selectionSide,
+	path []manifest.NamedResource,
+) (manifest.NamedResource, bool) {
+	if other.run.index == nil {
+		return manifest.NamedResource{}, false
+	}
+	for _, id := range path {
+		if s.run.store.EmissionOwner(id) != (manifest.NamedResource{}) || other.run.store.GetDeclaration(id) != nil {
+			continue
+		}
+		record, found := s.run.index.Lookup(id)
+		if !found || record.File == "" || record.Authored == (manifest.NamedResource{}) {
+			continue
+		}
+		if prior := other.declarationCounterpart(id, &record); prior != (manifest.NamedResource{}) {
+			return prior, true
+		}
+	}
+	return manifest.NamedResource{}, false
+}
+
+func (s *selectionSide) declarationCounterpart(
+	id manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+) manifest.NamedResource {
+	var prior manifest.NamedResource
+	for candidate := range s.run.index.Records {
+		previous := s.run.index.Records[candidate]
+		if candidate == id || previous.Authored != record.Authored || previous.File != record.File ||
+			s.run.store.EmissionOwner(candidate) == (manifest.NamedResource{}) {
+			continue
+		}
+		sameSource := slices.ContainsFunc(previous.Productions, func(p manifest.Production) bool {
+			return p.Source != (manifest.NamedResource{}) && slices.ContainsFunc(
+				record.Productions,
+				func(q manifest.Production) bool { return p.Source == q.Source },
+			)
+		})
+		if sameSource && (prior == (manifest.NamedResource{}) || candidate.Compare(prior) < 0) {
+			prior = candidate
+		}
+	}
+	return prior
 }
 
 func (s *selectionSide) recordUnavailable(id manifest.NamedResource, unavailable store.StatusInfo) {

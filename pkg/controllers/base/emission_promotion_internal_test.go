@@ -42,7 +42,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	parent := testutil.KustomizationID("apps", "parent")
 	source := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
 	s.AddObject(source)
-	s.SetIncluded(source.Named(), false)
+	s.SetIncluded(source.Named(), false, false)
 	child := &manifest.HelmRelease{
 		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name},
 		Name:      "consumer",
@@ -136,10 +136,7 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 					consumer.Named(),
 				}}, 0)
 				assert.Equal(t, retry, false)
-				st.SetIncluded(
-					input.Named(),
-					false,
-				)
+				st.SetIncluded(input.Named(), false, false)
 				c := New(st, task.NewBounded(2))
 				c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
 				var execution Execution
@@ -227,7 +224,7 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 		0,
 	)
 	assert.Equal(t, retry, false)
-	st.SetIncluded(input, true)
+	st.SetIncluded(input, true, true)
 	c := New(st, task.NewBounded(2))
 	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
 	var reads store.ReadSet

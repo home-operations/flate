@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"maps"
 	"path/filepath"
@@ -198,7 +199,7 @@ func (r *renderInvocation) discoverTrees(ctx context.Context) {
 			r.results[i].Orchestrator = o
 			if failure := o.discover(ctx); failure != nil {
 				result := o.failureResult()
-				if o.loader != nil && o.session == nil {
+				if o.filter.Enabled() && o.session == nil {
 					result.Warnings = tree.Input.Warnings
 				}
 				r.results[i].Result = result
@@ -216,7 +217,7 @@ func (r *renderInvocation) stopFailedDiscovery() error {
 			continue
 		}
 		o := result.Orchestrator
-		if o.loader != nil && o.session == nil {
+		if o.filter.Enabled() && o.session == nil {
 			err = errors.Join(err, result.Err)
 		}
 		o.stop()
@@ -360,6 +361,17 @@ func (r *renderInvocation) prepareSession(ctx context.Context, i int) {
 	o.preparation = nil
 	o.loader.Options.Changes = o.cfg.ExternalChanges
 	failure := o.lookupHistory(ctx)
+	if failure == nil {
+		o.configureControllers()
+		if o.history == nil {
+			o.history = map[manifest.NamedResource]struct {
+				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+				Complete bool
+			}{}
+		}
+		failure = o.prepareNeededHistory(ctx,
+			slices.SortedFunc(maps.Keys(o.loader.Options.HistoryOwners), manifest.NamedResource.Compare), o.history)
+	}
 	var proposal *loader.Admission
 	if failure == nil {
 		proposal, failure = o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
@@ -397,7 +409,7 @@ func (r *renderInvocation) completeDiscovery(ctx context.Context) {
 func (r *renderInvocation) qualifyDeclarations(ctx context.Context) error {
 	for i := range r.results {
 		o := r.results[i].Orchestrator
-		if o == nil || o.loader == nil {
+		if o == nil || !o.filter.Enabled() {
 			continue
 		}
 		other, j, found := r.opposite(i)
@@ -532,7 +544,7 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 func (r *renderInvocation) installAdmission(ctx context.Context) {
 	for i := range r.results {
 		o := r.results[i].Orchestrator
-		if o == nil || o.loader == nil {
+		if o == nil || !o.filter.Enabled() {
 			continue
 		}
 		r.wg.Go(func() {
@@ -566,7 +578,7 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 		}
 		r.wg.Go(func() {
 			defer o.stop()
-			if o.loader == nil {
+			if !o.filter.Enabled() {
 				o.completeBootstrap()
 				if failure := o.buildChangeFilter(ctx); failure != nil {
 					r.results[i].Orchestrator = nil

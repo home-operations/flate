@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -208,11 +209,11 @@ func TestSelection_AcceptedFootprintReplacement(t *testing.T) {
 		Name:      "second",
 	}
 	acceptInputsForTest(t, st, obj.Named(), []manifest.NamedResource{first})
-	before := slices.Collect(st.RequiredInputs(obj.Named()))
+	before := maps.Collect(st.RequiredInputs(obj.Named()))
 	acceptInputsForTest(t, st, obj.Named(), []manifest.NamedResource{second})
-	assert.Diff(t, slices.Collect(st.RequiredInputs(obj.Named())), []manifest.NamedResource{second})
-	assert.Diff(t, before, []manifest.NamedResource{first})
-	assert.Equal(t, len(slices.Collect(st.RequiredInputs(testutil.HelmReleaseID("apps", "absent")))), 0)
+	assert.Diff(t, maps.Collect(st.RequiredInputs(obj.Named())), map[manifest.NamedResource]bool{second: false})
+	assert.Diff(t, before, map[manifest.NamedResource]bool{first: false})
+	assert.Equal(t, len(maps.Collect(st.RequiredInputs(testutil.HelmReleaseID("apps", "absent")))), 0)
 }
 
 func TestSelection_SkippedHasNoConsumedPrerequisites(t *testing.T) {
@@ -236,7 +237,7 @@ func TestSelection_SkippedHasNoConsumedPrerequisites(t *testing.T) {
 	e.Close()
 	for range st.Sweep() {
 	}
-	assert.Equal(t, len(slices.Collect(st.RequiredInputs(obj.Named()))), 0)
+	assert.Equal(t, len(maps.Collect(st.RequiredInputs(obj.Named()))), 0)
 	info, _ := st.GetStatus(obj.Named())
 	assert.Equal(t, info.Outcome() == store.OutcomeSuspended, true)
 }
@@ -253,11 +254,11 @@ func TestSelection_WithdrawsStaleRequiredFootprint(t *testing.T) {
 	reads.RequireData(dependency)
 	reads.Accept(store.AssessmentReconciled)
 	defer reads.Retire()
-	assert.Diff(t, slices.Collect(st.RequiredInputs(obj.Named())), []manifest.NamedResource{dependency})
+	assert.Diff(t, maps.Collect(st.RequiredInputs(obj.Named())), map[manifest.NamedResource]bool{dependency: false})
 	changed := obj.Clone()
 	changed.Path = "changed"
 	st.AddObject(changed)
-	assert.Equal(t, len(slices.Collect(st.RequiredInputs(obj.Named()))), 0)
+	assert.Equal(t, len(maps.Collect(st.RequiredInputs(obj.Named()))), 0)
 }
 
 func TestSelection_AcceptedWarningWithdrawal(t *testing.T) {

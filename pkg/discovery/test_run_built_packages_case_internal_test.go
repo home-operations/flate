@@ -96,7 +96,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		if lifetime == "changed" {
 			assert.FatalIf(
 				t,
-				trees.PreviousEntry(t.Context(), req).Records != nil,
+				previousPackageHistory(t, trees, &req).Records != nil,
 				"%v",
 				"changed consumed resource retained stale accepted history",
 			)

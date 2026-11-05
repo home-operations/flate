@@ -27,7 +27,9 @@ func TestEntryReceipt_RecordsHistory(t *testing.T) {
 		Path: root, Input: &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root, LocalRoot: root},
 		Trees: kustomize.NewTreeCache(owner, nil, nil), Work: scope,
 	}}
-	d.entryReceipt(t.Context(), &Admission{qualification: &entryQualification{}})
+	admission := &Admission{qualification: &entryQualification{}}
+	d.entryReceipt(t.Context(), admission, d.cfg.Input)
+	d.entryReceipt(t.Context(), admission, d.cfg.Input)
 	var preparation, service manifest.WorkCounts
 	for _, record := range scope.Snapshot(0) {
 		assert.Equal(t, record.Key.Source, manifest.BootstrapSourceID)

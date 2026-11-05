@@ -156,6 +156,7 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 	}}
 	o.store.AddObject(supplier)
 	o.store.AddObject(reader)
+	o.loader.Index = o.index
 	o.store.UpdateStatus(supplier.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "retained"})
 	return r4Fixture{o: o, reader: reader.Named(), supplier: supplier.Named(), target: target}
 }

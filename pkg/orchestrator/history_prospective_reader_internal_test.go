@@ -10,7 +10,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -280,7 +279,7 @@ func testHistoryProspectiveReaderCase(t *testing.T, testCaseInput testHistoryPro
 		assert.NoError(t, reopened.Close())
 		assert.FatalIf(
 			t,
-			!slices.Contains(owners, producer),
+			len(owners[producer]) == 0,
 			"reopened history owners = %v, want ResourceSet %s",
 			owners,
 			producer,
@@ -479,7 +478,7 @@ spec:
 	}
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.NoError(t, fresh.lookupHistory(t.Context()))
-	assert.Equal(t, slices.Contains(fresh.loader.Options.HistoryOwners, owner), true)
+	assert.Equal(t, len(fresh.loader.Options.HistoryOwners[owner]) != 0, true)
 	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
 	assert.FatalIf(
 		t,

@@ -6,6 +6,10 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
+func (c *objectCell) ordinaryDemand() bool {
+	return c.ordinary || !c.included && !c.excluded
+}
+
 type capture struct {
 	capturePayload
 
@@ -13,6 +17,7 @@ type capture struct {
 	accepted    bool
 	independent bool
 	classified  bool
+	ordinary    bool
 	bound       bool
 	binding     *Input
 	support     *Input
@@ -60,6 +65,7 @@ func (sh *shard) captureLocked(
 	if view != nil {
 		*view = capture{
 			classified:  cell.classified && !cell.retired && cell.bound(),
+			ordinary:    cell.ordinaryDemand(),
 			independent: cell.independent,
 			accepted:    cell.rooted,
 			generation:  cell.generation,

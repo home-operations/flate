@@ -23,6 +23,7 @@ type AssessmentKind uint8
 const (
 	AssessmentReconciled AssessmentKind = iota
 	AssessmentReused
+	AssessmentQualificationSettled
 	AssessmentEntryBinding
 )
 

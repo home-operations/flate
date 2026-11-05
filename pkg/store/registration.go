@@ -28,6 +28,7 @@ type headKey struct {
 
 type registrationHead struct {
 	generation     atomic.Uint64
+	ordinary       atomic.Bool
 	first          atomic.Pointer[registration]
 	selected       atomic.Pointer[producerSlot]
 	position       atomic.Int64
@@ -63,8 +64,15 @@ func (h *registrationHead) stamp() uint64 {
 	return generation
 }
 
+const (
+	demandUnread uint32 = iota
+	demandQualification
+	demandOrdinary
+)
+
 type registration struct {
 	consumed   atomic.Bool
+	ordinary   atomic.Uint32
 	head       *registrationHead
 	generation atomic.Uint64
 	owner      *ReadSet
@@ -228,7 +236,13 @@ func (c *registration) retain() {
 }
 
 func (c *registration) current() bool {
-	if c == nil || c.head == nil || c.consumed.Load() {
+	if c == nil || c.head == nil {
+		return true
+	}
+	if !c.ordinaryCurrent() {
+		return false
+	}
+	if c.consumed.Load() {
 		return true
 	}
 	if c.absent != nil {
@@ -240,12 +254,21 @@ func (c *registration) current() bool {
 	return c.head.generation.Load() == c.generation.Load()
 }
 
+func (c *registration) ordinaryCurrent() bool {
+	demand := c.ordinary.Load()
+	return demand == demandUnread || c.absent != nil || (demand == demandOrdinary) == c.head.ordinary.Load()
+}
+
+func (in *Input) objectCurrent() bool {
+	cell := &in.object
+	if in.view.owner != nil && cell.head != nil && cell.absent == nil {
+		return cell.ordinaryCurrent() && cell.head.stamp() == cell.generation.Load()
+	}
+	return cell.current()
+}
+
 func (in *Input) current() bool {
-	if cell := &in.object; in.view.owner != nil && cell.head != nil && cell.absent == nil {
-		if cell.head.stamp() != cell.generation.Load() {
-			return false
-		}
-	} else if !cell.current() {
+	if !in.objectCurrent() {
 		return false
 	}
 	if details := in.details.Load(); details != nil {
@@ -402,7 +425,7 @@ func sweepRegistrations(
 	requeue := false
 	for cell := first; cell != nil; {
 		next := cell.next.Load()
-		changed := cell.generation.Load() != cutoff
+		changed := cell.generation.Load() != cutoff || !cell.ordinaryCurrent()
 		if cell.absent != nil {
 			generation := cell.generation.Load()
 			changed = generation != 0 && generation <= cutoff

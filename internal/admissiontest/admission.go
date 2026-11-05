@@ -12,7 +12,7 @@ import (
 
 // Config describes a fixture's declaration inventory and changed inputs.
 type Config struct {
-	HistoryOwners []manifest.NamedResource
+	HistoryOwners map[manifest.NamedResource][]manifest.SourceEvidence
 	Changes       *change.Set
 	Index         *manifest.DiscoveryIndex
 	Inventory     interface {

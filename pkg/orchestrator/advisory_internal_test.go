@@ -181,7 +181,7 @@ func testRenderTreesClusterAdvisoriesWarmAcquisitionTail(
 					o.tasks.BlockTillDone()
 					assert.FatalIf(
 						t,
-						execution == nil || !execution.Reused || !execution.Valid(),
+						execution == nil || execution.Disposition != store.AssessmentReused || !execution.Valid(),
 						"warm %s did not reuse accepted execution: %+v",
 						id,
 						execution,

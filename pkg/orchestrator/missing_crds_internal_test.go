@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -631,7 +632,11 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase(
 	}
 	assert.Diff(
 		t,
-		slices.SortedFunc(st.RequiredInputs(owner.Named()), manifest.NamedResource.Compare), testCaseInput.required,
+		slices.SortedFunc(
+			maps.Keys(maps.Collect(st.RequiredInputs(owner.Named()))),
+			manifest.NamedResource.Compare,
+		),
+		testCaseInput.required,
 	)
 	(&Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}}}).warnMissingCRDs()
 	var want []manifest.Warning

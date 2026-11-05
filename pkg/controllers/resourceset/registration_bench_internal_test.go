@@ -168,14 +168,14 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		second.Outcome() == schedule.Blocked || !second.Valid() || !reader.Valid() || updates.Load() != 1 ||
 			objectEvents.Load() != 0 ||
 			statusEvents.Load() != 0 ||
-			!second.Reused,
+			second.Disposition != store.AssessmentReused,
 		"equal output: unresolved=%t reader valid=%t artifact/object/status events=%d/%d/%d reused=%t status=%v",
 		second.Outcome() == schedule.Blocked,
 		reader.Valid(),
 		updates.Load()-1,
 		objectEvents.Load(),
 		statusEvents.Load(),
-		second.Reused,
+		second.Disposition == store.AssessmentReused,
 		statusChange.Load(),
 	)
 
@@ -191,14 +191,16 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	third := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer third.Close()
 	changed := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-	assert.FatalIf(t, third.Outcome() == schedule.Blocked || reader.Valid() || updates.Load() != 2 || third.Reused ||
-		changed.Fingerprint == initial.Fingerprint ||
-		!cmp.Equal(changed.Manifests, initial.Manifests),
-
+	assert.FatalIf(
+		t,
+		third.Outcome() == schedule.Blocked || reader.Valid() || updates.Load() != 2 || third.Disposition == store.AssessmentReused ||
+			changed.Fingerprint == initial.Fingerprint ||
+			!cmp.Equal(changed.Manifests, initial.Manifests),
 		"changed fingerprint: reader valid=%t artifact events=%d reused=%t",
 		reader.Valid(),
 		updates.Load(),
-		third.Reused)
+		third.Disposition == store.AssessmentReused,
+	)
 }
 
 func independentWriterFixture(name, color string) *manifest.ResourceSet {

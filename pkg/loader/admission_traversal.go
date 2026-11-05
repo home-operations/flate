@@ -275,6 +275,7 @@ func (c *admissionClosure) walkObject(
 	independent := c.independent(id, owned)
 	evidence := c.declarationEvidence(id)
 	evidence.independent = independent
+	evidence.qualification = !role.ordinary
 	bootstrap := evidence.independent && c.loader.roots[id].independent
 	if !bootstrap && (!evidence.independent || !record.Parent.ReportHidden()) && evidence.allowsOwner(record.Parent) {
 		c.add(record.Parent, admissionRole{needed: true, ordinary: true, dirty: c.states[record.Parent].changed})
@@ -429,7 +430,7 @@ func (c *admissionClosure) selectProductionReaders(
 	if owner != (manifest.NamedResource{}) && filepath.IsAbs(p.Path) {
 		file := c.coordinates(new(p)).indexed
 		for reader := range c.loader.Index.ReadersOfFile(file) {
-			if c.proposal.request.Invocation && !c.loader.frozen && c.role(id).selected && id.KindInfo().Runnable &&
+			if c.proposal.Request.Invocation && !c.loader.frozen && c.role(id).selected && id.KindInfo().Runnable &&
 				p.Authored == id && c.objects.GetDeclaration(id) == nil &&
 				reader.Reader == owner && reader.Source == p.Source && reader.Declaration == (manifest.NamedResource{}) {
 				continue
@@ -511,7 +512,8 @@ func (c *admissionClosure) hydrateDeclaration(
 	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id || c.children[id].Obj != nil {
 		return obj, nil
 	}
-	if current, policy := c.objects.Lookup(id); current != nil && policy.Root {
+	if current, policy := c.objects.Lookup(id); current != nil &&
+		(policy.Root || policy.Origin == manifest.SuppliedDeclaration && !c.loader.AdmitsRoot(c.loader.CatalogObject(id), c.record(id).Path)) {
 		return obj, nil
 	}
 	if !evidence.independent && c.role(id).selected && c.loader.entry == entryKustomize {
@@ -546,7 +548,7 @@ func (c *admissionClosure) hydrateDeclaration(
 func (c *admissionClosure) hydrateBuilt(id manifest.NamedResource, child *store.Child) bool {
 	role := c.role(id)
 	preparation := role.needed && role.ordinary && !role.selected && id.KindInfo().Structural
-	if !c.loader.roots[id].independent && !c.states[id].requested && !preparation {
+	if !c.loader.roots[id].independent && !c.states[id].requested && !preparation && (role.ordinary || !role.needed) {
 		return false
 	}
 	if c.children == nil {
@@ -574,6 +576,10 @@ func (c *admissionClosure) materializeEntryApplication(
 	if applicationSource.Name == "" || applicationSource == manifest.BootstrapSourceID ||
 		c.loader.entry != entryPlain ||
 		!safepath.Contains(c.loader.entryPath, record.Path) {
+		return false
+	}
+	location := SourceView(c.objects, applicationSource, c.loader.SourceRoot)
+	if location.Pinned || location.External {
 		return false
 	}
 	return materializers(materializerDemand{

@@ -194,8 +194,8 @@ func (c *admissionClosure) finishStart(
 			)
 		}
 	}
-	for _, id := range c.loader.Options.HistoryOwners {
-		if !c.replace[id] && c.loader.declarationLocated(id, c.objects) {
+	for _, id := range slices.SortedFunc(maps.Keys(c.loader.Options.HistoryOwners), manifest.NamedResource.Compare) {
+		if !c.replace[id] && c.historyOwnerSupported(id) {
 			c.add(id, admissionRole{needed: true, ordinary: true})
 		}
 	}
@@ -206,6 +206,33 @@ func (c *admissionClosure) finishStart(
 			c.queue = append(c.queue, id)
 		}
 	}
+}
+
+func (c *admissionClosure) historyOwnerSupported(id manifest.NamedResource) bool {
+	if !c.loader.declarationLocated(id, c.objects) {
+		return false
+	}
+	record := c.record(id)
+	root := c.rootEvidence(id)
+	if !root.admitted && c.objects.GetDeclaration(id) == nil && record.Builder == "" && len(c.productions(id)) == 0 {
+		return false
+	}
+	matches := func(source manifest.NamedResource) bool {
+		input, _ := c.objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+		return input != nil && input.Reads.Valid() &&
+			slices.ContainsFunc(c.loader.Options.HistoryOwners[id], func(evidence manifest.SourceEvidence) bool {
+				return evidence.Source == input.HistoryIdentity(source)
+			})
+	}
+	if matches(c.source(id)) {
+		return true
+	}
+	for source := range c.sources(id) {
+		if matches(source) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *admissionClosure) publishComparisonBindings() {

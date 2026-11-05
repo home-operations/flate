@@ -22,20 +22,20 @@ import (
 const frameDomain = "flateks4"
 
 type renderHeader struct {
-	Key     string            `json:"Key"`
-	Binding string            `json:"Binding"`
-	Output  string            `json:"Output"`
-	Size    int               `json:"Size"`
-	Reads   readSetSnapshot   `json:"Reads"`
-	Entry   *entryApplication `json:",omitempty"`
+	Key     string          `json:"Key"`
+	Binding string          `json:"Binding"`
+	Output  string          `json:"Output"`
+	Size    int             `json:"Size"`
+	Reads   readSetSnapshot `json:"Reads"`
 }
 
 type entryApplication struct {
-	Application map[string]any  `json:"Application"`
-	Reads       readSetSnapshot `json:"Reads"`
-	Inventory   acceptedRender  `json:"Inventory"`
-	Inputs      []EntryInput    `json:"Inputs"`
-	Complete    bool            `json:"Complete"`
+	Root        manifest.NamedResource `json:"Root"`
+	Application map[string]any         `json:"Application"`
+	Reads       readSetSnapshot        `json:"Reads"`
+	Inventory   acceptedRender         `json:"Inventory"`
+	Inputs      []EntryInput           `json:"Inputs"`
+	Complete    bool                   `json:"Complete"`
 }
 
 const frameHeaderLimit = 16 << 20
@@ -182,9 +182,7 @@ func decodeFrame(data []byte) (renderFrame, error) {
 	if err := json.Unmarshal(data[framePrefixSize:framePrefixSize+size], &header); err != nil {
 		return renderFrame{}, fmt.Errorf("decode render frame: %w", err)
 	}
-	if header.Entry != nil && (!header.Entry.Complete || header.Entry.Inputs == nil) {
-		return renderFrame{}, errors.New("incomplete entry qualification evidence")
-	}
+
 	begin := framePrefixSize + size
 	if header.Size < 0 || header.Size > len(data)-begin {
 		return renderFrame{}, errors.New("invalid render payload length")
@@ -409,7 +407,7 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 	return io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
 }
 
-// RenderAcceptance binds accepted output and optional entry inventory to its final owner.
+// RenderAcceptance MUST retain the inventory and reads from the accepted emission.
 type RenderAcceptance struct {
 	Work *manifest.RenderWork `json:"-"`
 	// Source identifies the admitted filesystem used by the receipt.
@@ -417,8 +415,7 @@ type RenderAcceptance struct {
 	Sources []manifest.SourceEvidence `json:"Sources"`
 	Owner   manifest.NamedResource    `json:"Owner"`
 	Receipt *manifest.RenderReceipt   `json:"Receipt"`
-	Entry   *manifest.RenderReceipt   `json:"Entry"`
-	// Records is supplied for opaque output or the entry applier receipt.
+	// Records MUST describe accepted output under Owner.
 	Records                 iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
 	DependencySubstitutions values.DependencySubstitutions                              `json:"DependencySubstitutions"`
 	Content                 any                                                         `json:"Content"`
@@ -426,7 +423,7 @@ type RenderAcceptance struct {
 	OutputReads             *store.ReadSet                                              `json:"OutputReads"`
 }
 
-// RecordRender persists accepted output and optional entry applier evidence.
+// RecordRender MUST publish history only after the emission accepts its captured inputs.
 //
 //nolint:gocritic // Preserve the public value API and its accepted-inventory snapshot.
 func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptance) error {
@@ -445,12 +442,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	if !ok || frame.header.Key == "" {
 		return manifest.NewError(manifest.ErrFlux, nil, "invalid kustomize receipt")
 	}
-	if acceptance.Entry != nil {
-		if application, ok := acceptance.Entry.Value().(entryApplication); ok {
-			frame.header.Entry = &application
-			frame.encoded, frame.accepted, frame.raw, frame.acceptedKey = nil, nil, "", ""
-		}
-	}
+
 	if !frame.binding.Dependencies.Equal(acceptance.DependencySubstitutions) {
 		frame.binding.Dependencies = acceptance.DependencySubstitutions
 		frame.header.Binding, frame.lookup, frame.raw = "", "", ""

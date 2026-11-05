@@ -34,14 +34,16 @@ type Kustomization struct {
 
 	Labels      map[string]string `json:"-" yaml:"-"`
 	Annotations map[string]string `json:"-" yaml:"-"`
-	// EntryReceipt retains accepted bootstrap application evidence for an internal entry.
-	EntryReceipt *RenderReceipt `json:"-" yaml:"-"`
 }
 
 // NewEntryKustomization constructs an internal producer for an admitted literal entry.
 func NewEntryKustomization(source NamedResource, path string, applier NamedResource) *Kustomization {
+	name := cmp.Or(NormalizeClaimBase(path), ".")
+	if source != BootstrapSourceID {
+		name = source.Group + "/" + source.Kind + "/" + source.Namespace + "/" + source.Name + "/" + name
+	}
 	return &Kustomization{
-		Name:            cmp.Or(NormalizeClaimBase(path), "."),
+		Name:            name,
 		Namespace:       internalKustomizationNamespace,
 		Path:            path,
 		diagnosticOwner: applier,

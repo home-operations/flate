@@ -167,7 +167,16 @@ func (o *Orchestrator) bootstrap(ctx context.Context) error {
 	if err := o.buildChangeFilter(ctx); err != nil {
 		return err
 	}
-	if o.loader != nil {
+	if o.filter.Enabled() && len(o.admission.EntryProducers()) == 0 {
+		proposal, err := o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
+		if err != nil {
+			return err
+		}
+		if _, err = o.loader.Commit(ctx, proposal, loader.Execution); err != nil {
+			return err
+		}
+	}
+	if o.filter.Enabled() {
 		return o.installAdmission(ctx)
 	}
 	return nil

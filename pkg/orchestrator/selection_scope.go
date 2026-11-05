@@ -53,9 +53,11 @@ func (s *selectionSide) requiredClosure(
 	}
 	q.seedRoots()
 	children := s.run.childrenByParent()
-	for _, kids := range children {
-		for _, id := range kids {
-			q.seed(id)
+	if roots[0].Name != "" {
+		for _, kids := range children {
+			for _, id := range kids {
+				q.seed(id)
+			}
 		}
 	}
 	// Prerequisites MUST NOT expand downward into unrelated siblings.

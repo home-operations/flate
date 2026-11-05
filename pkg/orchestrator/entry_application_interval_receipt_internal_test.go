@@ -23,13 +23,9 @@ import (
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
+	t.Run("cold-self-applier-substituteFrom", testEntrySelfApplier)
 	for _, kind := range []string{"fluxinstance", "kustomization"} {
 		t.Run(kind, func(t *testing.T) {
-			if kind == "kustomization" {
-				t.Skip(
-					"not run: warm Kustomization admissions lose the application receipt; owner orchestrator receipts",
-				)
-			}
 			testEntryApplicationIntervalReceipt(t, kind)
 		})
 	}
@@ -484,9 +480,6 @@ spec: {url: `+fixture.tree.SelfURLs[0]+"}\n")
 
 func testColdSelfApplierSubstituteFrom(t *testing.T) {
 	t.Helper()
-	t.Skip(
-		"not run: a synthetic entry producer remains beside the real applier when the self source carries an ignore policy. Owner: discovery's entry binding",
-	)
 	owners := []manifest.NamedResource{
 		testutil.HelmReleaseID("apps", "typed"),
 		testutil.KustomizationID("apps", "volsync-a"),

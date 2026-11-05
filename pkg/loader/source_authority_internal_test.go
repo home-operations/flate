@@ -95,3 +95,28 @@ spec: {url: https://example.invalid/effective}
 	assert.Equal(t, len(sources), 1)
 	assert.Equal(t, sources[0].Obj, children[0].Obj)
 }
+
+func TestRootAdmission_ReaderOwnership(t *testing.T) {
+	t.Parallel()
+	owner := testutil.KustomizationID("apps", "owner")
+	id := testutil.KustomizationID("apps", "child")
+	for _, tc := range []struct {
+		name     string
+		reader   manifest.FileReader
+		admitted bool
+	}{
+		{name: "render owner", reader: manifest.FileReader{Reader: owner}},
+		{name: "materializer", reader: manifest.FileReader{Reader: owner, Materialize: true}, admitted: true},
+		{name: "exact source", reader: manifest.FileReader{Reader: owner, Exact: true}, admitted: true},
+		{name: "declaration", reader: manifest.FileReader{Reader: owner, Declaration: id}, admitted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := New(store.New())
+			l.Index.Readers = map[string][]manifest.FileReader{"child.yaml": {tc.reader}}
+			record := manifest.DiscoveryRecord{Path: "child.yaml", File: "child.yaml", Authored: id}
+			scope := l.rootAdmission(record.Path, record.File, true)
+			assert.Equal(t, scope.admits(l, id, &record), tc.admitted)
+		})
+	}
+}

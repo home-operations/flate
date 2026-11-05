@@ -79,7 +79,10 @@ func (ts callbackTasks) BlockTillDone() {
 func TestScheduler_CallbacksOutsideMutex(t *testing.T) {
 	t.Parallel()
 	var s *Scheduler
-	call := func() { s.OnPublication() }
+	call := func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
 	var runs atomic.Int64
 	s = New(callbackTasks{Service: task.NewBounded(2), callback: call}, sweepDispatcher{
 		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel) Result {

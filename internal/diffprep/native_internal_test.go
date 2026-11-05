@@ -27,7 +27,7 @@ func TestPrepared_NativeInputs(t *testing.T) {
 	left.Parent, right.Parent = leftParent, rightParent
 	t.Run("report bodies", func(t *testing.T) {
 		t.Parallel()
-		report, err := Prepare([]Doc{left}, []Doc{right}, Options{}).Native()
+		report, err := Prepare([]Doc{left}, []Doc{right}, &Options{}).Native()
 		assert.NoError(t, err)
 		assert.FatalIf(t, len(report.Diffs) != 2, "want two report diffs, got %+v", report.Diffs)
 		for i, want := range []struct {
@@ -56,7 +56,7 @@ func TestPrepared_NativeInputs(t *testing.T) {
 		absent, empty := ncm("cluster", "greeting", "old"), ncm("empty", "greeting", "old")
 		delete(absent.Manifest["metadata"].(map[string]any), "namespace")
 		empty.Manifest["metadata"].(map[string]any)["namespace"] = ""
-		report, err := Prepare([]Doc{absent, empty}, nil, Options{}).Native()
+		report, err := Prepare([]Doc{absent, empty}, nil, &Options{}).Native()
 		assert.NoError(t, err)
 		assert.Equal(t, report.Diffs[0].Path.RootDescription(), "v1/ConfigMap/cluster")
 		assert.Equal(t, report.Diffs[1].Path.RootDescription(), "v1/ConfigMap//empty")
@@ -70,7 +70,7 @@ func TestPrepared_NativeOrder(t *testing.T) {
 
 		left := []Doc{ncm("a", "greeting", "shadowed"), ncm("z", "greeting", "old-z"), ncm("a", "greeting", "old-a")}
 		right := []Doc{ncm("a", "greeting", "new-a"), ncm("z", "greeting", "new-z")}
-		report, err := Prepare(left, right, Options{}).Native()
+		report, err := Prepare(left, right, &Options{}).Native()
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -94,7 +94,7 @@ func TestPrepared_NativeOrder(t *testing.T) {
 		ncm("z-modified", "greeting", "new"),
 	}
 
-	report, err := Prepare(left, right, Options{}).Native()
+	report, err := Prepare(left, right, &Options{}).Native()
 	assert.NoError(t, err)
 	assert.FatalIf(
 		t,

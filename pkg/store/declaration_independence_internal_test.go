@@ -90,7 +90,7 @@ func testGetDeclarationIndependenceLifecycleCase(
 		st.AddObjects([]manifest.BaseManifest{raw})
 	case "included", "preflight":
 		if (*testCaseInput.route) == "included" {
-			st.SetIncluded(raw.Named(), false)
+			st.SetIncluded(raw.Named(), false, false)
 		} else {
 			st.SetPreflight(raw.Named(), "preflight")
 		}
@@ -174,7 +174,7 @@ func testRecordEmittedIndependencePublicationCase(
 	sh.mu.RUnlock()
 	assert.FatalIf(t, present, "%s", "index manufactured an absent object cell")
 	if (*testCaseInput.route) == "metadata" {
-		st.SetIncluded(id, false)
+		st.SetIncluded(id, false, false)
 		st.SetPreflight(id, "preflight")
 	}
 	var absent ReadSet

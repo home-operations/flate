@@ -45,7 +45,7 @@ func (r *ReadSet) Admitted() bool { r.GetObject(r.id); return !r.input(r.id).vie
 func (r *ReadSet) Preflight() string { r.GetObject(r.id); return r.input(r.id).view.preflight }
 
 // RequiredInputs enumerates a completed origin's accepted required footprint.
-func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq[manifest.NamedResource] {
+func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq2[manifest.NamedResource, bool] {
 	sh := s.shardFor(id)
 	sh.mu.RLock()
 	head := sh.cells[id].links
@@ -57,7 +57,38 @@ func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq[manifest.Name
 		}
 	}
 	if reads == nil || !reads.Valid() {
-		return func(func(manifest.NamedResource) bool) {}
+		return func(func(manifest.NamedResource, bool) bool) {}
 	}
 	return reads.Required()
+}
+
+// OrdinaryDemand captures purpose so later promotion invalidates qualification settlement.
+func (r *ReadSet) OrdinaryDemand(id manifest.NamedResource) bool {
+	r.GetObject(id)
+	input := r.input(id)
+	input.ordinaryDemand = true
+	demand := demandQualification
+	if input.view.ordinary {
+		demand = demandOrdinary
+	}
+	input.object.ordinary.Store(demand)
+	if input.object.head != nil && !input.object.ordinaryCurrent() {
+		r.invalid.Store(true)
+		input.object.head.shard.queue(input.object.head)
+	}
+	return input.view.ordinary
+}
+
+// QualificationSettled MUST retain the original assessment's validity around capture matching.
+func (r *ReadSet) QualificationSettled(id manifest.NamedResource) bool {
+	r.GetObject(id)
+	input := r.input(id)
+	if input.object.head == nil || input.object.absent != nil {
+		return false
+	}
+	previous := input.object.head.assessments[0].Load()
+	if previous == nil || previous.kind != AssessmentQualificationSettled || !previous.reads.Valid() {
+		return false
+	}
+	return r.Matches(previous.reads) && !r.OrdinaryDemand(id) && previous.reads.Valid()
 }

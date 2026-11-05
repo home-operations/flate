@@ -91,11 +91,11 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 type objectCell struct {
 	authority
 
-	reference  *Declaration
-	policy     manifest.DeclarationPolicy
-	classified bool
-	static     manifest.BaseManifest
-	document   map[string]any
+	reference            *Declaration
+	policy               manifest.DeclarationPolicy
+	classified, ordinary bool
+	static               manifest.BaseManifest
+	document             map[string]any
 	// Direct writes use this revision; emitted values use the immutable producer record.
 	publication                                              uint64
 	binding                                                  *Input
@@ -437,9 +437,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 	if cell.generation == ^uint64(0) || bucket.generation == ^uint64(0) {
 		sh.requireCapacityLocked(cell.authority, bucket.authority)
 	}
-	if u.target != nil {
-		u.target.consumed.Store(true)
-	}
+	u.consumeTarget()
 	if cell.generation == 0 {
 		sh.admitAbsenceLocked(id, objectFacet, u.reads)
 		cell.links = sh.newHeadLocked(0)
@@ -743,6 +741,7 @@ func (s *Store) addAnchor(uValue *objectUpdate) bool {
 		s.unlockAll()
 		return false
 	}
+	u.consumeTarget()
 	region := s.affectedLocked(changed, manifest.NamedResource{})
 	obj := u.obj
 	if u.effectiveEqual && u.cell.static != nil {

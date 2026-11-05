@@ -104,11 +104,13 @@ func (c *execution) render(
 		return localErr
 	}
 
-	var fp string
-	var attempt store.Emission
+	var (
+		fp      string
+		attempt store.Emission
+		handled bool
+		replay  helm.RenderAdmission
+	)
 	defer attempt.Finish()
-	handled := false
-	var replay helm.RenderAdmission
 	input := helm.RenderOptions{
 		Work:                    c.run.Reads.Work().Scope().RenderWork(),
 		Options:                 c.Options,
@@ -116,14 +118,16 @@ func (c *execution) render(
 		Sources:                 helm.NewSources(&c.run.Reads),
 	}
 	input.Admit = func(admission helm.RenderAdmission) (bool, error) {
+		if c.run.AdmitQualification(admission.Possible) {
+			return true, nil
+		}
 		attempt.Render = admission.Receipt
 		var content any
 		if admission.Key != "" {
 			content = hr.Content(admission.Key, omitted)
 		}
-		var innerLocalErr error
-		fingerprintDedupResult1, fingerprintDedupResult1Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
-		fp, handled, innerLocalErr = fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+		fingerprintDedupResult1, innerLocalErr := c.run.FingerprintDedup(ctx, id, content, &attempt)
+		fp, handled = fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused
 		if handled || innerLocalErr != nil {
 			return handled, innerLocalErr
 		}
@@ -139,6 +143,9 @@ func (c *execution) render(
 	if err != nil {
 		return err
 	}
+	if c.run.Disposition == store.AssessmentQualificationSettled {
+		return nil
+	}
 	if replay.Accepted {
 		docs, receipt = replay.Documents, replay.Receipt
 	}
@@ -151,17 +158,9 @@ func (c *execution) render(
 		})
 	}
 	if handled {
-		return c.Helm.RecordRender(
-			ctx,
-			helm.RenderAcceptance{
-				Owner:   id,
-				Receipt: attempt.Render,
-				Records: attempt.Footprint(),
-				Sources: attempt.SourcePaths(),
-				Work:    c.run.Reads.Work().Scope().RenderWork(),
-			},
-		)
+		return c.recordRender(ctx, id, &attempt)
 	}
+
 	hr.EmissionPolicy().Stamp(docs)
 
 	parseChildrenResult2 := c.run.ParseChildren(
@@ -174,6 +173,10 @@ func (c *execution) render(
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
+	return c.recordRender(ctx, id, &attempt)
+}
+
+func (c *execution) recordRender(ctx context.Context, id manifest.NamedResource, attempt *store.Emission) error {
 	return c.Helm.RecordRender(
 		ctx,
 		helm.RenderAcceptance{

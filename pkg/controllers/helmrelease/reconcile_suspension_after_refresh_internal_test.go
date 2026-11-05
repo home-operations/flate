@@ -175,7 +175,8 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	initial, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(
 		t,
-		!ok || initialRun.Outcome() == schedule.Blocked || initialRun.Reused || len(initial.Manifests) != 2,
+		!ok || initialRun.Outcome() == schedule.Blocked || initialRun.Disposition == store.AssessmentReused ||
+			len(initial.Manifests) != 2,
 		"%v",
 		"initial two-document render did not settle",
 	)
@@ -229,12 +230,12 @@ func testReconcileSyntheticChartReplayContentTail(
 	replay := (*tailCaseInput.reconcile)()
 	after := (*tailCaseInput.st).GetArtifact((*tailCaseInput.hr).Named(), store.ArtifactContent).(*store.Emission)
 	assert.ErrorIf(t, pending.Load(), "%v", "equal synthetic-chart replay transiently became Pending")
-	assert.ErrorIf(t, replay.Outcome() == schedule.Blocked || !replay.Reused ||
+	assert.ErrorIf(t, replay.Outcome() == schedule.Blocked || replay.Disposition != store.AssessmentReused ||
 		after.Fingerprint != (*tailCaseInput.initial).Fingerprint,
 
 		"same content after synthetic publication: unresolved=%t reused=%t fingerprint=%q, want %q",
 		replay.Outcome() == schedule.Blocked,
-		replay.Reused,
+		replay.Disposition == store.AssessmentReused,
 		after.Fingerprint, (*tailCaseInput.initial).
 			Fingerprint)
 
@@ -250,7 +251,7 @@ func testReconcileSyntheticChartReplayContentTail(
 	withValues := (*tailCaseInput.st).GetArtifact((*tailCaseInput.hr).Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(
 		t,
-		valuesRun.Outcome() == schedule.Blocked || valuesRun.Reused || withValues.Fingerprint == after.Fingerprint ||
+		valuesRun.Outcome() == schedule.Blocked || valuesRun.Disposition == store.AssessmentReused || withValues.Fingerprint == after.Fingerprint ||
 			renderedConfigMapValue(testutil.DocumentMaps(withValues.Manifests), "value") != "second" ||
 			len(withValues.Manifests) != 2,
 		"%v",
@@ -266,14 +267,14 @@ func testReconcileSyntheticChartReplayContentTail(
 		)
 	sourceRun := (*tailCaseInput.reconcile)()
 	withSource := (*tailCaseInput.st).GetArtifact((*tailCaseInput.hr).Named(), store.ArtifactContent).(*store.Emission)
-	assert.FatalIf(t, sourceRun.Outcome() == schedule.Blocked || sourceRun.Reused ||
+	assert.FatalIf(t, sourceRun.Outcome() == schedule.Blocked || sourceRun.Disposition == store.AssessmentReused ||
 		withSource.Fingerprint == withValues.Fingerprint ||
 		renderedConfigMapValue(testutil.DocumentMaps(withSource.Manifests), "source") != "two" ||
 		len(withSource.Manifests) != 2,
 
 		"changed chart content: unresolved=%t reused=%t fingerprint=%q previous=%q source=%q documents=%d",
 		sourceRun.Outcome() == schedule.Blocked,
-		sourceRun.Reused,
+		sourceRun.Disposition == store.AssessmentReused,
 		withSource.Fingerprint,
 		withValues.Fingerprint,
 		renderedConfigMapValue(testutil.DocumentMaps(withSource.Manifests), "source"),

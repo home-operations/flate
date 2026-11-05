@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -108,16 +109,13 @@ func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
 }
 
 func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
-	observeEntry := o.entryBinding == (discovery.Binding{})
 	unsubAdd := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		obj, _ := payload.(manifest.BaseManifest)
 		if obj == nil {
 			sched.OnArrival(id, false)
 			return
 		}
-		if observeEntry {
-			o.admission.AddApplication(o.store, obj)
-		}
+		o.admission.AddApplication(o.store, obj)
 		if err := o.visitNodes(obj, false, sched.OnArrival); err != nil {
 			o.store.UpdateFailure(id, err)
 		}
@@ -169,7 +167,7 @@ func (o *Orchestrator) visitNodes(
 
 func (o *Orchestrator) includeNode(id manifest.NamedResource) bool {
 	included := o.filter.ShouldReconcile(id)
-	o.store.SetIncluded(id, included)
+	o.store.SetIncluded(id, included, o.filter.OrdinaryDemand(id))
 	return included
 }
 
@@ -190,7 +188,7 @@ func (d dagDispatcher) admitRawRoots(ctx context.Context) bool {
 	}
 	if reads != nil {
 		_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, reads)
-		reads.Retire()
+		d.o.store.Retire(reads)
 		if err != nil {
 			d.o.entryFailure = err
 		}
@@ -200,36 +198,64 @@ func (d dagDispatcher) admitRawRoots(ctx context.Context) bool {
 }
 
 func (o *Orchestrator) admitEntry(ctx context.Context) (bool, error) {
-	if o.entryBinding != (discovery.Binding{}) || o.entryFailure != nil {
+	if o.entryFailure != nil {
 		return false, o.entryFailure
 	}
 	for {
-		inputs := o.admission.EntryInputs()
+		inputs := o.admission.EntryProducers()
 		root, binding, err := o.admission.BindEntry(ctx, o.store)
 		if err != nil {
 			return false, err
 		}
-		if root == nil {
-			if slices.Equal(inputs, o.admission.EntryInputs()) {
-				return false, nil
-			}
-			if err := o.installAdmission(ctx); err != nil {
-				return false, err
+		if binding.Reads != nil {
+			accepted, acceptErr := o.commitEntry(ctx, root, &binding)
+			if acceptErr != nil || accepted {
+				return accepted, acceptErr
 			}
 			continue
 		}
-		o.entryBinding = binding
-		if binding.Entry != nil {
-			if err := o.installAdmission(ctx); err != nil {
-				return false, err
-			}
+		if slices.Equal(inputs, o.admission.EntryProducers()) {
+			return false, nil
 		}
-		if _, err := o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{Obj: root}, nil); err != nil {
+		if err := o.installAdmission(ctx); err != nil {
 			return false, err
 		}
-		o.store.AddObject(root)
+	}
+}
+
+func (o *Orchestrator) commitEntry(
+	ctx context.Context,
+	root *manifest.Kustomization,
+	binding *discovery.Binding,
+) (bool, error) {
+	defer o.store.Retire(binding.Reads)
+	defer binding.Reads.ReleaseCapture()
+	changed := root == nil || root != o.store.GetDeclaration(root.Named())
+	previous := o.entryBinding
+	if changed {
+		incoming := store.Child{}
+		if root != nil {
+			application := manifest.EntryApplication{Source: root.SourceID(), Path: root.Path}
+			incoming = store.Child{Obj: root, Entry: &application}
+		}
+		proposal, err := o.loader.Prepare(ctx, loader.PrepareRequest{Incoming: incoming, Reads: binding.Reads})
+		if err != nil {
+			return false, err
+		}
+		committed, err := o.loader.Commit(ctx, proposal, loader.Execution)
+		if err != nil || !committed || !binding.Reads.Valid() {
+			return false, err
+		}
+	}
+	accepted, err := o.acceptEntry(ctx, binding)
+	if err != nil || !accepted {
+		return false, err
+	}
+	if !changed && previous.Producer == binding.Producer && previous.Source == binding.Source &&
+		previous.Path == binding.Path {
 		return true, nil
 	}
+	return true, o.installAdmission(ctx)
 }
 
 func (o *Orchestrator) visitNodeReferences(
@@ -247,4 +273,36 @@ func (o *Orchestrator) visitNodeReferences(
 		}
 	}
 	return nil
+}
+
+func (o *Orchestrator) acceptEntry(ctx context.Context, binding *discovery.Binding) (bool, error) {
+	accepted, err := o.admission.AcceptEntry(ctx, *binding)
+	if err != nil {
+		return false, err
+	}
+	if accepted == (discovery.Binding{}) {
+		return false, nil
+	}
+	previous := o.entryBinding
+	o.entryBinding = accepted
+	if previous.Producer.ReportHidden() && previous.Producer != accepted.Producer {
+		var seen []manifest.NamedResource
+		owner := manifest.NamedResource{}
+		if accepted.Entry != nil && accepted.Entry.Owner != previous.Producer {
+			owner = accepted.Entry.Owner
+		}
+		for id := owner; id != (manifest.NamedResource{}); {
+			parent, found := o.parentOf(id)
+			if !found || slices.Contains(seen, parent) {
+				break
+			}
+			if id == previous.Producer || parent == previous.Producer {
+				return true, nil
+			}
+			seen = append(seen, parent)
+			id = parent
+		}
+		o.store.DeleteObject(previous.Producer)
+	}
+	return true, nil
 }

@@ -334,7 +334,7 @@ func TestClassify_AdmittedDependencyRejectsExcludedReadiness(t *testing.T) {
 			s := store.New()
 			upstream := &manifest.Kustomization{Name: "upstream", Namespace: "apps"}
 			s.AddObject(upstream)
-			s.SetIncluded(upstream.Named(), false)
+			s.SetIncluded(upstream.Named(), false, false)
 			s.UpdateStatus(upstream.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged})
 			classify := func() schedule.Kind {
 				t.Helper()
@@ -352,7 +352,7 @@ func TestClassify_AdmittedDependencyRejectsExcludedReadiness(t *testing.T) {
 				got := classify()
 				assert.FatalIf(t, got != schedule.Terminal, "excluded dependency: got %v", got)
 			}
-			s.SetIncluded(upstream.Named(), true)
+			s.SetIncluded(upstream.Named(), true, true)
 			{
 				got := classify()
 				assert.FatalIf(

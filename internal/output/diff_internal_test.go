@@ -104,7 +104,7 @@ func TestPrepareLines_NormalizeOnce(t *testing.T) {
 	}
 	before := []map[string]any{manifest.DeepCopyMap(left[0].Manifest), manifest.DeepCopyMap(right[0].Manifest)}
 	calls := 0
-	prepared := diffprep.Prepare(left, right, diffprep.Options{Normalize: func(m map[string]any) {
+	prepared := diffprep.Prepare(left, right, &diffprep.Options{Normalize: func(m map[string]any) {
 		calls++
 		m["metadata"].(map[string]any)["name"] = "x-normalized"
 	}})

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -80,8 +82,9 @@ func TestProducersForPaths_SourcePaths(t *testing.T) {
 			var want []manifest.NamedResource
 			if tc.found {
 				want = []manifest.NamedResource{owner}
+				assert.Diff(t, owners[owner], []manifest.SourceEvidence{{Source: tc.source, Path: tc.path}})
 			}
-			assert.Diff(t, owners, want)
+			assert.Diff(t, slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare), want)
 		})
 	}
 }
@@ -174,7 +177,11 @@ func TestRecordInventory_ConcurrentReuse(t *testing.T) {
 		[]manifest.SourceEvidence{{Source: manifest.SourceIdentity{Root: "/input"}, Path: "apps/shared/cm.yaml"}},
 	)
 	assert.NoError(t, err)
-	assert.Diff(t, owners, []manifest.NamedResource{inventory.History.Owner})
+	assert.Diff(
+		t,
+		slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare),
+		[]manifest.NamedResource{inventory.History.Owner},
+	)
 }
 
 //nolint:paralleltest // Allocation measurements use process-wide test accounting.
@@ -352,7 +359,7 @@ func testProducersForPathsAcceptanceCase(t *testing.T, mode *string,
 	if (*mode) == "accepted" || (*mode) == "rejected" {
 		want = []manifest.NamedResource{owner}
 	}
-	assert.Diff(t, owners, want)
+	assert.Diff(t, slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare), want)
 }
 
 func testProducersForPathsPublicationCase(t *testing.T, mode *string,
@@ -412,5 +419,5 @@ func testProducersForPathsPublicationCase(t *testing.T, mode *string,
 	if (*mode) == "empty replacement" {
 		want = owners[1:]
 	}
-	assert.Diff(t, got, want)
+	assert.Diff(t, slices.SortedFunc(maps.Keys(got), manifest.NamedResource.Compare), want)
 }

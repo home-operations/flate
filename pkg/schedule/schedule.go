@@ -44,6 +44,7 @@ type Result struct {
 type Dispatcher interface {
 	Dispatch(context.Context, NodeID, manifest.DrainLevel) Result
 	// Sweep permits final classification only when the invocation's work is quiescent.
+	// A nonempty result MUST keep the structural boundary open.
 	Sweep(context.Context, bool) []NodeID
 }
 
@@ -221,22 +222,17 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.dispatchNextLocked(runCtx)
 			continue
 		}
-		if s.inFlight != 0 {
-			if !s.published {
-				s.cond.Wait()
-				continue
-			}
-			s.published = false
-			s.mu.Unlock()
-			s.invalidate(s.disp.Sweep(runCtx, false))
-			s.mu.Lock()
+		quiescent := s.inFlight == 0
+		if !quiescent && !s.published {
+			s.cond.Wait()
 			continue
 		}
 		s.published = false
 		s.mu.Unlock()
-		s.invalidate(s.disp.Sweep(runCtx, true))
+		changed := s.disp.Sweep(runCtx, quiescent)
+		s.invalidate(changed)
 		s.mu.Lock()
-		if len(s.runq) > 0 || s.err != nil {
+		if !quiescent || len(changed) != 0 || s.published || len(s.runq) > 0 || s.err != nil {
 			continue
 		}
 		parked := s.parkedLocked()

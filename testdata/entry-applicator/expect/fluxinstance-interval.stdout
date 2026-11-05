@@ -48,10 +48,10 @@
     },
     {
       "parent": {
-        "group": "",
-        "kind": "",
-        "namespace": "",
-        "name": "",
+        "group": "fluxcd.controlplane.io",
+        "kind": "FluxInstance",
+        "namespace": "apps",
+        "name": "flux",
         "path": "kubernetes/apps"
       },
       "apiVersion": "kustomize.toolkit.fluxcd.io/v1",

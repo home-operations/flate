@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"iter"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +18,7 @@ import (
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/application"
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/internal/resourcesetinput"
 )
@@ -123,12 +126,56 @@ func (p *ProducerProjections) Clear() {
 	p.cache.Store(nil)
 }
 
-// ProjectProducer derives static emitted identities and inputs from a producer declaration.
-func ProjectProducer(object BaseManifest) TemplateProjection {
-	if resourceSet, ok := object.(*ResourceSet); ok {
-		return resourceSet.templateProjection()
+// ProjectProducer derives static facts and screens complete producer inputs for entry applications.
+func ProjectProducer(object BaseManifest, content iter.Seq[[]byte]) (TemplateProjection, bool) {
+	var projection TemplateProjection
+	if producer, ok := object.(interface{ templateProjection() TemplateProjection }); ok {
+		projection = producer.templateProjection()
 	}
-	return TemplateProjection{}
+	if producer, ok := object.(interface{ entryPrecondition(iter.Seq[[]byte]) bool }); ok {
+		return projection, producer.entryPrecondition(content)
+	}
+	return projection, true
+}
+
+func (h *HelmRelease) entryPrecondition(content iter.Seq[[]byte]) bool {
+	declaration, err := json.Marshal(h)
+	return err != nil || application.Contains(declaration) || possibleApplication(content)
+}
+
+func (r *ResourceSet) entryPrecondition(content iter.Seq[[]byte]) bool {
+	inputs, err := json.Marshal(r.Inputs)
+	if err != nil || application.Contains(inputs) || application.Contains([]byte(r.ResourcesTemplate)) {
+		return true
+	}
+	for _, resource := range r.Resources {
+		if application.Contains(resource.Raw) {
+			return true
+		}
+	}
+	for _, step := range r.Steps {
+		if application.Contains([]byte(step.ResourcesTemplate)) {
+			return true
+		}
+		for _, resource := range step.Resources {
+			if application.Contains(resource.Raw) {
+				return true
+			}
+		}
+	}
+	return possibleApplication(content)
+}
+
+func possibleApplication(content iter.Seq[[]byte]) bool {
+	if content == nil {
+		return true
+	}
+	for data := range content {
+		if application.Contains(data) {
+			return true
+		}
+	}
+	return false
 }
 
 func projectTemplate(data []byte, namespace string, projected bool, yield func(BaseManifest, string)) {
@@ -167,7 +214,7 @@ func (p *TemplateProjection) addObject(object BaseManifest, authoredNamespace st
 		keep(object)
 		p.Targets = append(p.Targets, ProducerTargets(object)...)
 	}
-	nested := ProjectProducer(object)
+	nested, _ := ProjectProducer(object, nil)
 	p.Inputs = append(p.Inputs, nested.Inputs...)
 	p.Targets = append(p.Targets, nested.Targets...)
 	for _, object := range nested.Objects {

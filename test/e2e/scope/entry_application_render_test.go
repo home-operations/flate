@@ -11,11 +11,6 @@ import (
 func TestE2E_EntryApplicationRendered(t *testing.T) {
 	for _, name := range []string{"entry-application-rendered-fluxinstance", "entry-application-rendered-kustomization"} {
 		t.Run(name, func(t *testing.T) {
-			if name == "entry-application-rendered-fluxinstance" {
-				t.Skip(
-					"not run: the FluxInstance alternate application path renders no ConfigMap at the new path; owner discovery",
-				)
-			}
 			fixture := harness.Open(t, "entry-applicator", name)
 			want := fixture.Want(t)
 			first, second := fixture.Run(t), fixture.Run(t)

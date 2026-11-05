@@ -4,11 +4,15 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func (c *admissionClosure) selectIncoming() error {
 	id := c.incoming.Obj.Named()
 	role := c.role(id)
+	if c.incoming.Entry != nil && !role.needed {
+		return nil
+	}
 	eligible := c.loader.Options.Selection.Matches(id)
 	var affected, footprintRead bool
 	if eligible && !c.loader.Options.Selection.Changed {
@@ -89,16 +93,15 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 	if _, _, applies := c.incoming.Obj.SourcePath(); !applies || role.needed {
 		return role
 	}
-	if producer, ok := c.incoming.Obj.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok && !c.loader.Options.Selection.Changed &&
-		slices.ContainsFunc(c.loader.Options.Selection.Roots, func(root manifest.NamedResource) bool {
-			return root.Name == "" && producer.EmissionPolicy().MatchesNamespace(root)
-		}) &&
-		slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
-			return p.Owner != (manifest.NamedResource{}) && c.role(p.Owner).needed
-		}) {
-		role.needed = true
+	if output, ok := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission); ok && output.Complete &&
+		output.OutputReads.Valid() {
+		return role
+	}
+	if c.incoming.Entry != nil {
+		return role
+	}
+	if c.namespaceProductionDemand(id) {
+		role.needed, role.ordinary = true, true
 	}
 	//nolint:gocritic // The iterator supplies immutable value snapshots.
 	for target, record := range c.loader.Index.Files() {
@@ -106,6 +109,10 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 		needed := c.role(target).needed
 		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
 			!c.coversDeclaration(c.incoming.Obj, target) {
+			continue
+		}
+		evidence := c.declarationEvidence(target)
+		if evidence.accepted {
 			continue
 		}
 		if record.Parent != (manifest.NamedResource{}) && record.Parent != id &&
@@ -185,4 +192,19 @@ func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) 
 		c.add(reader, admissionRole{needed: true, selected: true, dirty: true})
 	}
 	return nil
+}
+
+func (c *admissionClosure) namespaceProductionDemand(id manifest.NamedResource) bool {
+	if producer, ok := c.incoming.Obj.(interface {
+		EmissionPolicy() manifest.EmissionPolicy
+	}); ok &&
+		slices.ContainsFunc(c.loader.Options.Selection.Roots, func(root manifest.NamedResource) bool {
+			return root.Name == "" && producer.EmissionPolicy().MatchesNamespace(root)
+		}) &&
+		slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
+			return p.Owner != (manifest.NamedResource{}) && c.role(p.Owner).needed
+		}) && (!c.loader.Options.Selection.Changed || c.affected(id, c.incoming.Obj) || c.changedInput(id, id)) {
+		return true
+	}
+	return false
 }

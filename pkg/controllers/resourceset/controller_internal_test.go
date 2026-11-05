@@ -298,7 +298,8 @@ spec: {}
 	assert.FatalIf(t, child.Path != "first",
 		"emitted path = %q, want first", child.Path)
 
-	for _, object := range manifest.ProjectProducer(rs).Objects {
+	projection, _ := manifest.ProjectProducer(rs, nil)
+	for _, object := range projection.Objects {
 		assert.FatalIf(
 			t,
 			object.Named() == childID && object.(*manifest.Kustomization).Path != child.Path,

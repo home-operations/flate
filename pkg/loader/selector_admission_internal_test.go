@@ -337,7 +337,16 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 						nil,
 					)
 					stores[side].UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
-					l.Options.HistoryOwners = []manifest.NamedResource{producer.Named()}
+					l.Options.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
+						producer.Named(): {
+							{
+								Source: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
+									manifest.BootstrapSourceID,
+								),
+								Path: "input.yaml",
+							},
+						},
+					}
 					proposal, err = l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), true)

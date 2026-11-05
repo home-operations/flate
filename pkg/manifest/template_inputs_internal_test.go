@@ -172,7 +172,7 @@ func testTemplateInputsStaticReferencesFirstEvaluatedChildReplacesDraft(
 	}, ParseDocOptions{})
 	object := parsed.Object
 	assert.NoError(t, err)
-	projection := ProjectProducer(object)
+	projection, _ := ProjectProducer(object, nil)
 	assert.Equal(t, len(projection.Objects), 1)
 	assert.Equal(t, projection.Objects[0].(*Kustomization).Path, "first")
 	assert.Equal(t, len(projection.Targets), 1)

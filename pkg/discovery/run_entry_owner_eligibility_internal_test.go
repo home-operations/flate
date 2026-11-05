@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -81,7 +82,7 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 	assert.Diff(t, packageHistory(t, trees, &req, producer.Named()), want)
 	assert.FatalIf(
 		t,
-		trees.PreviousEntry(t.Context(), req).Owner == owner,
+		previousPackageHistory(t, trees, &req).Owner == owner,
 		"%v",
 		"transformed child replaced the accepted producer",
 	)
@@ -147,6 +148,7 @@ spec:
 					t.Context(),
 					owner,
 					st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+					nil,
 				)
 				assert.FatalIf(
 					t,
@@ -186,7 +188,7 @@ spec:
 			req := preparedRequest(t, &d.cfg, owner, source)
 			assert.FatalIf(
 				t,
-				trees.PreviousEntry(t.Context(), req).Records != nil,
+				previousPackageHistory(t, trees, &req).Records != nil,
 				"%v",
 				"failed package persisted a partial accepted batch",
 			)
@@ -205,7 +207,7 @@ spec:
 			_, err := d.loader.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
-			assert.NoError(t, d.prepareProducer(t.Context(), owner, source))
+			assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
 			assert.NoError(t, d.acceptPrepared(t.Context()))
 			assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 1)
 			closeCache()
@@ -236,7 +238,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	assert.NoError(t, err)
 	req := preparedRequest(t, &d.cfg, owner, source)
 	assert.NoError(t, os.RemoveAll(cacheDir))
-	assert.NoError(t, d.prepareProducer(t.Context(), owner, source))
+	assert.NoError(t, d.prepareProducer(t.Context(), owner, source, nil))
 	err = d.acceptPrepared(t.Context())
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) ||
 		!strings.Contains(
@@ -254,7 +256,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	trees, closeCache = testReceiptTreesResult6.trees, testReceiptTreesResult6.close
 	assert.FatalIf(
 		t,
-		trees.PreviousEntry(t.Context(), req).Records != nil,
+		previousPackageHistory(t, trees, &req).Records != nil,
 		"%v",
 		"failed publication left durable accepted history",
 	)
@@ -492,6 +494,9 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 		}
 	}
 	st := store.New()
+	encoded, err := json.Marshal(testutil.ObjectDocument(owner))
+	assert.NoError(t, err)
+	input["entry/owner.yaml"].Data = encoded
 	st.AddObject(owner)
 	if (*testCaseInput) == "transitive_admitted" {
 		st.AddObject(ready)
@@ -504,7 +509,7 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 			Path:  root + "/entry",
 		},
 	)
-	_, err := d.resolveEntrySources(t.Context(), false)
+	_, err = d.resolveEntrySources(t.Context(), false)
 	assert.NoError(t, err)
 	d.loader.SourceRoot = root
 	_, err = d.loader.Load(t.Context(), root+"/entry", manifest.NamedResource{}, nil)
@@ -593,7 +598,7 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 		previous := (*tailCaseInput.d).prepared[(*tailCaseInput.owner).Named()].receipt
 		input, _, err := kustomize.SourceInput((*tailCaseInput.st), selected)
 		assert.NoError(t, err)
-		assert.NoError(t, (*tailCaseInput.d).prepareProducer(t.Context(), selected, input))
+		assert.NoError(t, (*tailCaseInput.d).prepareProducer(t.Context(), selected, input, nil))
 		declaration := (*tailCaseInput.d).loader.Index.Records[(*tailCaseInput.owner).Named()].Declaration
 		assert.FatalIf(
 			t,
@@ -617,8 +622,11 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 		)
 		projected := *(*tailCaseInput.owner)
 		projected.DependsOn = []kustomizev1.DependencyReference{{Name: "${NEXT}", Namespace: "${NS}"}}
-		(*tailCaseInput.st).
-			AddObject(&projected)
+		parent := &manifest.ResourceSet{Name: "updates", Namespace: "apps"}
+		(*tailCaseInput.st).AddObject(parent)
+		(*tailCaseInput.st).RecordEmitted(parent.Named(), &store.Emission{
+			Children: []store.Child{{Obj: &projected, Doc: testutil.ObjectDocument(&projected)}}, Complete: true,
+		}, nil)
 		vars := func(value string) values.DependencySubstitutions {
 			return values.NewDependencySubstitutions(
 				[]*manifest.Kustomization{

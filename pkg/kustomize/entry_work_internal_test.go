@@ -8,7 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestPreviousEntry_RecordsHistory(t *testing.T) {
+func TestPreviousRender_RecordsHistory(t *testing.T) {
 	t.Parallel()
 	if !renderPersistenceEligible(t) {
 		t.Skip("requires a clean VCS-stamped build for positive persistence")
@@ -22,8 +22,9 @@ func TestPreviousEntry_RecordsHistory(t *testing.T) {
 	}
 	scope := recorder.Scope()
 	h.req.Work = scope.RenderWork()
-	evidence := h.cache.PreviousEntry(t.Context(), h.req)
-	assert.Equal(t, evidence.Owner, h.req.Spec.Named())
+	_, receipt, available := h.cache.PreviousRender(t.Context(), h.req)
+	_, complete := h.cache.RenderHistory(h.req.Spec.Named(), receipt, acceptedInput)
+	assert.Equal(t, available && complete, true)
 	var preparation, service manifest.WorkCounts
 	for _, record := range scope.Snapshot(0) {
 		assert.Equal(t, record.Key.Owner, h.req.Spec.Named())

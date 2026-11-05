@@ -22,7 +22,7 @@ type Admission struct {
 	Revision   uint64
 	Namespaces []string
 	reads      *store.ReadSet
-	request    PrepareRequest
+	Request    PrepareRequest
 	stale      bool
 	sources    []manifest.NamedResource
 }
@@ -55,7 +55,7 @@ func (a *Admission) Retire() {
 		a.reads.Retire()
 		a.reads = nil
 		a.Objects, a.sources = nil, nil
-		a.request = PrepareRequest{}
+		a.Request = PrepareRequest{}
 	}
 }
 
@@ -82,7 +82,7 @@ func (l *Loader) Commit(ctx context.Context, proposal *Admission, stage CommitSt
 			proposal.Retire()
 			return true, nil
 		}
-		request := proposal.request
+		request := proposal.Request
 		proposal.Retire()
 		if request.Reads != nil && !request.Reads.Valid() {
 			return false, nil
@@ -96,7 +96,7 @@ func (l *Loader) Commit(ctx context.Context, proposal *Admission, stage CommitSt
 }
 
 func (a *Admission) guardCurrent() bool {
-	return !a.stale && (a.request.Reads == nil || a.request.Reads.Valid())
+	return !a.stale && (a.Request.Reads == nil || a.Request.Reads.Valid())
 }
 
 func (l *Loader) commitMembership(proposal *Admission, stage CommitStage) bool {
@@ -111,7 +111,7 @@ func (l *Loader) commitMembership(proposal *Admission, stage CommitStage) bool {
 	}
 	l.constructionPurpose.Store(nil)
 	for _, id := range added {
-		l.Store.SetIncluded(id, true)
+		l.Store.SetIncluded(id, true, l.Options.Filter.OrdinaryDemand(id))
 	}
 	return true
 }
@@ -122,11 +122,7 @@ func (a *Admission) admitObjects(ctx context.Context) {
 			return
 		}
 		child := a.Objects[i]
-		owner := manifest.NamedResource{}
-		if a.request.Reads != nil && child.Entry != nil {
-			owner = a.request.Reads.ID()
-		}
-		a.reads.Admit(child, a.sources[i], owner)
+		a.reads.Admit(child, a.sources[i], manifest.NamedResource{})
 	}
 }
 
@@ -203,7 +199,7 @@ func (l *Loader) Prepare(
 	}
 	closure := admissionClosure{loader: l, incoming: request.Incoming, history: request.History}
 	proposal := &closure.result
-	proposal.request = request
+	proposal.Request = request
 	proposal.reads = &store.ReadSet{}
 	owner := manifest.NamedResource{}
 	if request.Reads != nil {
@@ -239,9 +235,9 @@ func (c *admissionClosure) captureIncoming() {
 		return
 	}
 	if len(c.incoming.Productions) == 0 {
-		c.incoming.Productions = c.proposal.reads.Productions(c.incoming.Obj.Named(), nil)
+		c.incoming.Productions = c.proposal.reads.Promotions(c.incoming.Obj.Named(), nil)
 	}
-	guard := c.proposal.request.Reads
+	guard := c.proposal.Request.Reads
 	if guard == nil {
 		return
 	}
@@ -341,7 +337,7 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 	previous := c.role(id)
 	role.needed, role.selected, role.dirty = true, role.selected || previous.selected, role.dirty || previous.dirty
 	role.ordinary = role.ordinary || previous.ordinary || role.selected
-	if previous == role && (!c.proposal.request.Invocation || c.incoming.Obj != nil) &&
+	if previous == role && (!c.proposal.Request.Invocation || c.incoming.Obj != nil) &&
 		(c.incoming.Obj == nil || c.incoming.Obj.Named() != id) {
 		record := c.record(id)
 		if !c.loader.roots[id].admitted && record.Path == "" && c.loader.candidates[id].Obj == nil ||
@@ -401,7 +397,7 @@ func (c *admissionClosure) seedAdmission(
 		}
 	}
 	if request.Reads != nil {
-		for id := range request.Reads.Required() {
+		for id, qualification := range request.Reads.Required() {
 			if c.states == nil {
 				c.states = map[manifest.NamedResource]admissionState{}
 			}
@@ -410,7 +406,7 @@ func (c *admissionClosure) seedAdmission(
 			c.states[id] = state
 			role := c.role(id)
 			role.needed = true
-			role.ordinary = true
+			role.ordinary = role.ordinary || !qualification
 			c.add(id, role)
 		}
 	}

@@ -189,7 +189,7 @@ func (c *execution) resolve(obj manifest.BaseManifest, resolved *store.SourceArt
 	if artifact != nil && artifact.FS != nil &&
 		(artifact.Reads.Valid() || c.run.Reads.Matches(artifact.Reads)) {
 		c.run.Reads.CarryAdvisories(artifact.Reads)
-		c.run.Reused = true
+		c.run.Disposition = store.AssessmentReused
 		return artifact
 	}
 	return resolved
@@ -209,7 +209,7 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	if err != nil {
 		return manifest.NewError(manifest.ErrSourceSkipped, err, "")
 	}
-	if c.run.Reused {
+	if c.run.Disposition == store.AssessmentReused {
 		if artifact != nil && !artifact.Reads.Valid() {
 			c.Store.SetArtifact(obj.Named(), artifact.WithReads(&c.run.Reads))
 		}

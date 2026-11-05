@@ -21,10 +21,10 @@ func TestClusterReport_NativeAggregateIndexes(t *testing.T) {
 	}
 	groups := make([]dyff.Report, 2)
 	var err error
-	groups[0], err = diffprep.Prepare([]diffprep.Doc{doc("same", "old"), doc("removed", "old")}, []diffprep.Doc{doc("same", "new")}, diffprep.Options{}).
+	groups[0], err = diffprep.Prepare([]diffprep.Doc{doc("same", "old"), doc("removed", "old")}, []diffprep.Doc{doc("same", "new")}, &diffprep.Options{}).
 		Native()
 	assert.NoError(t, err)
-	groups[1], err = diffprep.Prepare([]diffprep.Doc{doc("same", "old")}, []diffprep.Doc{doc("same", "new"), doc("added", "new")}, diffprep.Options{}).
+	groups[1], err = diffprep.Prepare([]diffprep.Doc{doc("same", "old")}, []diffprep.Doc{doc("same", "new"), doc("added", "new")}, &diffprep.Options{}).
 		Native()
 	assert.NoError(t, err)
 	aggregate := aggregateNative(groups)

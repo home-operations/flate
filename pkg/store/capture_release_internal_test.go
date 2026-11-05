@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"maps"
 	"runtime"
 	"slices"
 	"testing"
@@ -104,13 +105,13 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 			input := &manifest.ConfigMap{Name: fmt.Sprintf("input-%d", i), Namespace: "apps"}
 			st.AddObject(input)
 			binding.GetObject(input.Named())
-			binding.RequireData(input.Named())
+			binding.RequireQualification(input.Named())
 		}
 		binding.Require(manifest.DependencyRef{NamedResource: origin.Named(), ReadyExpr: new("true"), Artifact: true})
 		binding.Require(
 			manifest.DependencyRef{NamedResource: origin.Named(), ReadyExpr: new("false"), ArtifactOnly: true},
 		)
-		before := slices.Collect(binding.Required())
+		before := maps.Collect(binding.Required())
 		gates := slices.Collect(binding.Gates())
 		start, observed := make(chan struct{}), make(chan bool)
 		go func() {
@@ -120,7 +121,7 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		close(start)
 		binding.Accept(AssessmentEntryBinding)
 		assert.Equal(t, <-observed, true)
-		after := slices.Collect(binding.Required())
+		after := maps.Collect(binding.Required())
 		assert.Diff(t, after, before)
 		assert.Diff(t, slices.Collect(binding.Gates()), gates)
 		st.DeleteObject((&manifest.Kustomization{Name: "consumed", Namespace: "apps"}).Named())
@@ -163,7 +164,7 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 			}
 			proposal.GetObject(id)
 			proposal.GetStatus(id)
-			proposal.RequireData(id)
+			proposal.RequireQualification(id)
 		}
 		child := Child{Obj: &manifest.ConfigMap{Name: "admitted", Namespace: "apps"}}
 		proposal.Admit(Child{Obj: child.Obj}, manifest.BootstrapSourceID, manifest.NamedResource{})
@@ -171,7 +172,7 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		proposal.Require(manifest.DependencyRef{NamedResource: origin.Named(), ReadyExpr: new("true")})
 		binding.GetDeclaration(child.Obj.Named())
 		binding.Accept(AssessmentEntryBinding)
-		before := slices.Collect(proposal.Required())
+		before := maps.Collect(proposal.Required())
 		gates := slices.Collect(proposal.Gates())
 		source := proposal.input(manifest.BootstrapSourceID)
 		start, observed := make(chan struct{}), make(chan bool)
@@ -183,7 +184,7 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 		proposal.ReleaseCapture()
 		assert.Equal(t, <-observed, true)
 		assert.Equal(t, proposal.Valid(), true)
-		assert.Diff(t, slices.Collect(proposal.Required()), before)
+		assert.Diff(t, maps.Collect(proposal.Required()), before)
 		assert.Diff(t, slices.Collect(proposal.Gates()), gates)
 		proposal.ReleaseCapture()
 		proposal.Retire()

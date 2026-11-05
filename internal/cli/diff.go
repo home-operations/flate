@@ -235,7 +235,7 @@ func (d *diffFlags) payload(inv *selectedInvocation, encoder output.Encoder) sel
 		p := diffprep.Prepare(
 			diffprep.Documents(batches.Orig),
 			diffprep.Documents(batches.Current),
-			diffprep.Options{
+			&diffprep.Options{
 				Subjects: [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{
 					orig.Subjects,
 					current.Subjects,

@@ -541,7 +541,7 @@ func clusterDiffPayloadLoop(t *testing.T, loopInputs struct {
 		prepared := diffprep.Prepare(
 			diffprep.Documents(left),
 			diffprep.Documents(right),
-			diffprep.Options{
+			&diffprep.Options{
 				Subjects:    [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{before.Subjects, after.Subjects},
 				StripAttrs:  diff.DefaultStripAttrs,
 				StripFields: diff.DefaultStripFields,

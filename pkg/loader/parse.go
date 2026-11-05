@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 
 	"sigs.k8s.io/kustomize/api/resource"
 
+	"github.com/home-operations/flate/internal/application"
 	_ "github.com/home-operations/flate/internal/kustomize" // Loader-only SDK entrypoints MUST install the process scope owner at startup.
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -134,6 +136,19 @@ func (r documentReader) decodeFileObjects(
 	}
 	defer func() { _ = f.Close() }()
 	var reader io.Reader = f
+	if r.intent == manifest.ApplicationDocuments {
+		data, readErr := io.ReadAll(f)
+		if readErr != nil {
+			return fmt.Errorf("read %s: %w", path, readErr)
+		}
+		cached := r.cache[path]
+		cached.possible = application.Contains(data)
+		r.cache[path] = cached
+		if !cached.possible {
+			return nil
+		}
+		reader = bytes.NewReader(data)
+	}
 
 	err = r.prepareStream(reader, opts, func(child parsedObject) {
 		if prepared, emit := new(r).prepareFileObject(path, keepRaw, &child); emit {
@@ -163,6 +178,11 @@ func (r documentReader) censusFile(
 		if child.outcome.Err != nil {
 			facts = append(facts, child)
 			return
+		}
+		if application.Contains([]byte(child.version)) {
+			cached := r.cache[path]
+			cached.possible = true
+			r.cache[path] = cached
 		}
 		var projection manifest.TemplateProjection
 		if r.intent != manifest.ApplicationDocuments {
@@ -395,7 +415,8 @@ func (r *documentReader) prepareStreamObject(opts manifest.ParseDocOptions, leaf
 }
 
 func covers(coverage, intent manifest.DocumentRole) bool {
-	return coverage == intent || coverage == manifest.IncidentalDocuments && intent == manifest.ApplicationDocuments
+	return coverage == intent || intent == manifest.ApplicationDocuments &&
+		(coverage == manifest.IncidentalDocuments || coverage == manifest.RequiredDocuments)
 }
 
 func applicationView(objects []parsedObject, intent manifest.DocumentRole) []parsedObject {

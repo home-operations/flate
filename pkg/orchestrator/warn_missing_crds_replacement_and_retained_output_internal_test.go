@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -215,7 +216,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 		c.Configure(opts)
 		c.StartLifecycle()
 
-		s.SetIncluded(rs.Named(), false)
+		s.SetIncluded(rs.Named(), false, false)
 	}
 	publications := 0
 	u := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { publications++ }, false)
@@ -269,7 +270,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	}
 	assert.Diff(
 		t,
-		slices.SortedFunc(s.RequiredInputs(rs.Named()), manifest.NamedResource.Compare),
+		slices.SortedFunc(maps.Keys(maps.Collect(s.RequiredInputs(rs.Named()))), manifest.NamedResource.Compare),
 		wantRequired,
 	)
 	assertRetainedCRDManifests(t, s, rs, testCaseInput)

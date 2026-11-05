@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -152,4 +153,51 @@ spec:
 	load()
 	assert.Equal(t, reads["objects.yaml"].Load(), count)
 	assert.Equal(t, directories.Load(), listings)
+}
+
+func TestDecodeFileObjects_ApplicationPrecondition(t *testing.T) {
+	t.Parallel()
+	for _, api := range []string{
+		"kustomize.toolkit.fluxcd.io/v1",
+		"kustomize.toolkit.fluxcd.io/v1beta1",
+		"kustomize.toolkit.fluxcd.io/v1beta2",
+		`kustomize.toolkit.fluxcd.io/v\x31`,
+		"fluxcd.controlplane.io/v1",
+		`fluxcd.controlplane.io/v\x31`,
+	} {
+		t.Run(api, func(t *testing.T) {
+			t.Parallel()
+			kind, spec := "Kustomization", "path: ./entry"
+			if strings.HasPrefix(api, manifest.FluxOperatorDomain) {
+				kind, spec = "FluxInstance", "sync: {kind: GitRepository, url: https://fixture.invalid/repo, ref: refs/heads/main, path: ./entry}"
+			}
+			root := t.TempDir()
+			// Authored escapes MUST reach the YAML decoder unchanged.
+			document := "apiVersion: \"" + api + "\"\nkind: " + kind + "\nmetadata: {name: app, namespace: apps}\nspec: {" + spec + "}\n"
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+				LocalPath: root, FS: fstest.MapFS{"application.yaml": {Data: []byte(document)}},
+			})
+			l := New(st)
+			l.SourceRoot = root
+			l.mountSources()
+			reader := l.documents
+			reader.intent = manifest.ApplicationDocuments
+			var objects []parsedObject
+			err := reader.decodeFileObjects(
+				filepath.Join(root, "application.yaml"),
+				manifest.ParseDocOptions{},
+				true,
+				func(object parsedObject) {
+					objects = append(objects, object)
+				},
+			)
+			assert.NoError(t, err)
+			assert.FatalIf(t, len(objects) != 1, "application objects = %d, want 1", len(objects))
+			assert.NoError(t, objects[0].outcome.Err)
+			application, present := manifest.ApplicationFor(objects[0].Obj)
+			assert.Equal(t, present, true)
+			assert.Equal(t, application.Path, "./entry")
+		})
+	}
 }

@@ -31,7 +31,7 @@ func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence
 		if known {
 			return Occurrence{Identity: cached.identity, Authored: object.Named(), facts: cached.facts}
 		}
-		projection := manifest.ProjectProducer(object)
+		projection, _ := manifest.ProjectProducer(object, nil)
 		occurrence := compactOccurrence(object, projection)
 		if next == nil {
 			if previous == nil {

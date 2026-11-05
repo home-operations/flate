@@ -22,7 +22,7 @@ func (r *ReadSet) RequireMaterializer(id manifest.NamedResource) {
 func (r *ReadSet) require(refValue *manifest.DependencyRef, materializer bool) {
 	ref := *refValue
 	input := r.input(ref.NamedResource)
-	input.required = true
+	input.required, input.qualification = true, false
 	if !input.gate {
 		input.Ref.ReadyExpr, input.gate = ref.ReadyExpr, true
 		input.Ref.Artifact, input.Ref.ArtifactOnly, input.Ref.ChartSource = ref.Artifact, ref.ArtifactOnly, ref.ChartSource
@@ -90,10 +90,10 @@ func (r *ReadSet) Gates() iter.Seq[Gate] {
 }
 
 // Required enumerates the required inputs of the accepted execution.
-func (r *ReadSet) Required() iter.Seq[manifest.NamedResource] {
-	return func(yield func(manifest.NamedResource) bool) {
+func (r *ReadSet) Required() iter.Seq2[manifest.NamedResource, bool] {
+	return func(yield func(manifest.NamedResource, bool) bool) {
 		for input := r.inputs; input != nil; input = input.next {
-			if input.required && !yield(input.Ref.NamedResource) {
+			if input.required && !yield(input.Ref.NamedResource, input.qualification) {
 				return
 			}
 		}
@@ -101,7 +101,18 @@ func (r *ReadSet) Required() iter.Seq[manifest.NamedResource] {
 }
 
 // RequireData records a required semantic input without imposing readiness.
-func (r *ReadSet) RequireData(id manifest.NamedResource) { r.input(id).required = true }
+func (r *ReadSet) RequireData(id manifest.NamedResource) {
+	input := r.input(id)
+	input.required, input.qualification = true, false
+}
+
+// RequireQualification retains demand without authorizing an ordinary producer body.
+func (r *ReadSet) RequireQualification(id manifest.NamedResource) {
+	input := r.input(id)
+	if !input.required {
+		input.required, input.qualification = true, true
+	}
+}
 
 // CarryWarnings reuses advisories after the caller verifies an equal consumed projection.
 //

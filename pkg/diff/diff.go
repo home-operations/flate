@@ -135,9 +135,9 @@ func prepareDocs(docs []Doc) []diffprep.Doc {
 	return out
 }
 
-func prepareOptions(optsValue *Options) diffprep.Options {
+func prepareOptions(optsValue *Options) *diffprep.Options {
 	opts := *optsValue
-	return diffprep.Options{
+	return &diffprep.Options{
 		StripAttrs:  opts.StripAttrs,
 		StripFields: opts.StripFields,
 		Normalize:   opts.Normalize,

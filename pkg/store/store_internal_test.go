@@ -440,7 +440,7 @@ func TestStore_AdmissionResetsUnchangedReadiness(t *testing.T) {
 	obj := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
 	id := obj.Named()
 	s.AddObject(obj)
-	s.SetIncluded(id, false)
+	s.SetIncluded(id, false, false)
 	s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: ReasonUnchanged, Message: "unchanged"})
 	var reads ReadSet
 	reads.Init(s, id, nil)
@@ -466,7 +466,7 @@ func TestStore_AdmissionResetsUnchangedReadiness(t *testing.T) {
 	}, false)
 	go func() {
 		defer close(done)
-		s.SetIncluded(id, true)
+		s.SetIncluded(id, true, true)
 	}()
 	<-published
 	var current ReadSet
@@ -476,7 +476,7 @@ func TestStore_AdmissionResetsUnchangedReadiness(t *testing.T) {
 	assert.Equal(t, current.Admitted(), true)
 	assert.Equal(t, observed.Outcome(), OutcomePending)
 	assert.Equal(t, observed.Conditions[0].Status, metav1.ConditionUnknown)
-	s.SetIncluded(id, true)
+	s.SetIncluded(id, true, true)
 	assert.Equal(t, current.Valid(), true)
 	release()
 	<-done

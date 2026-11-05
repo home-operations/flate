@@ -51,6 +51,8 @@ type Input struct {
 	materializer    bool
 	declaration     bool
 	required        bool
+	qualification   bool
+	ordinaryDemand  bool
 	hasStatus       bool
 	derived         uint8
 	acquisitionRead bool
@@ -298,6 +300,7 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 		registration.head = &sh.absence
 		registration.link()
 	} else if cell.links != nil {
+		cell.links.ordinary.Store(view.ordinary)
 		registration.head = cell.links
 		if cell.links.first.Load() == nil && !cell.links.detached.Load() {
 			cell.links.generation.Store(view.generation)
@@ -590,9 +593,9 @@ func (r *ReadSet) Inputs() iter.Seq[manifest.NamedResource] {
 	}
 }
 
-// SetIncluded publishes invocation-monotone admission and resets stale unchanged readiness.
-// Once included, an object cannot be excluded within this Store invocation.
-func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
+// SetIncluded MUST never exclude an object after this Store invocation admits it.
+func (s *Store) SetIncluded(id manifest.NamedResource, included, ordinary bool) {
+	included = included || ordinary
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	cell := sh.cells[id]
@@ -610,7 +613,8 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 			condition = record.stamp()
 		}
 	}
-	if cell.included && !reset {
+	promoted := ordinary && !cell.ordinaryDemand()
+	if cell.included && !reset && !promoted {
 		sh.mu.Unlock()
 		return
 	}
@@ -618,7 +622,11 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 		sh.requireCapacityLocked(cell.authority, condition)
 		cell.authority = sh.advanceLocked(cell.current())
 	}
-	cell.excluded, cell.included = !included, included
+	cell.excluded, cell.included, cell.ordinary = !included, included, cell.ordinary || ordinary
+	if cell.links != nil {
+		cell.links.ordinary.Store(cell.ordinaryDemand())
+		sh.queue(cell.links)
+	}
 	sh.cells[id] = cell
 	var dispatch eventDispatch
 	if reset {
@@ -649,6 +657,12 @@ func (s *Store) SetPreflight(id manifest.NamedResource, message string) {
 	sh.mu.Unlock()
 }
 
+func (u *objectUpdate) consumeTarget() {
+	if u.target != nil {
+		u.target.consumed.Store(true)
+	}
+}
+
 // Admit binds raw-file admission to the captured source that supplied its bytes.
 //
 //nolint:gocritic // Admission consumes a stable child snapshot through publication retries.
@@ -669,7 +683,7 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 	}
 	id := child.Obj.Named()
 	for input := r.inputs; input != nil; input = input.next {
-		if input.Ref.NamedResource == id && input.object.head != nil && input.object.absent != nil {
+		if input.Ref.NamedResource == id && input.object.head != nil && input.view.child.Obj == nil {
 			update.target = &input.object
 		}
 		if input.Ref.NamedResource == (manifest.NamedResource{Group: id.Group, Kind: id.Kind}) {

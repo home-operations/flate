@@ -268,11 +268,11 @@ func TestExecution_ExcludedOutputValidity(t *testing.T) {
 	prior.Init(st, obj.Named(), nil)
 	prior.GetObject(obj.Named())
 	st.SetArtifact(obj.Named(), &store.SourceArtifact{Reads: &prior})
-	st.SetIncluded(obj.Named(), false)
+	st.SetIncluded(obj.Named(), false, false)
 	e := &base.Execution{Controller: base.New(st, nil)}
 	e.Reads.Init(st, obj.Named(), nil)
 	assert.FatalIf(t, !e.Valid(), "%v", "excluded assessment validated unconsumed output provenance")
-	st.SetIncluded(obj.Named(), true)
+	st.SetIncluded(obj.Named(), true, true)
 	assert.FatalIf(t, e.Valid(), "%v", "readmission retained the excluded assessment")
 	next := &base.Execution{Controller: e.Controller}
 	next.Reads.Init(st, obj.Named(), nil)

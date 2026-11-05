@@ -22,13 +22,21 @@ type pairKey struct {
 }
 
 // Prepare normalizes and pairs documents, retaining the last normalized duplicate.
-func Prepare(left, right []Doc, opts Options) Prepared {
+func Prepare(left, right []Doc, opts *Options) Prepared {
 	idx := make(map[pairKey]*Pair, len(left)+len(right))
 	var warnings []manifest.Warning
 	add := func(side Side, d, original Doc, pos int) {
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		resource := manifest.DocIdentity(d.Manifest)
-		k := pairKey{d.Parent.NamedResource, resource}
+		parent := d.Parent.NamedResource
+		keys := opts.ProducerKeys[0]
+		if side == SideCurrent {
+			keys = opts.ProducerKeys[1]
+		}
+		if key, known := keys[parent]; known {
+			parent = key
+		}
+		k := pairKey{parent, resource}
 		p, ok := idx[k]
 		if !ok {
 			p = &Pair{Resource: resource, OldPos: len(left), NewPos: len(right)}

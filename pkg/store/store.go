@@ -56,7 +56,8 @@ func (h authority) nextGeneration() authority {
 		panic("store: authority generation exhausted")
 	}
 	h.generation++
-	if h.links != nil && (h.links.first.Load() != nil || h.links.detached.Load()) {
+	// Borrowed stamps MUST advance after the last registration retires.
+	if h.links != nil && (h.links.first.Load() != nil || h.links.detached.Load() || h.links.borrowed.Load()) {
 		h.links.generation.Store(h.generation)
 	}
 
@@ -104,7 +105,7 @@ type objectCell struct {
 }
 
 func (c *objectCell) bound() bool {
-	return (c.binding == nil || c.binding.current()) && (c.support == nil || c.support.productionCurrent())
+	return (c.binding == nil || c.binding.sourceCurrent()) && (c.support == nil || c.support.productionCurrent())
 }
 
 type objectBucket struct {
@@ -315,6 +316,17 @@ func (u *objectUpdate) compare() {
 	}
 }
 
+func (u *objectUpdate) retainSupport() {
+	if input := u.binding; input != nil {
+		for kind := contentFacet; kind <= originFacet; kind++ {
+			input.cell(kind).retain()
+		}
+	}
+	if input := u.support; input != nil {
+		input.cell(producerFacet).retain()
+	}
+}
+
 // currentLocked MUST hold the effective producer's shard as well as the target's.
 func (u *objectUpdate) currentLocked(sh *shard) bool {
 	v := *u
@@ -418,6 +430,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 		cell.authority = sh.enqueueLocked(cell.authority)
 	}
 	if !u.staticEqual {
+		u.retainSupport()
 		cell.static, cell.binding, cell.support = u.obj, u.binding, u.support
 		cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 	}
@@ -688,7 +701,7 @@ func (s *Store) addAnchor(uValue *objectUpdate) bool {
 	changed := newObjectRegion(1, storage[:])
 	changed = changed.add(id, !u.effectiveEqual || u.cell.static == nil, u.independent)
 	s.lockAll()
-	if !new(u).currentLocked(sh) || u.binding != nil && !u.binding.current() ||
+	if !new(u).currentLocked(sh) || u.binding != nil && !u.binding.sourceCurrent() ||
 		u.support != nil && !u.support.productionCurrent() {
 		s.unlockAll()
 		return false
@@ -699,6 +712,7 @@ func (s *Store) addAnchor(uValue *objectUpdate) bool {
 		obj = u.cell.static
 	}
 	cell := sh.cells[id]
+	u.retainSupport()
 	cell.rooted, cell.static, cell.binding, cell.support, cell.document = true, obj, u.binding, u.support, u.document
 	cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 	cell.publication++
@@ -784,7 +798,7 @@ func artifactReadEqual(a, b Artifact, read ArtifactRead) bool {
 func (s *Store) commitObjectUpdate(sh *shard, id manifest.NamedResource, update *objectUpdate) publicationResult {
 	u := *update
 	sh.mu.Lock()
-	if u.binding != nil && !u.binding.current() || u.support != nil && !u.support.productionCurrent() {
+	if u.binding != nil && !u.binding.sourceCurrent() || u.support != nil && !u.support.productionCurrent() {
 		sh.mu.Unlock()
 		return publicationRejected
 	}

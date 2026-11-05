@@ -35,7 +35,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	currentReads.Init(o.Store(), id, nil)
 	currentReads.GetObject(id)
 	currentReads.RequireData(current)
-	currentReads.Accept()
+	currentReads.Accept(store.AssessmentReconciled)
 	t.Cleanup(currentReads.Retire)
 	res = &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{
 		id:      {Status: store.StatusFailed, Message: "selected failed after rendering"},

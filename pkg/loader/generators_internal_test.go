@@ -299,7 +299,7 @@ func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeI
 		if got := (*inputs.st).Warnings(); len(got) != 0 {
 			t.Fatalf("unaccepted lookup published warnings: %+v", got)
 		}
-		reads.Accept()
+		reads.Accept(store.AssessmentReconciled)
 		warnings := (*inputs.st).Warnings()
 		assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnSOPSUnreadable ||
 			warnings[0].Resource != (*inputs.id) ||

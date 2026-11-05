@@ -329,7 +329,7 @@ func testReadSetCloseRetiresHiddenBorrowedOutputCase(
 		s.RecordEmitted(declaration.Named(), &output, nil)
 		output.Finish()
 	}
-	first.Accept()
+	first.Accept(AssessmentReconciled)
 	if (*testCaseInput) == "changed" {
 		changed := *declaration.(*manifest.Kustomization)
 		changed.Path = "new"

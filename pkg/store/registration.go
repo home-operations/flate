@@ -25,16 +25,18 @@ type headKey struct {
 }
 
 type registrationHead struct {
-	generation atomic.Uint64
-	first      atomic.Pointer[registration]
-	selected   atomic.Pointer[producerSlot]
-	position   atomic.Int64
-	assessment atomic.Pointer[ReadSet]
-	shard      *shard
-	next       *registrationHead
-	pending    atomic.Bool
-	detached   atomic.Bool
-	watch      *registration
+	generation     atomic.Uint64
+	first          atomic.Pointer[registration]
+	selected       atomic.Pointer[producerSlot]
+	position       atomic.Int64
+	reconciliation atomic.Pointer[ReadSet]
+	binding        atomic.Pointer[ReadSet]
+	shard          *shard
+	next           *registrationHead
+	pending        atomic.Bool
+	detached       atomic.Bool
+	borrowed       atomic.Bool
+	watch          *registration
 }
 
 func (h *registrationHead) stamp() uint64 {
@@ -190,6 +192,12 @@ func (c *registration) link() {
 	}
 }
 
+func (c *registration) retain() {
+	if c != nil && c.head != nil && c.absent == nil {
+		c.head.borrowed.Store(true)
+	}
+}
+
 func (c *registration) current() bool {
 	if c == nil || c.head == nil {
 		return true
@@ -218,6 +226,19 @@ func (in *Input) current() bool {
 	return true
 }
 
+func (in *Input) sourceCurrent() bool {
+	details := in.details.Load()
+	if details == nil {
+		return true
+	}
+	for kind := contentFacet; kind <= originFacet; kind++ {
+		if !in.cell(kind).current() {
+			return false
+		}
+	}
+	return details.sourceGuard.Valid()
+}
+
 func (in *Input) productionCurrent() bool {
 	cell := in.cell(producerFacet)
 	return cell == nil || cell.head == nil ||
@@ -235,7 +256,8 @@ func (r *ReadSet) Valid() bool {
 	for input := r.inputs; input != nil; input = input.next {
 		if !input.current() ||
 			input.view.bound &&
-				(input.view.binding != nil && !input.view.binding.current() || input.view.support != nil && !input.view.support.productionCurrent()) {
+				(input.view.binding != nil && input.view.binding.Ref.NamedResource != r.id && !input.view.binding.sourceCurrent() ||
+					input.view.support != nil && input.view.support.Ref.NamedResource != r.id && !input.view.support.productionCurrent()) {
 			if !r.accepted.Load() {
 				r.invalid.Store(true)
 			}

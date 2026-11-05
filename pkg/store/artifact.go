@@ -260,6 +260,9 @@ func (s *Store) Retire(reads *ReadSet) {
 	sh.mu.RLock()
 	source := sh.artifacts[reads.id].value
 	retained := source != nil && source.Reads == reads
+	if head := sh.cells[reads.id].links; head != nil {
+		retained = retained || head.reconciliation.Load() == reads || head.binding.Load() == reads
+	}
 	if slot := sh.slots[reads.id]; slot != nil {
 		if inventory := slot.current.Load(); inventory != nil {
 			retained = retained || inventory.Retains(reads)

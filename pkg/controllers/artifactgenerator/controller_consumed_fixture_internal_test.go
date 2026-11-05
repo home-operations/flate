@@ -79,7 +79,7 @@ func (f *consumedFixture) preparePublication(t *testing.T, producer *base.Execut
 				)
 				assert.ErrorIf(t, err != nil, "%v", err)
 			}
-			producer.Reads.Accept()
+			producer.Reads.Accept(store.AssessmentReconciled)
 		}
 		publish(s1)
 		inventory, ok := st.GetArtifact(supplier.Named(), store.ArtifactContent).(*store.Emission)

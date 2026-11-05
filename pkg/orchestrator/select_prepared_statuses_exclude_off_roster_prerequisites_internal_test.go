@@ -635,7 +635,7 @@ func testSelectAcceptedPrerequisitesCase(t *testing.T, testCaseInput *struct {
 		reads.GetObject(dep)
 		reads.Require(manifest.DependencyRef{NamedResource: dep})
 	}
-	reads.Accept()
+	reads.Accept(store.AssessmentReconciled)
 	reads.Retire()
 	for range run.store.Sweep() {
 	}

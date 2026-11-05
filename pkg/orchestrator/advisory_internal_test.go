@@ -32,7 +32,7 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 		for _, override := range overrides {
 			reads.RecordSuppliedOverride(override)
 		}
-		reads.Accept()
+		reads.Accept(store.AssessmentReconciled)
 		reads.Close()
 		for range st.Sweep() {
 		}

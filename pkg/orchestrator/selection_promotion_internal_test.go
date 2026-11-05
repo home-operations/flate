@@ -236,7 +236,7 @@ func testSelectionPromotionBubble(
 			testCaseInput.markPromotionSourceReady(s, source, id)
 			if id != consumer.Named() {
 				execution.Reads.GetObject(id)
-				execution.Reads.Accept()
+				execution.Reads.Accept(store.AssessmentReconciled)
 				return schedule.Result{Assessment: execution}
 			}
 			dispatches.Add(1)

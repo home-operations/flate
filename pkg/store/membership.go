@@ -7,23 +7,28 @@ import (
 )
 
 type capture struct {
-	excluded     bool
-	accepted     bool
-	independent  bool
-	bound        bool
-	binding      *Input
-	support      *Input
-	preflight    string
+	capturePayload
+
+	excluded    bool
+	accepted    bool
+	independent bool
+	bound       bool
+	binding     *Input
+	support     *Input
+	preflight   string
+	owner       *producerSlot
+	revision    uint64
+	generation  uint64
+	position    int
+}
+
+type capturePayload struct {
 	child        Child
-	owner        *producerSlot
 	record       *Emission
-	revision     uint64
 	payload      *SourceArtifact
 	payloadInput *ArtifactInput
 	payloadOwner *producerSlot
 	source       *sourceBinding
-	generation   uint64
-	position     int
 	reference    *Declaration
 }
 
@@ -198,7 +203,8 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegion) bool {
 	sh := s.shardFor(id)
 	cell := sh.cells[id]
-	if cell.binding != nil && !cell.binding.current() || cell.support != nil && !cell.support.productionCurrent() {
+	if cell.binding != nil && !cell.binding.sourceCurrent() ||
+		cell.support != nil && !cell.support.productionCurrent() {
 		return false
 	}
 	if cell.rooted && cell.static != nil {

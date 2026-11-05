@@ -103,6 +103,7 @@ func (o *Orchestrator) prepareProducerHistory(
 
 	_, _, output := reads.GetEmission(id)
 	defer reads.Retire()
+	defer reads.ReleaseCapture()
 	defer output.Finish()
 	obj := reads.GetDeclaration(id)
 	if obj == nil {

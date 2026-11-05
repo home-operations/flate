@@ -34,7 +34,7 @@ func TestWarnings_SOPSUnreadableUnionAndScope(t *testing.T) {
 			},
 		)
 		if i < 2 {
-			reads.Accept()
+			reads.Accept(AssessmentReconciled)
 		}
 	}
 	var writers sync.WaitGroup

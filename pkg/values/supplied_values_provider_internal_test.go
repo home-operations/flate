@@ -65,7 +65,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	defer second.Close()
 	resolved := NewStoreProvider(&second).Data(supplied.Named())
 	assert.FatalIf(t, resolved != repository, "%s", "accepted repository data did not supersede supply")
-	second.Accept()
+	second.Accept(store.AssessmentReconciled)
 	assert.Diff(
 		t,
 		s.AdvisoryEvidence(),

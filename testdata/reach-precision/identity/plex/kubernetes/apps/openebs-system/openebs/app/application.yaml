@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openebs-configuration
+  namespace: openebs-system
+data:
+  values.yaml: "engines:\n  local:\n    lvm:\n      enabled: false\n    zfs:\n      enabled: false\n  replicated:\n\
+    \    mayastor:\n      enabled: false\n"

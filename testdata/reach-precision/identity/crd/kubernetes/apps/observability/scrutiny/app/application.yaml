@@ -1,0 +1,16 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: deny-scrutiny-influxdb-ingress
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: scrutiny
+      app.kubernetes.io/instance: scrutiny
+  ingressDeny:
+  - fromEndpoints:
+    - {}
+    toPorts:
+    - ports:
+      - port: '8086'
+        protocol: TCP

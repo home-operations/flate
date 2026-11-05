@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gluetun-update
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/jfroy/gluetun:v3.41.3@sha256:970fdef9eedb103e2f49a5c6716322d52053bc91fa67e6eebe32cfe43f315b50

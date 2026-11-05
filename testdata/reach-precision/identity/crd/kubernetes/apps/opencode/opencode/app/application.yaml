@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: opencode
+  namespace: opencode
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/anomalyco/opencode:1.19.0@sha256:543fe6b18470c9e4787e9be9813c4d340fba5738085b833ea76fb330ddff514a

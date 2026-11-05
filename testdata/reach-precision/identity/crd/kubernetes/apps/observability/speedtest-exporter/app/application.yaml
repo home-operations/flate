@@ -1,0 +1,13 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: speedtest-dashboard
+spec:
+  allowCrossNamespaceImport: true
+  datasources:
+  - datasourceName: prometheus
+    inputName: DS_PROMETHEUS
+  instanceSelector:
+    matchLabels:
+      grafana.internal/instance: grafana
+  url: https://grafana.com/api/dashboards/20115/revisions/4/download

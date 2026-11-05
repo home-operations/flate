@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rook-ceph-cluster-configuration
+  namespace: rook-ceph
+data:
+  values.yaml: "cephClusterSpec:\n  cleanupPolicy:\n    wipeDevicesFromOtherClusters: true\n  csi:\n    readAffinity:\n\
+    \      enabled: true\n      crushLocationLabels:\n      - kubernetes.io/hostname\n  dashboard:\n    urlPrefix:\
+    \ /\n    ssl: false\n    prometheusEndpoint: http://prometheus-operated.observability.svc.cluster.local:9090\n\
+    \  mgr:\n    modules:\n    - name: pg_autoscaler\n      enabled: true\n  resources:\n    osd:\n      limits:\n\
+    \        memory: 8Gi\n  security:\n    cephx:\n      allowedCiphers:\n      - aes256k\n      daemon:\n     \
+    \   keyRotationPolicy: KeyGeneration\n        keyGeneration: 2\n      csi:\n        keyRotationPolicy: KeyGeneration\n\
+    \        keyGeneration: 2\n        keepPriorKeyCountMax: 0\n        keyType: aes256k\n  storage:\n    devicePathFilter:\
+    \ /dev/disk/by-id/nvme-SAMSUNG_MZQL23T8HCLS-00A07_.*\n    useAllDevices: false\n"

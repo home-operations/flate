@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter-configuration
+  namespace: observability
+data:
+  values.yaml: "prometheus:\n  url: http://prometheus-operated.observability.svc.cluster.local\n"

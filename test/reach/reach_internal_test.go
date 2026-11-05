@@ -3,19 +3,15 @@ package reach
 import (
 	"encoding/json"
 	"errors"
-	"io/fs"
-	"maps"
-	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"slices"
-	"strings"
 	"testing"
 	"weak"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -32,54 +28,21 @@ type reachOracle struct {
 func (o *reachOracle) base(t *testing.T) {
 	cfg, controls := o.cfg, o.controls
 	t.Helper()
-	for _, name := range []string{"plex", "kopiur", "shared", "generator", "global", "crd"} {
-		t.Run(name, func(t *testing.T) {
+	for i := range o.worlds {
+		t.Run(o.worlds[i].spec.name, func(t *testing.T) {
 			t.Parallel()
-			var tc *reachCase
-			cases := reachCases()
-			for i := range cases {
-				candidate := &cases[i]
-				if candidate.fixture == name {
-					tc = candidate
-					break
-				}
-			}
-			trees := []orchestrator.Tree{reachTree(controls[name].root, tc, manifest.TreeBase)}
+			tc := &o.worlds[i].spec
+			trees := []orchestrator.Tree{reachTree(controls[tc.name].root, tc, manifest.TreeBase)}
 			runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
 			if err != nil && !errors.Is(err, manifest.ErrFlux) {
 				t.Fatal(err)
 			}
-			controls[name].result = runs[0].Result
+			controls[tc.name].result = runs[0].Result
 		})
 	}
 }
 
 func reachCases() []reachCase { return slices.Concat(reachFixtureCases(), reachDependencyCases()) }
-
-func readReachFixture(t *testing.T, name string) map[string]string {
-	t.Helper()
-	root := name
-	files := map[string]string{}
-	assert.NoError(t, filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		files[filepath.ToSlash(relative)] = string(body)
-		return nil
-	}))
-	return files
-}
 
 type reachWorld struct {
 	spec  reachCase
@@ -87,23 +50,6 @@ type reachWorld struct {
 	want  [2]map[string][]map[string]any
 	first string
 	refs  []reachWeak
-}
-
-func readReachFixtures(t *testing.T) map[string]map[string]string {
-	t.Helper()
-	registry := testutil.NewChartRegistry(t, []map[string]string{readReachFixture(t, "charts")}, false)
-	bindings := map[string]string{"oci://reach.invalid/demo": registry.URL}
-	fixtures := map[string]map[string]string{}
-	for _, name := range []string{"plex", "kopiur", "shared", "generator", "global", "crd"} {
-		fixtures[name] = readReachFixture(t, name)
-		for path, body := range fixtures[name] {
-			for old, url := range bindings {
-				body = strings.ReplaceAll(body, old+"\n", url+"\n")
-			}
-			fixtures[name][path] = body
-		}
-	}
-	return fixtures
 }
 
 func assertReachGlobalUsers(t *testing.T, full [2]*orchestrator.Result) {
@@ -143,7 +89,7 @@ func (o *reachOracle) head(t *testing.T) {
 			if err != nil && !errors.Is(err, manifest.ErrFlux) {
 				t.Fatal(err)
 			}
-			full := [2]*orchestrator.Result{controls[tc.fixture].result, runs[0].Result}
+			full := [2]*orchestrator.Result{controls[tc.name].result, runs[0].Result}
 			for side, result := range full {
 				assertReachControl(t, result, tc)
 				world.want[side] = reachOutput(result, tc, true)
@@ -155,30 +101,17 @@ func (o *reachOracle) head(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // The lifetime proof changes the process GC percentage and samples retained heap.
 func TestRenderTrees_Reach(t *testing.T) {
-	t.Chdir("../../testdata/e6-reach")
 	previousGC := debug.SetGCPercent(100)
 	defer debug.SetGCPercent(previousGC)
-	fixtures := readReachFixtures(t)
-	cfg := orchestrator.Config{
-		Concurrency: 2,
-
-		HelmOptions: helm.Options{
-			DisableChartDigestTracking: true,
-			KubeVersion:                helm.BundledKubeVersion(),
-			SkipTests:                  true,
-			SkipCRDs:                   true,
-			SkipKinds: []string{
-				manifest.KindSecret,
-			},
-		},
-	}
+	cfg := reachConfig()
 	oracleCache, err := sourcecache.New(t.Context(), "")
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, oracleCache.Close()) })
 	cfg.Cache = oracleCache
 	cfg.HelmClient = helm.NewClient(oracleCache)
-	controls, worlds := prepareReachWorlds(t, fixtures)
+	controls, worlds := prepareReachWorlds(t, reachCases())
 	oracle := reachOracle{cfg: &cfg, controls: controls, worlds: worlds}
 	oracle.render(t)
 	assert.NoError(t, oracleCache.Close())
@@ -219,6 +152,19 @@ func TestRenderTrees_Reach(t *testing.T) {
 	}
 	runtime.KeepAlive(worlds)
 	runtime.KeepAlive(controls)
+}
+
+func reachConfig() orchestrator.Config {
+	return orchestrator.Config{
+		Concurrency: 2,
+		HelmOptions: helm.Options{
+			DisableChartDigestTracking: true,
+			KubeVersion:                helm.BundledKubeVersion(),
+			SkipTests:                  true,
+			SkipCRDs:                   true,
+			SkipKinds:                  []string{manifest.KindSecret},
+		},
+	}
 }
 
 func reachTree(root string, tc *reachCase, side manifest.TreeSide) orchestrator.Tree {
@@ -314,9 +260,6 @@ func runReachWorld(t *testing.T, world *reachWorld, cfg *orchestrator.Config) (s
 		templates += count
 	}
 	t.Logf("cold request: builds=%d per side, templates=%d jointly", len(tc.builders), templates)
-	if tc.deferred != "" {
-		t.Log(tc.deferred)
-	}
 	return string(encoded), refs
 }
 
@@ -340,10 +283,9 @@ func globalVariableUsers() []string {
 
 type reachCase struct {
 	admissions                                                      []string
-	name, fixture, entry, selfURL, file, old, next, move            string
+	name, fixture, entry, selfURL                                   string
 	builders, outputOwners, declarationParents, prerequisiteParents []string
 	templates                                                       map[string]uint64
-	deferred                                                        string
 }
 
 type reachControl struct {
@@ -379,26 +321,24 @@ func reachOutput(result *orchestrator.Result, tc *reachCase, full bool) map[stri
 	return out
 }
 
-func prepareReachWorlds(t *testing.T, fixtures map[string]map[string]string) (map[string]*reachControl, []reachWorld) {
+func prepareReachWorlds(t *testing.T, cases []reachCase) (map[string]*reachControl, []reachWorld) {
 	t.Helper()
 	controls := map[string]*reachControl{}
-	for _, name := range []string{"plex", "kopiur", "shared", "generator", "global", "crd"} {
-		controls[name] = &reachControl{root: testutil.WriteTree(t, fixtures[name])}
-	}
-	cases := reachCases()
 	worlds := make([]reachWorld, len(cases))
 	for i := range cases {
 		tc := &cases[i]
-		after := maps.Clone(fixtures[tc.fixture])
-		if !strings.Contains(after[tc.file], tc.old) {
-			t.Fatal("fixture mutation has no input")
+		after := testfixture.Materialize(t, "reach-precision", tc.name)
+		root := filepath.Dir(after.Repo)
+		controls[tc.name] = &reachControl{root: filepath.Join(root, "identity-base", tc.fixture)}
+		for _, step := range after.Plan.Steps {
+			if step.Edit != nil {
+				after.Edit(t, step)
+			}
 		}
-		after[tc.file] = strings.Replace(after[tc.file], tc.old, tc.next, 1)
-		if tc.move != "" {
-			after[strings.Replace(tc.move, "config.yaml", "config-renamed.yaml", 1)] = after[tc.move]
-			delete(after, tc.move)
+		worlds[i] = reachWorld{
+			spec:  *tc,
+			roots: [2]string{controls[tc.name].root, filepath.Join(root, "identity-head", tc.fixture)},
 		}
-		worlds[i] = reachWorld{spec: *tc, roots: [2]string{controls[tc.fixture].root, testutil.WriteTree(t, after)}}
 	}
 	return controls, worlds
 }

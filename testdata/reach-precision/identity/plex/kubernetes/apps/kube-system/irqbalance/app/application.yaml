@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: irqbalance
+  namespace: kube-system
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/home-operations/irqbalance:1.9.5@sha256:c83a571c3759947288b98a60ca65ce12ec65a54622250d61cf0790841dc0d956

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reloader-configuration
+  namespace: kube-system
+data:
+  values.yaml: "reloader:\n  readOnlyRootFileSystem: true\n  podMonitor:\n    enabled: true\n"

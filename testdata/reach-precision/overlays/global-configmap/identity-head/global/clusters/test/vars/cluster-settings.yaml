@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-settings
+  namespace: flux-system
+data:
+  NFS_MUSIC: /volume1/test/music-edited
+  UNCHANGED: stable
+  MISSING_SECRET: missing-settings

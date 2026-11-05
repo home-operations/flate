@@ -101,19 +101,11 @@ func reachFixtureCases() []reachCase {
 				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance",
 			},
 
-			deferred: "U1.2 makes key, variable and render-stage reach exact",
-
 			fixture: "plex",
 
 			entry: "kubernetes/apps",
 
 			selfURL: "https://github.com/buroa/home-ops",
-
-			file: "kubernetes/apps/media/plex/ks.yaml",
-
-			old: "  interval: 1h\n",
-
-			next: "  interval: 1h\n  timeout: 2m\n",
 
 			builders: []string{
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller",
@@ -197,9 +189,6 @@ func reachFixtureCases() []reachCase {
 			fixture: "kopiur",
 			entry:   "kubernetes/apps",
 			selfURL: "https://github.com/buroa/home-ops",
-			file:    "kubernetes/components/kopiur/kopiur/snapshotschedule.yaml",
-			old:     "cron: H * * * *",
-			next:    "cron: H */2 * * *",
 			builders: []string{
 				"Kustomization.kustomize.toolkit.fluxcd.io/default/atuin",
 				"Kustomization.kustomize.toolkit.fluxcd.io/default/home-assistant",
@@ -264,9 +253,6 @@ func reachFixtureCases() []reachCase {
 			fixture: "shared",
 			entry:   "kubernetes/apps",
 			selfURL: "https://github.com/buroa/home-ops",
-			file:    "kubernetes/components/zeroscaler/horizontalpodautoscaler.yaml",
-			old:     "periodSeconds: 15",
-			next:    "periodSeconds: 30",
 			builders: []string{
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/bazarr",
 				"Kustomization.kustomize.toolkit.fluxcd.io/media/plex",
@@ -299,9 +285,6 @@ func reachFixtureCases() []reachCase {
 			fixture: "generator",
 			entry:   "kubernetes/apps",
 			selfURL: "https://github.com/buroa/home-ops",
-			file:    "kubernetes/apps/observability/kromgo/app/resources/config.yaml",
-			old:     "title: Talos",
-			next:    "title: Talos nodes",
 			builders: []string{
 				"Kustomization.kustomize.toolkit.fluxcd.io/observability/kromgo",
 			},
@@ -413,19 +396,11 @@ func reachFixtureCases() []reachCase {
 				"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/flux-instance",
 			},
 
-			deferred: "U1.2 makes key, variable and render-stage reach exact",
-
 			fixture: "plex",
 
 			entry: "kubernetes/apps",
 
 			selfURL: "https://github.com/buroa/home-ops",
-
-			file: "kubernetes/apps/media/plex/ks.yaml",
-
-			old: "interval: 1h",
-
-			next: "interval: 2h",
 
 			builders: []string{
 				"Kustomization.kustomize.toolkit.fluxcd.io/actions-runner-system/actions-runner-controller",
@@ -477,10 +452,6 @@ func reachFixtureCases() []reachCase {
 			fixture: "generator",
 			entry:   "kubernetes/apps",
 			selfURL: "https://github.com/buroa/home-ops",
-			file:    "kubernetes/apps/observability/kromgo/app/kustomization.yaml",
-			old:     "- ./resources/config.yaml",
-			next:    "- config.yaml=./resources/config-renamed.yaml",
-			move:    "kubernetes/apps/observability/kromgo/app/resources/config.yaml",
 			builders: []string{
 				"Kustomization.kustomize.toolkit.fluxcd.io/observability/kromgo",
 			},

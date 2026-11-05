@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: immich-pet-tagger
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/tedornitier/immich-pet-tagger:v1.8.0-cuda@sha256:f72dc8e32d96c5a7a17c6f0758c16ab8eac3e404e1fa037fd2461f8e6d610a10

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paperless-env
+data:
+  PAPERLESS_FILENAME_FORMAT: '{{ correspondent }}/{{ created_year }}/{{ correspondent }}_{{ document_type }}_{{
+    created }}'

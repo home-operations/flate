@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scrutiny-collector-zfs
+  namespace: observability-agents
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/starosdev/scrutiny:1.76.4-collector-zfs@sha256:750f64d5790e7ecd198799f739b20cdd91ee923a35a955118d9c663016c3e15e

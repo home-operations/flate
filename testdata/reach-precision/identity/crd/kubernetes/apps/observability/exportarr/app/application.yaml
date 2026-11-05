@@ -1,0 +1,53 @@
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: radarr-exporter
+  labels:
+    app.kubernetes.io/instance: radarr
+  annotations:
+    reloader.stakater.com/auto: 'true'
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: radarr
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: radarr
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: monitoring
+    spec:
+      containers:
+      - name: radarr-exporter
+        image: ghcr.io/onedr0p/exportarr:v2.3.0@sha256:af535d94061cf97a52e1661945ffba78c03f9443eae7c0da1a80a5a4be56b520
+        imagePullPolicy: IfNotPresent
+        args:
+        - radarr
+        env:
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: radarr-exporter
+              key: api-key
+        - name: PORT
+          value: '9707'
+        - name: URL
+          value: http://radarr.default.svc.cluster.local:80
+        ports:
+        - name: monitoring
+          containerPort: 9707
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: monitoring
+          failureThreshold: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: monitoring
+          failureThreshold: 5
+          periodSeconds: 10

@@ -1,0 +1,8 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: toolhive-registry-server
+spec:
+  cluster:
+    name: pg18vc
+  name: toolhive_registry_server

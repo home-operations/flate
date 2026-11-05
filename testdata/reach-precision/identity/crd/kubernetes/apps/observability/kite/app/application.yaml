@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kite-configuration
+  namespace: observability
+data:
+  values.yaml: "config:\n  enabled: true\n  existingSecret: kite-config\n"

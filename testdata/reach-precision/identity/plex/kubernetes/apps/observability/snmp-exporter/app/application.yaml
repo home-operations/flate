@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: snmp-exporter
+spec:
+  groups:
+  - name: snmp-exporter.rules
+    rules:
+    - alert: UPSOnBattery
+      expr: upsBasicBatteryTimeOnBattery_seconds > 0
+      annotations:
+        summary: ZPM {{ $labels.instance }} is running on battery power
+      for: 5m
+      labels:
+        severity: critical
+    - alert: UPSReplaceBattery
+      expr: upsAdvBattery_needsreplacing > 0
+      annotations:
+        summary: ZPM {{ $labels.instance }} battery needs to be replaced
+      for: 5m
+      labels:
+        severity: critical

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dashbrr
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/autobrr/dashbrr:v0.7.0@sha256:0a14f0b614e840e0157290d70abd753ea124a7af28769e79f11acbfc5db01cf0

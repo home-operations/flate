@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-configuration
+  namespace: default
+data:
+  values.yaml: "service:\n  type: ClusterIP\n  port: 5000\n"

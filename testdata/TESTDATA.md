@@ -230,17 +230,6 @@ env FLATE_E8_SLOW=1 mise exec -- go test -race ./pkg/schedule ./pkg/orchestrator
 E8-4 runs the routine package race proof. E8-5 owns the exact large race
 campaign, full repository gates and the final candidate commit.
 
-## E6 synthetic reach fixtures
-
-`e6-reach/` contains six small input graphs and one offline chart for `TestRenderTrees_Reach`.
-Its README describes the eight edits, structural reach, independent output oracle, and seven fixed `NFS_MUSIC` users.
-The test asserts both diff sides by identity, repeats cold requests, and bounds retained heap.
-Parallel subtests share immutable fixture inputs.
-The serial parent isolates process GC state and heap samples in the dedicated `test/reach` process.
-U1.2 owns precision for the three recorded broad-reach rows.
-Real repository inputs stay in the corpus and benchmark harness.
-
-
 ## Fixture scenarios
 
 A scenario is a repository tree with declared edits and CLI invocations.
@@ -1413,3 +1402,76 @@ The Git package retains HEAD, index, status, and file-byte observations. Low-lev
 | `remote-inputs/git-source` | git source | Reset on replay. |
 | `cache-lifecycle/source-prime-and-warm` | Prime a source cache, then reuse the same cache for the warm render and replay. | Reuse on replay. |
 | `source-errors/source-ref--held-error-scope-non-decode-error` | The loader package distinguishes a read error from a decode error. Unsupported readers remain not-run. | Package-only permission proof. |
+
+## Reach precision
+
+`reach-precision/` replaces the finite inputs of `TestRenderTrees_Reach` through `internal/testfixture.Materialize`.
+The original application names, namespaces, paths, self URLs, and expected work identities remain fixed.
+The source is the authored `testdata/e6-reach` corpus at flate revision `d53d49455876634fcc92802c60763ec54f17b0bc`.
+Its reductions group excluded declarations and replace empty packages with application resources from two pinned repositories.
+Plex reductions use `buroa/home-ops@380ca7bc59d0e58e8d85bfcaa54d8bb7057e5f70`.
+CRD reductions use `jfroy/flatops@a2e1cbf6cae6742b624ea66db20ce064f9a2f014`.
+Each catalog entry records its source path and application purpose.
+Native resources retain workloads, routing, storage, policy, or monitoring specifications.
+Workload reductions retain the actual application image.
+Configuration reductions retain an actual chart configuration subtree in `data.values.yaml`.
+Five packages use pinned release manifests or chart files referenced by those repositories.
+Their catalog entries include the release URL or chart layer digest.
+The CRD reductions retain PodMonitor selection and endpoint fields, and the MCPGroup description field.
+No secret material is retained.
+Database ResourceSets contain connection objects and disable reconciliation as exclusion controls.
+The Plex and global releases retain their OCI chart sources.
+A declared materializer operation binds both sides to one local TLS registry.
+The remaining releases retain their bootstrap Git chart sources.
+No live external endpoint serves these cases.
+
+The SDK suite runs independent full base and head renders before two cold diff requests.
+Both requests use concurrency 2, fresh memory caches, and no persisted render history.
+The suite compares complete selected output on both sides against independent full-render projections.
+It retains exact admissions, engine owners, completion and failure counts, tree identities, and failure identities.
+Exactly seven NFS_MUSIC users change.
+
+The lifetime proof remains in `test/reach`, outside the CLI catalog.
+It requires cleared weak references after two GC cycles and retains the original heap bound.
+The CRD case retains 187 admissions and two physical Kustomize builds.
+The global case retains 130 admissions, 62 Kustomize builds, 56 successful Helm owners, and 63 joint templates.
+The other cases retain their complete original identity sets and counts.
+`TestRenderTrees_ReachScale` retains the original Plex topology outside the finite catalog.
+It generates empty unsuspended sibling packages from the fixed identity catalog before both independent full renders and both cold requests.
+The finite Plex controls contain meaningful suspended siblings instead.
+Both proofs retain 82 admissions, ten Kustomize builds per side, and ten joint templates.
+CRD siblings remain nonempty and unsuspended, with 187 admissions and two builders.
+The independent full-render oracle also remains in that package.
+Stage and unused-variable package proofs remain in `pkg/orchestrator/stage_precision_internal_test.go`.
+
+| Case | Declared edit | Consumer |
+| --- | --- | --- |
+| `reach-precision/global-configmap` | `global-configmap` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
+| `reach-precision/crd` | `crd` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
+| `reach-precision/plex-timeout` | `plex-timeout` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
+| `reach-precision/kopiur-component` | `kopiur-component` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
+| `reach-precision/shared-component` | `shared-component` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
+| `reach-precision/generator` | `generator` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
+| `reach-precision/interval` | `interval` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
+| `reach-precision/rename` | `rename` overlay | `TestRenderTrees_Reach` SDK proof, outside the e2e catalog |
+
+The following CLI cases use a separate, small repository within the same scenario.
+The Plex workload consumes NFS_MUSIC, and a nonempty sibling exposes accidental selection.
+Every invocation declares complete stdout, stderr, and exit status.
+Each sequence repeats twice with concurrency 2 and a reset cache between replays.
+The expected workload documents come from the declared ConfigMap and Flux ownership labels.
+The metadata-only and unused-variable differences have empty expected output.
+
+| Case | Behavior | Consumer |
+| --- | --- | --- |
+| `reach-precision/consumed-variable` | The declared music path changes in the complete workload output. | `TestE2E_ReachPrecision/consumed-variable` |
+| `reach-precision/unused-variable` | An unused variable produces an empty workload diff. | `TestE2E_ReachPrecision/unused-variable` |
+| `reach-precision/metadata-only` | A reconciliation interval produces an empty workload diff. | `TestE2E_ReachPrecision/metadata-only` |
+
+The SDK-only `registry` setup operation declares a chart directory, source files, and an exact URL sentinel.
+The materializer starts one local TLS registry and binds both source files to its URL.
+Restore reuses that URL while it restores both repositories.
+`TestFixture_RegistryReplay` proves source agreement, replay stability, and chart-layer serving.
+CLI cases do not declare this operation and retain the socket-free harness boundary.
+The catalog also builds states for SDK cases that contain only declared edits.
+Components use consumers within the same materialized repository when repositories share one source directory.

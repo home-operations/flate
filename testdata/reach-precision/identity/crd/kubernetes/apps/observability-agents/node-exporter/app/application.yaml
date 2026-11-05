@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-exporter-configuration
+  namespace: observability-agents
+data:
+  values.yaml: 'extraArgs:
+
+    - --collector.filesystem.mount-points-exclude=^/(dev|etc|proc|run/containerd/.+|sys|var/lib/kubelet/.+)($|/)
+
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$
+
+    '

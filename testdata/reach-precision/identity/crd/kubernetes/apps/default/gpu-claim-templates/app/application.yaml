@@ -1,0 +1,11 @@
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: any-nvidia-gpu
+spec:
+  spec:
+    devices:
+      requests:
+      - name: nvidia-gpu
+        exactly:
+          deviceClassName: gpu.nvidia.com

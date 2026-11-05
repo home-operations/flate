@@ -1,0 +1,55 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: kopiur-cache
+spec:
+  groups:
+  - name: kopiur-cache
+    rules:
+    - alert: KopiurCacheVolumeFillingUp
+      expr: "100 * (\n  1 - min_over_time(\n        kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\"\
+        kopiur-cache-.*\"}[48h]\n      )\n      / max_over_time(\n        kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"\
+        kopiur-cache-.*\"}[48h]\n      )\n) > 80\n"
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: kopiur cache volume {{ $labels.persistentvolumeclaim }} peaked at {{ $value | printf "%.1f" }}%
+          full
+        description: Cache PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} peaked at {{ $value |
+          printf "%.1f" }}% used over the last 48h, above the 80% threshold.
+    - alert: KopiurCacheVolumeFull
+      expr: "100 * (\n  1 - min_over_time(\n        kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\"\
+        kopiur-cache-.*\"}[48h]\n      )\n      / max_over_time(\n        kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"\
+        kopiur-cache-.*\"}[48h]\n      )\n) > 92\n"
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: kopiur cache volume {{ $labels.persistentvolumeclaim }} is {{ $value | printf "%.1f" }}% full
+        description: Cache PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} peaked at {{ $value |
+          printf "%.1f" }}% used over the last 48h, above the 92% threshold.
+  - name: kopiur-maintenance
+    rules:
+    - alert: KopiurQuickMaintenanceStale
+      expr: "max(\n  max_over_time(\n    kube_job_status_succeeded{namespace=\"kopiur-system\", job_name=~\"kopiur-r2-q-.*\"\
+        }[20h]\n  )\n) < 1\nor\nabsent_over_time(\n  kube_job_status_succeeded{namespace=\"kopiur-system\", job_name=~\"\
+        kopiur-r2-q-.*\"}[20h]\n)\n"
+      for: 30m
+      labels:
+        severity: warning
+      annotations:
+        summary: kopiur quick maintenance has not succeeded in 20h
+        description: No kopiur-r2 quick-maintenance Job in namespace kopiur-system has succeeded in the last 20h.
+          The configured schedule is every 6h.
+    - alert: KopiurFullMaintenanceStale
+      expr: "max(\n  max_over_time(\n    kube_job_status_succeeded{namespace=\"kopiur-system\", job_name=~\"kopiur-r2-f-.*\"\
+        }[50h]\n  )\n) < 1\nor\nabsent_over_time(\n  kube_job_status_succeeded{namespace=\"kopiur-system\", job_name=~\"\
+        kopiur-r2-f-.*\"}[50h]\n)\n"
+      for: 30m
+      labels:
+        severity: warning
+      annotations:
+        summary: kopiur full maintenance has not succeeded in 50h
+        description: No kopiur-r2 full-maintenance Job in namespace kopiur-system has succeeded in the last 50h.
+          The configured schedule is daily.

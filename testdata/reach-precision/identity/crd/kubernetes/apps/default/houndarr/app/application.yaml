@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: houndarr
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/av1155/houndarr:v1.13.3@sha256:b2e4ff8b550d385a56ea3380bddf88253eac00d750a811a8f97090ff77dcc79e

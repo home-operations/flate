@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubelet-csr-approver-configuration
+  namespace: kube-system
+data:
+  values.yaml: "metrics:\n  enable: true\n  serviceMonitor:\n    enabled: true\n"

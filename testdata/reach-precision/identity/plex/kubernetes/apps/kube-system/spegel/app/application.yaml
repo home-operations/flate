@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spegel-configuration
+  namespace: kube-system
+data:
+  values.yaml: "spegel:\n  containerdRegistryConfigPath: /etc/cri/conf.d/hosts\n"

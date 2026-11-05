@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ceph-csi-drivers-configuration
+  namespace: rook-ceph
+data:
+  values.yaml: "operatorConfig:\n  namespace: rook-ceph\n  driverSpecDefaults:\n    imageSet:\n      name: rook-csi-operator-image-set-configmap\n\
+    \    nodePlugin:\n      priorityClassName: system-node-critical\n    controllerPlugin:\n      priorityClassName:\
+    \ system-cluster-critical\n"

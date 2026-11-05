@@ -1,0 +1,13 @@
+apiVersion: operator.victoriametrics.com/v1
+kind: VLAgent
+metadata:
+  name: kantai
+spec:
+  k8sCollector:
+    enabled: true
+  tolerations:
+  - key: node.kantai.xyz/low-memory
+    operator: Exists
+    effect: NoSchedule
+  remoteWrite:
+  - url: http://vlsingle-kantai.observability.svc.cluster.local:9428/insert/native

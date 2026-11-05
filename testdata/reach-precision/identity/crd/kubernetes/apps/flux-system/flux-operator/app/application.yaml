@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flux-operator-configuration
+  namespace: flux-system
+data:
+  values.yaml: "web:\n  config:\n    baseURL: https://flux.kantai.xyz\n    authentication:\n      type: OAuth2\n\
+    \      oauth2:\n        provider: OIDC\n        issuerURL: https://pid.kantai.xyz\n  httpRoute:\n    enabled:\
+    \ true\n    parentRefs:\n    - name: envoy-internal\n      namespace: network\n    hostnames:\n    - flux.kantai.xyz\n"

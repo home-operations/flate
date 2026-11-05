@@ -1,7 +1,0 @@
-apiVersion: fluxcd.controlplane.io/v1
-kind: ResourceSet
-metadata:
-  name: authentik-db
-  namespace: authentik
-spec:
-  resources: []

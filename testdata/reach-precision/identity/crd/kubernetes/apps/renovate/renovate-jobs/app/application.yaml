@@ -1,0 +1,53 @@
+apiVersion: renovate-operator.mogenius.com/v1alpha1
+kind: RenovateJob
+metadata:
+  name: github-jfroy-bot
+spec:
+  provider:
+    name: github
+  discoveryFilters:
+  - jfroy/*
+  skipForks: true
+  githubAppReference:
+    secretName: github-jfroy-bot-app
+    appIdSecretKey: APP_ID
+    installationIdSecretKey: INSTALL_ID
+    pemSecretKey: PEM
+  image: ghcr.io/jfroy/renovate:44.149.3@sha256:3ad16638e1dc1293db08d33653a5fd4172fd208660e9349405c2f8d163804000
+  schedule: 0,30 * * * *
+  parallelism: 10
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 1Gi
+  runtimeClassName: kata
+  webhook:
+    enabled: true
+    authentication:
+      enabled: true
+      secretRef:
+        name: webhook-token
+        key: token
+    sync:
+      enabled: true
+  renovateConfig:
+    inline: "module.exports = {\n  allowedCommands: ['^helm-docs( .*)?$', '^helm-schema( .*)?$'],\n  allowedUnsafeExecutions:\
+      \ ['mise'],\n  platformCommit: 'enabled',\n  internalHostAccess: 'block',\n  hostRules: [\n    {\n      hostType:\
+      \ 'docker',\n      matchHost: 'docker.io',\n      username: process.env.DOCKERHUB_USERNAME,\n      password:\
+      \ process.env.DOCKERHUB_TOKEN,\n    },\n    { matchHost: 'kantai.xyz' },\n    { matchHost: 'etincelle.cloud'\
+      \ },\n  ],\n};\n"
+  extraEnv:
+  - name: LOG_LEVEL
+    value: debug
+  - name: DOCKERHUB_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: docker-hub-token
+        key: DOCKERHUB_USERNAME
+  - name: DOCKERHUB_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: docker-hub-token
+        key: DOCKERHUB_TOKEN

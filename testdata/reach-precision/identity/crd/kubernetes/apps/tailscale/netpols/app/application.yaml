@@ -1,0 +1,13 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ts-tailscale-dns-k8s-gateway-allow-world-ingress
+spec:
+  endpointSelector:
+    matchLabels:
+      tailscale.com/parent-resource: tailscale-dns-k8s-gateway
+      tailscale.com/parent-resource-ns: network
+      tailscale.com/parent-resource-type: svc
+  ingress:
+  - fromEntities:
+    - world

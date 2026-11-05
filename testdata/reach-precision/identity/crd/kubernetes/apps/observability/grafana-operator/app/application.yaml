@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-operator-configuration
+  namespace: observability
+data:
+  values.yaml: "dashboard:\n  enabled: true\n"

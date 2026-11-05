@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: csi-ceph-conf-override
+  namespace: rook-ceph
+data:
+  ceph.conf: '[client]
+
+    rbd_cache = false
+
+    '

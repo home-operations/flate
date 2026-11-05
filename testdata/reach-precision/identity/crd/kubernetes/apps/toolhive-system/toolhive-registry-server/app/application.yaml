@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: toolhive-registry-server-configuration
+  namespace: toolhive-system
+data:
+  values.yaml: "config:\n  sources:\n  - name: toolhive\n    git:\n      repository: https://github.com/stacklok/toolhive-catalog.git\n\
+    \      branch: main\n      path: pkg/catalog/toolhive/data/registry-upstream.json\n    syncPolicy:\n      interval:\
+    \ 30m\n  - name: cluster\n    kubernetes:\n      namespaces:\n      - mcp\n    syncPolicy:\n      interval:\
+    \ 5m\n  registries:\n  - name: default\n    sources:\n    - toolhive\n    - cluster\n  auth:\n    mode: anonymous\n\
+    \  database:\n    host: pg18vc-rw.database.svc.cluster.local\n    port: 5432\n    user: toolhive_registry\n\
+    \    database: toolhive_registry\n    sslMode: verify-ca\n    maxOpenConns: 10\n    maxIdleConns: 5\n    connMaxLifetime:\
+    \ 30m\n"

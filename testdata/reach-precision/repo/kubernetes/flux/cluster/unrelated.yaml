@@ -1,0 +1,11 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unrelated
+  namespace: media
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/media/unrelated/app
+  targetNamespace: media
+  prune: true
+  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}

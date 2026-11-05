@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trust-manager-configuration
+  namespace: cert-manager
+data:
+  values.yaml: "app:\n  metrics:\n    service:\n      servicemonitor:\n        enabled: true\n        interval:\
+    \ 1m\n"

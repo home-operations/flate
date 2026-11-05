@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: descheduler-configuration
+  namespace: kube-system
+data:
+  values.yaml: "deschedulerPolicy:\n  metricsProviders:\n  - source: KubernetesMetrics\n  profiles:\n  - name: default\n\
+    \    pluginConfig:\n    - name: DefaultEvictor\n      args:\n        nodeFit: true\n        podProtections:\n\
+    \          defaultDisabled:\n          - FailedBarePods\n          - PodsWithLocalStorage\n          - SystemCriticalPods\n\
+    \    - name: RemovePodsHavingTooManyRestarts\n      args:\n        podRestartThreshold: 80\n        includingInitContainers:\
+    \ true\n    - name: LowNodeUtilization\n      args:\n        metricsUtilization:\n          source: KubernetesMetrics\n\
+    \        thresholds:\n          cpu: 30\n          memory: 40\n        targetThresholds:\n          cpu: 70\n\
+    \          memory: 70\n        evictionLimits:\n          node: 3\n    - name: RemovePodsViolatingNodeAffinity\n\
+    \      args:\n        nodeAffinityType:\n        - preferredDuringSchedulingIgnoredDuringExecution\n       \
+    \ - requiredDuringSchedulingIgnoredDuringExecution\n    - name: RemovePodsViolatingNodeTaints\n    - name: RemovePodsViolatingInterPodAntiAffinity\n\
+    \    - name: RemovePodsViolatingTopologySpreadConstraint\n    plugins:\n      balance:\n        enabled:\n \
+    \       - LowNodeUtilization\n        - RemovePodsViolatingTopologySpreadConstraint\n      deschedule:\n   \
+    \     enabled:\n        - RemovePodsHavingTooManyRestarts\n        - RemovePodsViolatingNodeTaints\n       \
+    \ - RemovePodsViolatingNodeAffinity\n        - RemovePodsViolatingInterPodAntiAffinity\n  - name: failed-pods\n\
+    \    pluginConfig:\n    - name: DefaultEvictor\n      args:\n        nodeFit: false\n        podProtections:\n\
+    \          defaultDisabled:\n          - FailedBarePods\n          - PodsWithLocalStorage\n          - SystemCriticalPods\n\
+    \    - name: RemoveFailedPods\n      args:\n        reasons:\n        - ContainerStatusUnknown\n        - NodeAffinity\n\
+    \        - NodeShutdown\n        - Terminated\n        - UnexpectedAdmissionError\n        includingInitContainers:\
+    \ true\n        excludeOwnerKinds:\n        - Job\n        minPodLifetimeSeconds: 1800\n    plugins:\n     \
+    \ deschedule:\n        enabled:\n        - RemoveFailedPods\n"

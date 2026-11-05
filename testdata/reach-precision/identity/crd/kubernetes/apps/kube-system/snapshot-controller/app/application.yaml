@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: snapshot-controller-configuration
+  namespace: kube-system
+data:
+  values.yaml: "controller:\n  replicaCount: 2\n  serviceMonitor:\n    create: true\n"

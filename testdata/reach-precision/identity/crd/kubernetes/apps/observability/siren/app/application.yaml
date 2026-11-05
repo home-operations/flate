@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: siren
+  namespace: observability
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/shamubernetes/siren:1.4.40@sha256:b322bb92b4f0746266e9a73fa36820a16987d32026279d6e180c2ff1836e272c

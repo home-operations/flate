@@ -1,0 +1,3 @@
+namespace: tailscale
+resources:
+- application.yaml

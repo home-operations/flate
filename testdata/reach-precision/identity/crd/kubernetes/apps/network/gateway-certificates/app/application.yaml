@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: xyz-kantai
+spec:
+  commonName: kantai.xyz
+  dnsNames:
+  - kantai.xyz
+  - '*.kantai.xyz'
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  secretName: xyz-kantai-tls

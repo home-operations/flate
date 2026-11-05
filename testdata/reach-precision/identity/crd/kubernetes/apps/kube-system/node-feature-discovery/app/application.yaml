@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-feature-discovery-configuration
+  namespace: kube-system
+data:
+  values.yaml: "worker:\n  tolerations:\n  - key: node.kantai.xyz/low-memory\n    operator: Exists\n    effect:\
+    \ NoSchedule\n"

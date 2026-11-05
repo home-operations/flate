@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: silence-operator-configuration
+  namespace: observability
+data:
+  values.yaml: "networkPolicy:\n  enabled: false\n"

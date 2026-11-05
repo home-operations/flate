@@ -82,6 +82,23 @@ type operation struct {
 	Ref          *reference    `json:"ref,omitempty"`
 	NoGit        string        `json:"noGit,omitempty"`
 	Submodule    *blob         `json:"submodule,omitempty"`
+	Registry     *registry     `json:"registry,omitempty"`
+}
+
+func (op *operation) overlayEligible() bool {
+	remaining := *op
+	remaining.Delete = ""
+	remaining.Rename = nil
+	remaining.Chmod = nil
+	remaining.Symlink = nil
+	remaining.CacheFailure = nil
+	return remaining == (operation{})
+}
+
+type registry struct {
+	Chart    string   `json:"chart"`
+	Files    []string `json:"files"`
+	Sentinel string   `json:"sentinel"`
 }
 
 type rename struct {
@@ -350,8 +367,7 @@ func (s *scenario) validateOverlayOperations(
 	for _, o := range s.Overlays {
 		for i := range o.Operations {
 			op := &o.Operations[i]
-			if op.Overlay != "" || op.Commit != "" || op.Shallow != "" || op.MissingBlob != nil || op.Ref != nil ||
-				op.NoGit != "" || op.Submodule != nil {
+			if !op.overlayEligible() {
 				return fmt.Errorf("overlay operations require delete, rename, chmod, symlink or cacheFailure")
 			}
 			if err := validateOperation(op, overlays, commitRepos, repos); err != nil {
@@ -473,7 +489,7 @@ func validateOperation(
 
 func validateOperationAction(op *operation) error {
 	count := 0
-	for _, set := range []bool{op.Overlay != "", op.Commit != "", op.Delete != "", op.Rename != nil, op.Chmod != nil, op.Symlink != nil, op.CacheFailure != nil, op.Shallow != "", op.MissingBlob != nil, op.Ref != nil, op.NoGit != "", op.Submodule != nil} {
+	for _, set := range []bool{op.Overlay != "", op.Commit != "", op.Delete != "", op.Rename != nil, op.Chmod != nil, op.Symlink != nil, op.CacheFailure != nil, op.Shallow != "", op.MissingBlob != nil, op.Ref != nil, op.NoGit != "", op.Submodule != nil, op.Registry != nil} {
 		if set {
 			count++
 		}
@@ -488,11 +504,19 @@ func validateOperationAction(op *operation) error {
 			return fmt.Errorf("invalid cache failure operation")
 		}
 	}
+	if registry := op.Registry; registry != nil {
+		if !local(registry.Chart) || len(registry.Files) == 0 || registry.Sentinel == "" {
+			return fmt.Errorf("registry requires a local chart, source files and a sentinel")
+		}
+	}
 	return nil
 }
 
 func validateOperationPaths(op *operation, commits map[string]string, repos map[string]bool) error {
 	paths := []string{op.Delete}
+	if op.Registry != nil {
+		paths = append(paths, op.Registry.Files...)
+	}
 	if op.Symlink != nil {
 		link := op.Symlink
 		if link.Target == "" || filepath.IsAbs(link.Target) || strings.Contains(link.Target, "\\") ||

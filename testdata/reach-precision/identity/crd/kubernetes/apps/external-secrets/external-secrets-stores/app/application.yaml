@@ -1,0 +1,21 @@
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: openbao
+spec:
+  provider:
+    vault:
+      server: https://bao.etincelle.cloud
+      path: kantai
+      version: v2
+      auth:
+        jwt:
+          path: jwt
+          role: kantai-eso
+          kubernetesServiceAccountToken:
+            serviceAccountRef:
+              name: external-secrets
+              namespace: external-secrets
+            audiences:
+            - openbao
+            expirationSeconds: 600

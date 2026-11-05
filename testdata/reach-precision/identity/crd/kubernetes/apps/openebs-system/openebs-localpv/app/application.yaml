@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openebs-localpv-configuration
+  namespace: openebs-system
+data:
+  values.yaml: "localpv:\n  basePath: /var/mnt/openebs\n"

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seerr-configuration
+  namespace: default
+data:
+  values.yaml: "config:\n  persistence:\n    existingClaim: seerr\n"

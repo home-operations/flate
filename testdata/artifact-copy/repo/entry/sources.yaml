@@ -1,0 +1,46 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: repo
+  namespace: apps
+spec:
+  interval: 1m
+  url: https://example.test/cluster.git
+---
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata:
+  name: generator
+  namespace: apps
+  uid: authored
+spec:
+  artifacts:
+  - copy:
+    - from: '@repo/app/'
+      to: '@artifact/app/'
+    - from: '@repo/base.yaml'
+      to: '@artifact/app/app/config.yaml'
+    - from: '@repo/overlay.yaml'
+      strategy: Merge
+      to: '@artifact/app/app/config.yaml'
+    - from: '@repo/archive.tgz'
+      strategy: Extract
+      to: '@artifact/app/app/'
+    name: generated
+  sources:
+  - alias: repo
+    kind: GitRepository
+    name: repo
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  interval: 1m
+  path: ./app/app
+  sourceRef:
+    kind: ExternalArtifact
+    name: generated

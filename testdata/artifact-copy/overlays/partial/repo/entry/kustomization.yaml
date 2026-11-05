@@ -1,0 +1,1 @@
+resources: [generator.yaml, a.yaml, b.yaml, c.yaml]

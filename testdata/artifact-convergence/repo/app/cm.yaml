@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: raw
+kind: ConfigMap
+metadata:
+  name: generated-config
+  namespace: apps

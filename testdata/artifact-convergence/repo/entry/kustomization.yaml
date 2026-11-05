@@ -1,0 +1,10 @@
+resources: [generator.yaml, consumer.yaml]
+patches:
+- target: {kind: ArtifactGenerator, name: generator}
+  patch: |-
+    - op: replace
+      path: /spec/artifacts/0/copy/1/from
+      value: '@repo/transformed.yaml'
+    - op: replace
+      path: /metadata/uid
+      value: built-generator

@@ -431,3 +431,38 @@ Both sequence replays start with empty caches.
 | `helm-dependencies/changed-only-render-emitted-dependency` | changed only render emitted dependency. | Reuse within sequence; reset on replay. |
 | `helm-dependencies/ready-expr--helm-release` | ready expr  helm release. | Reuse within sequence; reset on replay. |
 | `helm-oci/helm-missingoci-source` | helm missingoci source. | Reuse within sequence; reset on replay. |
+
+### U6 ArtifactGenerator catalog
+
+| Scenario / case | Behavior and commands | Cache regime |
+| --- | --- | --- |
+| `artifact-copy/artifact-generator--all-strategies` | `build all`: directory copy, YAML merge with a retained key, and archive extraction overwrite the copied payloads. | Two invocations share the default cache. Replays retain caches. |
+| `artifact-copy/artifact-generator--partial-failure` | `build all`: outputs a and b publish once. Missing input c fails with exit 1 and blocks its consumer. | Two invocations share the default cache. Replays retain caches. |
+| `artifact-reach/artifact-generator--bootstrap-input` | `build all`: a missing source aliases the working tree. Both repositories pin identical copied inputs. A consumer-only edit still selects its static generator. | Full and changed-only builds share the default cache. Replays retain caches. |
+| `artifact-reach/artifact-generator--emitted-changed-only-diff` | Changed-only `build all` and both directions of `diff all`: a component emits the generator. Its changed copy input reaches the consumer and excludes the unrelated workload. | Each invocation shares the default cache. Replays retain caches. |
+| `artifact-reach/artifact-generator--input-source-changed-only` | Full builds resolve both pinned inputs. Changed-only builds and both diff directions cover independent directory baselines and committed baselines. | Each invocation shares the default cache. Replays retain caches. |
+| `artifact-reach/artifact-generator--input-source-changed-only-reverse-committed` | `diff all`: the before checkout owns both commits and compares with the after commit. | The default cache survives both replays. |
+| `artifact-convergence/artifact-generator--consumed-input-convergence` | `build all`: entry patches replace the raw generator input and UID. The final consumer and ExternalArtifact appear once with the current metadata. | Two invocations share the default cache. Replays retain caches. |
+
+These scenarios are authored reductions of `xunholy/k8s-gitops` revision `2f2e6edc730457a3f45d7a73aad536afc683b5eb`.
+The reference path is `kubernetes/apps/base/flux-system/artifact-generator/artifactgenerator.yaml`.
+The reduction keeps the source, copy, artifact, and consumer relationships and replaces application payloads with local ConfigMaps.
+Merge, extract, missing input, bootstrap, pinned history, and convergence are authored variants of the existing flate regression tests.
+The unrelated workload is an exclusion control with a real ConfigMap.
+The copied archive payload and merge target also exist before generation, so each source package builds independently.
+The generator overwrites those payloads with the independently specified final values.
+The component uses the standard `Kustomization` filename and renders through its owner package.
+
+Flux source-watcher `v2.3.1` supplies the behavior authority through `ArtifactGeneratorReconciler.reconcile`, `fetchSources`, and `reconcileExternalArtifact`.
+Its `mergeYAML` and `extractTarball` define the merge and extraction results.
+Flux kustomize-controller `v1.10.1` supplies transformations and ownership labels through `KustomizationReconciler.build` and `apply`.
+Flate supplies the offline aliases, changed-only selection, diff presentation, and failure diagnostics.
+Expectation files specify complete bytes and exit codes independently of candidate output.
+
+Every U6 sequence runs twice with concurrency 2.
+The pinned-input case keeps separate Git stores for directory comparisons and selects both historical commits through the declared fixture transport.
+Its committed reverse diff uses a separate declared checkout in the repository that owns both historical commits.
+The emitted-generator case keeps a declared shallow boundary on the baseline repository.
+The package tests under `pkg/controllers/artifactgenerator` retain parser, archive, partial publication, and synchronized convergence proofs.
+U6 removes both ArtifactGenerator files from the migration allowlist.
+The shared CLI and fixture helpers remain for the unmigrated U1 through U5 and U7 consumers until U9 removes their last callers.

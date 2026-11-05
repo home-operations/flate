@@ -1,0 +1,6 @@
+
+  ✗  ArtifactGenerator  apps/generator  evaluate generated-c: stat: stat c: file does not exist
+  ✗  ExternalArtifact  apps/generated-c  not found
+         required by apps/c
+
+  ✗ 2 failed · 1 blocked

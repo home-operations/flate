@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: b
+kind: ConfigMap
+metadata:
+  name: accepted-b
+  namespace: apps

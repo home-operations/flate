@@ -1,0 +1,38 @@
+---
+apiVersion: v1
+data:
+  value: archive
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: extracted
+  namespace: apps
+---
+apiVersion: v1
+data:
+  a: after
+  b: retained
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: merged
+  namespace: apps
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: ExternalArtifact
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: source-watcher
+    source.extensions.fluxcd.io/generator: authored
+  name: generated
+  namespace: apps
+spec:
+  sourceRef:
+    apiVersion: source.extensions.fluxcd.io/v1beta1
+    kind: ArtifactGenerator
+    name: generator
+    namespace: apps

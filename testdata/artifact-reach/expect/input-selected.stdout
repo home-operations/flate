@@ -1,0 +1,87 @@
+---
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: generated-config
+  namespace: apps
+---
+apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata:
+  name: generator
+  namespace: apps
+  uid: authored
+spec:
+  artifacts:
+  - copy:
+    - from: '@repo/app/kustomization.yaml'
+      to: '@artifact/render/kustomization.yaml'
+    - from: '@repo/app/cm.yaml'
+      to: '@artifact/render/cm.yaml'
+    name: generated
+  sources:
+  - alias: repo
+    kind: GitRepository
+    name: input
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: ExternalArtifact
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: source-watcher
+    source.extensions.fluxcd.io/generator: authored
+  name: generated
+  namespace: apps
+spec:
+  sourceRef:
+    apiVersion: source.extensions.fluxcd.io/v1beta1
+    kind: ArtifactGenerator
+    name: generator
+    namespace: apps
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: independent
+  namespace: apps
+spec:
+  url: https://example.test/cluster.git
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: input
+  namespace: apps
+spec:
+  ref:
+    commit: @@commit:content-after@@
+  url: https://example.test/cluster.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  interval: 1m
+  path: ./render
+  sourceRef:
+    kind: ExternalArtifact
+    name: generated
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unrelated
+  namespace: apps
+spec:
+  interval: 1m
+  path: ./unrelated
+  sourceRef:
+    kind: GitRepository
+    name: independent

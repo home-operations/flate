@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -94,11 +96,13 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 		URL:       "file://" + src,
 		Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"},
 	}
-	art, err := f.Fetch(
+	art, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		repo,
 		(testInputs{}).readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	assert.FatalIf(t, err != nil, "Fetch tag: %v", err)
 

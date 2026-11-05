@@ -51,9 +51,11 @@ func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, op
 		if err != nil {
 			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 		}
-		endpoint, err := f.validateRepo(manifest.NewGitRepository(sourcev1.GitRepository{
-			Spec: sourcev1.GitRepositorySpec{URL: remote.Config().URLs[0]},
-		}))
+		endpoint, err := f.validateRepo(
+			manifest.NewGitRepository(
+				sourcev1.GitRepository{Spec: sourcev1.GitRepositorySpec{URL: remote.Config().URLs[0]}},
+			), false,
+		)
 		if err != nil {
 			return fmt.Errorf("validate submodule %q: %w", sub.Config().Name, err)
 		}

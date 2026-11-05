@@ -10,6 +10,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
@@ -147,7 +149,7 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 				r.Timeout = &metav1.Duration{Duration: tc.timeout}
 			}
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-			_, err := f.Fetch(t.Context(), r, (testInputs{}).readSet(r), &sourcecache.Policy{})
+			_, err := fetchtest.Fetch(t.Context(), f.Fetch, r, (testInputs{}).readSet(r), &sourcecache.Policy{}, nil)
 			assert.FatalIf(
 				t,
 				calls == 0 || !errors.Is(err, transport.ErrRepositoryNotFound),
@@ -259,7 +261,14 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 			Timeout:           &metav1.Duration{Duration: 5 * time.Second},
 		}
 		start := time.Now()
-		_, err := f.Fetch(t.Context(), r, (testInputs{}).readSet(r), &sourcecache.Policy{MaxAge: time.Hour})
+		_, err := fetchtest.Fetch(
+			t.Context(),
+			f.Fetch,
+			r,
+			(testInputs{}).readSet(r),
+			&sourcecache.Policy{MaxAge: time.Hour},
+			nil,
+		)
 		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second || calls != 2 {
 			t.Fatalf("aggregate attempt: calls=%d elapsed=%v error=%v", calls, time.Since(start), err)
 		}
@@ -273,11 +282,13 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 		}
 		longer := *r
 		longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
-		artifact, err := f.Fetch(
+		artifact, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			&longer,
 			(testInputs{}).readSet(&longer),
 			&sourcecache.Policy{MaxAge: time.Hour},
+			nil,
 		)
 		assert.FatalIf(t, err != nil, "longer policy reused failure: %v", err)
 		body, err := fs.ReadFile(artifact.FS, "hello.txt")
@@ -291,11 +302,13 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 		shorter := longer
 		shorter.Timeout = &metav1.Duration{Duration: time.Nanosecond}
 		before := calls
-		warm, err := f.Fetch(
+		warm, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			&shorter,
 			(testInputs{}).readSet(&shorter),
 			&sourcecache.Policy{MaxAge: time.Hour},
+			nil,
 		)
 		assert.FatalIf(
 			t,

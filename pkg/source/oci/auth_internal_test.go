@@ -17,6 +17,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2/registry/remote/auth"
 
@@ -81,7 +83,7 @@ func TestFetcher_ResolveTLS_NoCertSecret(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", nil)
 	repo.URL = "oci://registry.example/test"
-	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(repo.RegistryAccess()))
+	request, err := (&operation{Fetcher: f}).resolvedRepository(t.Context(), new(repo.RegistryAccess()))
 	assert.NoError(t, err)
 
 	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{})
@@ -99,7 +101,7 @@ func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) { s.Insecure = true })
 	repo.URL = "oci://registry.example/test"
-	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(repo.RegistryAccess()))
+	request, err := (&operation{Fetcher: f}).resolvedRepository(t.Context(), new(repo.RegistryAccess()))
 	assert.NoError(t, err)
 
 	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Insecure: true})
@@ -130,7 +132,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	})
 	repo.URL = "oci://registry.example/test"
-	request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
+	request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolvedRepository(
 		t.Context(), new(repo.RegistryAccess()),
 	)
 	assert.NoError(t, err)
@@ -223,7 +225,7 @@ func TestFetcher_CorruptDockerConfig(t *testing.T) {
 		s.Reference = &sourcev1.OCIRepositoryRef{Tag: "v1"}
 	})
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}
-	got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
+	got, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, (testInputs{}).readSet(repo), &sourcecache.Policy{}, nil)
 	assert.FatalIf(
 		t,
 		got != nil || err == nil || !errors.Is(err, manifest.ErrFlux) || strings.Contains(err.Error(), "auths"),
@@ -401,12 +403,15 @@ func testFetcherSecretCredentialsAcquisitionPolicyCase1(t *testing.T, tt *struct
 	if tt.canceled {
 		cancel()
 	}
-	if _, err := f.Fetch(
+	if _, err := fetchtest.Fetch(
 		ctx,
+		f.Fetch,
 		repo,
 		fInputs.readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
-	); err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing ||
+		nil,
+	); err == nil ||
+		errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing ||
 		errors.Is(err, context.Canceled) != tt.canceled {
 		t.Fatalf("Fetch error = %v, want missing=%t canceled=%t", err, tt.wantMissing, tt.canceled)
 	} else if tt.wantInput &&
@@ -427,7 +432,14 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 		s.Provider = sourcev1.AmazonOCIProvider
 		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 	})
-	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), &sourcecache.Policy{MaxAge: repo.SourceInterval()})
+	_, err := fetchtest.Fetch(
+		t.Context(),
+		f.Fetch,
+		repo,
+		fInputs.readSet(repo),
+		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
+	)
 	assert.FatalIf(t, err == nil, "expected missing-secret error")
 	assert.ErrorIf(
 		t,
@@ -500,18 +512,20 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 				s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 			})
 
-			_, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).fetchSource(
-				t.Context(),
-				repo,
-				&sourcecache.Policy{},
-			)
+			_, err := fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {
+				return (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).fetchSource(
+					t.Context(),
+					repo,
+					&sourcecache.Policy{},
+				)
+			})
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || missing.RetryAmbient == nil || missing.Secret.Name != "creds",
 				"unavailable auth lost lazy continuation: %v", err)
 
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			if _, err := missing.RetryMachine(ctx, nil); !errors.Is(err, context.Canceled) {
+			if _, err := fetchtest.Machine(ctx, missing, nil); !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled continuation ran preparation: %v", err)
 			}
 		})
@@ -569,7 +583,9 @@ func testFetcherSharedMachineFailureCallback(
 	}
 	repo := ociRepo("shared", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://registry.invalid/app" })
 	for range 2 {
-		_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+		_, err := fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {
+			return op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+		})
 		response, ok := errors.AsType[*fetcherr.ResponseError](err)
 		assert.FatalIf(t, !ok || response.StatusCode != http.StatusServiceUnavailable ||
 			strings.Contains(err.Error(), "credential helper") ||
@@ -579,13 +595,17 @@ func testFetcherSharedMachineFailureCallback(
 	time.Sleep(time.Second)
 	done := make(chan error, 2)
 	go func() {
-		_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+		_, err := fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {
+			return op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+		})
 		done <- err
 	}()
 	<-entered
 	testutil.WriteFileAt(t, path, `{}`)
 	go func() {
-		_, err := op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+		_, err := fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {
+			return op.fetchSource(t.Context(), repo, &sourcecache.Policy{})
+		})
 		done <- err
 	}()
 	synctest.Wait()

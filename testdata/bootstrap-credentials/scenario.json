@@ -1,0 +1,229 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "c73c77b85ebe051d2dfa981ab02244f5404617ea",
+    "paths": [
+      "pkg/controllers/base/acquisition.go",
+      "pkg/controllers/source/controller.go"
+    ],
+    "reductions": "An authored bootstrap source names its own SSH remote. Add missing authentication and verification references without changing the rendered ConfigMap. Compare complete build and diff output."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "ssh://git@fixture.invalid/cluster"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "after",
+      "directory": "overlays/after"
+    },
+    {
+      "name": "credentials",
+      "directory": "overlays/credentials"
+    }
+  ],
+  "cases": [
+    {
+      "name": "build-and-diff",
+      "description": "Bootstrap sources bypass credentials and render the same objects in build and diff.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "after"
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": ""
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build-plain",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-plain",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--base",
+              "@@commit:base@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "credentials",
+          "edit": {
+            "overlay": "credentials"
+          }
+        },
+        {
+          "id": "build-credentials",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-credentials",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--base",
+              "@@commit:base@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/success.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/build.stdout",
+      "cases": [
+        "build-and-diff"
+      ],
+      "purpose": "Authored input or complete output for the bootstrap credential regression."
+    },
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "build-and-diff"
+      ],
+      "purpose": "Authored input or complete output for the bootstrap credential regression."
+    },
+    {
+      "path": "expect/success.stderr",
+      "cases": [
+        "build-and-diff"
+      ],
+      "purpose": "Authored input or complete output for the bootstrap credential regression."
+    },
+    {
+      "path": "overlays/after/repo/apps/cm.yaml",
+      "cases": [
+        "build-and-diff"
+      ],
+      "purpose": "Authored input or complete output for the bootstrap credential regression."
+    },
+    {
+      "path": "overlays/credentials/repo/flux/entry.yaml",
+      "cases": [
+        "build-and-diff"
+      ],
+      "purpose": "Authored input or complete output for the bootstrap credential regression."
+    },
+    {
+      "path": "repo/apps/cm.yaml",
+      "cases": [
+        "build-and-diff"
+      ],
+      "purpose": "Authored input or complete output for the bootstrap credential regression."
+    },
+    {
+      "path": "repo/apps/kustomization.yaml",
+      "cases": [
+        "build-and-diff"
+      ],
+      "purpose": "Authored input or complete output for the bootstrap credential regression."
+    },
+    {
+      "path": "repo/flux/entry.yaml",
+      "cases": [
+        "build-and-diff"
+      ],
+      "purpose": "Authored input or complete output for the bootstrap credential regression."
+    }
+  ]
+}

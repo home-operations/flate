@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
@@ -129,7 +130,7 @@ func (c *execution) acquireProvider(
 		base.Acquisition{
 			AllowMissingSecrets:  c.AllowMissingSecrets,
 			AllowAnonymousDenied: true,
-			Fetch: func(ctx context.Context) (*store.SourceArtifact, error) {
+			Fetch: func(ctx context.Context) (source.PreparedFetch, error) {
 				return c.Inputs.FetchInputs(ctx, provider, &c.run.Reads, &cache.Policy{Retry: c.Retry})
 			},
 			Complete: func(ctx context.Context, artifact *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {

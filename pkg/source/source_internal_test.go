@@ -24,21 +24,26 @@ import (
 )
 
 type stubTypedFetcher struct {
-	called *manifest.GitRepository
-	policy sourcecache.Policy
-	reads  *store.ReadSet
+	called   *manifest.GitRepository
+	policy   sourcecache.Policy
+	reads    *store.ReadSet
+	artifact *store.SourceArtifact
 }
 
 func (s *stubTypedFetcher) Fetch(
 	_ context.Context,
 	obj *manifest.GitRepository,
 	reads *store.ReadSet,
-	policy *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
+	policyValue *sourcecache.Policy,
+) (PreparedFetch, error) {
+	policy := *policyValue
 	s.called = obj
 	s.reads = reads
-	s.policy = *policy
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: obj.URL}, nil
+	s.policy = policy
+	return PreparedFetch{Fetch: func(_ context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+		s.artifact = local
+		return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: obj.URL}, nil
+	}}, nil
 }
 
 func TestWrap_DispatchesTypedPayload(t *testing.T) {
@@ -50,13 +55,17 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 
 	policy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}}
 	reads := testReadSet(repo)
-	art, err := f.Fetch(t.Context(), repo, reads, &policy)
+	admitted := &store.SourceArtifact{InputAlias: true}
+	prepared, err := f.Fetch(t.Context(), repo, reads, &policy)
+	assert.NoError(t, err)
+	art, err := prepared.Fetch(t.Context(), admitted)
+	assert.Equal(t, inner.artifact, admitted)
 	assert.FatalIf(t, inner.reads != reads, "%s", "ReadSet was not forwarded")
 
 	if inner.policy.MaxAge != policy.MaxAge || inner.policy.Retry != policy.Retry ||
 		inner.policy.Timeout != policy.Timeout ||
 		inner.policy.Admit != nil {
-		t.Fatalf("policy=%+v, want %+v", inner.policy, policy)
+		t.Fatalf("policy=%+v, want %+v", inner.policy, &policy)
 	}
 	assert.FatalIf(t, err != nil, "Fetch: %v", err)
 	assert.ErrorIf(t, inner.called != repo, "Wrap did not pass typed payload through")
@@ -71,7 +80,11 @@ func TestWrap_MismatchedPayloadReturnsInputError(t *testing.T) {
 	f := Wrap(manifest.KindGitRepository, inner)
 	wrong := &manifest.OCIRepository{Name: "o", Namespace: "ns"}
 
-	_, err := f.Fetch(context.Background(), wrong, testReadSet(wrong), &sourcecache.Policy{})
+	_, err := f.Fetch(
+		context.Background(),
+		wrong,
+		testReadSet(wrong), &sourcecache.Policy{},
+	)
 	assert.FatalIf(t, err == nil, "%s", "expected ErrInput on mismatched payload")
 
 	assert.ErrorIf(t, !errors.Is(err, manifest.ErrInput), "expected wrapped ErrInput; got %v", err)

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -148,7 +150,7 @@ func testFetcherMachineProfilesCaseCompletion(t *testing.T, captures *testFetche
 	reads := inputs.readSet(b)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
-	artifact, err := f.Fetch(t.Context(), b, reads, &cache.Policy{MaxAge: time.Hour})
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, reads, &cache.Policy{MaxAge: time.Hour}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(
 		t,
@@ -157,7 +159,7 @@ func testFetcherMachineProfilesCaseCompletion(t *testing.T, captures *testFetche
 		"profile lookup ran before continuation: %v",
 		err,
 	)
-	artifact, err = missing.RetryMachine(t.Context(), reads)
+	artifact, err = fetchtest.Machine(t.Context(), missing, reads)
 	success := (*(*captures.shape)) == "process" || (*(*captures.shape)) == "static before process" ||
 		(*(*captures.shape)) == "environment before files" ||
 		(*(*captures.shape)) ==
@@ -267,7 +269,7 @@ func testFetcherMachineProfilesCaseCompletionTail(
 		}
 	}
 	if *scope.success {
-		warm, err := (*scope.missing).RetryMachine(t.Context(), (*scope.reads))
+		warm, err := fetchtest.Machine(t.Context(), (*scope.missing), (*scope.reads))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -291,7 +293,7 @@ func testFetcherMachineProfilesCaseCompletionTail(
 				strings.ReplaceAll((*(*scope.captures).script), "file-canary", "rotated-canary"),
 			)
 		}
-		rotated, err := (*scope.missing).RetryMachine(t.Context(), (*scope.reads))
+		rotated, err := fetchtest.Machine(t.Context(), (*scope.missing), (*scope.reads))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,

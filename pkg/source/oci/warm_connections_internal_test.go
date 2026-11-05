@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -54,11 +56,13 @@ func TestFetcher_Freshness_WarmConnections(t *testing.T) {
 			beforeHeads, beforeManifests, beforeLayers := heads.Load(), manifests.Load(), layers.Load()
 			request := *repo
 			request.Name = fmt.Sprintf("source-%d", operation)
-			art, err := f.Fetch(
+			art, err := fetchtest.Fetch(
 				t.Context(),
+				f.Fetch,
 				&request,
 				(testInputs{}).readSet(&request),
 				&sourcecache.Policy{MaxAge: request.SourceInterval()},
+				nil,
 			)
 			assert.NoError(t, err)
 

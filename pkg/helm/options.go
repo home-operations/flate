@@ -22,9 +22,16 @@ type RenderOptions struct {
 	// Callers already holding a task slot MUST leave it nil.
 	PreparationTasks *task.Service `json:"-"`
 	// DependencySubstitutions binds emitted dependency projection to accepted history.
-	DependencySubstitutions values.DependencySubstitutions `json:"DependencySubstitutions"`
-	// Admit receives the cache owner's content key; true returns empty output without rendering.
-	Admit func(string) (bool, error) `json:"Admit"`
+	DependencySubstitutions values.DependencySubstitutions      `json:"DependencySubstitutions"`
+	Admit                   func(RenderAdmission) (bool, error) `json:"Admit"`
+}
+
+// RenderAdmission carries accepted cache evidence bound to the current request.
+type RenderAdmission struct {
+	Accepted  bool
+	Key       string
+	Documents []manifest.DocOccurrence
+	Receipt   *manifest.RenderReceipt
 }
 
 // Options collects the helm template flags flate supports.

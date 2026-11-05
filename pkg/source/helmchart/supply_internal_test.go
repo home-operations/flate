@@ -43,7 +43,7 @@ func TestFetcher_SuppliedHTTPMaterial(t *testing.T) {
 	defer reads.Close()
 	network := new(source.Network)
 	t.Cleanup(network.Close)
-	prepared, err := (&operation{Fetcher: &Fetcher{network: network}, secrets: source.SecretLookup(&reads)}).prepareHTTP(
+	prepared, err := (&operation{Fetcher: &Fetcher{network: network}, secrets: source.SecretLookup(&reads)}).resolvedHTTP(
 		r,
 	)
 	assert.NoError(t, err)

@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	src "github.com/home-operations/flate/pkg/source"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -27,34 +29,42 @@ type generatedOCIFetcher struct {
 }
 
 func (f *generatedOCIFetcher) Fetch(
-	ctx context.Context,
+	_ context.Context,
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
 	policy *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	f.calls.Add(1)
-	if reads == nil {
-		return nil, fmt.Errorf("missing captured inputs")
-	}
-	if policy.Retry != f.wantRetry {
-		return nil, fmt.Errorf("unexpected retry: %+v", policy.Retry)
-	}
-	if obj.Named().Name == "app" {
-		f.fetched.Store(true)
-	}
-	if f.err != nil {
-		return nil, f.err
-	}
-	location, err := gitrepo.Locate(ctx, f.root, f.root)
-	if err != nil {
-		return nil, err
-	}
-	input, err := gittree.AdmitDirectory(ctx, location)
-	if err != nil {
-		return nil, err
-	}
-	input.Kind, input.Digest = manifest.KindOCIRepository, "sha256:fixture"
-	return input, nil
+) (src.PreparedFetch, error) {
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			f.calls.Add(1)
+			if reads == nil {
+				return nil, fmt.Errorf("missing captured inputs")
+			}
+			if policy.Retry != f.wantRetry {
+				return nil, fmt.Errorf("unexpected retry: %+v", policy.Retry)
+			}
+			if obj.Named().Name == "app" {
+				f.fetched.Store(true)
+			}
+			if f.err != nil {
+				return nil, f.err
+			}
+			location, err := gitrepo.Locate(ctx, f.root, f.root)
+			if err != nil {
+				return nil, err
+			}
+			input, err := gittree.AdmitDirectory(ctx, location)
+			if err != nil {
+				return nil, err
+			}
+			input.Kind, input.Digest = manifest.KindOCIRepository, "sha256:fixture"
+			return input, nil
+		},
+	}, nil
 }
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.

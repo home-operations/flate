@@ -16,6 +16,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -583,11 +585,13 @@ func testFetchRemoteBaseDefaultSubmodulesCase(
 				Reference:         &sourcev1.GitRepositoryRef{Commit: pin.String()},
 				RecurseSubmodules: true,
 			}
-			artifact, err = f.Fetch(
+			artifact, err = fetchtest.Fetch(
 				t.Context(),
+				f.Fetch,
 				r,
 				(testInputs{}).readSet(r),
 				&sourcecache.Policy{MaxAge: time.Hour},
+				nil,
 			)
 		}
 		assert.FatalIf(t, err != nil, "%s fetch: %v", wave, err)

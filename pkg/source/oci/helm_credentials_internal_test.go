@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -97,7 +99,14 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	}
 	charts := helmchart.New(ociFetcher, helmchart.Config{Cache: cache, Network: &network})
 
-	got, err := charts.Fetch(t.Context(), chartInput, chartsInputs.readSet(chartInput), &sourcecache.Policy{})
+	got, err := fetchtest.Fetch(
+		t.Context(),
+		charts.Fetch,
+		chartInput,
+		chartsInputs.readSet(chartInput),
+		&sourcecache.Policy{},
+		nil,
+	)
 	assert.NoError(t, err)
 
 	if got.Kind != manifest.KindHelmChart {
@@ -118,11 +127,13 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		&Fetcher{Cache: cache, Network: &network},
 		helmchart.Config{Cache: cache, Network: &network},
 	)
-	helmArtifact, err := helmCharts.Fetch(
+	helmArtifact, err := fetchtest.Fetch(
 		t.Context(),
+		helmCharts.Fetch,
 		chartInput,
 		helmInputs.readSet(chartInput),
 		&sourcecache.Policy{},
+		nil,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, helmArtifact.Kind, manifest.KindHelmChart)
@@ -139,22 +150,24 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	fallbackCharts := helmchart.New(fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
 
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-	_, err = fallbackCharts.Fetch(
+	_, err = fetchtest.Fetch(
 		t.Context(),
+		fallbackCharts.Fetch,
 		chartInput,
 		fallbackChartsInputs.readSet(chartInput),
 		&sourcecache.Policy{Retry: retry},
+		nil,
 	)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing fallback: %v", err)
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	{
-		_, retryAmbientErr := missing.RetryAmbient(cancelled)
+		_, retryAmbientErr := fetchtest.Retry(cancelled, missing.RetryAmbient)
 		assert.FatalIf(t, !errors.Is(retryAmbientErr, context.Canceled), "fallback context: %v", retryAmbientErr)
 	}
 	failNext.Store(true)
-	got, err = missing.RetryAmbient(t.Context())
+	got, err = fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	if err != nil || failures.Load() != 1 {
 		t.Fatalf("fallback recovery: %v, failures=%d", err, failures.Load())
 	}
@@ -165,7 +178,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		got,
 	)
 	beforeWarm := requests.Load()
-	warm, err := missing.RetryAmbient(t.Context())
+	warm, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	if err != nil || warm == nil || warm.Key != got.Key || warm.Kind != manifest.KindHelmChart ||
 		requests.Load() != beforeWarm {
 		t.Fatalf(
@@ -184,11 +197,13 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		repos:   func(_, _ string) *manifest.HelmRepository { return &refreshRepo },
 	}
 	refreshCharts := helmchart.New(fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
-	_, err = refreshCharts.Fetch(
+	_, err = fetchtest.Fetch(
 		t.Context(),
+		refreshCharts.Fetch,
 		&refreshInput,
 		refreshChartsInputs.readSet(&refreshInput),
 		&sourcecache.Policy{Retry: retry},
+		nil,
 	)
 	missing, ok = errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "refresh fallback: %v", err)
@@ -207,7 +222,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	assert.FatalIf(t, !ok || !terminal.Attempted, "seed: %v", err)
 	cause := terminal.Err
 	before := requests.Load()
-	_, err = missing.RetryAmbient(t.Context())
+	_, err = fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	if terminal, ok := errors.AsType[*sourcecache.TerminalError](
 		err,
 	); !ok || terminal.Attempted || !errors.Is(err, cause) ||

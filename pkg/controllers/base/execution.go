@@ -69,6 +69,7 @@ func (e *Execution) Valid() bool {
 
 // Retire releases superseded assessment cells while retaining borrowed output.
 func (e *Execution) Retire() {
+	e.closeAcquisition()
 	e.Store.Retire(&e.Reads)
 }
 
@@ -188,6 +189,7 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 // Settle classifies retained unresolved gates without rendering again.
 func (e *Execution) Settle(ctx context.Context, level manifest.DrainLevel) {
 	if !e.Reads.Valid() {
+		e.closeAcquisition()
 		return
 	}
 	if pending, ok := e.pending.(interface {
@@ -212,7 +214,11 @@ func (e *Execution) finish(ctx context.Context, err error) {
 	if !e.Reads.Valid() {
 		return
 	}
-	defer e.Reads.Accept(store.AssessmentReconciled)
+	kind := store.AssessmentReconciled
+	if e.Reused {
+		kind = store.AssessmentReused
+	}
+	defer e.Reads.Accept(kind)
 	id := e.Reads.ID()
 	e.Blocked = nil
 	e.kind = schedule.Terminal
@@ -243,7 +249,7 @@ func (e *Execution) finishFailure(ctx context.Context, id manifest.NamedResource
 		e.kind = schedule.DependencyFailed
 	}
 	if artifact, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok &&
-		!artifact.Reads.Valid() {
+		(errors.Is(err, manifest.ErrSourceSkipped) || !artifact.Reads.Valid()) {
 		e.Store.SetArtifact(id, nil)
 	}
 	_, _, next := e.Reads.GetEmission(id)
@@ -371,14 +377,6 @@ func (e *Execution) reconcile[T manifest.BaseManifest](
 	if !e.Reads.Valid() {
 		return nil
 	}
-	if err := e.requireDeclaration(ctx, level); err != nil {
-		return err
-	}
-	if !e.prepared {
-		if err := e.prepare(ctx, obj); err != nil {
-			return err
-		}
-	}
 	return reconcile(ctx, obj, level)
 }
 
@@ -460,7 +458,9 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
 		}
 	}
-	failed.Failed = owners
+	failed.Failed = append(failed.Failed, owners...)
+	slices.SortFunc(failed.Failed, manifest.NamedResource.Compare)
+	failed.Failed = slices.Compact(failed.Failed)
 	for _, owner := range owners {
 		if _, exists := failed.Reasons[owner]; !exists {
 			failed.Reasons[owner] = manifest.DiagnosticReason{
@@ -528,6 +528,10 @@ func (e *Execution) FingerprintDedup(
 	if !matched {
 		return Deduplication{Fingerprint: fp, Reused: false}, e.admitRender()
 	}
+	if attempt.Render == nil && output.Render != nil && attempt.OutputReads != nil && attempt.OutputReads.Valid() &&
+		e.Reads.Matches(attempt.OutputReads) {
+		attempt.Render = output.Render
+	}
 	if err := e.Checkpoint(); err != nil {
 		return Deduplication{Fingerprint: fp, Reused: true}, err
 	}
@@ -535,19 +539,11 @@ func (e *Execution) FingerprintDedup(
 	if slices.Equal(output.Unreadable, e.Unreadable) {
 		e.Reads.CarryWarnings(output)
 	}
-	if attempt.Render == nil && output.Render != nil && attempt.OutputReads != nil && attempt.OutputReads.Valid() &&
-		e.Reads.Matches(attempt.OutputReads) {
-		attempt.Render = output.Render
-	}
 	attempt.Children = output.Children
 	attempt.Manifests = output.Manifests
 	attempt.Fingerprint = output.Fingerprint
 	attempt.Unreadable = e.Unreadable
 	attempt.Complete = true
-	if attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) &&
-		slices.Equal(output.Unreadable, e.Unreadable) {
-		attempt.Reads = attempt.OutputReads
-	}
 	return Deduplication{Fingerprint: fp, Reused: true}, e.Emit(ctx, id, attempt, nil)
 }
 
@@ -558,7 +554,16 @@ func (e *Execution) Outcome() schedule.Kind { return e.kind }
 func (e *Execution) Progressed() bool { return !e.Reused }
 
 // Close retires all provenance borrowed by the completed invocation.
-func (e *Execution) Close() { e.Reads.Close() }
+func (e *Execution) Close() {
+	e.closeAcquisition()
+	e.Reads.Close()
+}
+
+func (e *Execution) closeAcquisition() {
+	if pending, ok := errors.AsType[*pendingAcquisitionError](e.pending); ok {
+		pending.close()
+	}
+}
 
 func (e *Execution) withdrawInvalid(ctx context.Context) error {
 	_, _, next := e.Reads.GetEmission(e.Reads.ID())

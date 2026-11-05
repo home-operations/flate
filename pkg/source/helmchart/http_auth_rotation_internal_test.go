@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -195,11 +197,13 @@ func testFetchHTTPChartBasicAuthSnapshotRotationCase(
 	f := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 
 	before := testCaseInput.hits.Load()
-	art, err := f.Fetch(
+	art, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		helmChart("repo", "app-template", "1.0.0"),
 		fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 		&sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3}},
+		nil,
 	)
 	assert.NoError(t, err)
 
@@ -209,11 +213,13 @@ func testFetchHTTPChartBasicAuthSnapshotRotationCase(
 	(*testCaseInput.previous) = art.Key
 	before = testCaseInput.hits.Load()
 	{
-		_, fetchErr := f.Fetch(
+		_, fetchErr := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			helmChart("repo", "app-template", "1.0.0"),
 			fInputs.readSet(helmChart("repo", "app-template", "1.0.0")),
 			&sourcecache.Policy{},
+			nil,
 		)
 		assert.FatalIf(t, fetchErr != nil || testCaseInput.hits.
 			Load() != before, "warm chart missed: %v", fetchErr)

@@ -62,6 +62,7 @@ type Emission struct {
 	documentOwners []manifest.NamedResource
 	previous       *Emission
 	cached         *RenderedOutput
+	sources        []manifest.SourceEvidence
 	entries        []admission
 	coverage       []footprint
 	binding        sourceBinding

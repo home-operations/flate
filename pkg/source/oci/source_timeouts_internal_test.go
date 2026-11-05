@@ -53,7 +53,7 @@ func testFetcherSourceTimeoutCase(t *testing.T, tc *struct {
 		r.Timeout = &metav1.Duration{Duration: tc.timeout}
 	}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", sourcecache.New)}
-	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(r.RegistryAccess()))
+	request, err := (&operation{Fetcher: f}).resolvedRepository(t.Context(), new(r.RegistryAccess()))
 	assert.NoError(t, err)
 
 	stop := errors.New("controlled registry request")

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,13 +53,13 @@ func (s *stubOCI) FetchChart(
 	r *manifest.OCIRepository,
 	reads *store.ReadSet,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
 
 	s.got = r
 	s.reads = reads
 	s.policy = policy
-	return s.art, s.err
+	return fetchtest.Prepared(s.art, s.err)
 }
 
 func TestFetch_OCIBranch(t *testing.T) {
@@ -77,7 +79,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 	retry := cache.RetryConfig{Attempts: 3}
 	hc := helmChart("truecharts", "kromgo", "3.0.0")
 	reads := fInputs.readSet(hc)
-	art, err := f.Fetch(t.Context(), hc, reads, &cache.Policy{MaxAge: time.Minute, Retry: retry})
+	art, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, reads, &cache.Policy{MaxAge: time.Minute, Retry: retry}, nil)
 	assert.FatalIf(t, stub.reads != reads, "%s", "nested OCI fetch did not receive execution inputs")
 
 	if stub.policy.MaxAge != time.Hour || stub.policy.Retry != retry || stub.policy.Timeout != nil ||
@@ -122,7 +124,7 @@ func TestFetch_TransientOCIDiagnostic(t *testing.T) {
 	defer reads.Close()
 	network := newTestNetwork(t)
 	f := New(&oci.Fetcher{Network: network}, Config{Network: network})
-	_, err := f.Fetch(t.Context(), hc, reads, &cache.Policy{})
+	_, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, reads, &cache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(
 		t,
@@ -178,22 +180,25 @@ func TestFetch_OCIAmbientContinuation(t *testing.T) {
 				source.MissingSecretErr(manifest.DiagnosticFor(synthetic.Named(), synthetic), "auth", "not found"),
 			)
 			calls := 0
-			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+			missing.RetryAmbient = func(context.Context) (source.PreparedFetch, error) {
 				calls++
 				if failure != nil {
-					return nil, failure
+					return fetchtest.Prepared(nil, failure)
 				}
-				return &store.SourceArtifact{Kind: manifest.KindOCIRepository, Content: "chart"}, nil
+				return fetchtest.Prepared(
+					&store.SourceArtifact{Kind: manifest.KindOCIRepository, Content: "chart"},
+					nil,
+				)
 			}
 			f := &Fetcher{oci: &stubOCI{err: missing}}
 			reads := (testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}).readSet(hc)
 			defer reads.Close()
-			_, err := f.Fetch(t.Context(), hc, reads, &cache.Policy{})
+			_, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, reads, &cache.Policy{}, nil)
 			wrapped, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || wrapped.RetryAmbient == nil || calls != 0, "prepare = %v; calls=%d", err, calls)
 			assert.FatalIf(t, wrapped.Owner != synthetic.Named() || wrapped.Subject.Resource != release.Named() ||
 				!errors.Is(err, manifest.ErrMissingSecret), "retry wrapper lost captured identity: %+v", wrapped)
-			artifact, err := wrapped.RetryAmbient(t.Context())
+			artifact, err := fetchtest.Retry(t.Context(), wrapped.RetryAmbient)
 			assert.FatalIf(t, !errors.Is(err, failure) || calls != 1, "ambient continuation = %v; calls=%d", err, calls)
 			assert.FatalIf(t, failure != nil && artifact != nil ||
 				failure == nil &&
@@ -204,15 +209,28 @@ func TestFetch_OCIAmbientContinuation(t *testing.T) {
 
 func TestFetch_RepoNotFound(t *testing.T) {
 	t.Parallel()
-	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return nil }}
-	f := &Fetcher{network: newTestNetwork(t)}
-	_, err := f.Fetch(
+	f := &Fetcher{}
+	hc := helmChart("missing", "kromgo", "3.0.0")
+	s := store.New()
+	s.AddObject(hc)
+	reads := new(store.ReadSet)
+	reads.Init(s, hc.Named(), nil)
+	defer reads.Close()
+	prepared, err := f.Fetch(
 		context.Background(),
-		helmChart("missing", "kromgo", "3.0.0"),
-		fInputs.readSet(helmChart("missing", "kromgo", "3.0.0")),
+		hc,
+		reads,
 		&cache.Policy{},
 	)
 	assert.FatalIf(t, !errors.Is(err, manifest.ErrObjectNotFound), "err = %v, want ErrObjectNotFound", err)
+	assert.Equal(t, prepared.Fetch == nil, true)
+	assert.Equal(t, prepared.LocalUnavailable, (*source.MissingSecretError)(nil))
+	assert.Diff(t, prepared.Inputs, []manifest.DependencyRef{{
+		Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: hc.Namespace, Name: "missing",
+	}})
+	assert.Equal(t, reads.Valid(), true)
+	s.AddObject(&manifest.HelmRepository{Name: "missing", Namespace: hc.Namespace})
+	assert.Equal(t, reads.Valid(), false)
 }
 
 func TestFetch_OCIExactVersionForever(t *testing.T) {
@@ -222,11 +240,13 @@ func TestFetch_OCIExactVersionForever(t *testing.T) {
 	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}
 	f := &Fetcher{network: newTestNetwork(t), oci: stub, disableChartDigestTracking: true}
 	{
-		_, err := f.Fetch(
+		_, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			helmChart(repo.Name, "chart", "1.0.0"),
 			fInputs.readSet(helmChart(repo.Name, "chart", "1.0.0")),
 			&cache.Policy{},
+			nil,
 		)
 		assert.NoError(t, err)
 	}

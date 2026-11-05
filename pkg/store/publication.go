@@ -20,6 +20,7 @@ func (s *Store) RecordEmitted(
 		reads.Bind(next)
 	}
 	if !next.Reads.Valid() {
+		s.Retire(next.Reads)
 		return
 	}
 	if len(next.Failures) != 0 {
@@ -57,6 +58,7 @@ func (s *Store) RecordEmitted(
 			proposal.revision = generation + 1
 		}
 		retainEmissionCache(proposal, prev)
+		s.prepareSourcePaths(proposal, prev)
 		var result publicationResult
 		if state.stable {
 			result = s.commitStable(slot, prev, proposal, generation)
@@ -68,6 +70,7 @@ func (s *Store) RecordEmitted(
 		case publicationRetry:
 			continue
 		case publicationRejected:
+			s.Retire(next.Reads)
 			return
 		}
 		acceptEmission(next, proposal, &candidate)
@@ -199,10 +202,12 @@ func (e *Emission) sameContent(other *Emission) bool {
 func (e *Emission) sameOutput(other *Emission) bool {
 	sameDocuments := len(e.Manifests) == len(other.Manifests) &&
 		(len(e.Manifests) == 0 || &e.Manifests[0] == &other.Manifests[0])
-	sameInput := other.inputHead.owner == e.inputHead.owner && other.inputHead.generation == e.inputHead.generation &&
-		other.inputHead.revision == e.inputHead.revision && other.inputHead.binding.equal(&e.inputHead.binding) && manifest.Equal(other.input, e.input) ||
-		e.input != nil &&
-			semanticEqual(Child{Obj: other.input, Doc: other.inputDoc}, Child{Obj: e.input, Doc: e.inputDoc})
+	exactInput := other.inputHead.owner == e.inputHead.owner && other.inputHead.generation == e.inputHead.generation &&
+		other.inputHead.revision == e.inputHead.revision && manifest.Equal(other.input, e.input)
+	semanticInput := e.input != nil &&
+		semanticEqual(Child{Obj: other.input, Doc: other.inputDoc}, Child{Obj: e.input, Doc: e.inputDoc})
+	sameBinding := other.inputHead.binding.equal(&e.inputHead.binding)
+	sameInput := sameBinding && (exactInput || semanticInput)
 	return sameInput && other.family == e.family &&
 		(sameDocuments || slices.EqualFunc(other.Manifests, e.Manifests, func(a, b manifest.DocOccurrence) bool {
 			return a.Ordinal == b.Ordinal && manifest.ValueEqual(a.Document, b.Document)
@@ -425,6 +430,15 @@ func emissionProposalState(proposal, prev *Emission) proposalState {
 	var unchanged bool
 	stable := prev != nil &&
 		(proposal == prev || sameMembership(prev, proposal) && slices.EqualFunc(prev.Children, proposal.Children, func(a, b Child) bool { return a.payload == b.payload }))
+	if stable {
+		for i := range proposal.entries {
+			entry := &proposal.entries[i]
+			if entry.objectChanged && entry.objectHead != nil && entry.objectHead.retained.Load() {
+				stable = false
+				break
+			}
+		}
+	}
 	unchanged = proposal == prev || proposal.sameContent(prev)
 	if unchanged && len(proposal.Failures) == 0 && !proposal.Complete && prev.Complete {
 		proposal.Complete = true

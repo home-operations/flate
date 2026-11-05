@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -142,7 +144,7 @@ func testFetcherMachineSSOTransportCaseCompletion(
 	reads := inputs.readSet(b)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
-	artifact, err := f.Fetch((*captures.ctx), b, reads, &cache.Policy{})
+	artifact, err := fetchtest.Fetch((*captures.ctx), f.Fetch, b, reads, &cache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(
 		t,
@@ -150,7 +152,7 @@ func testFetcherMachineSSOTransportCaseCompletion(
 		"SSO continuation unavailable: %v",
 		err,
 	)
-	artifact, err = missing.RetryMachine((*captures.ctx), reads)
+	artifact, err = fetchtest.Machine((*captures.ctx), missing, reads)
 	captures.destinations.
 		Range(func(destination, _ any) bool {
 			assert.ErrorIf(

@@ -40,10 +40,13 @@ func (f *Fetcher) Fetch(
 	b *manifest.Bucket,
 	reads *store.ReadSet,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
-	innerOperation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
+	innerOperation := operation{
+		Fetcher: f,
+		reads:   reads,
+		secrets: source.SecretLookup(reads),
+	}
 	return innerOperation.fetchSource(ctx, b, &policy)
 }
 
@@ -51,57 +54,74 @@ func (f *operation) fetchSource(
 	ctx context.Context,
 	b *manifest.Bucket,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
 	f.work.Scope = f.reads.Work().Scope().Source(b.Named())
 	if policy.Work != nil {
 		f.work.Scope = policy.Work.Attribution().Source(b.Named())
 	}
 	policy.Work = &f.work
+
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return source.PreparedFetch{}, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	request, err := f.prepare(b)
 	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.bucket != nil {
-		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-			return f.machineFetch(ctx, &request, &policy)
-		}
+		request.missing = missing
+		missing.RetryAmbient = func(ctx context.Context) (source.PreparedFetch, error) { return f.machineFetch(ctx, &request, &policy) }
 	}
 	if err != nil {
-		return nil, err
+		return source.PreparedFetch{}, err
 	}
 	if b.Provider == sourcev1.BucketProviderAmazon && b.SecretRef == nil {
 		return f.machineFetch(ctx, &request, &policy)
 	}
-	return f.fetch(ctx, &request, &policy)
+	return source.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+			if err := f.connect(&request); err != nil {
+				return nil, err
+			}
+			return f.fetch(ctx, &request, &policy)
+		},
+	}, nil
 }
 
 func (f *operation) machineFetch(
 	ctx context.Context, requestValue *bucketAcquisition,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
 	request := *requestValue
 	timeout := request.bucket.OperationTimeout()
 	policy.Timeout = &timeout
-	return source.AcquireMachine(ctx, &policy, func(ctx context.Context) error {
+	prepared, err := source.AcquireMachine(ctx, &policy, func(ctx context.Context) error {
 		if err := request.machineCredentials(
 			ctx,
 			[]credentials.Provider{&credentials.EnvAWS{}, &credentials.FileAWSCredentials{}, &credentials.IAM{}},
 		); err != nil {
 			return err
 		}
-		value, _ := request.options.Creds.GetWithContext(nil)
-		tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: request.resolved, Credentials: value})
-		request.options.Transport = tr
-		return err
-	}, func(ctx context.Context, policyValue *cache.Policy) (*store.SourceArtifact, error) {
+		return nil
+	}, func(ctx context.Context, policyValue *cache.Policy, local *store.SourceArtifact) (*store.SourceArtifact, error) {
 		policy := *policyValue
-
+		if local != nil {
+			return local, ctx.Err()
+		}
+		if err := f.connect(&request); err != nil {
+			return nil, err
+		}
 		return f.fetch(ctx, &request, &policy)
 	})
+	if err == nil {
+		identity, _ := request.options.Creds.GetWithContext(nil)
+		if identity.AccessKeyID == "" && identity.SecretAccessKey == "" {
+			prepared.LocalUnavailable = request.missing
+		}
+	}
+	return prepared, err
 }
 
 func (f *operation) fetch(
@@ -111,8 +131,9 @@ func (f *operation) fetch(
 	policy := *policyValue
 
 	request := *requestValue
-	request.work.Scope = f.work.Scope
-	policy.Work = &request.work
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("acquire bucket: %w", err)
+	}
 	b := request.bucket
 	ignore := ""
 	if b.Ignore != nil {

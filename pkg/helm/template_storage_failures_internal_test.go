@@ -92,13 +92,27 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 		assert.NoError(t, os.RemoveAll(root))
 	}
 	for range 2 {
+		admissions := 0
 		out, receipt31, err := testutil.RenderMaps(
-			cli.Template(t.Context(), hr, nil, RenderOptions{Sources: cliSources}),
+			cli.Template(t.Context(), hr, nil, RenderOptions{
+				Sources: cliSources,
+				Admit: func(admission RenderAdmission) (bool, error) {
+					admissions++
+					assert.Equal(t, admission.Key != "", true)
+					return false, nil
+				},
+			}),
 		)
+		assert.Equal(t, admissions, 1)
 		if err == nil {
 			err = cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt31, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt31,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 		}
 
@@ -122,6 +136,21 @@ func testTemplateCacheStorageFailuresCase(t *testing.T, testCaseInput *string,
 				err,
 				errdef.ErrNotFound,
 			), "%s fault returned output %q, error %v", (*testCaseInput), out, err)
+	}
+	for _, admissionErr := range []error{nil, errors.New("admission failed")} {
+		admissions := 0
+		docs, receipt, err := cli.Template(t.Context(), hr, nil, RenderOptions{
+			Sources: cliSources,
+			Admit: func(admission RenderAdmission) (bool, error) {
+				admissions++
+				assert.Equal(t, admission.Key != "", true)
+				return true, admissionErr
+			},
+		})
+		assert.Equal(t, admissions, 1)
+		assert.Equal(t, err, admissionErr)
+		assert.Equal(t, docs == nil, true)
+		assert.Equal(t, receipt == nil, true)
 	}
 }
 
@@ -150,6 +179,7 @@ func testTemplateCacheStorageFailuresCaseLoop(t *testing.T, loopInputs struct {
 						Owner:   (*loopInputs.hr).Named(),
 						Receipt: receipt30,
 						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
 					},
 				)
 				assert.NoError(t, recordErr)

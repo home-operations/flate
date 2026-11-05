@@ -15,8 +15,10 @@ const (
 	contentFacet
 	revisionFacet
 	originFacet
+	acquisitionFacet
 	producerFacet
 	bucketFacet
+	reconciliationFacet
 )
 
 type headKey struct {
@@ -29,17 +31,25 @@ type registrationHead struct {
 	first          atomic.Pointer[registration]
 	selected       atomic.Pointer[producerSlot]
 	position       atomic.Int64
-	reconciliation atomic.Pointer[ReadSet]
-	binding        atomic.Pointer[ReadSet]
+	assessments    [2]atomic.Pointer[acceptedAssessment]
+	reconciliation atomic.Pointer[registrationHead]
+	result         *registrationHead
 	shard          *shard
 	next           *registrationHead
 	pending        atomic.Bool
 	detached       atomic.Bool
+	retained       atomic.Bool
 	borrowed       atomic.Bool
 	watch          *registration
 }
 
 func (h *registrationHead) stamp() uint64 {
+	if h.result != nil {
+		if accepted := h.result.assessments[0].Load(); accepted != nil {
+			return accepted.revision
+		}
+		return 0
+	}
 	generation := h.generation.Load()
 	if slot := h.selected.Load(); slot != nil {
 		// A selected slot MUST already own a published record.
@@ -107,10 +117,19 @@ func (sh *shard) headLocked(key headKey) authority {
 		return sh.artifacts[key.id].revisionHead
 	case originFacet:
 		return sh.artifacts[key.id].originHead
+	case acquisitionFacet:
+		return sh.artifacts[key.id].acquisitionHead
 	case producerFacet:
 		return sh.slots[key.id].authority
 	case bucketFacet:
 		return sh.byName[kindID{key.id.Group, key.id.Kind}].authority
+	case reconciliationFacet:
+		if head := sh.cells[key.id].links; head != nil {
+			if result := head.reconciliation.Load(); result != nil {
+				return authority{links: result, generation: result.stamp()}
+			}
+		}
+		return authority{}
 	}
 	panic("store: unknown authority facet")
 }
@@ -175,10 +194,14 @@ func (r *ReadSet) activate(input *Input, kind facet, generation uint64) {
 	if cell.head == nil {
 		cell.head, cell.absent = &sh.absence, input
 		cell.generation.Store(0)
-	} else if cell.head.first.Load() == nil && !cell.head.detached.Load() {
+	} else if cell.head.result == nil && cell.head.first.Load() == nil && !cell.head.detached.Load() {
 		cell.head.generation.Store(head.generation)
 	}
 	cell.link()
+	if kind == reconciliationFacet && cell.head.stamp() != generation {
+		r.invalid.Store(true)
+		sh.queue(cell.head)
+	}
 	sh.mu.RUnlock()
 }
 
@@ -204,6 +227,9 @@ func (c *registration) current() bool {
 	}
 	if c.absent != nil {
 		return c.generation.Load() == 0
+	}
+	if c.head.result != nil {
+		return c.head.stamp() == c.generation.Load()
 	}
 	return c.head.generation.Load() == c.generation.Load()
 }
@@ -276,7 +302,7 @@ func (r *ReadSet) Retire() {
 		if details := input.details.Load(); details != nil {
 			details.gates = nil
 		}
-		for kind := objectFacet; kind <= bucketFacet; kind++ {
+		for kind := objectFacet; kind <= reconciliationFacet; kind++ {
 			cell := input.cell(kind)
 			if cell == nil || cell.head == nil {
 				continue
@@ -387,7 +413,7 @@ func deliverRegistrationChange(
 	yield func(manifest.NamedResource) bool,
 ) bool {
 	requeue := false
-	if changed && !cell.owner.invalid.Load() {
+	if changed && !cell.owner.delivered.Load() {
 		if *deliver {
 			completeRegistrationChange(cell, deliver, yield)
 		} else {
@@ -398,7 +424,8 @@ func deliverRegistrationChange(
 }
 
 func completeRegistrationChange(cell *registration, deliver *bool, yield func(manifest.NamedResource) bool) {
-	if cell.owner.invalid.CompareAndSwap(false, true) {
+	cell.owner.invalid.Store(true)
+	if cell.owner.delivered.CompareAndSwap(false, true) {
 		*deliver = yield(cell.owner.id)
 	}
 }

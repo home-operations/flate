@@ -70,7 +70,12 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		{
 			recordErr := cli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt34, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt34,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -107,7 +112,12 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 			{
 				recordErr := c.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt39, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt39,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -126,7 +136,12 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 			{
 				recordErr := c.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt40, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt40,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}
@@ -158,7 +173,12 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 		{
 			recordErr := newClientCli.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt35, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt35,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -216,7 +236,12 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 		{
 			recordErr := fresh.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt36, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt36,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -251,7 +276,12 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 		{
 			recordErr := newClientCli2.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: hr.Named(), Receipt: receipt37, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   hr.Named(),
+					Receipt: receipt37,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}
@@ -291,7 +321,12 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 		{
 			recordErr := fresh.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: sourceHR.Named(), Receipt: receipt38, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   sourceHR.Named(),
+					Receipt: receipt38,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}

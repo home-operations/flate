@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -45,13 +47,15 @@ func testFetcherReferencesCase(t *testing.T, src *string, tc *struct {
 	if tc.warmCommit != "" {
 		unconstrained := *repo
 		unconstrained.Reference = &sourcev1.GitRepositoryRef{Commit: tc.warmCommit}
-		_, err := f.Fetch(
+		_, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			&unconstrained,
 			(testInputs{}).readSet(&unconstrained),
 			&sourcecache.Policy{
 				MaxAge: unconstrained.SourceInterval(),
 			},
+			nil,
 		)
 		assert.NoError(t, err)
 	}
@@ -60,10 +64,10 @@ func testFetcherReferencesCase(t *testing.T, src *string, tc *struct {
 		Owner:  testutil.KustomizationID("apps", "consumer"),
 		Source: manifest.BootstrapSourceID,
 	}}
-	art, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), &sourcecache.Policy{
+	art, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, (testInputs{}).readSet(repo), &sourcecache.Policy{
 		MaxAge: time.Hour,
 		Work:   &manifest.AcquisitionWork{Scope: (&work).Scope()},
-	})
+	}, nil)
 	if tc.wantErr {
 		if err == nil || tc.errText != "" && !strings.Contains(err.Error(), tc.errText) {
 			t.Fatalf("Fetch error = %v, want failure containing %q", err, tc.errText)
@@ -115,13 +119,15 @@ func assertFetcherReferenceWork(captures *assertFetcherReferenceWorkInputs) {
 	for _, phase := range []string{"cold", "source-warm"} {
 		if phase == "source-warm" {
 			(*captures.work) = manifest.WorkRecorder{Key: captures.work.Key}
-			warm, err := (*captures.f).Fetch(
+			warm, err := fetchtest.Fetch(
 				(*captures.t).Context(),
+				(*captures.f).Fetch,
 				(*captures.repo),
 				(testInputs{}).readSet((*captures.repo)),
 				&sourcecache.Policy{
 					MaxAge: time.Hour, Work: &manifest.AcquisitionWork{Scope: captures.work.Scope()},
 				},
+				nil,
 			)
 			assert.NoError((*captures.t), err)
 			assert.Equal((*captures.t), warm.Key, (*captures.art).Key)

@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -107,11 +109,13 @@ func testFetcherLayerSelectionAndIgnoreFlavorCase(
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
 	var first *store.SourceArtifact
 	for range 2 {
-		got, err := f.Fetch(
+		got, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			repo,
 			(testInputs{}).readSet(repo),
 			&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+			nil,
 		)
 		if testCaseInput.tc.wantErr {
 			assert.FatalIf(
@@ -173,11 +177,13 @@ func testFetcherLayerSelectionAndIgnoreFlavorCase(
 	}
 	copyRepo := *repo
 	copyRepo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
-	copied, err := f.Fetch(
+	copied, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		&copyRepo,
 		(testInputs{}).readSet(&copyRepo),
 		&sourcecache.Policy{MaxAge: copyRepo.SourceInterval()},
+		nil,
 	)
 	assert.NoError(t, err)
 
@@ -199,11 +205,13 @@ func testFetcherLayerSelectionAndIgnoreFlavorCase(
 
 	f.Cache = cachetest.New(t, root, sourcecache.New)
 	for range 2 {
-		warm, err := f.Fetch(
+		warm, err := fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			&copyRepo,
 			(testInputs{}).readSet(&copyRepo),
 			&sourcecache.Policy{MaxAge: copyRepo.SourceInterval()},
+			nil,
 		)
 		assert.NoError(t, err)
 

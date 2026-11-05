@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
@@ -24,7 +25,7 @@ func (f *operation) acquire(
 	ctx context.Context,
 	accessValue *manifest.RegistryAccess,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	access := *accessValue
 
 	policy := *policyValue
@@ -36,7 +37,7 @@ func (f *operation) acquire(
 	policy.Work = &f.work
 
 	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+		return source.PreparedFetch{}, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
 	if f.secrets != nil {
 		for _, ref := range []*manifest.LocalObjectReference{access.SecretRef, access.CertSecretRef, access.ProxySecretRef} {
@@ -46,48 +47,69 @@ func (f *operation) acquire(
 		}
 	}
 	policy.Timeout = &access.Timeout
-	request, err := f.newRepoClient(ctx, &access)
-	machine := func(ctx context.Context) (*store.SourceArtifact, error) {
-		machineRequest := request
-		machinePolicy := policy
-		if f.work.Scope.Identity() == (manifest.WorkKey{}) {
-			machineRequest.client = &remote.Repository{Reference: request.client.Reference}
-		} else {
-			attempt := &struct {
-				remote.Repository
-
-				work manifest.AcquisitionWork
-			}{Reference: request.client.Reference}
-			attempt.work.Scope = f.work.Scope
-			machineRequest.client = &attempt.Repository
-			machinePolicy.Work = &attempt.work
-		}
-		return source.AcquireMachine(ctx, &machinePolicy, func(ctx context.Context) error {
-			selected, credentialsErr := f.Network.RegistryCredentials(
-				ctx,
-				f.RegistryConfig,
-				machineRequest.client.Reference.Host(),
-			)
-			if credentialsErr != nil {
-				return credentialsErr
-			}
-			return f.configure(&access, &machineRequest, *selected)
-		}, func(ctx context.Context, policyValue *cache.Policy) (*store.SourceArtifact, error) {
-			acquisitionPolicy := *policyValue
-
-			return f.acquirePrepared(ctx, &access, &machineRequest, &acquisitionPolicy)
-		})
-	}
-	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.client != nil {
+	request, err := f.newRepoClient(ctx, new(access))
+	machine := f.machineAcquisition(&access, &request, &policy, err)
+	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.reference.Registry != "" {
 		missing.RetryAmbient = machine
 	}
 	if err != nil {
-		return nil, err
+		return source.PreparedFetch{}, err
 	}
 	if access.SecretRef == nil {
 		return machine(ctx)
 	}
-	return f.acquirePrepared(ctx, &access, &request, &policy)
+	return source.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+			return f.acquirePrepared(ctx, &access, &request, &policy)
+		},
+	}, nil
+}
+
+func (f *operation) machineAcquisition(
+	accessValue *manifest.RegistryAccess,
+	requestValue *registryAcquisition,
+	policyValue *cache.Policy,
+	unavailable error,
+) func(context.Context) (source.PreparedFetch, error) {
+	access := *accessValue
+	request := *requestValue
+	policy := *policyValue
+	return func(ctx context.Context) (source.PreparedFetch, error) {
+		machineRequest := struct {
+			registryAcquisition
+
+			work manifest.AcquisitionWork
+		}{registryAcquisition: request}
+		machineRequest.work.Scope = f.work.Scope
+		machinePolicy := policy
+		machinePolicy.Work = &machineRequest.work
+		prepared, machineErr := source.AcquireMachine(ctx, &machinePolicy, func(ctx context.Context) error {
+			selected, credentialsErr := f.Network.RegistryCredentials(
+				ctx,
+				f.RegistryConfig,
+				machineRequest.reference.Host(),
+			)
+			if credentialsErr != nil {
+				return credentialsErr
+			}
+
+			machineRequest.credential = *selected
+			return nil
+		}, func(ctx context.Context, policyValue *cache.Policy, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			acquisitionPolicy := *policyValue
+			if local != nil {
+				return local, ctx.Err()
+			}
+			return f.acquirePrepared(ctx, &access, &machineRequest.registryAcquisition, &acquisitionPolicy)
+		})
+		if machineErr == nil && machineRequest.credential == auth.EmptyCredential {
+			prepared.LocalUnavailable, _ = errors.AsType[*source.MissingSecretError](unavailable)
+		}
+		return prepared, machineErr
+	}
 }
 
 func (f *operation) newRepoClient(
@@ -103,7 +125,7 @@ func (f *operation) newRepoClient(
 	if err != nil {
 		return registryAcquisition{}, err
 	}
-	client, err := remote.NewRepository(reference)
+	parsed, err := registry.ParseReference(reference)
 	if err != nil {
 		return registryAcquisition{}, fmt.Errorf("oras: %w", err)
 	}
@@ -115,7 +137,7 @@ func (f *operation) newRepoClient(
 		return registryAcquisition{}, err
 	}
 	if _, proxyURLErr := resolved.ProxyURL(
-		&url.URL{Scheme: "https", Host: client.Reference.Host()},
+		&url.URL{Scheme: "https", Host: parsed.Host()},
 	); proxyURLErr != nil {
 		return registryAcquisition{}, manifest.NewError(
 			manifest.ErrInput,
@@ -123,16 +145,16 @@ func (f *operation) newRepoClient(
 			"resolve registry proxy: invalid proxy configuration",
 		)
 	}
-	request := registryAcquisition{client: client, resolved: resolved}
-	selected, err := f.resolveRegistryConfig(ctx, new(access), client.Reference.Host())
+	request := registryAcquisition{reference: parsed, resolved: resolved}
+	selected, err := f.resolveRegistryConfig(ctx, new(access), parsed.Host())
 	if err == nil && *selected == auth.EmptyCredential && access.SecretRef != nil {
 		err = source.MissingSecretErr(owner, access.SecretRef.Name, "no credentials for the source registry")
 	}
 	if err != nil {
 		return request, err
 	}
-	err = f.configure(new(access), &request, *selected)
-	return request, err
+	request.credential = *selected
+	return request, nil
 }
 
 func (f *operation) configure(
@@ -147,6 +169,7 @@ func (f *operation) configure(
 		material = cred
 	}
 	request.material = request.resolved.Identity(material)
+	request.client = &remote.Repository{Reference: request.reference}
 	tr, err := f.Network.HTTPTransport(
 		source.HTTPTransportConfig{Material: request.resolved, Insecure: access.Insecure, Credentials: material},
 	)
@@ -169,6 +192,9 @@ func (f *operation) acquirePrepared(
 
 	access := *accessValue
 	request := *requestValue
+	if err := f.configure(&access, &request, request.credential); err != nil {
+		return nil, err
+	}
 	artifact, err := f.produce(ctx, request, &policy)
 	if access.Insecure && ctx.Err() == nil && errors.Is(err, http.ErrSchemeMismatch) {
 		if requestErr, ok := errors.AsType[*url.Error](err); ok {

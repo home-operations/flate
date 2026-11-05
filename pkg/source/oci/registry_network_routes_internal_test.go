@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -100,21 +102,25 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 			f.RegistryConfig,
 			fmt.Sprintf(`{"auths":{%q:{"auth":"dXNlcjpwYXNz"}}}`, mustURL(t, registryURL).Host),
 		)
-		_, err = f.Fetch(
+		_, err = fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			repo,
 			fInputs.readSet(repo),
 			&sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
+			nil,
 		)
 		missing, innerOk := errors.AsType[*source.MissingSecretError](err)
 		assert.FatalIf(t, !innerOk || missing.RetryAmbient == nil, "fallback: %v", err)
-		_, err = missing.RetryAmbient(t.Context())
+		_, err = fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	} else {
-		_, err = f.Fetch(
+		_, err = fetchtest.Fetch(
 			t.Context(),
+			f.Fetch,
 			repo,
 			fInputs.readSet(repo),
 			&sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
+			nil,
 		)
 	}
 	terminal, ok := errors.AsType[*sourcecache.TerminalError](err)

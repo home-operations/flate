@@ -20,15 +20,18 @@ func (f *Fetcher) FetchInputs(
 	provider *manifest.ResourceSetInputProvider,
 	reads *store.ReadSet,
 	policyValue *cache.Policy,
-) (*store.SourceArtifact, error) {
+) (source.PreparedFetch, error) {
 	policy := *policyValue
-
 	plan, err := provider.InputPlan()
 	if err != nil {
-		return nil, err
+		return source.PreparedFetch{}, err
 	}
 	if plan.Registry == nil {
-		return nil, manifest.NewError(manifest.ErrInput, nil, "provider does not supply registry inputs")
+		return source.PreparedFetch{}, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			"provider does not supply registry inputs",
+		)
 	}
 	op := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads), allowAnonymousDenied: true}
 	op.produce = func(ctx context.Context, request registryAcquisition, policyValue *cache.Policy) (*store.SourceArtifact, error) {

@@ -93,14 +93,12 @@ func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValu
 	if !bound {
 		obj = nil
 	}
-	if view == nil && bound {
-		available := cell.rooted || !sh.derived && obj != nil
-		if available {
-			return Child{Obj: obj, Doc: cell.document, policy: policy}
-		}
+	available := cell.rooted || !sh.derived && obj != nil
+	if view == nil && bound && available {
+		return Child{Obj: obj, Doc: cell.document, policy: policy}
 	}
 	chosen := sh.captureMembersLocked(id, view)
-	if !cell.rooted || !bound {
+	if !cell.rooted && (cell.links == nil || !cell.links.retained.Load()) || !bound {
 		if chosen != nil {
 			record := chosen.slot.current.Load()
 			child := &record.entries[chosen.position].child
@@ -235,51 +233,59 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 	s.propagateReachabilityLocked(region, &queue, add)
 	s.publishRegionVisibilityLocked(region)
 	publications := make([]objectPublication, 0, len(region.states)+1)
-	{
-		stateValues4 := region.states
-		for stateIndex4 := range stateValues4 {
-			state := stateValues4[stateIndex4]
-			id := state.id
-			sh := s.shardFor(id)
-			cell := sh.cells[id]
-			generation, retired, hidden, policy := cell.generation, cell.retired, cell.hidden, cell.policy
-			cell.generation = max(cell.generation, state.cell.generation)
-			if cell.generation == 0 && cell.static == nil && len(sh.members[id]) == 0 && sh.slots[id] == nil {
-				continue
-			}
-			if cell.hidden && state.live {
-				sh.clearFacetsLocked(id)
-			}
-			cell.retired, cell.hidden, cell.independent = !state.static, !state.live, state.independent
-			var view capture
-			sh.captureLocked(id, new(cell), &view)
-			after := view.child
+	for i := range region.states {
+		publications = s.publishRegionObjectLocked(&region.states[i], publications)
+	}
+	return publications
+}
 
-			s.advanceRegionObjectLocked(new(state), &cell, new(view))
-			if cell.generation != generation || cell.retired != retired || cell.hidden != hidden ||
-				cell.policy != policy {
-				sh.cells[id] = cell
-			}
-			selectRegionHeadLocked(&cell, new(view))
-			sh.updateRegionBucketLocked(new(state), new(after))
-			// Direct removal MUST restore surviving emitted payloads after clearing static facets.
-			publications = s.appendRegionArtifactLocked(new(state), new(cell), new(view), publications)
-			if (state.direct || state.before != after.Obj) && (after.Obj != nil || state.visible || !cell.hidden) {
-				event := fireUnderLock(s, EventObjectAdded, id)
-				event.payload = after.Obj
-				publications = append(
-					publications,
-					objectPublication{
-						event:        event,
-						before:       state.before,
-						document:     state.document,
-						after:        after.Obj,
-						nextDocument: after.Doc,
-						force:        state.seed,
-					},
-				)
-			}
-		}
+func (s *Store) publishRegionObjectLocked(
+	stateValue *regionState,
+	publications []objectPublication,
+) []objectPublication {
+	state := *stateValue
+	id := state.id
+	sh := s.shardFor(id)
+	cell := sh.cells[id]
+	generation, retired, hidden, policy := cell.generation, cell.retired, cell.hidden, cell.policy
+	cell.generation = max(cell.generation, state.cell.generation)
+	if cell.generation == 0 && cell.static == nil && len(sh.members[id]) == 0 && sh.slots[id] == nil {
+		return publications
+	}
+	if cell.hidden && state.live {
+		sh.clearFacetsLocked(id)
+	}
+	cell.retired, cell.hidden, cell.independent = !state.static, !state.live, state.independent
+	if cell.links != nil && (cell.retired || cell.hidden || !cell.bound()) {
+		cell.links.retained.Store(false)
+	}
+	var view capture
+	sh.captureLocked(id, new(cell), &view)
+	after := view.child
+
+	s.advanceRegionObjectLocked(new(state), &cell, new(view))
+	if cell.generation != generation || cell.retired != retired || cell.hidden != hidden ||
+		cell.policy != policy {
+		sh.cells[id] = cell
+	}
+	selectRegionHeadLocked(&cell, new(view))
+	sh.updateRegionBucketLocked(new(state), new(after))
+	// Direct removal MUST restore surviving emitted payloads after clearing static facets.
+	publications = s.appendRegionArtifactLocked(new(state), new(cell), new(view), publications)
+	if (state.direct || state.before != after.Obj) && (after.Obj != nil || state.visible || !cell.hidden) {
+		event := fireUnderLock(s, EventObjectAdded, id)
+		event.payload = after.Obj
+		publications = append(
+			publications,
+			objectPublication{
+				event:        event,
+				before:       state.before,
+				document:     state.document,
+				after:        after.Obj,
+				nextDocument: after.Doc,
+				force:        state.seed,
+			},
+		)
 	}
 	return publications
 }
@@ -570,11 +576,14 @@ func (s *Store) advanceRegionObjectLocked(stateValue *regionState, cell *objectC
 		sh.clearFacetsLocked(id)
 	}
 	cell.policy = after.policy
-	if state.direct || (state.before == nil) != (after.Obj == nil) || state.owner != view.owner ||
-		!state.source.equal(view.source) ||
+	sameDeclaration := reconcileEqual(Child{Obj: state.before, Doc: state.document}, after)
+	sameAuthority := state.owner == view.owner && state.source.equal(view.source) && sameDeclaration
+	sameVisibility := cell.retired == state.cell.retired && cell.hidden == state.cell.hidden &&
+		cell.policy == state.cell.policy
+	if state.direct && (cell.links == nil || !cell.links.retained.Load() || !sameAuthority || !sameVisibility) ||
+		!sameAuthority ||
 		cell.rooted != state.cell.rooted && state.cell.static == nil ||
-		cell.retired != state.cell.retired ||
-		cell.hidden != state.cell.hidden || cell.policy != state.cell.policy {
+		!sameVisibility {
 		if cell.generation == 0 {
 			sh.admitAbsenceLocked(id, objectFacet)
 		}

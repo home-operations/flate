@@ -11,10 +11,16 @@ func (e *Emission) SourcePaths() []manifest.SourceEvidence {
 	if e == nil || !e.accepted || !e.Complete || e.OutputReads == nil || !e.OutputReads.Valid() {
 		return nil
 	}
-	if record, _ := e.family.Lookup(e.origin); record.StaticOutput && !e.origin.ReportHidden() {
-		return nil
+	if record, _ := e.family.Lookup(e.origin); record.StaticOutput && !e.origin.ReportHidden() && e.Render == nil {
+		data := false
+		for ref := range manifest.References(e.input, manifest.ReferenceRelations) {
+			data = data || ref.Content && ref.NamedResource.KindInfo().Data
+		}
+		if !data {
+			return nil
+		}
 	}
-	return sourcePaths(e.OutputReads.store, e.OutputReads, e.entries, e.family)
+	return e.sources
 }
 
 // ChildSourcePaths projects the source paths of a complete discovery batch.
@@ -33,6 +39,12 @@ func (s *Store) ChildSourcePaths(
 		make(map[manifest.NamedResource]int, len(children)),
 	)
 	return sourcePaths(s, assessment.OutputReads, entries, index)
+}
+
+func (s *Store) prepareSourcePaths(proposal, previous *Emission) {
+	if proposal != previous && proposal.Complete {
+		proposal.sources = sourcePaths(s, proposal.OutputReads, proposal.entries, proposal.family)
+	}
 }
 
 func sourcePaths(

@@ -24,12 +24,18 @@ func (e *Execution) RequireRefresh[T manifest.BaseManifest](
 	if err := e.Checkpoint(); err != nil {
 		return canonical, err
 	}
+	deps := e.dependencies(effective, stage)
+	for _, dep := range deps {
+		e.Reads.Require(dep)
+	}
 	if err := e.requireDeclaration(ctx, level); err != nil {
-		if _, failed := errors.AsType[*manifest.DependencyFailedError](err); !failed {
+		return canonical, err
+	}
+	if !e.prepared {
+		if err := e.prepare(ctx, canonical); err != nil {
 			return canonical, err
 		}
 	}
-	deps := e.dependencies(effective, stage)
 	if stage != manifest.GateParents && len(deps) != 0 {
 		message := "resolving dependencies"
 		if stage == manifest.GateArtifacts {

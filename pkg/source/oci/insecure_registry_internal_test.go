@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"helm.sh/helm/v4/pkg/registry"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,7 +83,7 @@ func testFetcherInsecureRegistryErrorsCase(t *testing.T, mode *string,
 	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
 	result := make(chan error, 1)
 	go func() {
-		got, err := f.Fetch(ctx, repo, (testInputs{}).readSet(repo), &sourcecache.Policy{})
+		got, err := fetchtest.Fetch(ctx, f.Fetch, repo, (testInputs{}).readSet(repo), &sourcecache.Policy{}, nil)
 		if got != nil {
 			t.Error("failed acquisition returned an artifact")
 		}
@@ -301,11 +303,13 @@ func testFetcherInsecureRegistryFetch(
 				SemVer: "1.x",
 			},
 		}
-		return f.Fetch(
+		return fetchtest.Fetch(
 			ctx,
+			f.Fetch,
 			repo,
 			(testInputs{}).readSet(repo),
 			&sourcecache.Policy{MaxAge: time.Hour, Work: accounting},
+			nil,
 		)
 	}
 	repo := &manifest.HelmRepository{
@@ -339,21 +343,16 @@ func testFetcherInsecureRegistryFetch(
 	reads := (testInputs{repos: func(string, string) *manifest.HelmRepository { return repo }}).readSet(
 		hc,
 	)
-	return helmchart.New(
+	return fetchtest.Fetch(ctx, helmchart.New(
 		f,
 		helmchart.Config{
 			Cache:   f.Cache,
 			Network: f.Network,
 		},
-	).Fetch(
-		ctx,
-		hc,
-		reads,
-		&sourcecache.Policy{
-			MaxAge: time.Hour,
-			Work:   accounting,
-		},
-	)
+	).Fetch, hc, reads, &sourcecache.Policy{
+		MaxAge: time.Hour,
+		Work:   accounting,
+	}, nil)
 }
 
 type assertInsecureRegistryWorkInputs struct {

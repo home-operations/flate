@@ -45,20 +45,29 @@ func (f *fakeFetcher) Fetch(
 	obj manifest.BaseManifest,
 	reads *store.ReadSet,
 	policy *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	f.calls++
-	f.objects = append(f.objects, obj)
-	f.retry = *policy
+) (src.PreparedFetch, error) {
 	if f.secret != "" {
 		src.SecretLookup(reads)(obj.Named().Namespace, f.secret)
 	}
-	if f.during != nil {
-		f.during()
-	}
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.artifact, nil
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			f.calls++
+			f.objects = append(f.objects, obj)
+			f.retry = *policy
+
+			if f.during != nil {
+				f.during()
+			}
+			if f.err != nil {
+				return nil, f.err
+			}
+			return f.artifact, nil
+		},
+	}, nil
 }
 
 func TestSource_CapturedMaterialRefresh(t *testing.T) {

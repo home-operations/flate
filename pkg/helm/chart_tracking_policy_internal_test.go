@@ -49,7 +49,12 @@ func testTemplateCacheNonOCITrackingModeCase(
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: hr.Named(), Receipt: receipt11, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   hr.Named(),
+						Receipt: receipt11,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}

@@ -108,16 +108,18 @@ func (c *execution) render(
 	var attempt store.Emission
 	defer attempt.Finish()
 	handled := false
+	var replay helm.RenderAdmission
 	input := helm.RenderOptions{
 		Work:                    c.run.Reads.Work().Scope().RenderWork(),
 		Options:                 c.Options,
 		DependencySubstitutions: c.DependencySubstitutions,
 		Sources:                 helm.NewSources(&c.run.Reads),
 	}
-	input.Admit = func(key string) (bool, error) {
+	input.Admit = func(admission helm.RenderAdmission) (bool, error) {
+		attempt.Render = admission.Receipt
 		var content any
-		if key != "" {
-			content = hr.Content(key, omitted)
+		if admission.Key != "" {
+			content = hr.Content(admission.Key, omitted)
 		}
 		var innerLocalErr error
 		fingerprintDedupResult1, fingerprintDedupResult1Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
@@ -127,11 +129,18 @@ func (c *execution) render(
 		}
 		attempt.Finish()
 		_, _, attempt = c.run.Reads.GetEmission(id)
+		if admission.Accepted {
+			replay = admission
+			return true, nil
+		}
 		return false, nil
 	}
 	docs, receipt, err := c.Helm.Template(ctx, hr, hr.Values, input)
 	if err != nil {
 		return err
+	}
+	if replay.Accepted {
+		docs, receipt = replay.Documents, replay.Receipt
 	}
 	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values, &input); len(stale) > 0 {
 		c.run.Reads.AddWarning(manifest.Warning{

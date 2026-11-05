@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/pkg/source"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -70,7 +73,10 @@ func testFetcherMachineFailureCausesCase(t *testing.T, name *string,
 			return func() {}, nil
 		}
 	}
-	artifact, err := op.fetchSource(ctx, repo, &policy)
+	artifact, err := fetchtest.Retry(
+		ctx,
+		func(context.Context) (source.PreparedFetch, error) { return op.fetchSource(ctx, repo, &policy) },
+	)
 	assert.FatalIf(
 		t,
 		err == nil || artifact != nil || !errors.Is(err, manifest.ErrFlux),

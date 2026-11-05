@@ -82,7 +82,12 @@ func testTemplateCacheSubchartPersistenceCase(
 		{
 			recordErr := next.RecordRender(
 				t.Context(),
-				RenderAcceptance{Owner: (*testCaseInput.hr).Named(), Receipt: receipt10, Records: emptyRenderInventory},
+				RenderAcceptance{
+					Owner:   (*testCaseInput.hr).Named(),
+					Receipt: receipt10,
+					Records: emptyRenderInventory,
+					Sources: []manifest.SourceEvidence{},
+				},
 			)
 			assert.NoError(t, recordErr)
 		}

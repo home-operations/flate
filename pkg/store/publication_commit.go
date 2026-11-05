@@ -269,18 +269,39 @@ func (s *Store) retireMembersLocked(
 			)
 		}
 	}
-	// A publication MUST retain the bootstrap authority supporting its own declaration.
-	for ancestor, inside := region.position(id); inside; {
-		state := &region.states[ancestor]
-		if state.before == nil || state.supportsProducer {
-			break
+	// A publication MUST retain its declaration and consumed source authority.
+	for _, support := range [2]manifest.NamedResource{id, proposal.binding.source} {
+		if support != id && (proposal.binding.artifact == nil ||
+			!slices.ContainsFunc(proposal.entries, func(entry admission) bool { return entry.child.Obj.Named() == support })) {
+			continue
 		}
-		state.supportsProducer = true
-		if state.owner == nil {
-			break
+		for ancestor, inside := region.position(support); inside; {
+			state := &region.states[ancestor]
+			if state.before == nil || state.supportsProducer {
+				break
+			}
+			state.supportsProducer = true
+			if state.owner == nil {
+				break
+			}
+			ancestor, inside = region.position(state.owner.id)
 		}
-		ancestor, inside = region.position(state.owner.id)
 	}
+	for i := range region.states {
+		state := &region.states[i]
+		sh := s.shardFor(state.id)
+		cell := sh.cells[state.id]
+		if cell.links != nil && cell.links.retained.Load() && !state.supportsProducer {
+			cell.links.retained.Store(false)
+			cell.retired = true
+			sh.cells[state.id] = cell
+			state.seed = true
+		}
+	}
+	s.retireBootstrapMembersLocked(proposal, region)
+}
+
+func (s *Store) retireBootstrapMembersLocked(proposal *Emission, region *objectRegion) {
 	{
 		entryValues4 := proposal.entries
 		for entryIndex3 := range entryValues4 {
@@ -291,8 +312,17 @@ func (s *Store) retireMembersLocked(
 			cell := sh.cells[target]
 			if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
 				position, _ := region.position(target)
-				if region.states[position].supportsProducer {
+				if region.states[position].supportsProducer && cell.bound() &&
+					semanticEqual(Child{Obj: cell.static, Doc: cell.document}, entry.child) {
+					if cell.links == nil {
+						cell.links = sh.newHeadLocked(cell.generation)
+					}
+					cell.links.retained.Store(true)
+					sh.cells[target] = cell
 					continue
+				}
+				if cell.links != nil {
+					cell.links.retained.Store(false)
 				}
 				cell.retired = true
 				sh.cells[target] = cell

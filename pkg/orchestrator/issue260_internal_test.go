@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	src "github.com/home-operations/flate/pkg/source"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -27,14 +29,22 @@ func (f fakeOCIFetcher) Fetch(
 	_ manifest.BaseManifest,
 	_ *store.ReadSet,
 	_ *sourcecache.Policy,
-) (*store.SourceArtifact, error) {
-	return &store.SourceArtifact{
-		Kind:      manifest.KindOCIRepository,
-		URL:       "oci://example.test/homepage-config",
-		LocalPath: f.localPath,
-		Revision:  "test",
-		Key:       "test",
-		FS:        os.DirFS(f.localPath),
+) (src.PreparedFetch, error) {
+	return src.PreparedFetch{
+		Fetch: func(ctx context.Context, local *store.SourceArtifact) (*store.SourceArtifact, error) {
+			if local != nil {
+				return local, ctx.Err()
+			}
+
+			return &store.SourceArtifact{
+				Kind:      manifest.KindOCIRepository,
+				URL:       "oci://example.test/homepage-config",
+				LocalPath: f.localPath,
+				Revision:  "test",
+				Key:       "test",
+				FS:        os.DirFS(f.localPath),
+			}, nil
+		},
 	}, nil
 }
 

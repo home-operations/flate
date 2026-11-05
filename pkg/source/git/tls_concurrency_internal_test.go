@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -95,11 +97,13 @@ func testFetcherConcurrentCustomTLSCase(t *testing.T, concurrency *int,
 	done := make(chan error, len(repos))
 	for _, repo := range repos {
 		workers.Go(func() {
-			art, err := f.Fetch(
+			art, err := fetchtest.Fetch(
 				ctx,
+				f.Fetch,
 				repo,
 				fInputs.readSet(repo),
 				&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+				nil,
 			)
 			if err == nil {
 				var content []byte
@@ -139,12 +143,14 @@ func testFetcherConcurrentCustomTLSCaseCompletion(
 			t.Fatal("custom TLS acquisitions did not overlap")
 		}
 	}
-	_, err := (*captures.f).Fetch(
+	_, err := fetchtest.Fetch(
 		(*captures.ctx),
+		(*captures.f).Fetch,
 		gitRepoWithSecret("anonymous", (*captures.repos)[0].URL, ""),
 		captures.fInputs.
 			readSet(gitRepoWithSecret("anonymous", (*captures.repos)[0].URL, "")),
 		&sourcecache.Policy{},
+		nil,
 	)
 	{
 		_, ok := errors.AsType[x509.UnknownAuthorityError](err)
@@ -154,9 +160,8 @@ func testFetcherConcurrentCustomTLSCaseCompletion(
 		bad := gitRepoWithSecret(name, (*captures.repos)[0].URL, name)
 		bad.ProxySecretRef = (*captures.repos)[0].ProxySecretRef
 		{
-			_, err := (*captures.f).Fetch((*captures.ctx), bad, captures.fInputs.
-				readSet(bad), &sourcecache.Policy{MaxAge: bad.SourceInterval()},
-			)
+			_, err := fetchtest.Fetch((*captures.ctx), (*captures.f).Fetch, bad, captures.fInputs.
+				readSet(bad), &sourcecache.Policy{MaxAge: bad.SourceInterval()}, nil)
 			assert.FatalIf(t, err == nil, "%s fetch inherited another operation's credentials", name)
 		}
 	}

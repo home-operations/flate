@@ -76,7 +76,7 @@ func testFetcherPullTimeoutCaseCallback(t *testing.T, testCaseInput testFetcherP
 		Reference: &sourcev1.OCIRepositoryRef{SemVer: "*"},
 		Timeout:   &metav1.Duration{Duration: 5 * time.Second},
 	}
-	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(r.RegistryAccess()))
+	request, err := (&operation{Fetcher: f}).resolvedRepository(t.Context(), new(r.RegistryAccess()))
 	assert.NoError(t, err)
 
 	blocked := true

@@ -44,7 +44,12 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 			{
 				recordErr := cli.RecordRender(
 					t.Context(),
-					RenderAcceptance{Owner: request.Named(), Receipt: receipt12, Records: emptyRenderInventory},
+					RenderAcceptance{
+						Owner:   request.Named(),
+						Receipt: receipt12,
+						Records: emptyRenderInventory,
+						Sources: []manifest.SourceEvidence{},
+					},
 				)
 				assert.NoError(t, recordErr)
 			}

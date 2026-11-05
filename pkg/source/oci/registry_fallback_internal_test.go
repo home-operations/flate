@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -68,11 +70,13 @@ func testFetcherResolveConfigRegistryFallbackSnapshotCase(
 	var work manifest.WorkRecorder
 	reads := fInputs.readSet(repo)
 	reads.SetWork(&work)
-	_, err := f.Fetch(
+	_, err := fetchtest.Fetch(
 		t.Context(),
+		f.Fetch,
 		repo,
 		reads,
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil || lookups.Load() != 2 {
@@ -83,7 +87,7 @@ func testFetcherResolveConfigRegistryFallbackSnapshotCase(
 	var wg sync.WaitGroup
 	for range *callers {
 		wg.Go(func() {
-			_, err := missing.RetryAmbient(ctx)
+			_, err := fetchtest.Retry(ctx, missing.RetryAmbient)
 			assert.ErrorIf(t, !errors.Is(err, context.Canceled), "canceled fallback: %v", err)
 		})
 	}
@@ -93,7 +97,7 @@ func testFetcherResolveConfigRegistryFallbackSnapshotCase(
 	artifacts := make([]*store.SourceArtifact, (*callers))
 	failures := make([]error, (*callers))
 	for i := range *callers {
-		wg.Go(func() { <-start; artifacts[i], failures[i] = missing.RetryMachine(t.Context(), nil) })
+		wg.Go(func() { <-start; artifacts[i], failures[i] = fetchtest.Machine(t.Context(), missing, nil) })
 	}
 	close(start)
 	wg.Wait()

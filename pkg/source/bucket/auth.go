@@ -20,7 +20,7 @@ import (
 )
 
 type bucketAcquisition struct {
-	work     manifest.AcquisitionWork
+	missing  *source.MissingSecretError
 	network  *source.Network
 	bucket   *manifest.Bucket
 	endpoint string
@@ -34,10 +34,6 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 	if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 		return bucketAcquisition{}, authErr
 	}
-	endpointInfo, err := normalizeEndpoint(b.Endpoint, b.Insecure)
-	if err != nil {
-		return bucketAcquisition{}, err
-	}
 	owner := manifest.DiagnosticFor(b.Named(), b)
 	resolved, err := source.ResolveTransport(f.secrets, owner, []source.TransportInput{
 		{Reference: b.ProxySecretRef, Use: source.TransportProxy},
@@ -45,15 +41,6 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 	})
 	if err != nil {
 		return bucketAcquisition{}, err
-	}
-	if _, proxyURLErr := resolved.ProxyURL(
-		&url.URL{Scheme: schemeFor(endpointInfo.secure), Host: endpointInfo.host},
-	); proxyURLErr != nil {
-		return bucketAcquisition{}, manifest.NewError(
-			manifest.ErrInput,
-			nil,
-			"resolve bucket proxy: invalid proxy configuration",
-		)
 	}
 	var material any
 	if creds != nil {
@@ -74,10 +61,20 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 		}
 		return bucketAcquisition{}, authErr
 	}
-	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: resolved, Credentials: material})
+	endpointInfo, err := normalizeEndpoint(b.Endpoint, b.Insecure)
 	if err != nil {
 		return bucketAcquisition{}, err
 	}
+	if _, proxyURLErr := resolved.ProxyURL(
+		&url.URL{Scheme: schemeFor(endpointInfo.secure), Host: endpointInfo.host},
+	); proxyURLErr != nil {
+		return bucketAcquisition{}, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			"resolve bucket proxy: invalid proxy configuration",
+		)
+	}
+
 	request := bucketAcquisition{
 		network:  f.Network,
 		bucket:   b,
@@ -89,7 +86,6 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 			Creds:      creds,
 			Secure:     endpointInfo.secure,
 			Region:     b.Region,
-			Transport:  tr,
 		},
 	}
 	return request, authErr
@@ -222,4 +218,17 @@ func (r *bucketAcquisition) machineCredential(
 		return credentials.Value{}, false, err
 	}
 	return value, true, nil
+}
+
+func (f *operation) connect(request *bucketAcquisition) error {
+	var material any
+	if request.options.Creds != nil {
+		value, _ := request.options.Creds.GetWithContext(nil)
+		if value.AccessKeyID != "" || value.SecretAccessKey != "" {
+			material = value
+		}
+	}
+	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: request.resolved, Credentials: material})
+	request.options.Transport = tr
+	return err
 }

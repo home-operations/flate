@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2/registry/remote/auth"
 
@@ -212,7 +214,14 @@ func testFetcherMachineCredentialsAcquisitionCase(
 			}}
 		}
 	}
-	got, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{MaxAge: time.Hour})
+	got, err := fetchtest.Fetch(
+		t.Context(),
+		f.Fetch,
+		repo,
+		inputs.readSet(repo),
+		&sourcecache.Policy{MaxAge: time.Hour},
+		nil,
+	)
 	if (*name) == "wrong Docker is authoritative" || (*name) == "explicit miss" ||
 		(*name) == "missing helper" ||
 		(*name) ==
@@ -229,7 +238,14 @@ func testFetcherMachineCredentialsAcquisitionCase(
 
 	if (*name) == "helper rotation" {
 		before := accepted.Load()
-		warm, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{MaxAge: time.Hour})
+		warm, err := fetchtest.Fetch(
+			t.Context(),
+			f.Fetch,
+			repo,
+			inputs.readSet(repo),
+			&sourcecache.Policy{MaxAge: time.Hour},
+			nil,
+		)
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -240,7 +256,14 @@ func testFetcherMachineCredentialsAcquisitionCase(
 
 		expectedPassword.Store("rotated")
 		t.Setenv("FLATE_HELPER_SECRET", "rotated")
-		rotated, err := f.Fetch(t.Context(), repo, inputs.readSet(repo), &sourcecache.Policy{MaxAge: time.Hour})
+		rotated, err := fetchtest.Fetch(
+			t.Context(),
+			f.Fetch,
+			repo,
+			inputs.readSet(repo),
+			&sourcecache.Policy{MaxAge: time.Hour},
+			nil,
+		)
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,

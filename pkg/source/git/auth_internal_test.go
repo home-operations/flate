@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/fetchtest"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -209,11 +211,13 @@ func TestFetcher_ProviderUnavailable(t *testing.T) {
 		URL:      "https://github.com/x/y.git",
 		Provider: sourcev1.GitProviderGitHub,
 	}
-	_, err := f.Fetch(
+	_, err := fetchtest.Fetch(
 		context.Background(),
+		f.Fetch,
 		repo,
 		(testInputs{}).readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	assert.FatalIf(t, err == nil, "expected error for unimplemented provider")
 	assert.ErrorIf(t, !errors.Is(err, manifest.ErrMissingSecret), "expected missing provider credentials; got %v", err)
@@ -328,11 +332,13 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 		Provider:  sourcev1.GitProviderGitHub,
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	_, err := f.Fetch(
+	_, err := fetchtest.Fetch(
 		context.Background(),
+		f.Fetch,
 		repo,
 		fInputs.readSet(repo),
 		&sourcecache.Policy{MaxAge: repo.SourceInterval()},
+		nil,
 	)
 	assert.FatalIf(t, err == nil, "expected missing-secret error")
 	assert.ErrorIf(

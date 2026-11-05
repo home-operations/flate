@@ -1,0 +1,47 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: a-sources
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: pinned
+  namespace: flux-system
+spec:
+  interval: 10m
+  ref:
+    tag: v1.0.0
+  url: git://fixture.invalid/cluster
+---
+apiVersion: v1
+data:
+  value: pinned-deleted
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: deleted
+  namespace: apps
+---
+apiVersion: v1
+data:
+  value: pinned-extra
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: extra
+  namespace: apps
+---
+apiVersion: v1
+data:
+  value: pinned
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: hello
+  namespace: apps

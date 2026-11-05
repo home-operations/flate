@@ -1,0 +1,7 @@
+namespace: flux-system
+generatorOptions: {disableNameSuffixHash: true}
+configMapGenerator:
+- name: settings
+  files: [VALUE=value.txt]
+- name: stable-settings
+  literals: [STABLE=unchanged]

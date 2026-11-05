@@ -27,6 +27,24 @@
       "email": "fixture@example.test",
       "time": "2000-01-01T00:00:00Z",
       "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "u2-generator-failure-missing",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-generator-failure-missing"
+    },
+    {
+      "repository": "repo",
+      "name": "u2-generator-failure-outside",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-generator-failure-outside"
     }
   ],
   "overlays": [
@@ -36,6 +54,60 @@
       "operations": [
         {
           "delete": "repo/entry/sources.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-generator-failure-missing",
+      "directory": "overlays/u2-generator-failure-missing",
+      "operations": [
+        {
+          "delete": "repo/app/config.yaml"
+        },
+        {
+          "delete": "repo/app/extracted.yaml"
+        },
+        {
+          "delete": "repo/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/archive.tgz"
+        },
+        {
+          "delete": "repo/base.yaml"
+        },
+        {
+          "delete": "repo/entry/sources.yaml"
+        },
+        {
+          "delete": "repo/overlay.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-generator-failure-outside",
+      "directory": "overlays/u2-generator-failure-outside",
+      "operations": [
+        {
+          "delete": "repo/app/config.yaml"
+        },
+        {
+          "delete": "repo/app/extracted.yaml"
+        },
+        {
+          "delete": "repo/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/archive.tgz"
+        },
+        {
+          "delete": "repo/base.yaml"
+        },
+        {
+          "delete": "repo/entry/sources.yaml"
+        },
+        {
+          "delete": "repo/overlay.yaml"
         }
       ]
     }
@@ -164,6 +236,76 @@
             "expect": {
               "stdout": "expect/partial.stdout",
               "stderr": "expect/partial.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "bootstrap-generator-failure-isolation-missing",
+      "description": "bootstrap generator failure isolation missing",
+      "setup": [
+        {
+          "commit": "u2-generator-failure-missing"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "u2-generator-failure-missing",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/u2-generator-failure-missing.stdout",
+              "stderr": "expect/u2-generator-failure-missing.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "bootstrap-generator-failure-isolation-outside",
+      "description": "bootstrap generator failure isolation outside",
+      "setup": [
+        {
+          "commit": "u2-generator-failure-outside"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "u2-generator-failure-outside",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/u2-generator-failure-outside.stdout",
+              "stderr": "expect/u2-generator-failure-outside.stderr",
               "code": 1
             }
           }
@@ -311,6 +453,112 @@
         "artifact-generator--all-strategies"
       ],
       "purpose": "Source, producer, consumer or payload in the declared artifact topology."
+    },
+    {
+      "path": "inputs/outside.txt",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-failure-missing/repo/flux/ks.yaml",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-failure-missing/repo/apps/good/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-failure-missing/repo/apps/good/cm.yaml",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-failure-missing/repo/apps/bad/kustomization.yml",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control.",
+      "package": "failure"
+    },
+    {
+      "path": "expect/u2-generator-failure-missing.stdout",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-generator-failure-missing.stderr",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-generator-failure-outside/repo/flux/ks.yaml",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-failure-outside/repo/apps/good/kustomization.yaml",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-failure-outside/repo/apps/good/cm.yaml",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-generator-failure-outside/repo/apps/bad/kustomization.yml",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "expect/u2-generator-failure-outside.stdout",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-generator-failure-outside.stderr",
+      "cases": [
+        "bootstrap-generator-failure-isolation-missing",
+        "bootstrap-generator-failure-isolation-outside"
+      ],
+      "purpose": "Reviewed expected CLI stream."
     }
-  ]
+  ],
+  "inputs": "inputs"
 }

@@ -1,0 +1,23 @@
+---
+apiVersion: v1
+data:
+  mode: after
+  value: v1.0.0
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: consumer
+  namespace: apps
+---
+apiVersion: v1
+data:
+  value: v1.0.0
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: hello
+  namespace: apps

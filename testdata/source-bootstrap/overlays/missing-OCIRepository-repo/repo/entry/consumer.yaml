@@ -1,0 +1,11 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: missing
+    namespace: sources
+  interval: 2m

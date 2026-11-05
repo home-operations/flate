@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: pinned-deleted
+kind: ConfigMap
+metadata:
+  name: deleted
+  namespace: apps

@@ -1,0 +1,55 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./consumer
+  postBuild:
+    substituteFrom:
+    - kind: ConfigMap
+      name: settings
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: raw
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./shared
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: nsprod
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./overlay
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: other
+  namespace: other
+spec:
+  interval: 10m
+  patches:
+  - patch: "- op: replace\n  path: /does/not/exist\n  value: x"
+    target:
+      kind: ConfigMap
+  path: ./shared
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

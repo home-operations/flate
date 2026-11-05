@@ -1,0 +1,5 @@
+generatorOptions: {disableNameSuffixHash: true}
+secretGenerator:
+- name: creds
+  namespace: flux-system
+  envs: [creds.sops.env]

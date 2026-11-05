@@ -1,0 +1,10 @@
+resources: [root.yaml, tmpl.yaml]
+patches:
+- target: {group: kustomize.toolkit.fluxcd.io, version: v1, kind: Kustomization, name: tmpl}
+  patch: |-
+    - op: add
+      path: /spec/path
+      value: ./apps
+    - op: add
+      path: /spec/sourceRef
+      value: {kind: GitRepository, name: flux-system}

@@ -1,0 +1,8 @@
+apiVersion: v1
+data:
+  mode: before
+  value: ${value}
+kind: ConfigMap
+metadata:
+  name: consumer
+  namespace: apps

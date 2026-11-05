@@ -1,0 +1,8 @@
+
+  ⚠ warnings (3)
+    [BootstrapAliases] orig snapshot: aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree
+      GitRepository.source.toolkit.fluxcd.io/flux-system/one, GitRepository.source.toolkit.fluxcd.io/flux-system/two, @@repo@@/.flate-base/@@commit:submodule-aliases@@
+    [SkippedSubmodule] orig snapshot: GitRepository flux-system/flux-system: skipping submodule
+      module, @@commit:submodule-aliases@@
+    [BootstrapAliases] current snapshot: aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree
+      GitRepository.source.toolkit.fluxcd.io/flux-system/one, GitRepository.source.toolkit.fluxcd.io/flux-system/two, @@repo@@

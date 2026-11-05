@@ -1,0 +1,5 @@
+
+  ✗  HelmRepository  sources/missing  not found
+         required by HelmRelease apps/consumer, HelmRelease apps/consumer
+
+  ✗ 1 failed · 2 blocked

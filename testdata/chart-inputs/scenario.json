@@ -18,6 +18,16 @@
           "url": "https://example.test/cluster.git"
         }
       ]
+    },
+    {
+      "name": "baseline",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.test/cluster.git"
+        }
+      ]
     }
   ],
   "commits": [
@@ -120,6 +130,24 @@
       "parents": [
         "base"
       ]
+    },
+    {
+      "repository": "repo",
+      "name": "u2-last-owner-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-last-owner-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "u2-last-owner-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-last-owner-before"
     }
   ],
   "overlays": [
@@ -239,6 +267,90 @@
       "operations": [
         {
           "delete": "repo/config/prod.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-last-owner-after",
+      "directory": "overlays/u2-last-owner-after",
+      "operations": [
+        {
+          "delete": "repo/apps/demo/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/apps/demo/app/release.yaml"
+        },
+        {
+          "delete": "repo/apps/demo/ks.yaml"
+        },
+        {
+          "delete": "repo/apps/sibling/app/kustomization.yaml"
+        },
+        {
+          "delete": "repo/apps/sibling/app/release.yaml"
+        },
+        {
+          "delete": "repo/apps/sibling/ks.yaml"
+        },
+        {
+          "delete": "repo/charts/jenkins-deployment/Chart.yaml"
+        },
+        {
+          "delete": "repo/charts/jenkins-deployment/templates/configmap.yaml"
+        },
+        {
+          "delete": "repo/charts/jenkins-deployment/values.prod.yaml"
+        },
+        {
+          "delete": "repo/charts/jenkins-deployment/values.yaml"
+        },
+        {
+          "delete": "repo/cluster/source.yaml"
+        },
+        {
+          "delete": "repo/config/prod.yaml"
+        }
+      ]
+    },
+    {
+      "name": "u2-last-owner-before",
+      "directory": "overlays/u2-last-owner-before",
+      "operations": [
+        {
+          "delete": "baseline/apps/demo/app/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/apps/demo/app/release.yaml"
+        },
+        {
+          "delete": "baseline/apps/demo/ks.yaml"
+        },
+        {
+          "delete": "baseline/apps/sibling/app/kustomization.yaml"
+        },
+        {
+          "delete": "baseline/apps/sibling/app/release.yaml"
+        },
+        {
+          "delete": "baseline/apps/sibling/ks.yaml"
+        },
+        {
+          "delete": "baseline/charts/jenkins-deployment/Chart.yaml"
+        },
+        {
+          "delete": "baseline/charts/jenkins-deployment/templates/configmap.yaml"
+        },
+        {
+          "delete": "baseline/charts/jenkins-deployment/values.prod.yaml"
+        },
+        {
+          "delete": "baseline/charts/jenkins-deployment/values.yaml"
+        },
+        {
+          "delete": "baseline/cluster/source.yaml"
+        },
+        {
+          "delete": "baseline/config/prod.yaml"
         }
       ]
     }
@@ -973,6 +1085,156 @@
           }
         }
       ]
+    },
+    {
+      "name": "source-ref--last-owner-local-chart",
+      "description": "source ref  last owner local chart",
+      "setup": [
+        {
+          "commit": "u2-last-owner-after"
+        },
+        {
+          "commit": "u2-last-owner-before"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "u2-last-owner-full-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/u2-last-owner-full-after.stdout",
+              "stderr": "expect/u2-last-owner-full-after.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-last-owner-full-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/u2-last-owner-full-before.stdout",
+              "stderr": "expect/u2-last-owner-full-before.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-last-owner-selected-forward",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/u2-last-owner-selected-forward.stdout",
+              "stderr": "expect/u2-last-owner-selected-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-last-owner-diff-forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@baseline@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/u2-last-owner-diff-forward.stdout",
+              "stderr": "expect/u2-last-owner-diff-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-last-owner-selected-reverse",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/flux"
+            ],
+            "expect": {
+              "stdout": "expect/u2-last-owner-selected-reverse.stdout",
+              "stderr": "expect/u2-last-owner-selected-reverse.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "u2-last-owner-diff-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--path-orig",
+              "@@repo@@/flux",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/u2-last-owner-diff-reverse.stdout",
+              "stderr": "expect/u2-last-owner-diff-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -1651,6 +1913,167 @@
         "helm-source-root-values-files-changed-only-chartref-add"
       ],
       "purpose": "Restore the selected source-root values file that the base commit omits."
+    },
+    {
+      "path": "overlays/u2-last-owner-after/repo/flux/release.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-after/repo/charts/demo/Chart.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-after/repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-after/repo/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-after/repo/apps/cm.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "expect/u2-last-owner-full-after.stdout",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-full-after.stderr",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-last-owner-before/baseline/flux/release.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-before/baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-before/baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-before/baseline/apps/kustomization.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-before/baseline/apps/cm.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "overlays/u2-last-owner-before/baseline/flux/owner.yaml",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Authored source regression input or exclusion control."
+    },
+    {
+      "path": "expect/u2-last-owner-full-before.stdout",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-full-before.stderr",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-selected-forward.stdout",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-selected-forward.stderr",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-diff-forward.stdout",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-diff-forward.stderr",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-selected-reverse.stdout",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-selected-reverse.stderr",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-diff-reverse.stdout",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/u2-last-owner-diff-reverse.stderr",
+      "cases": [
+        "source-ref--last-owner-local-chart"
+      ],
+      "purpose": "Reviewed expected CLI stream."
     }
   ]
 }

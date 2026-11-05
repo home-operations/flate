@@ -1,0 +1,11 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: z-stage
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./stage
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

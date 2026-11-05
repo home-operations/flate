@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [BootstrapAliases] aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree
+      GitRepository.source.toolkit.fluxcd.io/flux-system/one, GitRepository.source.toolkit.fluxcd.io/flux-system/two, @@repo@@

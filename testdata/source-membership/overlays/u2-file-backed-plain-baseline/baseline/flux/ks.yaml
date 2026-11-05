@@ -1,0 +1,27 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: consumer
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./consumer
+  postBuild:
+    substituteFrom:
+    - kind: ConfigMap
+      name: othercm
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: producer
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

@@ -1,0 +1,13 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: upstream
+  namespace: flux-system
+spec:
+  ignore: '/*
+
+    '
+  interval: 10m
+  ref:
+    tag: v1.7.7
+  url: git://fixture.invalid/cluster

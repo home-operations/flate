@@ -1,0 +1,14 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: consumer
+  namespace: apps
+spec:
+  chart:
+    spec:
+      chart: ./decoy
+      sourceRef:
+        kind: HelmRepository
+        name: missing
+        namespace: sources
+  interval: 1m

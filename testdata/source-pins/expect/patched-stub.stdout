@@ -1,0 +1,41 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: root
+  namespace: flux-system
+spec:
+  interval: 1m
+  path: ./flux
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: root
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: tmpl
+  namespace: flux-system
+spec:
+  interval: 1m
+  path: ./apps
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: tmpl
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: apps-cm
+  namespace: apps

@@ -1,0 +1,321 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Authored source topology with the existing pinned-tree regression inputs. Application payloads reduce to ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "upstream",
+      "directory": "upstream",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "git://fixture.invalid/cluster"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "upstream",
+      "name": "upstream",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/v1.7.7"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "omitted",
+      "directory": "overlays/omitted"
+    },
+    {
+      "name": "explicit",
+      "directory": "overlays/explicit"
+    },
+    {
+      "name": "excluded",
+      "directory": "overlays/excluded"
+    }
+  ],
+  "cases": [
+    {
+      "name": "source-ref--ignore-negation-omitted",
+      "description": "source ref  ignore negation omitted",
+      "setup": [
+        {
+          "overlay": "omitted"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "ignore-omitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "multus-crd",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--git-depth",
+              "0",
+              "--skip-kinds",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/ignore-omitted.stdout",
+              "stderr": "expect/ignore-omitted.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-ref--ignore-negation-explicit",
+      "description": "source ref  ignore negation explicit",
+      "setup": [
+        {
+          "overlay": "explicit"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "ignore-explicit",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "multus-crd",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--git-depth",
+              "0",
+              "--skip-kinds",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/ignore-explicit.stdout",
+              "stderr": "expect/ignore-explicit.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "source-ref--ignore-negation-excluded",
+      "description": "source ref  ignore negation excluded",
+      "setup": [
+        {
+          "overlay": "excluded"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "ignore-excluded",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "multus-crd",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--git-depth",
+              "0",
+              "--skip-kinds",
+              ""
+            ],
+            "expect": {
+              "stdout": "expect/ignore-excluded.stdout",
+              "stderr": "expect/ignore-excluded.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/flux/source.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "upstream/artifacts/networks-crd.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "upstream/artifacts/excluded.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/omitted/repo/flux/source.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/omitted/repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/ignore-omitted.stdout",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/ignore-omitted.stderr",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/explicit/repo/flux/source.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/explicit/repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/ignore-explicit.stdout",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/ignore-explicit.stderr",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/excluded/repo/flux/source.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/excluded/repo/flux/consumer.yaml",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/ignore-excluded.stdout",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/ignore-excluded.stderr",
+      "cases": [
+        "source-ref--ignore-negation-omitted",
+        "source-ref--ignore-negation-explicit",
+        "source-ref--ignore-negation-excluded"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    }
+  ]
+}

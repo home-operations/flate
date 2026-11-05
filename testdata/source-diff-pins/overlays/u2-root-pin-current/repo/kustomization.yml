@@ -1,0 +1,1 @@
+resources: [apps, flux/entry.yaml, flux/repo.yaml]

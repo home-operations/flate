@@ -1,0 +1,7 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unknown
+spec:
+  interval: 10m
+  url: git://fixture.invalid/external

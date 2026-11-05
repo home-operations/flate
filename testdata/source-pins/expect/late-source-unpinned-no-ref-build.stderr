@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/apps  kustomize build ./apps: accumulating resources: accumulation err='accumulating resources from 'deleted.yaml': resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist': must build at directory: not a valid directory: resolve apps/deleted.yaml: stat apps/deleted.yaml: file does not exist
+
+  ✗ 1 failed

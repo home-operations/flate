@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  K: v
+kind: ConfigMap
+metadata:
+  name: othercm
+  namespace: default

@@ -1,0 +1,150 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "."
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "added-rs-output",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "phantom"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "resourceset.fluxcd.controlplane.io/name": "added-rs",
+            "resourceset.fluxcd.controlplane.io/namespace": "flux-system"
+          },
+          "name": "added-rs-output",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "."
+      },
+      "apiVersion": "source.toolkit.fluxcd.io/v1",
+      "kind": "GitRepository",
+      "namespace": "flux-system",
+      "name": "working",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "source.toolkit.fluxcd.io/v1",
+        "kind": "GitRepository",
+        "metadata": {
+          "name": "working",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "url": "git://fixture.invalid/cluster"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "."
+      },
+      "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+      "kind": "Kustomization",
+      "namespace": "flux-system",
+      "name": "added-ks",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "added-ks",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./apps/phantom",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "working",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "kind": "",
+        "name": "",
+        "path": "."
+      },
+      "apiVersion": "fluxcd.controlplane.io/v1",
+      "kind": "ResourceSet",
+      "namespace": "flux-system",
+      "name": "added-rs",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "fluxcd.controlplane.io/v1",
+        "kind": "ResourceSet",
+        "metadata": {
+          "name": "added-rs",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "resourcesTemplate": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: added-rs-output, namespace: apps}\ndata: {value: phantom}\n"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    },
+    {
+      "parent": {
+        "group": "kustomize.toolkit.fluxcd.io",
+        "kind": "Kustomization",
+        "namespace": "flux-system",
+        "name": "added-ks",
+        "path": "apps/phantom"
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "apps",
+      "name": "added-ks-output",
+      "status": "added",
+      "old": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "phantom"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "added-ks",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "added-ks-output",
+          "namespace": "apps"
+        }
+      },
+      "oldChart": "",
+      "newChart": ""
+    }
+  ],
+  "suppressed": []
+}

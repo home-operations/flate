@@ -1,0 +1,12 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: b-second
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./a-second
+  sourceRef:
+    kind: GitRepository
+    name: second
+    namespace: flux-system

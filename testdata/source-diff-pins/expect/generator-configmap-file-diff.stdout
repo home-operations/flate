@@ -1,0 +1,21 @@
+--- ConfigMap apps/consumer (consumer)
++++ ConfigMap apps/consumer (consumer)
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  generated: before
++  generated: after
+   pinned: v1.0.0
+ kind: ConfigMap
+ metadata:
+
+--- ConfigMap apps/settings (producer)
++++ ConfigMap apps/settings (producer)
+@@ -1,6 +1,6 @@
+ apiVersion: v1
+ data:
+-  GENERATED: before
++  GENERATED: after
+ kind: ConfigMap
+ metadata:
+   annotations:

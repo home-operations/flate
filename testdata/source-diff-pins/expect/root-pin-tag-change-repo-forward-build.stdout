@@ -1,0 +1,55 @@
+---
+apiVersion: v1
+data:
+  value: v2.0.0
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: hello
+  namespace: apps
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: cluster
+  namespace: flux-system
+spec:
+  ignore: /ignored.txt
+  interval: 10m
+  ref:
+    tag: v1.0.0
+  url: git://fixture.invalid/cluster
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: apps
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system

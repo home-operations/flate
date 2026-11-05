@@ -1,0 +1,7 @@
+namespace: apps
+generatorOptions: {disableNameSuffixHash: true}
+configMapGenerator:
+- name: settings
+  files: [GENERATED=value.txt]
+- name: stable-settings
+  literals: [STABLE=unchanged]

@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: phantom
+kind: ConfigMap
+metadata:
+  name: added-ks-output
+  namespace: apps

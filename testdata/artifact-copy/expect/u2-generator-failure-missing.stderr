@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/bad  kustomize build ./apps/bad: loading KV pairs: file sources: [missing.txt]: resolve apps/bad/missing.txt: stat apps/bad/missing.txt: file does not exist
+
+  ✗ 1 failed

@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  v: ${K}
+kind: ConfigMap
+metadata:
+  name: out
+  namespace: default

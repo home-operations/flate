@@ -1,0 +1,436 @@
+{
+  "source": {
+    "repository": "wrmilling/k3s-gitops",
+    "revision": "dca29749e04b073f6463fdda490a74822594ed15",
+    "paths": [
+      "flux-system/gotk-sync.yaml"
+    ],
+    "reductions": "Authored source topology with the existing pinned-tree regression inputs. Application payloads reduce to ConfigMaps."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "incidental-sibling",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "u2-kustomization-parse-failure",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "u2-kustomization-parse-failure"
+    }
+  ],
+  "overlays": [
+    {
+      "name": "incidental-sibling",
+      "directory": "overlays/incidental-sibling"
+    },
+    {
+      "name": "incidental-component",
+      "directory": "overlays/incidental-component"
+    },
+    {
+      "name": "u2-kustomization-parse-failure",
+      "directory": "overlays/u2-kustomization-parse-failure",
+      "operations": [
+        {
+          "delete": "repo/flux.yaml"
+        },
+        {
+          "delete": "repo/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/apps/cm.yaml"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "loader-incidental-parse-failure-sibling",
+      "description": "loader incidental parse failure sibling",
+      "setup": [
+        {
+          "commit": "incidental-sibling"
+        },
+        {
+          "overlay": "incidental-sibling"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "incidental-sibling-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/incidental-sibling-build.stdout",
+              "stderr": "expect/incidental-sibling-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "incidental-sibling-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/incidental-sibling-test.stdout",
+              "stderr": "expect/incidental-sibling-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "loader-incidental-parse-failure-component",
+      "description": "loader incidental parse failure component",
+      "setup": [
+        {
+          "commit": "incidental-sibling"
+        },
+        {
+          "overlay": "incidental-component"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "incidental-component-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/incidental-component-build.stdout",
+              "stderr": "expect/incidental-component-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "incidental-component-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/incidental-component-test.stdout",
+              "stderr": "expect/incidental-component-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "kustomization-parse-failure",
+      "description": "kustomization parse failure",
+      "setup": [
+        {
+          "commit": "u2-kustomization-parse-failure"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "parse-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/parse-build.stdout",
+              "stderr": "expect/parse-build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "parse-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/parse-test.stdout",
+              "stderr": "expect/parse-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/flux.yaml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/apps/kustomization.yaml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "repo/apps/cm.yaml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/incidental-sibling/repo/apps/bad.yaml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/incidental-sibling-build.stdout",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/incidental-sibling-build.stderr",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/incidental-sibling-test.stdout",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/incidental-sibling-test.stderr",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/incidental-component/repo/kustomization.yml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/incidental-component/repo/component-indexer.yaml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/incidental-component/repo/component/kustomization.yml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases.",
+      "package": "excluded"
+    },
+    {
+      "path": "overlays/incidental-component/repo/component/bad.yaml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "expect/incidental-component-build.stdout",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/incidental-component-build.stderr",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/incidental-component-test.stdout",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/incidental-component-test.stderr",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/u2-kustomization-parse-failure/repo/flux/apps.yaml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases."
+    },
+    {
+      "path": "overlays/u2-kustomization-parse-failure/repo/apps/kustomization.yml",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Source, committed variant, or authored exclusion control for the declared cases.",
+      "package": "failure"
+    },
+    {
+      "path": "expect/parse-build.stdout",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/parse-build.stderr",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/parse-test.stdout",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/parse-test.stderr",
+      "cases": [
+        "loader-incidental-parse-failure-sibling",
+        "loader-incidental-parse-failure-component",
+        "kustomization-parse-failure"
+      ],
+      "purpose": "Reviewed expected CLI stream."
+    }
+  ]
+}

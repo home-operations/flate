@@ -1,0 +1,13 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: Bucket
+metadata:
+  name: data
+  namespace: apps
+spec:
+  bucketName: fixture
+  endpoint: https://s3.fixture.invalid
+  interval: 1m
+  provider: generic
+  proxySecretRef:
+    name: missing-material
+  region: us-east-1

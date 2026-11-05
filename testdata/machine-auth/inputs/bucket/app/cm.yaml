@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: bucket
+kind: ConfigMap
+metadata:
+  name: native-output
+  namespace: apps

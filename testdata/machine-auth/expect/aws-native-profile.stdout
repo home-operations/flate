@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  value: bucket
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: native-output
+  namespace: apps

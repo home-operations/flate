@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: registry
+  namespace: apps
+spec:
+  interval: 1m
+  ref:
+    tag: 1.0.0
+  url: oci://registry.fixture.invalid/source/app

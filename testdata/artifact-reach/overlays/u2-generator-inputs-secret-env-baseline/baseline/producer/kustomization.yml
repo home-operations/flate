@@ -1,0 +1,8 @@
+namespace: flux-system
+generatorOptions: {disableNameSuffixHash: true}
+secretGenerator:
+- name: settings
+  envs: [values.sops.env]
+configMapGenerator:
+- name: stable-settings
+  literals: [STABLE=unchanged]

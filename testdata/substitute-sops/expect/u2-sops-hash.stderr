@@ -1,0 +1,5 @@
+
+  ⚠ warnings (2)
+    [EmptyScan] no Flux Kustomization or HelmRelease objects found under --path; check the path is correct
+    [SOPSUnreadable] Secret settings-8h75cgbfc5: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      values.yaml

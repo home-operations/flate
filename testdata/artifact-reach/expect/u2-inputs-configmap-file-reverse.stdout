@@ -1,0 +1,68 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "before"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "consumer",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "consumer",
+      "namespace": "apps"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "VALUE": "before"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "annotations": {
+        "config.kubernetes.io/origin": "configuredIn: kustomization.yml\nconfiguredBy:\n  apiVersion: builtin\n  kind: ConfigMapGenerator\n"
+      },
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "producer",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "settings",
+      "namespace": "flux-system"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "STABLE": "unchanged"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "annotations": {
+        "config.kubernetes.io/origin": "configuredIn: kustomization.yml\nconfiguredBy:\n  apiVersion: builtin\n  kind: ConfigMapGenerator\n"
+      },
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "producer",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "stable-settings",
+      "namespace": "flux-system"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "value": "unchanged"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "sibling",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "sibling",
+      "namespace": "apps"
+    }
+  }
+]

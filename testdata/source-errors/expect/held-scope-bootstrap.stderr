@@ -1,0 +1,5 @@
+
+  ✗  Kustomization  flux-system/a-held  kustomize build ./held: accumulating resources: accumulating resources from 'extra.yaml': MalformedYAMLError: yaml: line 1: did not find expected ',' or '}' in File: extra.yaml
+  ✗  Kustomization  flux-system/b-second  kustomize build ./second: accumulating resources: accumulating resources from 'extra.yaml': MalformedYAMLError: yaml: line 1: did not find expected ',' or '}' in File: extra.yaml
+
+  ✗ 2 failed

@@ -1,0 +1,6 @@
+
+  ⚠ warnings (2)
+    [ConflictingProducers] orig snapshot: ConfigMap apps/hello: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps
+      entry path ".", Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps
+    [ConflictingProducers] current snapshot: ConfigMap apps/hello: conflicting producers; using Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps
+      entry path ".", Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps

@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  value: ok-consumer
+kind: ConfigMap
+metadata:
+  name: ok
+  namespace: apps

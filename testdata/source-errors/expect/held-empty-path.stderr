@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/b-z  flux kustomize generator: failed to decode Kubernetes YAML from @@repo@@/apps/cm.yaml: MalformedYAMLError: yaml: line 1: did not find expected ',' or '}'
+
+  ✗ 1 failed

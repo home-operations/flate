@@ -1,0 +1,27 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+      - envFrom:
+        - secretRef:
+            name: settings-8h75cgbfc5
+        image: example.invalid/app:latest
+        name: app
+---
+apiVersion: v1
+data: {}
+kind: Secret
+metadata:
+  name: settings-8h75cgbfc5
+type: Opaque

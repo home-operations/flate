@@ -70,7 +70,7 @@ func testFinalizeIndexOwnersOfFileDanglingResourceCase(
 	}
 	if testCaseInput.preload {
 		l.documents.mountSources(s)
-		_, err := l.loadFile(t.Context(), filepath.Join(dir, input.missing))
+		_, err := l.loadFile(t.Context(), filepath.Join(dir, input.missing), &l.documents)
 		assert.NoError(t, err)
 		input.opens = 0
 	}

@@ -716,7 +716,9 @@ func testRSRawSinkDeterministicCollisionWinnerCaseSegment(
 		children, authoritative, failures := parseChildrenResult.Children, parseChildrenResult.Visible, parseChildrenResult.Failures
 		assert.Diff(t, testutil.DocumentMaps(authoritative), input)
 		mixedChildren := 0
-		for i, child := range children {
+		childValues := children
+		for i := range childValues {
+			child := childValues[i]
 			if child.Obj.Named().Namespace == "" && manifest.KindOf(child.Obj).Namespaced() {
 				children[i].Obj = child.Obj.WithNamespace(id.Namespace)
 			}
@@ -748,7 +750,9 @@ func testRSRawSinkDeterministicCollisionWinnerCaseSegment(
 func assertCollisionEmission(t *testing.T, children []store.Child) {
 	t.Helper()
 	mixedChildren := 0
-	for _, child := range children {
+	childValues2 := children
+	for childIndex := range childValues2 {
+		child := childValues2[childIndex]
 		if child.Obj.Named().Kind == manifest.KindConfigMap {
 			mixedChildren++
 		}

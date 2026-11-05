@@ -104,34 +104,48 @@ func (d *Session) pinnedWorkingTreeFile(
 }
 
 // The Loader deduplicates unchanged views; unavailable followed paths fail during reconciliation.
-func (d *Session) loadAt(ctx context.Context, dir string, total *int, work *manifest.WorkRecord) error {
-	n, err := d.loader.Load(ctx, dir, work)
+func (d *Session) loadAt(
+	ctx context.Context,
+	dir string,
+	total *int,
+	input sourceLoad,
+) (int, error) {
+	n, err := d.loader.Load(ctx, dir, input.owner, input.work)
 	if d.loader.IgnoreFile == "" && errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return 0, nil
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	*total += n
-	return nil
+	return n, nil
 }
 
 func (d *Session) loadSourcePath(
 	ctx context.Context,
 	dir string,
+	expansion *sourceExpansion,
 	total *int,
-	input sourceLoad,
-) (bool, error) {
-	if err := d.loadAt(ctx, dir, total, input.work); err != nil {
-		if errors.Is(err, fs.ErrPermission) && input.input != nil && input.input.FS != nil {
-			name, _ := filepath.Rel(input.input.LocalPath, dir)
-			if _, statErr := fs.Stat(input.input.FS, filepath.ToSlash(name)); errors.Is(statErr, fs.ErrPermission) {
-				return false, nil
+) (int, error) {
+	input := expansion.source
+	owner := expansion.ks.Named()
+	if d.loadPurpose == manifest.IncidentalDocuments {
+		owner = manifest.NamedResource{}
+	}
+	n, err := d.loadAt(ctx, dir, total, sourceLoad{
+		owner: owner,
+		work:  d.cfg.Work.Source(expansion.ks.SourceID()).Record(manifest.WorkPreparation, dir),
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrPermission) && input != nil && input.FS != nil {
+			name, _ := filepath.Rel(input.LocalPath, dir)
+			if _, statErr := fs.Stat(input.FS, filepath.ToSlash(name)); errors.Is(statErr, fs.ErrPermission) {
+				return 0, nil
 			}
 		}
-		return false, err
+		return 0, err
 	}
-	return true, nil
+	return n, nil
 }
 
 // Begin binds sources and collects declarations without evaluating standalone packages.
@@ -152,18 +166,20 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
 		return nil, err
 	}
+	d.loadPurpose = manifest.ApplicationDocuments
 	return d, nil
 }
 
 // Advance prepares source-qualified declarations and packages required by admission.
 func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (bool, error) {
+	defer admission.Retire()
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("context: %w", err)
 	}
 	if d.result != nil || admission == nil {
 		return false, nil
 	}
-	admitRequiredObjectsResult2, admitRequiredObjectsResult2Err := d.admitRequiredObjects(ctx, admission.Objects)
+	admitRequiredObjectsResult2, admitRequiredObjectsResult2Err := d.admitRequiredObjects(ctx, admission)
 	changed, refresh, err := admitRequiredObjectsResult2.changed, admitRequiredObjectsResult2.refresh, admitRequiredObjectsResult2Err
 	if err != nil {
 		return false, err
@@ -205,9 +221,10 @@ type requiredAdmission struct {
 	refresh bool
 }
 
-func (d *Session) admitRequiredObjects(ctx context.Context, objects []store.Child) (requiredAdmission, error) {
+func (d *Session) admitRequiredObjects(ctx context.Context, proposal *loader.Admission) (requiredAdmission, error) {
 	changed, refresh := false, false
-	for _, child := range objects {
+	for i := range proposal.Objects {
+		child := &proposal.Objects[i]
 		if err := ctx.Err(); err != nil {
 			return requiredAdmission{changed: false, refresh: false}, fmt.Errorf("context: %w", err)
 		}
@@ -219,12 +236,15 @@ func (d *Session) admitRequiredObjects(ctx context.Context, objects []store.Chil
 			}
 		}
 		if child.Obj != nil && d.cfg.Store.GetObject(child.Obj.Named()) == nil {
-			d.cfg.Store.AddObject(child.Obj, child.Doc)
 			changed = true
 			_, _, hasPath := child.Obj.SourcePath()
 			_, source := child.Obj.(entrySource)
 			refresh = refresh || hasPath || source
 		}
+	}
+	committed, err := d.loader.Commit(ctx, proposal, loader.Construction)
+	if err != nil || !committed {
+		return requiredAdmission{}, err
 	}
 	return requiredAdmission{changed: changed, refresh: refresh}, nil
 }
@@ -256,7 +276,9 @@ func (d *Session) pendingProducers(
 	owners map[manifest.NamedResource]bool,
 ) (map[manifest.NamedResource]*manifest.Kustomization, error) {
 	pending := map[manifest.NamedResource]*manifest.Kustomization{}
-	for _, child := range d.loader.Kustomizations() {
+	childValues := d.loader.Kustomizations()
+	for childIndex := range childValues {
+		child := childValues[childIndex]
 		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
 		if !owners[ks.Named()] || ks.IsFragment() {
 			continue
@@ -289,7 +311,8 @@ func (d *Session) preparePendingProducer(ctx context.Context, ks *manifest.Kusto
 	if err != nil || d.cfg.Trees == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}
-	if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == input {
+	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered &&
+		previous.matches(ks, input, d.substitutions) {
 		return false, nil
 	}
 	if err := d.prepareProducer(ctx, ks, input); err != nil {
@@ -330,6 +353,6 @@ func (d *Session) Freeze(ctx context.Context) (*Result, error) {
 }
 
 type sourceLoad struct {
-	input *store.SourceArtifact
+	owner manifest.NamedResource
 	work  *manifest.WorkRecord
 }

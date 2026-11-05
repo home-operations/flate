@@ -661,7 +661,9 @@ func publishSuspendedChild(t *testing.T, o *Orchestrator, gate manifest.NamedRes
 		manifest.ParseDocOptions{DefaultNamespace: gate.Namespace},
 	)
 	children, retained := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
-	for _, emitted := range children {
+	emittedValues := children
+	for emittedIndex := range emittedValues {
+		emitted := emittedValues[emittedIndex]
 		if o.filter != nil {
 			if _, innerLocalErr := o.ksc.KeepEmitted(t.Context(), gate, emitted, nil); innerLocalErr != nil {
 				t.Error(innerLocalErr)

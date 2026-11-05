@@ -264,7 +264,9 @@ func testRecordEmittedReplacedInputRejectedCase(
 		var proposal *Emission
 		if strings.HasPrefix((*testCaseInput.route), "locked_") {
 			prepared := make([]admission, 0, len(next.Children))
-			for _, c := range next.Children {
+			cValues := next.Children
+			for cIndex := range cValues {
+				c := cValues[cIndex]
 				prepared = append(
 					prepared,
 					admission{child: c, targets: manifest.ProducerTargets(c.Obj), binding: next.binding},

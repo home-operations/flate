@@ -86,13 +86,12 @@ func newAdmission(tb testing.TB, cfg admissionConfig) *admissionFixture {
 	}
 	f := &admissionFixture{tb: tb, loader: l, objs: inventory, keep: map[manifest.NamedResource]role{}}
 	if changes != nil {
-		f.prepare(store.Child{}, nil, false)
+		f.prepare(new(store.Child{}), nil, false)
 	}
 	return f
 }
 
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
-func (f *admissionFixture) prepare(child store.Child, reads *store.ReadSet, commit bool) []manifest.NamedResource {
+func (f *admissionFixture) prepare(child *store.Child, reads *store.ReadSet, commit bool) []manifest.NamedResource {
 	f.tb.Helper()
 	proposal := &Admission{}
 	proposal.Revision = f.loader.Options.Filter.Membership(manifest.NamedResource{}).Revision
@@ -103,16 +102,22 @@ func (f *admissionFixture) prepare(child store.Child, reads *store.ReadSet, comm
 	if reads != nil {
 		reader = reads
 	}
-	c := admissionClosure{loader: f.loader, objects: reader, incoming: child, proposal: proposal, history: f.history}
-	proposal, err := c.evaluate(f.tb.Context(), reads)
+	c := admissionClosure{loader: f.loader, objects: reader, incoming: *child, proposal: proposal, history: f.history}
+	proposal, err := c.evaluate(
+		f.tb.Context(),
+		new(PrepareRequest{Reads: reads, Invocation: child.Obj == nil && reads == nil}),
+	)
 	if err != nil {
 		f.tb.Fatal(err)
 	}
 	if commit {
 		_, retry := f.loader.Options.Filter.AddEmitted(
-			proposal.Needed,
-			proposal.Selected,
-			proposal.Dirty,
+			change.MembershipUpdate{
+				Needed:   proposal.Needed,
+				Selected: proposal.Selected,
+				Dirty:    proposal.Dirty,
+				Ordinary: proposal.Ordinary,
+			},
 			proposal.Revision,
 		)
 		if retry {
@@ -172,12 +177,12 @@ func (f *admissionFixture) KeepNamespaces() map[string]struct{} {
 	return namespaces
 }
 
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (f *admissionFixture) AddEmitted(
 	parent manifest.NamedResource,
-	child store.Child,
+	incoming *store.Child,
 	reader any,
 ) []manifest.NamedResource {
+	child := *incoming
 	f.mu.Lock()
 	var needs, selected []manifest.NamedResource
 	if len(f.keep) != 0 {
@@ -191,10 +196,13 @@ func (f *admissionFixture) AddEmitted(
 	}
 	f.mu.Unlock()
 	revision := f.loader.Options.Filter.Membership(manifest.NamedResource{}).Revision
-	f.loader.Options.Filter.AddEmitted(needs, selected, selected, revision)
+	f.loader.Options.Filter.AddEmitted(
+		change.MembershipUpdate{Needed: needs, Selected: selected, Dirty: selected, Ordinary: needs},
+		revision,
+	)
 	child.Productions = append(slices.Clone(child.Productions), manifest.Production{Owner: parent})
 	reads, _ := reader.(*store.ReadSet)
-	return f.prepare(child, reads, true)
+	return f.prepare(new(child), reads, true)
 }
 
 func (f *admissionFixture) RefineHistory(
@@ -212,7 +220,7 @@ func (f *admissionFixture) RefineHistory(
 		}{records, complete[owner]}
 	}
 	clear(f.keep)
-	f.prepare(store.Child{}, nil, false)
+	f.prepare(new(store.Child{}), nil, false)
 }
 
 func sourceChanges(changes *change.Set, source manifest.NamedResource) *change.Set {
@@ -236,4 +244,9 @@ func testInput(root string) *store.SourceArtifact {
 		return nil
 	}
 	return &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+}
+
+func projectedProducerForTest(object manifest.BaseManifest) manifest.TemplateProjection {
+	projection := manifest.ProjectProducer(object)
+	return projection
 }

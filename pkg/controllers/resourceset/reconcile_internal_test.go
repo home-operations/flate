@@ -242,7 +242,9 @@ func testReconcileProviderInventorySettlementCase(
 		admissiontest.Commit(t, filterLoader, nil)
 		filter := filterLoader.Options.Filter
 		_, _, before := st.GetEmission(rs.Named())
-		for _, child := range before.Children {
+		childValues := before.Children
+		for childIndex := range childValues {
+			child := childValues[childIndex]
 			assert.FatalIf(
 				t,
 				!filter.ShouldReconcile(child.Obj.Named()),
@@ -271,7 +273,9 @@ func testReconcileProviderInventorySettlementCase(
 			count,
 		)
 		if status == store.StatusReady {
-			for _, child := range current.Children {
+			childValues2 := current.Children
+			for childIndex2 := range childValues2 {
+				child := childValues2[childIndex2]
 				assert.FatalIf(t, !filter.ShouldReconcile(child.Obj.Named()),
 					"accepted child %s missing from changed-only selection", child.Obj.Named())
 			}

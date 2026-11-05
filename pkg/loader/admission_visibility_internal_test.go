@@ -64,7 +64,7 @@ func duplicateAdmissionInputPair(t *testing.T, scenario string) ([2]*Loader, [2]
 		l.SourceRoot = root
 		l.Options.Selection = manifest.Selection{Changed: true}
 		l.Options.Filter = change.NewFilter()
-		_, err = l.Load(t.Context(), root, nil)
+		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	}
@@ -151,7 +151,7 @@ func admissionVisibilityPair(t *testing.T, policy string, hide bool) ([2]*Loader
 		l.SourceRoot = root
 		l.Options.Selection = manifest.Selection{Changed: true}
 		l.Options.Filter = change.NewFilter()
-		_, err = l.Load(t.Context(), root, nil)
+		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	}

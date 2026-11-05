@@ -45,7 +45,7 @@ func TestFinalizeIndex_ProducedChildPath(t *testing.T) {
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes = change.NewSet([]string{"apps/red/cm.yaml"})
 			l.Options.Filter = change.NewFilter()
-			_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			child := manifest.NamedResource{
@@ -62,7 +62,7 @@ func TestFinalizeIndex_ProducedChildPath(t *testing.T) {
 			assert.Equal(t, l.CatalogObject(child).(*manifest.Kustomization).Path, "./${ROOT}")
 			parent, _ := l.Index.Lookup(owner)
 			assert.Equal(t, parent.StaticOutput, tc.known)
-			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, child), true)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner), true)
@@ -86,7 +86,7 @@ func TestFinalizeIndex_EffectiveInputContent(t *testing.T) {
 				l.Options.Selection = manifest.Selection{Changed: true}
 				l.Options.Changes = change.NewSet([]string{"flux/settings.yaml"})
 				l.Options.Filter = change.NewFilter()
-				_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+				_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 				assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 				id := manifest.NamedResource{
@@ -257,7 +257,7 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	borrowed := l.InputContent
@@ -269,7 +269,7 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 	files["flux/settings.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\n" +
 		"metadata: {name: settings, namespace: apps}\ndata: {VALUE: new}\n")}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
-	_, err = l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+	_, err = l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	second, known := l.InputContent[reader]
@@ -287,7 +287,7 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 			"metadata: {name: reader, namespace: apps}\nspec: {path: ./app}\n"),
 	}
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
-	_, err = l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+	_, err = l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	_, known = l.InputContent[reader]

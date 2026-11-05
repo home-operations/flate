@@ -40,10 +40,10 @@ func TestAdmission_InputGate(t *testing.T) {
 	l.Options.Selection = manifest.Selection{
 		Roots: []manifest.NamedResource{(&manifest.ResourceSet{Name: "consumer", Namespace: "apps"}).Named()},
 	}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	gate := (&manifest.Kustomization{Name: "gate", Namespace: "apps"}).Named()
 	assert.Equal(t, slices.Contains(proposal.Needed, gate), true)
@@ -71,17 +71,17 @@ func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"input.yaml"})
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	producer := (&manifest.ResourceSet{Name: "templates", Namespace: "apps"}).Named()
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
 	l.Options.HistoryOwners = []manifest.NamedResource{producer}
-	proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err = l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
@@ -210,7 +210,7 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 		reads := &admissionArtifactReads{admissionReader: &captured, bySource: map[manifest.NamedResource]int{}}
 		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
 		c.proposal = &c.result
-		proposal, err := c.evaluate(t.Context(), nil)
+		proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 		assert.NoError(t, err)
 		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), !replaced)
 		if len(reads.bySource) < len(sources) {
@@ -265,7 +265,7 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 		reads := &admissionArtifactReads{admissionReader: &captured[i], bySource: map[manifest.NamedResource]int{}}
 		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
 		c.proposal = &c.result
-		proposal, err := c.evaluate(t.Context(), nil)
+		proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 		assert.NoError(t, err)
 		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), true)
 		assert.Equal(t, reads.bySource[source.Named()], 1)
@@ -303,7 +303,7 @@ func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
 	c.proposal = &c.result
 	before, _, _ := c.delta(source)
 	assert.Equal(t, before.Contains("before.yaml"), true)
-	_, err := c.evaluate(t.Context(), nil)
+	_, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 	assert.NoError(t, err)
 	l.Options.Changes = change.NewSet([]string{"after.yaml"})
 	next := admissionClosure{
@@ -381,7 +381,7 @@ func testAdmissionUnreferencedInputCollisionCase(
 		l.Options.Selection = manifest.Selection{Changed: true}
 		l.Options.Filter = change.NewFilter()
 		for _, dir := range []string{"flux", "decls", "app"} {
-			_, err := l.Load(t.Context(), filepath.Join(root, dir), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, dir), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -391,7 +391,7 @@ func testAdmissionUnreferencedInputCollisionCase(
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.Options.Changes = changes
-		proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+		proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 		assert.NoError(t, err)
 		if len(proposal.Needed) != 0 {
 			t.Errorf("side %d admitted unrelated objects: %v", side, proposal.Needed)

@@ -44,7 +44,8 @@ func (s *Set) WithDeclarations(
 	}
 	d.markOneSided()
 	d.applyCopied()
-	for id, left := range d.objects[0] {
+	for id := range d.objects[0] {
+		left := d.objects[0][id]
 		if err := d.compare(ctx, id, &left); err != nil {
 			return nil, err
 		}
@@ -78,12 +79,14 @@ func (d *declarationScope) capture(
 		emission.Finish()
 		d.objects[side][id] = store.Child{Obj: obj, Doc: doc}
 	}
-	for id, child := range prepared {
+	for id := range prepared {
+		child := prepared[id]
 		if _, known := d.objects[side][id]; !known {
 			d.objects[side][id] = child
 		}
 	}
-	for id, child := range d.objects[side] {
+	for id := range d.objects[side] {
+		child := d.objects[side][id]
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context: %w", err)
 		}
@@ -210,7 +213,8 @@ func (d *declarationScope) compare(ctx context.Context, id manifest.NamedResourc
 }
 
 func (d *declarationScope) validSourcePaths(_ context.Context, children *[2]store.Child) bool {
-	for side, child := range *children {
+	for side := range children {
+		child := &children[side]
 		ref, path, applies := child.Obj.SourcePath()
 		if !applies {
 			continue
@@ -251,7 +255,8 @@ func (d *declarationScope) compareReferences(
 ) error {
 	work := d.work.Source(d.sources[0][id]).Record(manifest.WorkPreparation, "declarations")
 	refs := [2][]manifest.Reference{}
-	for side, child := range *children {
+	for side := range children {
+		child := &children[side]
 		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
 			work.Add(&manifest.WorkCounts{ReaderEdges: 1})
 			refs[side] = append(refs[side], ref.Clone())
@@ -307,7 +312,8 @@ func referenceChanged(ref *manifest.Reference, inputs *[2]store.Child) (Comparis
 	if ref.Key != "" {
 		values := [2]string{}
 		present := [2]bool{}
-		for side, input := range *inputs {
+		for side := range inputs {
+			input := &inputs[side]
 			data, ok := input.Obj.(manifest.Data)
 			if !ok {
 				return Comparison{}, nil

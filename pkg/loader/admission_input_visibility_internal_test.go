@@ -138,7 +138,7 @@ func testAdmissionDuplicateInputContentCase(t *testing.T, testCaseInput *string,
 		}
 		for _, l := range loaders {
 			l.Options.Changes = changes
-			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Selected, consumer), (*testCaseInput) != "retained")
 		}
@@ -177,7 +177,7 @@ func testAdmissionInputVisibilityCaseCompletion(
 		assert.NoError(t, err)
 		for _, l := range *loaders {
 			l.Options.Changes = changes
-			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 			assert.NoError(t, err)
 			assert.Equal(
 				t,

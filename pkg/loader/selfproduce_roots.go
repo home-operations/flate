@@ -39,7 +39,8 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 	sourceRoot := new(l.documents).mountedRoot(repoRoot)
 	roots := map[string]bool{}
 	l.collectPackageRoots(repoRoot, sourceRoot, roots)
-	for i, child := range kss {
+	for i := range kss {
+		child := &kss[i]
 		//nolint:errcheck // Kustomization-only inputs must panic on an invalid object type.
 		ks := child.Obj.(*manifest.Kustomization)
 		view := l.scopes.sources[l.scopes.inputs[i].source]

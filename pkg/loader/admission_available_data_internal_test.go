@@ -73,7 +73,7 @@ func TestAdmission_MaterializersSkipAvailableData(t *testing.T) {
 			l := New(st)
 			l.Options.Filter = change.NewFilter()
 			l.locations = map[manifest.NamedResource]Occurrence{producer.Named(): compactOccurrence(producer,
-				manifest.ProjectProducer(producer))}
+				projectedProducerForTest(producer))}
 			c := admissionClosure{loader: l, objects: st, states: map[manifest.NamedResource]admissionState{}}
 			pending := c.materializers(
 				&materializerDemand{target: input.Named(), required: true},

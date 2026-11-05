@@ -65,7 +65,7 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 	l := New(st)
 	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	{
-		_, err := l.Load(t.Context(), dir, nil)
+		_, err := l.Load(t.Context(), dir, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	for id := range l.Index.Files() {

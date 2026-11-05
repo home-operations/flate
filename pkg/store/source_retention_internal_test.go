@@ -38,7 +38,7 @@ func testRecordEmittedSourceRetainsInvocation(t *testing.T, mode string) {
 	var supplied ReadSet
 	supplied.Init(s, manifest.BootstrapSourceID, nil)
 	defer supplied.Retire()
-	supplied.Admit(source, manifest.BootstrapSourceID, manifest.NamedResource{})
+	supplied.Admit(Child{Obj: source}, manifest.BootstrapSourceID, manifest.NamedResource{})
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		source.Named(): {Declaration: source, Productions: []manifest.Production{
 			{Source: manifest.BootstrapSourceID}, {Owner: owner.Named(), Source: source.Named()},

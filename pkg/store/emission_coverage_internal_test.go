@@ -81,7 +81,9 @@ func testRecordEmittedShadowedCoverageAncestorReplacementCase(
 			t.Fatalf("%v unavailable before publication", owner.Obj.Named())
 		}
 		attempt.Children, attempt.Manifests, attempt.Complete = children, nil, true
-		for _, child := range children {
+		childValues := children
+		for childIndex := range childValues {
+			child := childValues[childIndex]
 			attempt.Manifests = append(attempt.Manifests, manifest.DocOccurrence{Document: child.Doc})
 		}
 		s.RecordEmitted(owner.Obj.Named(), &attempt, nil)
@@ -119,7 +121,9 @@ func testRecordEmittedShadowedCoverageAncestorReplacementCase(
 		},
 	}})
 	publish(p, k)
-	for _, child := range []Child{k, l, m} {
+	childValues2 := []Child{k, l, m}
+	for childIndex2 := range childValues2 {
+		child := childValues2[childIndex2]
 		check("initial", child, true)
 	}
 	if t.Failed() {

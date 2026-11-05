@@ -79,21 +79,36 @@ func TestLoad_WorkCensusLifetime(t *testing.T) {
 	l := New(st)
 	l.SourceRoot = root
 	l.Options.Selection.Roots = []manifest.NamedResource{{Namespace: "apps"}}
-	_, err := l.Load(t.Context(), root, recorder.Scope().Record(manifest.WorkPreparation, root))
+	_, err := l.Load(
+		t.Context(),
+		root,
+		manifest.NamedResource{},
+		recorder.Scope().Record(manifest.WorkPreparation, root),
+	)
 	assert.NoError(t, err)
 	for range 2 {
 		rows := l.Kustomizations()
 		assert.Equal(t, len(rows), 9)
 		for i := range rows {
 			target := filepath.Join(root, rows[i].Obj.Named().Name)
-			_, loadErr := l.Load(t.Context(), target, recorder.Scope().Record(manifest.WorkPreparation, target))
+			_, loadErr := l.Load(
+				t.Context(),
+				target,
+				manifest.NamedResource{},
+				recorder.Scope().Record(manifest.WorkPreparation, target),
+			)
 			assert.NoError(t, loadErr)
 		}
 	}
 	failed := New(st)
 	failed.SourceRoot = root
 	failed.IgnoreFile = filepath.Join(root, "one")
-	_, err = failed.Load(t.Context(), root, recorder.Scope().Record(manifest.WorkPreparation, root))
+	_, err = failed.Load(
+		t.Context(),
+		root,
+		manifest.NamedResource{},
+		recorder.Scope().Record(manifest.WorkPreparation, root),
+	)
 	if err == nil {
 		t.Fatal("directory ignore file did not fail preparation")
 	}

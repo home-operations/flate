@@ -19,15 +19,17 @@ type ChildDocuments struct {
 
 // Child retains an admitted object and its authoritative sanitized document.
 type Child struct {
-	Obj         manifest.BaseManifest
-	Doc         map[string]any
-	Generated   bool
-	Origin      manifest.DeclarationOrigin
-	policy      manifest.DeclarationPolicy
-	Productions []manifest.Production
-	Warnings    []manifest.Warning `json:"-"`
-	payload     *SourceArtifact
-	output      *ReadSet
+	Entry         *manifest.EntryApplication
+	SourceSupport manifest.NamedResource
+	Obj           manifest.BaseManifest
+	Doc           map[string]any
+	Generated     bool
+	Origin        manifest.DeclarationOrigin
+	policy        manifest.DeclarationPolicy
+	Productions   []manifest.Production
+	Warnings      []manifest.Warning `json:"-"`
+	payload       *SourceArtifact
+	output        *ReadSet
 }
 
 // Emission is an immutable assessed inventory. Maps and objects are borrowed read-only.
@@ -61,7 +63,7 @@ type Emission struct {
 	validated      *atomic.Pointer[manifest.BaseManifest]
 	documentOwners []manifest.NamedResource
 	previous       *Emission
-	cached         *RenderedOutput
+	renderCache    *atomic.Pointer[RenderedOutput]
 	sources        []manifest.SourceEvidence
 	entries        []admission
 	coverage       []footprint
@@ -98,8 +100,10 @@ func (e *Emission) Replay(fingerprint string) (RenderedOutput, bool) {
 	if e.Complete && e.Fingerprint == fingerprint {
 		return e.renderedOutput(), true
 	}
-	if e.cached != nil && e.cached.Fingerprint == fingerprint {
-		return *e.cached, true
+	if e.renderCache != nil {
+		if output := e.renderCache.Load(); output != nil && output.Fingerprint == fingerprint {
+			return *output, true
+		}
 	}
 	return e.previous.Replay(fingerprint)
 }
@@ -173,8 +177,39 @@ func (s *Store) ChildFootprint(
 	return childFootprint(entries, parent)
 }
 
-// Finish releases predecessor inventory borrowed by an attempt.
-func (e *Emission) Finish() { e.previous = nil }
+// Finish retains completed renderer bytes across rejected admission without retaining its captures.
+func (e *Emission) Finish() {
+	e.retainRender()
+	e.previous = nil
+}
+
+func (e *Emission) acceptRender(previous *Emission) {
+	if e.renderCache == nil {
+		return
+	}
+	if e.Complete || len(e.Failures) != 0 {
+		e.renderCache.Store(nil)
+		return
+	}
+	if previous != nil && previous.Complete && previous.Fingerprint != "" {
+		output := previous.renderedOutput()
+		e.renderCache.Store(&output)
+	}
+}
+
+func (e *Emission) retainRender() {
+	if e.accepted || e.renderCache == nil || !e.Complete || e.Fingerprint == "" || len(e.Failures) != 0 {
+		return
+	}
+	if current := e.renderCache.Load(); current != nil && current.Fingerprint == e.Fingerprint {
+		return
+	}
+	output := e.renderedOutput()
+	if e.Reads != nil {
+		output.warnings = slices.Clone(e.Reads.warnings)
+	}
+	e.renderCache.Store(&output)
+}
 
 func (e *Emission) shadows(bindingValue *sourceBinding) bool {
 	binding := *bindingValue

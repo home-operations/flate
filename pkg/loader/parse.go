@@ -91,7 +91,7 @@ func (r documentReader) parseFile(
 func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
 	r.restore(path)
 	out := r.cache[path].objects
-	if out == nil {
+	if out == nil || !covers(r.cache[path].coverage, r.intent) {
 		out = []parsedObject{}
 		err := r.decodeFileObjects(path, opts, r.cache != nil, func(child parsedObject) {
 			out = append(out, child)
@@ -101,11 +101,16 @@ func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) 
 		}
 		if r.cache != nil {
 			cached := r.cache[path]
-			cached.objects = out
+			cached.objects, cached.coverage = out, r.intent
 			r.cache[path] = cached
 		}
 	}
-	return out, nil
+	if r.coordinate != nil {
+		out = slices.DeleteFunc(slices.Clone(out), func(child parsedObject) bool {
+			return child.outcome.Ordinal != r.coordinate.Document || child.item != r.coordinate.item
+		})
+	}
+	return applicationView(out, r.intent), nil
 }
 
 //nolint:gocritic // Immutable reader values retain their original snapshot semantics.
@@ -128,7 +133,9 @@ func (r documentReader) decodeFileObjects(
 		return fileOpenFailure(path, err, yield)
 	}
 	defer func() { _ = f.Close() }()
-	err = r.prepareStream(f, opts, func(child parsedObject) {
+	var reader io.Reader = f
+
+	err = r.prepareStream(reader, opts, func(child parsedObject) {
 		if prepared, emit := new(r).prepareFileObject(path, keepRaw, &child); emit {
 			yield(prepared)
 		}
@@ -146,8 +153,9 @@ func (r documentReader) censusFile(
 	opts manifest.ParseDocOptions,
 ) ([]parsedObject, error) {
 	r.restore(path)
-	if cached := r.cache[path]; cached.objects != nil || cached.decodeErr != nil {
-		return cached.objects, cached.decodeErr
+	if cached := r.cache[path]; (cached.objects != nil || cached.decodeErr != nil) &&
+		covers(cached.coverage, r.intent) {
+		return applicationView(cached.objects, r.intent), cached.decodeErr
 	}
 	facts := []parsedObject{}
 	var projectionErr error
@@ -156,11 +164,15 @@ func (r documentReader) censusFile(
 			facts = append(facts, child)
 			return
 		}
-		projection, err := r.projections.Project(ctx, child.Obj)
-		if err != nil {
-			projectionErr = err
-			manifest.ReleaseDoc(child.Doc)
-			return
+		var projection manifest.TemplateProjection
+		if r.intent != manifest.ApplicationDocuments {
+			var err error
+			projection, err = r.projections.Project(ctx, child.Obj)
+			if err != nil {
+				projectionErr = err
+				manifest.ReleaseDoc(child.Doc)
+				return
+			}
 		}
 		o := compactOccurrence(child.Obj, projection)
 		o.facts.declared = child.declared
@@ -188,11 +200,11 @@ func (r documentReader) censusFile(
 	if projectionErr != nil {
 		err = projectionErr
 	}
-	if len(facts) > 1 {
+	if r.intent != manifest.ApplicationDocuments && len(facts) > 1 {
 		resolveDeclaredFingerprints(facts)
 	}
 	cached := r.cache[path]
-	cached.objects, cached.decodeErr = facts, err
+	cached.objects, cached.decodeErr, cached.coverage = facts, err, r.intent
 	r.cache[path] = cached
 	return facts, err
 }
@@ -256,6 +268,12 @@ func (r *documentReader) prepareFileObject(path string, keepRaw bool, childValue
 		return child, true
 	}
 	obj := child.Obj
+	if r.intent == manifest.ApplicationDocuments {
+		if _, applies := manifest.ApplicationFor(obj); !applies {
+			manifest.ReleaseDoc(child.Doc)
+			return parsedObject{}, false
+		}
+	}
 	tracked := obj != nil && manifest.KindOf(obj).Tracked
 	if obj == nil || !tracked && !keepRaw {
 		manifest.ReleaseDoc(child.Doc)
@@ -338,7 +356,7 @@ func (r *documentReader) skipFileLeaf(item int, leafValue *manifest.DocOccurrenc
 }
 
 func (r *documentReader) prepareStream(input io.Reader, opts manifest.ParseDocOptions, yield func(parsedObject)) error {
-	role := manifest.IncidentalDocuments
+	role := r.intent
 	if opts.RequiredIdentity {
 		role = manifest.RequiredDocuments
 	}
@@ -369,9 +387,38 @@ func (r *documentReader) prepareStream(input io.Reader, opts manifest.ParseDocOp
 func (r *documentReader) prepareStreamObject(opts manifest.ParseDocOptions, leaf *manifest.DocOccurrence) parsedObject {
 	version := manifest.DocAPIVersion(leaf.Document)
 	declared := ""
-	if r.compact && r.coordinate == nil {
+	if r.compact && r.coordinate == nil && r.intent != manifest.ApplicationDocuments {
 		declared = manifest.Fingerprint(manifest.WithoutOwnershipLabels(leaf.Document))
 	}
 	child, outcome, _ := Prepare(*leaf, opts)
 	return parsedObject{Child: child, outcome: outcome, version: version, declared: declared}
+}
+
+func covers(coverage, intent manifest.DocumentRole) bool {
+	return coverage == intent || coverage == manifest.IncidentalDocuments && intent == manifest.ApplicationDocuments
+}
+
+func applicationView(objects []parsedObject, intent manifest.DocumentRole) []parsedObject {
+	if intent != manifest.ApplicationDocuments {
+		return objects
+	}
+	var applications []parsedObject
+	for i := range objects {
+		if parsedApplication(&objects[i]) {
+			applications = append(applications, objects[i])
+		}
+	}
+	return applications
+}
+
+func parsedApplication(child *parsedObject) bool {
+	object := child.Obj
+	if child.fact != nil {
+		object = child.fact.object
+		if object == nil && child.fact.facts != nil {
+			object = child.fact.facts.catalog
+		}
+	}
+	_, valid := manifest.ApplicationFor(object)
+	return child.outcome.Err != nil || valid
 }

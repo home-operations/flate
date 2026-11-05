@@ -27,15 +27,15 @@ func testRegisterBuiltStandaloneRootsInactivePackageBatch(t *testing.T) {
 	testutil.WriteFile(t, root, "target/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: raw}\n")
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	obj := &manifest.ConfigMap{Name: "injected", Namespace: "apps"}
 	l.RegisterBuilt(
-		BuiltInput{
+		supportedBuiltInputForTest(l, &BuiltInput{
 			Root:   filepath.Join(root, "target"),
 			Source: manifest.BootstrapSourceID,
 			Owner:  testutil.KustomizationID("apps", "entry"),
-		},
+		}),
 		[]store.Child{{Obj: obj}},
 	)
 	{
@@ -78,7 +78,7 @@ func testRegisterBuiltStandaloneRootsCase(t *testing.T, testCaseInput *struct {
 		entry = root
 	}
 	{
-		_, err := l.Load(t.Context(), entry, nil)
+		_, err := l.Load(t.Context(), entry, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	var want []string

@@ -15,7 +15,7 @@ type scopeConstruction struct {
 	walks         map[graphContext]scopeTraversal
 	records       map[manifest.NamedResource]manifest.DiscoveryRecord
 	candidates    map[manifest.NamedResource]store.Child
-	scanned       map[string]struct{}
+	scanned       map[string]manifest.DocumentRole
 	sources       []sourceScope
 	sourceBuf     [1]sourceScope
 	inputs        []scopeInput
@@ -82,7 +82,7 @@ func (l *Loader) ensureScopes() {
 	if l.scopes == nil {
 		l.scopes = &scopeConstruction{
 			walks:   map[graphContext]scopeTraversal{},
-			scanned: map[string]struct{}{},
+			scanned: map[string]manifest.DocumentRole{},
 			visits:  map[string][]graphVisit{},
 		}
 		l.scopes.sources = l.scopes.sourceBuf[:0]
@@ -104,14 +104,16 @@ func (l *Loader) prepareClaimInputs(repoRoot string, kss []store.Child) {
 	if len(inputs) != len(kss) {
 		inputs = make([]scopeInput, len(kss))
 	} else {
-		for i, child := range kss {
+		for i := range kss {
+			child := &kss[i]
 			if inputs[i].owner.Named() != child.Obj.Named() {
 				inputs = make([]scopeInput, len(kss))
 				break
 			}
 		}
 	}
-	for i, child := range kss {
+	for i := range kss {
+		child := &kss[i]
 		//nolint:errcheck // Kustomization-only inputs must panic on an invalid object type.
 		ks := child.Obj.(*manifest.Kustomization)
 		view := l.scopeSource(new(l.sourceState(ks.SourceID(), repoRoot)))
@@ -165,7 +167,8 @@ func (l *Loader) scopesMatch(kss []store.Child, repoRoot string) bool {
 	}
 	var previous manifest.NamedResource
 	indexed := len(l.Index.Records) != 0
-	for i, child := range kss {
+	for i := range kss {
+		child := &kss[i]
 		//nolint:errcheck // Kustomization-only inputs must panic on an invalid object type.
 		ks := child.Obj.(*manifest.Kustomization)
 		input := &l.scopes.inputs[i]

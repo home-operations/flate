@@ -40,11 +40,11 @@ func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
 	}
 	assert.Equal(t, f.ShouldReconcile(sibling), false)
 	for _, emitter := range []manifest.NamedResource{owner.Named(), parent.Named()} {
-		assert.Equal(t, len(f.AddEmitted(emitter, store.Child{Obj: refObj(sibling)}, f.objs)), 0)
+		assert.Equal(t, len(f.AddEmitted(emitter, new(store.Child{Obj: refObj(sibling)}), f.objs)), 0)
 		assert.Equal(t, f.ShouldReconcile(sibling), false)
 	}
 	child := testutil.HelmReleaseID("apps", "rendered")
-	assert.Diff(t, f.AddEmitted(release, store.Child{Obj: refObj(child)}, f.objs), []manifest.NamedResource{child})
+	assert.Diff(t, f.AddEmitted(release, new(store.Child{Obj: refObj(child)}), f.objs), []manifest.NamedResource{child})
 }
 
 func TestFilter_AcceptedChildren(t *testing.T) {
@@ -156,9 +156,9 @@ func testFilterAcceptedChildrenCase(t *testing.T, testCaseInput *string,
 	)
 	switch *testCaseInput {
 	case "runtime", "file_indexed":
-		f.AddEmitted(emitter.Named(), store.Child{Obj: parent}, f.objs)
+		f.AddEmitted(emitter.Named(), new(store.Child{Obj: parent}), f.objs)
 	case "unselected":
-		f.AddEmitted(parent.Named(), store.Child{Obj: child}, f.objs)
+		f.AddEmitted(parent.Named(), new(store.Child{Obj: child}), f.objs)
 	}
 	for _, obj := range []manifest.BaseManifest{child, leaf} {
 		assert.Equal(
@@ -219,9 +219,9 @@ func testFilterLateProducerIndexedDeclarationsOciProviderCredentials(t *testing.
 				},
 			)
 			filter.loader.locations = map[manifest.NamedResource]Occurrence{
-				provider.Named(): compactOccurrence(provider, manifest.ProjectProducer(provider)),
+				provider.Named(): compactOccurrence(provider, projectedProducerForTest(provider)),
 			}
-			filter.prepare(store.Child{}, nil, false)
+			filter.prepare(new(store.Child{}), nil, false)
 			for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
 				assert.Equal(t, filter.ShouldReconcile(id), true)
 			}
@@ -278,14 +278,14 @@ func testFilterLateProducerIndexedDeclarationsCase(
 			inventory: st,
 		},
 	)
-	f.AddEmitted(emitter.Named(), store.Child{Obj: parent}, st)
+	f.AddEmitted(emitter.Named(), new(store.Child{Obj: parent}), st)
 	assert.Equal(t, f.ShouldReconcile(parent.Named()), true)
 	f.AddEmitted(
 		parent.Named(),
-		store.Child{
+		new(store.Child{
 			Obj:         child,
 			Productions: []manifest.Production{{Owner: parent.Named(), File: "sibling.yaml"}},
-		},
+		}),
 		st,
 	)
 	assert.Equal(t, f.ShouldReconcile(child.Named()), testCaseInput.want)

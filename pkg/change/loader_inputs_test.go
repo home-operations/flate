@@ -59,7 +59,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 			admitForFilter(s, root)
 
 			{
-				_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+				_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
 
@@ -155,7 +155,7 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 	l := loader.New(s)
 	l.SourceRoot = root
 	admitForFilter(s, root)
-	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 
 	{
@@ -268,7 +268,7 @@ func testFinalizeIndexInputSourceViewsCase(t *testing.T, testCaseInput *string,
 	l := loader.New(s)
 	l.SourceRoot = root
 	admitForFilter(s, root)
-	_, err := l.Load(t.Context(), filepath.Join(local, "entry"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(local, "entry"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 
 	{
@@ -412,7 +412,7 @@ spec:
 			input.FS = os.DirFS(root)
 			st.SetArtifact(manifest.BootstrapSourceID, art)
 		}
-		_, err := l.Load(t.Context(), filepath.Join(root, "manifests"), nil)
+		_, err := l.Load(t.Context(), filepath.Join(root, "manifests"), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		return l, input, want
 	}
@@ -515,7 +515,7 @@ func testFinalizeIndexSourceValuesReadersChartRef(t *testing.T) {
 	)
 	l := loader.New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	chartID := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -527,10 +527,15 @@ func testFinalizeIndexSourceValuesReadersChartRef(t *testing.T) {
 	chart.Chart = "charts/demo"
 	chart.SourceRef.Kind, chart.SourceRef.Name = source.Named().Kind, source.Name
 	chart.ValuesFiles = []string{"config/prod.yaml", "config/prod.yaml", "entry/kustomization.yaml"}
+	var support store.ReadSet
+	support.Init(st, testutil.KustomizationID("apps", "entry"), nil)
+	support.GetDeclaration(testutil.KustomizationID("apps", "entry"))
+	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
 	l.RegisterBuilt(
 		loader.BuiltInput{
-			Root:   filepath.Join(root, "entry"),
-			Source: manifest.BootstrapSourceID,
+			Support: &support,
+			Root:    filepath.Join(root, "entry"),
+			Source:  manifest.BootstrapSourceID,
 			Owner: manifest.NamedResource{
 				Group:     manifest.FluxKustomizeDomain,
 				Kind:      manifest.KindKustomization,

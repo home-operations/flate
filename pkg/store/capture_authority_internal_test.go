@@ -30,7 +30,7 @@ func TestCapture_RawSupportExcludesReadiness(t *testing.T) {
 	}
 	reads.GetStatus(owner)
 	reads.Admit(
-		&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "raw"}},
+		Child{Obj: &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "raw"}}},
 		source,
 		owner,
 	)

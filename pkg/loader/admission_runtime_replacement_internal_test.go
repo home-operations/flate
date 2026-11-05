@@ -55,7 +55,7 @@ func TestAddEmitted_AlreadySelectedSourceRetained(t *testing.T) {
 	assert.Equal(t, f.ShouldReconcile(child.Named()), true)
 	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), false)
 
-	added := f.AddEmitted(parent, store.Child{Obj: child}, f.objs)
+	added := f.AddEmitted(parent, new(store.Child{Obj: child}), f.objs)
 
 	assert.Equal(t, len(added), 1)
 	for _, id := range []manifest.NamedResource{child.Named(), child.ChartSource()} {
@@ -113,7 +113,7 @@ func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
 		joined.Go(func() {
 			ready.Done()
 			<-start
-			results[i] = f.AddEmitted(parent, store.Child{Obj: child}, f.objs)
+			results[i] = f.AddEmitted(parent, new(store.Child{Obj: child}), f.objs)
 		})
 	}
 	ready.Wait()
@@ -201,9 +201,9 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 			assert.Equal(t, f.ShouldReconcile(projected), false)
 			child := kept
 			child.Name, child.Namespace = "emitted", ""
-			assert.Equal(t, len(f.AddEmitted(collider, store.Child{Obj: refObj(child)}, f.objs)), 0)
+			assert.Equal(t, len(f.AddEmitted(collider, new(store.Child{Obj: refObj(child)}), f.objs)), 0)
 			assert.Equal(t, f.ShouldReconcile(child), false)
-			f.AddEmitted(kept, store.Child{Obj: refObj(child)}, f.objs)
+			f.AddEmitted(kept, new(store.Child{Obj: refObj(child)}), f.objs)
 			assert.Equal(t, f.ShouldReconcile(child), true)
 			child.Namespace = "effective"
 			assert.Equal(t, f.ShouldReconcile(child), false)

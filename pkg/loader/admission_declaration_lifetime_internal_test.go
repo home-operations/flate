@@ -32,7 +32,7 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes = change.NewSet([]string{"consumer.yaml"})
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	readonly := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -42,7 +42,7 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 	}
 	for _, freeze := range []bool{false, true} {
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, freeze))
-		proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+		proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 		assert.NoError(t, err)
 		present := slices.ContainsFunc(
 			proposal.Objects,
@@ -135,7 +135,15 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 		Inputs:      []string{"declaration.yaml"},
 		Productions: []manifest.Production{{Owner: owner.Named(), Source: manifest.BootstrapSourceID}},
 	}
-	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{id}, []manifest.NamedResource{id}, nil, 0)
+	_, retry := l.Options.Filter.AddEmitted(
+		change.MembershipUpdate{
+			Needed:   []manifest.NamedResource{id},
+			Selected: []manifest.NamedResource{id},
+			Dirty:    nil,
+			Ordinary: []manifest.NamedResource{id},
+		},
+		0,
+	)
 	assert.Equal(t, retry, false)
 	child := prepared[0][id]
 	child.Obj = child.Obj.(*manifest.Kustomization).Clone()
@@ -155,7 +163,7 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 	if testCaseInput.absent {
 		child.Doc = nil
 	}
-	proposal, err := l.Prepare(t.Context(), child, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: child})
 	assert.NoError(t, err)
 	assert.Equal(
 		t,
@@ -198,7 +206,7 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 		changed = "child.yaml"
 	}
 	l.Options.Changes, l.Options.Filter = change.NewSet([]string{changed}), change.NewFilter()
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	child := manifest.NamedResource{
@@ -213,7 +221,7 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 		Namespace: "apps",
 		Name:      "owner",
 	}
-	l.roots[child] = testCaseInput.independent
+	l.roots[child] = rootEvidence{admitted: testCaseInput.independent}
 	if testCaseInput.knownOwner {
 		record := l.Index.Records[child]
 		record.Parent = manifest.NamedResource{
@@ -230,7 +238,7 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 			Named()
 		l.Index.Records[child] = record
 	}
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), testCaseInput.want)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
@@ -245,7 +253,7 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 		st.AddObject(&manifest.ResourceSet{Name: producer.Name, Namespace: producer.Namespace})
 		st.RecordEmitted(producer, &store.Emission{Complete: true}, nil)
 		st.UpdateStatus(producer, store.StatusInfo{Status: store.StatusReady})
-		proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+		proposal, err = l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 		assert.NoError(t, err)
 		assert.Equal(
 			t,

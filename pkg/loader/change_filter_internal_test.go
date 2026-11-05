@@ -27,7 +27,7 @@ func (f *admissionFixture) addRecursive(id manifest.NamedResource) []manifest.Na
 	f.mu.Lock()
 	f.keep[parent] = primary
 	f.mu.Unlock()
-	return f.AddEmitted(parent, store.Child{Obj: refObj(id)}, f.objs)
+	return f.AddEmitted(parent, new(store.Child{Obj: refObj(id)}), f.objs)
 }
 
 func (f *admissionFixture) productionOwners(id manifest.NamedResource) []manifest.NamedResource {
@@ -741,7 +741,7 @@ func testFilterPinnedOwnershipKeepsProducerCase(
 	}
 	if testCaseInput.tt.wantConsumer && testCaseInput.tt.changed != "flux/producer.yaml" {
 		sentinel := testutil.KustomizationID("", "sentinel")
-		f.AddEmitted((*testCaseInput.producer).Named(), store.Child{Obj: refObj(sentinel)}, f.objs)
+		f.AddEmitted((*testCaseInput.producer).Named(), new(store.Child{Obj: refObj(sentinel)}), f.objs)
 		assert.FatalIf(
 			t,
 			f.ShouldReconcile(sentinel),

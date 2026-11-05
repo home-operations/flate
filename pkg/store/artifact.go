@@ -414,7 +414,7 @@ func (sh *shard) advanceArtifactLocked(id manifest.NamedResource, record *artifa
 	for i, head := range heads {
 		if changed&(1<<i) != 0 {
 			if head.generation == 0 {
-				sh.admitAbsenceLocked(id, contentFacet+facet(i))
+				sh.admitAbsenceLocked(id, contentFacet+facet(i), nil)
 			}
 			*head = sh.advanceLocked(*head)
 		}

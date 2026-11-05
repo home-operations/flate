@@ -126,18 +126,15 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 					},
 				)
 				l := admissiontest.New(t, admissiontest.Config{Inventory: st})
-				_, retry := l.Options.Filter.AddEmitted(
-					[]manifest.NamedResource{
-						consumer.Named(),
-					},
-					[]manifest.NamedResource{
-						consumer.Named(),
-					},
-					[]manifest.NamedResource{
-						consumer.Named(),
-					},
-					0,
-				)
+				_, retry := l.Options.Filter.AddEmitted(change.MembershipUpdate{Needed: []manifest.NamedResource{
+					consumer.Named(),
+				}, Selected: []manifest.NamedResource{
+					consumer.Named(),
+				}, Dirty: []manifest.NamedResource{
+					consumer.Named(),
+				}, Ordinary: []manifest.NamedResource{
+					consumer.Named(),
+				}}, 0)
 				assert.Equal(t, retry, false)
 				st.SetIncluded(
 					input.Named(),
@@ -216,11 +213,19 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 	l.SourceRoot = root
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes, l.Options.Filter = change.NewSet([]string{"unrelated.yaml"}), change.NewFilter()
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{input}, nil, nil, 0)
+	_, retry := l.Options.Filter.AddEmitted(
+		change.MembershipUpdate{
+			Needed:   []manifest.NamedResource{input},
+			Selected: nil,
+			Dirty:    nil,
+			Ordinary: []manifest.NamedResource{input},
+		},
+		0,
+	)
 	assert.Equal(t, retry, false)
 	st.SetIncluded(input, true)
 	c := New(st, task.NewBounded(2))
@@ -257,7 +262,7 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes = change.NewSet(nil)
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	input := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
@@ -270,9 +275,12 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	}
 	st.AddObjects([]manifest.BaseManifest{input, consumer})
 	_, retry := l.Options.Filter.AddEmitted(
-		[]manifest.NamedResource{input.Named()},
-		[]manifest.NamedResource{input.Named()},
-		[]manifest.NamedResource{input.Named()},
+		change.MembershipUpdate{
+			Needed:   []manifest.NamedResource{input.Named()},
+			Selected: []manifest.NamedResource{input.Named()},
+			Dirty:    []manifest.NamedResource{input.Named()},
+			Ordinary: []manifest.NamedResource{input.Named()},
+		},
 		0,
 	)
 	assert.Equal(t, retry, false)

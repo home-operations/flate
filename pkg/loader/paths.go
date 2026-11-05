@@ -408,7 +408,7 @@ func (p *pathResolution) projectSubstitutions(
 		bindings.known = false
 	}
 	roots := record.ContentRoots
-	if occurrence, ok := l.occurrence(id); roots == nil && ok {
+	if occurrence, ok := l.catalogOccurrence(id); roots == nil && ok {
 		source, _, _ := occurrence.SourcePath()
 		if source.Kind == "" || source.Name == "" {
 			source = manifest.BootstrapSourceID

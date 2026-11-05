@@ -103,6 +103,9 @@ func (l *Loader) authoredManifestRecord(
 	r := *recordArg
 
 	record := r
+	if record.Builder != "" {
+		return record
+	}
 	record.Productions = nil
 	if old, ok := l.Index.Lookup(id); ok && old.Path == r.Path && previous == projected {
 		record.Refs = old.Refs

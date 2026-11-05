@@ -323,7 +323,9 @@ func checkGeneratedSourceReplacement(
 		"%v",
 		"source transition forced completion or failure",
 	)
-	for _, child := range tailCaseInput.completed.Children {
+	childValues := tailCaseInput.completed.Children
+	for childIndex := range childValues {
+		child := childValues[childIndex]
 		if child.Generated {
 			continue
 		}

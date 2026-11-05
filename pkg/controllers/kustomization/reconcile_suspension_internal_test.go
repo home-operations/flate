@@ -435,7 +435,7 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	s.AddObject(ks)
 	l := loader.New(s)
 	l.SourceRoot = root
-	_, err = l.Load(t.Context(), filepath.Join(root, "apps"), nil)
+	_, err = l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.FinalizeIndex(t.Context(), root, true)
 	shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
@@ -584,7 +584,9 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	cachedOutput := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	assert.Diff(t, testutil.DocumentMaps(cachedOutput.Manifests), wantManifests)
 	assert.Equal(t, len(cachedOutput.Children), len(freshOutput.Children))
-	for _, child := range cachedOutput.Children {
+	childValues := cachedOutput.Children
+	for childIndex := range childValues {
+		child := childValues[childIndex]
 		if configMap, ok := child.Obj.(*manifest.ConfigMap); ok {
 			assert.Equal(t, configMap.Data["value"], any("original"))
 		}

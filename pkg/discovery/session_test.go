@@ -71,7 +71,10 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	}
 	built := l.PromotionDocuments(one)
 	assert.Equal(t, len(built), 1)
-	advanced, err = session.Advance(t.Context(), &loader.Admission{Objects: built})
+	st.AddObject(built[0].Obj, built[0].Doc)
+	proposal, err := l.Prepare(t.Context(), loader.PrepareRequest{Incoming: built[0]})
+	assert.NoError(t, err)
+	advanced, err = session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, false)
 	result, err := session.Freeze(t.Context())
@@ -184,7 +187,10 @@ spec: {path: ./workload}
 			assert.NoError(t, err)
 			requests := 0
 			for {
-				proposal, prepareErr := l.Prepare(t.Context(), store.Child{}, nil, nil)
+				proposal, prepareErr := l.Prepare(
+					t.Context(),
+					loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: nil, Invocation: true},
+				)
 				assert.NoError(t, prepareErr)
 				for _, path := range proposal.Blocked {
 					if path == "entry" {

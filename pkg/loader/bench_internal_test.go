@@ -25,7 +25,7 @@ func BenchmarkLoad_LargeRepo(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		s := store.New()
-		if _, err := New(s).Load(context.Background(), dir, nil); err != nil {
+		if _, err := New(s).Load(context.Background(), dir, manifest.NamedResource{}, nil); err != nil {
 			b.Fatalf("Load: %v", err)
 		}
 	}
@@ -41,7 +41,7 @@ func BenchmarkLoad_DeepComponents(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		s := store.New()
-		if _, err := New(s).Load(context.Background(), dir, nil); err != nil {
+		if _, err := New(s).Load(context.Background(), dir, manifest.NamedResource{}, nil); err != nil {
 			b.Fatalf("Load: %v", err)
 		}
 	}

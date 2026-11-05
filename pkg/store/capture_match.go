@@ -66,7 +66,7 @@ func (r *ReadSet) matchesInputDetails(input *Input, details *inputDetails) bool 
 		return false
 	}
 	if input.derived&capturedProductions != 0 {
-		if !slices.Equal(details.productions, r.Productions(id, nil)) {
+		if !slices.Equal(details.productions, r.Productions(id, details.index)) {
 			return false
 		}
 	} else if details != nil && details.productions != nil {

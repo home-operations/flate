@@ -69,7 +69,7 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 					l := New(st)
 					l.SourceRoot = root
 					l.Options.Selection.Changed = true
-					_, err := l.Load(t.Context(), filepath.Join(root, "entry"), nil)
+					_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 					assert.NoError(t, err)
 					l.Admit(root)
 					assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -125,10 +125,10 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 		l := New(st)
 		l.SourceRoot = root
 		l.Options.Selection.Changed = true
-		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		for _, directory := range []string{"old", "new", "reader"} {
-			_, err := l.Load(t.Context(), filepath.Join(root, directory), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, directory), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
 		l.Admit(root)
@@ -188,7 +188,7 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 			t.Parallel()
 			loaders, _ := declarationMovePair(t, scenario, true)
 			for _, l := range loaders {
-				proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+				proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 				assert.NoError(t, err)
 				assert.Equal(
 					t,
@@ -208,7 +208,7 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 					child, err := l.exactObject(t.Context(), &occurrence, input)
 					assert.NoError(t, err)
 					child.Doc["spec"].(map[string]any)["interval"] = "2h"
-					proposal, err = l.Prepare(t.Context(), child, nil, nil)
+					proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: child})
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Dirty, testutil.HelmReleaseID("apps", "reader")), true)
 				}
@@ -287,7 +287,7 @@ func testUnchangedDeclarationMove(t *testing.T, reverse bool) {
 			assert.Equal(t, record.Declaration == nil, true)
 		}
 		for range 2 {
-			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 			assert.NoError(t, err)
 			var renderers []manifest.NamedResource
 			for _, id := range proposal.Needed {

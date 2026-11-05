@@ -26,7 +26,7 @@ func TestLoader_FixtureHeldDecodeErrors(t *testing.T) {
 			}
 			l := loader.New(store.New())
 			l.SourceRoot = fixture.Repo
-			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, second), nil)
+			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, second), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			err = l.EntryFailure(t.Context(), fixture.Repo)
 			assert.FatalIf(
@@ -38,7 +38,7 @@ func TestLoader_FixtureHeldDecodeErrors(t *testing.T) {
 			if variant == "two-held" || variant == "two-held-path-order" {
 				heldLoader := loader.New(store.New())
 				heldLoader.SourceRoot = fixture.Repo
-				_, err := heldLoader.Load(t.Context(), filepath.Join(fixture.Repo, held), nil)
+				_, err := heldLoader.Load(t.Context(), filepath.Join(fixture.Repo, held), manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 				heldLoader.Admit(fixture.Repo)
 				assert.FatalIf(
@@ -68,7 +68,7 @@ func TestLoader_FixturePermissionError(t *testing.T) {
 	st.SetArtifact(obj.Named(), &store.SourceArtifact{LocalPath: fixture.Repo, FS: input.FS})
 	l := loader.New(st)
 	l.SourceRoot = fixture.Repo
-	_, err = l.Load(t.Context(), filepath.Join(fixture.Repo, "second"), nil)
+	_, err = l.Load(t.Context(), filepath.Join(fixture.Repo, "second"), manifest.NamedResource{}, nil)
 	if err == nil {
 		t.Skip(
 			"The admitted source permits reading a file with no permissions. The loader owns this permission-dependent proof.",

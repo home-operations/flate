@@ -162,7 +162,9 @@ func (d *Session) assertPreparedPackageOutputs(
 	if len(batch) != 0 {
 		docs = make([]map[string]any, 0, len(batch))
 	}
-	for _, child := range batch {
+	childValues := batch
+	for childIndex := range childValues {
+		child := childValues[childIndex]
 		docs = append(docs, child.Doc)
 		record, ok := d.loader.Index.Lookup(child.Obj.Named())
 		assert.FatalIf(t, !ok || record.Parent != d.binding.Producer ||

@@ -36,7 +36,9 @@ func testFeasibilityPointerOnlyExistingSectionCase(
 			proposed.Children = append(slices.Clone(proposed.Children), emissionChild("new", "b"))
 		}
 		prepared := make([]admission, len(proposed.Children))
-		for i, child := range proposed.Children {
+		childValues := proposed.Children
+		for i := range childValues {
+			child := childValues[i]
 			prepared[i] = admission{child: child, targets: manifest.ProducerTargets(child.Obj)}
 		}
 		proposal := prepareEmission(

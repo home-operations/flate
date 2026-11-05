@@ -58,7 +58,7 @@ func TestAdmission_ProjectedReaderNamespace(t *testing.T) {
 			manifest.FileReader{Reader: reader.Named(), Source: manifest.BootstrapSourceID},
 		)
 	}
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, input.Named()), true)
 	for _, namespace := range []string{"apps", "other"} {
@@ -178,10 +178,10 @@ func testAdmissionMaterializerInventoryAuthorityNamespaceGeneratedRoot(t *testin
 			{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps"},
 		},
 	}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	producer := (&manifest.HelmRelease{Name: "producer", Namespace: "apps"}).Named()
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
@@ -237,7 +237,7 @@ func runMaterializerMode(t *testing.T, testCaseInput *string, mode string) {
 		input.FS.(fstest.MapFS)["entry/consumer.yaml"] = input.FS.(fstest.MapFS)["consumer.yaml"]
 		loadPath = filepath.Join(root, "entry")
 	}
-	_, err := l.Load(t.Context(), loadPath, nil)
+	_, err := l.Load(t.Context(), loadPath, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	if mode == "prepared" || mode == "prepared_foreign" {
 		registerMaterializerPrepared(t, preparedMaterializerInput{root: root, mode: mode, store: st, loader: l})
@@ -280,7 +280,7 @@ func runMaterializerMode(t *testing.T, testCaseInput *string, mode string) {
 			Complete bool
 		}{Records: records, Complete: mode != "positive_history"}
 	}
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, history)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{History: history, Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(
 		t,
@@ -327,7 +327,7 @@ func registerMaterializerPrepared(t *testing.T, fixture preparedMaterializerInpu
 		fixture.store.SetArtifact(source, &store.SourceArtifact{LocalPath: builtRoot, FS: input.FS})
 	}
 	fixture.loader.RegisterBuilt(
-		BuiltInput{
+		supportedBuiltInputForTest(fixture.loader, &BuiltInput{
 			Root:   builtRoot,
 			Source: source,
 			Owner: manifest.NamedResource{
@@ -335,7 +335,7 @@ func registerMaterializerPrepared(t *testing.T, fixture preparedMaterializerInpu
 				Kind:  manifest.KindKustomization,
 				Name:  "entry",
 			},
-		},
+		}),
 		docs,
 	)
 }
@@ -368,9 +368,9 @@ spec:
 			l.SourceRoot = root
 			l.Options.Filter = change.NewFilter()
 			l.Options.Selection = manifest.Selection{Changed: compact}
-			_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+			_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			_, err = l.Load(t.Context(), filepath.Join(root, "application"), nil)
+			_, err = l.Load(t.Context(), filepath.Join(root, "application"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "flux", manifest.NamedResource{}).
@@ -449,7 +449,7 @@ spec:
 				l.SourceRoot = root
 				l.Options.Filter = change.NewFilter()
 				l.Options.Selection = manifest.Selection{Changed: true}
-				_, err := l.Load(t.Context(), filepath.Join(root, "application"), nil)
+				_, err := l.Load(t.Context(), filepath.Join(root, "application"), manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 				assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 				owner := manifest.NamedResource{
@@ -548,7 +548,7 @@ func testApplicationInventoryCase(t *testing.T, tc *applicationInventoryCase) {
 			Path:     filepath.Join(root, "entry", "application.yaml"),
 			File:     "entry/application.yaml",
 		}
-		l.roots = map[manifest.NamedResource]bool{application.Named(): true}
+		l.roots = map[manifest.NamedResource]rootEvidence{application.Named(): {admitted: true}}
 		current := application.Clone()
 		if tc.name == "retired_static" {
 			current.Spec = manifest.DeepCopyMap(application.Spec)

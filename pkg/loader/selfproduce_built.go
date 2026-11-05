@@ -18,7 +18,7 @@ func (l *Loader) prepareBuiltProductions(
 	var builtDirs []string
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for dir, doc := range l.documents.cache {
-		if doc.built != nil {
+		if doc.builtInput != nil && doc.builtInput.Support != nil && doc.builtInput.Support.Valid() {
 			builtDirs = append(builtDirs, dir)
 		}
 	}
@@ -34,7 +34,8 @@ func (l *Loader) prepareBuiltProductions(
 		}
 		l.recordBuiltOwner(&root)
 		var candidates []manifest.NamedResource
-		for _, child := range doc.built {
+		for i := range doc.built {
+			child := &doc.built[i]
 			obj := child.Obj
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				candidates = append(candidates, ref.NamedResource)
@@ -55,10 +56,11 @@ func (l *Loader) prepareBuiltProductions(
 				new(manifest.FileReader{Reader: root.owner, Source: root.source, Exact: exact}),
 			)
 		}
-		for _, child := range doc.built {
+		for i := range doc.built {
+			child := &doc.built[i]
 			obj := child.Obj
 			if record, ok := l.Index.Lookup(obj.Named()); ok && record.Builder == root.coordinate {
-				prepared[record.File] = append(prepared[record.File], child)
+				prepared[record.File] = append(prepared[record.File], *child)
 				preparedOwners[obj.Named()] = doc.builtInput.Owner
 				b.recordProducer(
 					new(producerDeclaration{obj: obj, identity: obj.Named(), authored: obj.Named(), visit: root}),

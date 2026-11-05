@@ -53,7 +53,7 @@ func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedRes
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func (cv *capture) declaration() manifest.BaseManifest {
 	c := *cv
-	if c.independent || c.accepted || c.owner != nil || c.child.Origin == manifest.SuppliedDeclaration {
+	if c.independent || c.accepted || c.classified || c.owner != nil || c.child.Origin == manifest.SuppliedDeclaration {
 		return c.child.Obj
 	}
 	return nil
@@ -87,6 +87,7 @@ func (s *Store) getEmission(
 		sh.captureLocked(id, new(sh.cells[id]), &view)
 	}
 	var prev *Emission
+	head := sh.cells[id].links
 	if slot := sh.slots[id]; slot != nil && slot.visible.Load() {
 		prev = slot.current.Load()
 	}
@@ -105,6 +106,9 @@ func (s *Store) getEmission(
 			revision:   view.revision,
 			binding:    view.sourceBinding(),
 		},
+	}
+	if head != nil {
+		e.renderCache = &head.rendered
 	}
 	if prev != nil {
 		e.OutputReads = prev.OutputReads
@@ -152,7 +156,7 @@ func (s *Store) Productions(id manifest.NamedResource, index *manifest.Discovery
 
 // IncomingProductions projects prospective evidence without the stored target's state.
 //
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
+//nolint:gocritic // The SDK query accepts a value snapshot independent of caller storage.
 func (s *Store) IncomingProductions(child Child, index *manifest.DiscoveryIndex) []manifest.Production {
 	result := productionResult{incoming: &child}
 	s.visitProductions(child.Obj.Named(), index, &result)
@@ -247,7 +251,17 @@ func (s *Store) RenderedParent(
 	return result.parent, result.parent != (manifest.NamedResource{})
 }
 
+// SourceAdmission rejects initial source support after accepted ownership retires it.
+func (s *Store) SourceAdmission(id, source manifest.NamedResource) bool {
+	result := productionResult{source: source, open: true}
+	s.visitProductions(id, nil, &result)
+	return result.open
+}
+
 type productionResult struct {
+	source        manifest.NamedResource
+	open          bool
+	qualified     bool
 	reference     *Declaration
 	data          manifest.Data
 	out           []manifest.Production
@@ -269,6 +283,9 @@ func (r *productionResult) reset(evidence []manifest.Production) {
 }
 
 func (r *productionResult) add(p *manifest.Production) {
+	if r.source != (manifest.NamedResource{}) {
+		return
+	}
 	if r.parentOnly {
 		if p.Owner != (manifest.NamedResource{}) && p.Owner != r.id && p.Authored == (manifest.NamedResource{}) &&
 			p.Declaration == (manifest.NamedResource{}) &&
@@ -321,6 +338,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	result.out = evidence
 	sh := s.shardFor(id)
 	sh.mu.RLock()
+	result.classifySource(new(sh.cells[id]), provisional)
 	for i := range evidence {
 		if result.incoming == nil {
 			result.addVisibleProduction(s, id, &evidence[i], reads)
@@ -340,6 +358,15 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		reads.activateProducers()
 	}
 	result.finishProductions()
+}
+
+func (r *productionResult) classifySource(cell *objectCell, provisional bool) {
+	r.qualified = cell.static != nil &&
+		(cell.classified && cell.binding != nil && cell.binding.Ref.NamedResource == r.source ||
+			provisional && r.source == manifest.BootstrapSourceID)
+	if r.qualified && cell.retired {
+		r.open = false
+	}
 }
 
 func sameProductionContext(
@@ -540,7 +567,7 @@ func (sh *shard) addProductionMembers(
 	if cell.static != nil && cell.binding != nil && cell.support == nil && len(result.out) == 0 && cell.bound() {
 		result.add(&manifest.Production{Source: cell.binding.Ref.NamedResource})
 	}
-	if cell.static != nil && cell.retired && provisional {
+	if cell.static != nil && cell.retired && (provisional || cell.classified) {
 		result.reset(nil)
 	}
 	for _, m := range sh.members[id] {
@@ -629,6 +656,10 @@ func (r *productionResult) addVisibleProduction(
 		accepted := c.slot.current.Load()
 		if reads != nil {
 			reads.sample(id, c.slot, accepted, r.watch)
+		}
+		if r.source != (manifest.NamedResource{}) && !r.qualified && p.Source == r.source &&
+			accepted.shadows(new(c.binding)) {
+			r.open = false
 		}
 		if c.slot.hidden.Load() || accepted.shadows(new(c.binding)) {
 			return

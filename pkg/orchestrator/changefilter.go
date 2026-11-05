@@ -15,6 +15,7 @@ import (
 )
 
 func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
+	defer func() { o.preparation.Retire(); o.preparation = nil }()
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context: %w", err)
 	}
@@ -40,7 +41,7 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	proposal := o.preparation
 	if proposal == nil {
 		var err error
-		proposal, err = o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+		proposal, err = o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
 		if err != nil {
 			return err
 		}
@@ -207,26 +208,20 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 		for _, id := range inputs {
 			reads.RequireData(id)
 		}
-		proposal, err = o.loader.Prepare(ctx, store.Child{}, &reads, nil)
-		reads.Retire()
+		proposal, err = o.loader.Prepare(ctx, loader.PrepareRequest{Reads: &reads})
+		defer reads.Retire()
 	} else {
-		proposal, err = o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+		proposal, err = o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
 	}
 	if err != nil {
 		return err
 	}
-	added, retry := o.filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
-	if retry {
-		return manifest.NewError(manifest.ErrInput, nil, "startup membership changed during preparation")
+	committed, err := o.loader.Commit(ctx, proposal, loader.Execution)
+	if err != nil {
+		return err
 	}
-	for _, id := range added {
-		o.store.SetIncluded(id, true)
-	}
-	for _, child := range proposal.Objects {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("context: %w", err)
-		}
-		o.store.AddObject(child.Obj, child.Doc)
+	if !committed {
+		return nil
 	}
 	o.changeNamespaces = proposal.Namespaces
 	o.preparation = nil

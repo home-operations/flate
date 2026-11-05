@@ -115,7 +115,7 @@ func TestDocumentReader_UnreadableBuilder(t *testing.T) {
 		absent := l.documents.read(filepath.Join(root, "absent")).file
 		assert.FatalIf(t, absent != "", "absent builder classified as present: %q", absent)
 	}
-	_, err := l.Load(t.Context(), filepath.Join(root, "plain"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "plain"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	{
@@ -174,7 +174,7 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target}\n"),
 				},
 			}})
-			_, err := l.Load(t.Context(), root, nil)
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(root)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -205,7 +205,7 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 				),
 			},
 		}})
-		_, err := l.Load(t.Context(), root, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		l.Admit(root)
 		owners := l.Kustomizations()

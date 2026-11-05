@@ -166,7 +166,7 @@ func TestReadSet_AssessmentOrigins(t *testing.T) {
 			proposal.RequireData(id)
 		}
 		child := Child{Obj: &manifest.ConfigMap{Name: "admitted", Namespace: "apps"}}
-		proposal.Admit(child.Obj, manifest.BootstrapSourceID, manifest.NamedResource{})
+		proposal.Admit(Child{Obj: child.Obj}, manifest.BootstrapSourceID, manifest.NamedResource{})
 		proposal.ListObjects("", manifest.KindConfigMap)
 		proposal.Require(manifest.DependencyRef{NamedResource: origin.Named(), ReadyExpr: new("true")})
 		binding.GetDeclaration(child.Obj.Named())
@@ -348,7 +348,7 @@ func TestReadSet_ReleasedSourceStamps(t *testing.T) {
 			t.Cleanup(reads.Close)
 			child := &manifest.ConfigMap{Name: "admitted", Namespace: "apps"}
 			reads.GetArtifact(source, ArtifactContent|ArtifactRevision|ArtifactOrigin)
-			reads.Admit(child, source, manifest.NamedResource{})
+			reads.Admit(Child{Obj: child}, source, manifest.NamedResource{})
 			captured := reads.input(source)
 			reads.ReleaseCapture()
 			reads.Retire()
@@ -398,7 +398,7 @@ func TestCapture_AcquiringOwnSource(t *testing.T) {
 	acquisition.Init(s, source.Named(), nil)
 	defer admission.Close()
 	defer acquisition.Close()
-	admission.Admit(root, source.Named(), manifest.NamedResource{})
+	admission.Admit(Child{Obj: root}, source.Named(), manifest.NamedResource{})
 	assert.Equal(t, acquisition.GetDeclaration(root.Named()), manifest.BaseManifest(root))
 	assert.Equal(t, acquisition.Valid(), true)
 	s.SetArtifact(source.Named(), &SourceArtifact{Key: "new"})

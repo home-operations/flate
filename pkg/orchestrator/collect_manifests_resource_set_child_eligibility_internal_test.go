@@ -382,7 +382,9 @@ func testCollectManifestsArtifactGeneratorsCase(
 		if generator.Name == "z" {
 			byteWinner = payload
 		}
-		for _, child := range children {
+		childValues := children
+		for childIndex := range childValues {
+			child := childValues[childIndex]
 			outputs[generator.Name] = append(outputs[generator.Name], child.Doc)
 		}
 	}

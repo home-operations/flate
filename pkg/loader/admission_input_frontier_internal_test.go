@@ -48,15 +48,18 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 			l.SourceRoot = root
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes, l.Options.Filter = change.NewSet([]string{file}), change.NewFilter()
-			_, err := l.Load(t.Context(), root, nil)
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 			assert.NoError(t, err)
 			_, retry := l.Options.Filter.AddEmitted(
-				proposal.Needed,
-				proposal.Selected,
-				proposal.Dirty,
+				change.MembershipUpdate{
+					Needed:   proposal.Needed,
+					Selected: proposal.Selected,
+					Dirty:    proposal.Dirty,
+					Ordinary: proposal.Ordinary,
+				},
 				proposal.Revision,
 			)
 			assert.Equal(t, retry, false)
@@ -73,23 +76,18 @@ func TestAdmission_GeneratedInputRetainsUnchangedConsumers(t *testing.T) {
 				Name:      "declaration",
 				Namespace: "apps",
 			}
-			proposal, err = l.Prepare(
-				t.Context(),
-				store.Child{
-					Obj: manifest.NewSecret(input, nil, map[string]any{"VALUE": "current"}),
-					Productions: []manifest.Production{
-						{
-							Owner:       parent,
-							Declaration: declaration,
-							Authored:    declaration,
-							Source:      manifest.BootstrapSourceID,
-							File:        "apps/vars.yaml",
-						},
+			proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{
+				Obj: manifest.NewSecret(input, nil, map[string]any{"VALUE": "current"}),
+				Productions: []manifest.Production{
+					{
+						Owner:       parent,
+						Declaration: declaration,
+						Authored:    declaration,
+						Source:      manifest.BootstrapSourceID,
+						File:        "apps/vars.yaml",
 					},
 				},
-				nil,
-				nil,
-			)
+			}})
 			assert.NoError(t, err)
 			want := file != "apps/changed.yaml"
 			assert.Equal(t, slices.Contains(proposal.Dirty, input), want)
@@ -133,10 +131,10 @@ func TestAdmission_KnownInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"input.yaml"})
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
 	renderer := manifest.NamedResource{
@@ -219,7 +217,7 @@ func testAdmissionUnclaimedInput(t *testing.T, scenario string) {
 	}
 	l.Options.Changes = change.NewSet(changed)
 	l.Options.Selection = manifest.Selection{Changed: true}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	templated := manifest.NamedResource{
@@ -237,7 +235,7 @@ func testAdmissionUnclaimedInput(t *testing.T, scenario string) {
 	record := l.Index.Records[templated]
 	record.Productions = []manifest.Production{{Owner: producer}}
 	l.Index.Records[templated] = record
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	if scenario != "unowned only" {
 		assertAdmissionSuppliedDependency(t, l, proposal, dependency)
@@ -265,7 +263,7 @@ func assertAdmissionUnrelatedMembership(t *testing.T, l *Loader, proposal *Admis
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
 	l.Options.HistoryOwners = []manifest.NamedResource{producer}
-	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
@@ -304,7 +302,7 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	provider := manifest.NamedResource{
 		Group:     manifest.FluxKustomizeDomain,
@@ -326,7 +324,7 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
 	l.Options.Filter = change.NewFilter()
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	l.roots = map[manifest.NamedResource]bool{provider: true}
+	l.roots = map[manifest.NamedResource]rootEvidence{provider: {admitted: true}}
 	st.AddObjects(
 		[]manifest.BaseManifest{
 			providerChild.Obj,
@@ -339,9 +337,12 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	st.AddObject(manifest.NewConfigMap(fresh, map[string]any{"VALUE": "current"}))
 	revision := l.Options.Filter.Membership(provider).Revision
 	_, retry := l.Options.Filter.AddEmitted(
-		[]manifest.NamedResource{provider, settings, manifest.BootstrapSourceID},
-		nil,
-		nil,
+		change.MembershipUpdate{
+			Needed:   []manifest.NamedResource{provider, settings, manifest.BootstrapSourceID},
+			Selected: nil,
+			Dirty:    nil,
+			Ordinary: []manifest.NamedResource{provider, settings, manifest.BootstrapSourceID},
+		},
 		revision,
 	)
 	assert.Equal(t, retry, false)
@@ -357,7 +358,7 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	var reads store.ReadSet
 	reads.Init(st, consumer, nil)
 	defer reads.Close()
-	proposal, err := l.Prepare(t.Context(), incoming, &reads, nil)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: incoming, Reads: &reads})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, provider), (*testCaseInput) != "published")
 	if (*testCaseInput) == "incoming" {
@@ -380,7 +381,8 @@ func assertAdmissionSuppliedDependency(
 	data := l.Store.ReferenceFacts(dependency, l.Index, manifest.NamedResource{}).Data
 	if dependency.Name == "settings" {
 		var hydrated bool
-		for _, child := range proposal.Objects {
+		for i := range proposal.Objects {
+			child := &proposal.Objects[i]
 			if child.Obj.Named() == dependency {
 				hydrated = true
 				l.Store.AddObject(child.Obj, child.Doc)

@@ -79,9 +79,9 @@ func TestAdmission_ParentPatchRemoval(t *testing.T) {
 		l.SourceRoot = root
 		l.Options.Selection = manifest.Selection{Changed: true}
 		l.Options.Filter = change.NewFilter()
-		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), nil)
+		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
-		_, err = l.Load(t.Context(), filepath.Join(root, "app"), nil)
+		_, err = l.Load(t.Context(), filepath.Join(root, "app"), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		stores[side], loaders[side] = st, l
@@ -90,7 +90,7 @@ func TestAdmission_ParentPatchRemoval(t *testing.T) {
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.Options.Changes = changes
-		proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+		proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 		assert.NoError(t, err)
 		id := (&manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}).Named()
 		assert.ErrorIf(
@@ -137,7 +137,7 @@ func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
 				id := object.Named()
 				file := fmt.Sprintf("declarations/%05d.yaml", i)
 				l.Index.Records[id] = manifest.DiscoveryRecord{File: file, Parent: parent, Declaration: object}
-				occurrence := compactOccurrence(object, manifest.ProjectProducer(object))
+				occurrence := compactOccurrence(object, projectedProducerForTest(object))
 				occurrence.Declaration = OccurrenceID{Source: root, File: file}
 				l.locations[id] = occurrence
 				parent = id
@@ -145,7 +145,7 @@ func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
 			reads := &admissionArtifactReads{admissionReader: st}
 			c := admissionClosure{loader: l, objects: reads}
 			c.proposal = &c.result
-			proposal, err := c.evaluate(t.Context(), nil)
+			proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 			assert.NoError(t, err)
 			assert.Equal(t, len(proposal.Needed), 0)
 			t.Logf("%d stable ancestors: %d artifact reads", count, reads.calls)
@@ -178,12 +178,15 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 		required.RequireData(object.Named())
 	}
 	revision := l.Options.Filter.Membership(manifest.NamedResource{}).Revision
-	_, retry := l.Options.Filter.AddEmitted(ids, ids, ids, revision)
+	_, retry := l.Options.Filter.AddEmitted(
+		change.MembershipUpdate{Needed: ids, Selected: ids, Dirty: ids, Ordinary: ids},
+		revision,
+	)
 	assert.Equal(t, retry, false)
 	reads := &admissionArtifactReads{admissionReader: st}
 	c := admissionClosure{loader: l, objects: reads}
 	c.proposal = &c.result
-	proposal, err := c.evaluate(t.Context(), &required)
+	proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Reads: &required}))
 	assert.NoError(t, err)
 	assert.Equal(t, len(proposal.Needed), 0)
 	assert.Equal(t, len(proposal.Selected), 0)
@@ -201,7 +204,7 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 			incoming: store.Child{Obj: object, Productions: st.Productions(object.Named(), l.Index)},
 		}
 		cResult.proposal = &cResult.result
-		evaluateProposal, evaluateErr := cResult.evaluate(t.Context(), &proof)
+		evaluateProposal, evaluateErr := cResult.evaluate(t.Context(), new(PrepareRequest{Reads: &proof}))
 		proof.Close()
 		assert.NoError(t, evaluateErr)
 		assert.Equal(t, len(evaluateProposal.Objects), 0)
@@ -224,7 +227,7 @@ func testAdmissionChangedDeclarationsPrepareLinearlyCase(
 	reads = &admissionArtifactReads{admissionReader: st}
 	c = admissionClosure{loader: l, objects: reads, incoming: child}
 	c.proposal = &c.result
-	proposal, err = c.evaluate(t.Context(), nil)
+	proposal, err = c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, child.Obj.Named()), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, child.Obj.Named()), true)
@@ -262,11 +265,11 @@ func testAdmissionHistoryOwnerDeclarationAndInputsCase(
 	if *testCaseInput {
 		l.Options.HistoryOwners = []manifest.NamedResource{owner}
 	}
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	for range 2 {
-		proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+		proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 		assert.NoError(t, err)
 		assert.Equal(t, slices.Contains(proposal.Needed, owner), (*testCaseInput))
 		assert.Equal(t, slices.Contains(proposal.Selected, owner), false)
@@ -274,7 +277,8 @@ func testAdmissionHistoryOwnerDeclarationAndInputsCase(
 		inputID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
 		assert.Equal(t, slices.Contains(proposal.Needed, inputID), (*testCaseInput))
 		found := false
-		for _, child := range proposal.Objects {
+		for i := range proposal.Objects {
+			child := &proposal.Objects[i]
 			if child.Obj.Named() == owner {
 				declaration := child.Obj.(*manifest.HelmRelease)
 				assert.Equal(t, declaration.Values["marker"], any("keep"))

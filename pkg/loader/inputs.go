@@ -29,6 +29,8 @@ type parsedSource struct {
 }
 
 type parsedDocument struct {
+	coverage  manifest.DocumentRole
+	possible  bool
 	body      *types.Kustomization
 	file      string
 	objects   []parsedObject
@@ -48,6 +50,8 @@ type (
 	loadContext   struct{ path, ignore string }
 	loadDirectory struct{ adHoc, traversed bool }
 	loadFacts     struct {
+		err                error
+		coverage           manifest.DocumentRole
 		complete, observed bool
 		files              []fileAdmission
 		directories        map[string]loadDirectory
@@ -96,7 +100,7 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
 			source.walks, source.loads = maps.Clone(prior.walks), maps.Clone(prior.loads)
 			for key, load := range source.loads {
-				load.observed = false
+				load.observed, load.err = false, nil
 				source.loads[key] = load
 			}
 		}
@@ -129,6 +133,7 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 		if source, ok := inputs.sources[new(l.documents).mountedRoot(file)]; ok {
 			source.documents[file] = parsedDocument{
 				body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
+				coverage: doc.coverage, possible: doc.possible,
 				state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
 			}
 		}
@@ -156,7 +161,7 @@ func (r documentReader) restore(file string) {
 		return
 	}
 	cached := r.cache[file]
-	if cached.body != nil || cached.objects != nil {
+	if cached.objects != nil && covers(cached.coverage, r.intent) {
 		return
 	}
 	root := new(r).mountedRoot(file)
@@ -171,7 +176,10 @@ func (r documentReader) restore(file string) {
 	}
 	if doc, ok := source.documents[file]; ok {
 		cached.body, cached.file = doc.body, doc.file
-		cached.objects = cloneInputObjects(doc.objects)
+		if cached.objects == nil || covers(doc.coverage, cached.coverage) {
+			cached.objects = cloneInputObjects(doc.objects)
+			cached.coverage, cached.possible = doc.coverage, doc.possible
+		}
 		if r.compact {
 			cached.pathState, cached.searched, cached.plugins, cached.decodeErr = doc.state, doc.searched, doc.plugins, doc.decodeErr
 		}

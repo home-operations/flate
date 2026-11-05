@@ -229,7 +229,7 @@ func (c *admissionClosure) reverse(
 		}
 		return false
 	}
-	if occurrence, ok := c.loader.occurrence(id); ok {
+	if occurrence, ok := c.loader.catalogOccurrence(id); ok {
 		{
 			originalValues := occurrence.facts.refs
 			for originalIndex := range originalValues {
@@ -461,7 +461,7 @@ func (c *admissionClosure) comparisonRecordChanged(
 		return false
 	}
 	file := changed.File
-	if occurrence, located := c.loader.occurrence(
+	if occurrence, located := c.loader.catalogOccurrence(
 		scope.dependency,
 	); changed.Unbound &&
 		(located || len(c.loader.Index.Claims) != 0 || len(c.loader.Index.Readers) != 0) {

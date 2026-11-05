@@ -20,7 +20,7 @@ import (
 
 func loadForTest(ctx context.Context, t *testing.T, l *Loader, dir string) (int, error) {
 	t.Helper()
-	n, err := l.Load(ctx, dir, nil)
+	n, err := l.Load(ctx, dir, manifest.NamedResource{}, nil)
 	if err == nil {
 		l.Admit(cmp.Or(l.SourceRoot, new(l.documents).mountedRoot(dir)))
 	}

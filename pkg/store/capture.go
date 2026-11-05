@@ -61,6 +61,7 @@ type inputDetails struct {
 
 	cells            [8]registration
 	gates            *readinessGate
+	inventory        *[shardCount]registration
 	sourceGuard      *ReadSet
 	artifactRead     ArtifactRead
 	acquisition      *acceptedAssessment
@@ -69,6 +70,7 @@ type inputDetails struct {
 
 type inputPayload struct {
 	productions []manifest.Production
+	index       *manifest.DiscoveryIndex
 	objects     []manifest.BaseManifest
 	artifact    Artifact
 	conditions  []Condition
@@ -455,6 +457,7 @@ func (r *ReadSet) IncomingProductions(child Child, index *manifest.DiscoveryInde
 func (r *ReadSet) productions(input *Input, index *manifest.DiscoveryIndex) []manifest.Production {
 	details := r.details(input)
 	if details.productions == nil {
+		details.index = index
 		result := productionResult{reads: r, captureTarget: true, watch: true}
 		r.store.visitProductions(input.Ref.NamedResource, index, &result)
 		details.productions = result.out
@@ -516,16 +519,34 @@ func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 	if input.derived&capturedObjects != 0 {
 		return details.objects
 	}
-	sh := r.store.shardFor(key)
-	sh.mu.RLock()
-	bucket := sh.byName[kindID{group, kind}]
-	ids := make([]manifest.NamedResource, 0, len(bucket.names))
-	for name := range bucket.names {
-		ids = append(ids, manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name})
+	var ids []manifest.NamedResource
+	if group == "" && kind == "" {
+		details.inventory = new([shardCount]registration)
+		r.store.rLockAll()
+		for i, sh := range r.store.shards {
+			cell := &details.inventory[i]
+			cell.head, cell.absent, cell.owner = &sh.absence, input, r
+			cell.link()
+			for id := range sh.cells {
+				ids = append(ids, id)
+			}
+		}
+		r.store.rUnlockAll()
+	} else {
+		sh := r.store.shardFor(key)
+		sh.mu.RLock()
+		bucket := sh.byName[kindID{group, kind}]
+		ids = make([]manifest.NamedResource, 0, len(bucket.names))
+		for name := range bucket.names {
+			ids = append(
+				ids,
+				manifest.NamedResource{Group: group, Kind: kind, Namespace: name.namespace, Name: name.name},
+			)
+		}
+		generation := bucket.generation
+		sh.mu.RUnlock()
+		r.observe(input, bucketFacet, generation)
 	}
-	generation := bucket.generation
-	sh.mu.RUnlock()
-	r.observe(input, bucketFacet, generation)
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
 	missing := len(ids)
 	for captured := r.inputs; captured != nil; captured = captured.next {
@@ -629,13 +650,41 @@ func (s *Store) SetPreflight(id manifest.NamedResource, message string) {
 }
 
 // Admit binds raw-file admission to the captured source that supplied its bytes.
-func (r *ReadSet) Admit(obj manifest.BaseManifest, source, owner manifest.NamedResource, docs ...map[string]any) {
+//
+//nolint:gocritic // Admission consumes a stable child snapshot through publication retries.
+func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
+	if child.SourceSupport != (manifest.NamedResource{}) &&
+		(child.SourceSupport != source || !r.Valid() || !r.SourceAdmission(child.Obj.Named(), source)) {
+		return
+	}
 	r.GetArtifact(source, ArtifactContent)
 	var support *Input
-	if owner != (manifest.NamedResource{}) && owner != obj.Named() {
+	if owner != (manifest.NamedResource{}) && owner != child.Obj.Named() {
 		support = r.input(owner)
 	}
-	r.store.addObject(obj, r.input(source), support, docs...)
+	update := objectUpdate{
+		obj: child.Obj, document: child.Doc, explicit: child.Doc != nil,
+		binding: r.input(source), support: support, reads: r,
+		classified: child.SourceSupport != (manifest.NamedResource{}),
+	}
+	id := child.Obj.Named()
+	for input := r.inputs; input != nil; input = input.next {
+		if input.Ref.NamedResource == id && input.object.head != nil && input.object.absent != nil {
+			update.target = &input.object
+		}
+		if input.Ref.NamedResource == (manifest.NamedResource{Group: id.Group, Kind: id.Kind}) {
+			update.collection = input.cell(bucketFacet)
+		}
+	}
+	r.store.addObject(&update)
+}
+
+// SourceAdmission captures whether accepted output still permits initial source support.
+func (r *ReadSet) SourceAdmission(id, source manifest.NamedResource) bool {
+	r.GetArtifact(source, ArtifactContent)
+	result := productionResult{reads: r, source: source, open: true, watch: true}
+	r.store.visitProductions(id, nil, &result)
+	return result.open
 }
 
 // Promotions captures source-family evidence before conditional raw-file admission.
@@ -653,6 +702,7 @@ func (r *ReadSet) Bind(emission *Emission) {
 		_, _, captured := r.GetEmission(r.id)
 		emission.input, emission.inputDoc, emission.inputHead = captured.input, captured.inputDoc, captured.inputHead
 		emission.binding, emission.coverage = captured.binding, captured.coverage
+		emission.renderCache = captured.renderCache
 		previous = captured.previous
 		captured.Finish()
 	}
@@ -664,7 +714,7 @@ func (r *ReadSet) Bind(emission *Emission) {
 		emission.entriesOwned = !shared && !entriesMatch(emission.Children, previous.entries)
 	}
 	if emission.entriesOwned {
-		emission.entries = r.store.prepareChildren(emission.Children, r.store.index.Load())
+		emission.entries = r.store.prepareChildren(&emission.Children, r.store.index.Load())
 	} else {
 		emission.entries = previous.entries
 	}

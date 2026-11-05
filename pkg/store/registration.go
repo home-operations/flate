@@ -31,6 +31,7 @@ type registrationHead struct {
 	first          atomic.Pointer[registration]
 	selected       atomic.Pointer[producerSlot]
 	position       atomic.Int64
+	rendered       atomic.Pointer[RenderedOutput]
 	assessments    [2]atomic.Pointer[acceptedAssessment]
 	reconciliation atomic.Pointer[registrationHead]
 	result         *registrationHead
@@ -63,6 +64,7 @@ func (h *registrationHead) stamp() uint64 {
 }
 
 type registration struct {
+	consumed   atomic.Bool
 	head       *registrationHead
 	generation atomic.Uint64
 	owner      *ReadSet
@@ -74,7 +76,7 @@ func (sh *shard) canAdmit(count uint64) bool {
 	return sh.absence.first.Load() == nil && sh.absence.watch == nil || ^uint64(0)-sh.absence.generation.Load() >= count
 }
 
-func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet) {
+func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet, admission *ReadSet) {
 	head := &sh.absence
 	first := head.first.Load()
 	if first == nil && head.watch == nil {
@@ -85,7 +87,11 @@ func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet) {
 	head.generation.Store(generation)
 	for _, chain := range [2]*registration{first, head.watch} {
 		for cell := chain; cell != nil; cell = cell.next.Load() {
-			if cell.absent.Ref.NamedResource == id && cell == cell.absent.cell(kind) && cell.generation.Load() == 0 {
+			matches := cell.absent.Ref.NamedResource == id && cell == cell.absent.cell(kind)
+			if kind == bucketFacet && cell.absent.Ref.NamedResource == (manifest.NamedResource{}) {
+				matches = true
+			}
+			if matches && cell.generation.Load() == 0 && (kind != bucketFacet || cell.owner != admission) {
 				cell.generation.Store(generation)
 				sh.queue(head)
 			}
@@ -222,7 +228,7 @@ func (c *registration) retain() {
 }
 
 func (c *registration) current() bool {
-	if c == nil || c.head == nil {
+	if c == nil || c.head == nil || c.consumed.Load() {
 		return true
 	}
 	if c.absent != nil {
@@ -243,6 +249,13 @@ func (in *Input) current() bool {
 		return false
 	}
 	if details := in.details.Load(); details != nil {
+		if details.inventory != nil {
+			for i := range details.inventory {
+				if !details.inventory[i].current() {
+					return false
+				}
+			}
+		}
 		for i := range details.cells {
 			if !details.cells[i].current() {
 				return false
@@ -301,6 +314,12 @@ func (r *ReadSet) Retire() {
 	for input := r.inputs; input != nil; input = input.next {
 		if details := input.details.Load(); details != nil {
 			details.gates = nil
+			if details.inventory != nil {
+				for i := range details.inventory {
+					cell := &details.inventory[i]
+					cell.head.shard.queue(cell.head)
+				}
+			}
 		}
 		for kind := objectFacet; kind <= reconciliationFacet; kind++ {
 			cell := input.cell(kind)
@@ -388,7 +407,7 @@ func sweepRegistrations(
 			generation := cell.generation.Load()
 			changed = generation != 0 && generation <= cutoff
 		}
-		if !cell.owner.retired.Load() {
+		if !cell.owner.retired.Load() && !cell.consumed.Load() {
 			if deliverRegistrationChange(cell, changed, deliver, yield) {
 				requeue = true
 			}

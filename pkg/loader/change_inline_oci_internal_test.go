@@ -94,7 +94,7 @@ func testFilterInlineOCICredentialChangeSelectsReleaseCase(
 		admissionConfig{changes: change.NewSet([]string{"credentials.yaml"}), index: index, inventory: st},
 	)
 	if (*testCaseInput.form) == "emitted" {
-		f.AddEmitted(parent, store.Child{Obj: release}, st)
+		f.AddEmitted(parent, new(store.Child{Obj: release}), st)
 	}
 	assert.Equal(t, f.ShouldReconcile(release.Named()), true)
 	assert.Equal(t, f.ShouldReconcile(sibling.Named()), false)

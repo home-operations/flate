@@ -56,7 +56,7 @@ func TestAddEmitted_CapturedUnpublishedDeclaration(t *testing.T) {
 		nil,
 	)
 	assert.Equal(t, st.GetDeclaration(target.Named()), manifest.BaseManifest(target))
-	f.AddEmitted(emitter, store.Child{Obj: child}, &reads)
+	f.AddEmitted(emitter, new(store.Child{Obj: child}), &reads)
 	assert.Diff(
 		t,
 		f.keep,
@@ -73,7 +73,7 @@ func TestAddEmitted_CapturedUnpublishedDeclaration(t *testing.T) {
 		t,
 		admissionConfig{changes: change.NewSet([]string{"emitter.yaml"}), index: index, inventory: st, root: "/repo"},
 	)
-	fresh.AddEmitted(emitter, store.Child{Obj: child}, st)
+	fresh.AddEmitted(emitter, new(store.Child{Obj: child}), st)
 	assert.Diff(
 		t,
 		fresh.keep,
@@ -112,7 +112,7 @@ func TestAddEmitted_DoesNotReadIncomingDeclaration(t *testing.T) {
 	reads.Init(st, producer.Named(), nil)
 	defer reads.Close()
 	child := store.Child{Obj: target, Productions: []manifest.Production{proof}}
-	f.AddEmitted(producer.Named(), child, &reads)
+	f.AddEmitted(producer.Named(), new(child), &reads)
 	assert.Equal(t, reads.Valid(), true)
 	st.RecordEmitted(producer.Named(), &store.Emission{Children: []store.Child{child}, Complete: true}, nil)
 	assert.Equal(t, reads.Valid(), true)

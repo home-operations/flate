@@ -487,7 +487,7 @@ func (sh *shard) initializeConditionsLocked(id manifest.NamedResource, record *c
 			sh.mu.Unlock()
 			panic("store: authority generation exhausted")
 		}
-		sh.admitAbsenceLocked(id, conditionFacet)
+		sh.admitAbsenceLocked(id, conditionFacet, nil)
 		record.state = &conditionState{}
 		record.conditions = record.state.first[:0]
 	}

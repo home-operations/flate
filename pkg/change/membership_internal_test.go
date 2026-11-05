@@ -29,9 +29,12 @@ func TestFilter_UnionRejectsStaleProposal(t *testing.T) {
 	rejected := testutil.KustomizationID("apps", "rejected")
 	f := NewFilter()
 	added, retry := f.AddEmitted(
-		[]manifest.NamedResource{support, selected},
-		[]manifest.NamedResource{selected},
-		[]manifest.NamedResource{selected},
+		MembershipUpdate{
+			Needed:   []manifest.NamedResource{support, selected},
+			Selected: []manifest.NamedResource{selected},
+			Dirty:    []manifest.NamedResource{selected},
+			Ordinary: slices.Concat([]manifest.NamedResource{support, selected}, []manifest.NamedResource{selected}),
+		},
 		0,
 	)
 	want := []manifest.NamedResource{selected, support}
@@ -43,11 +46,17 @@ func TestFilter_UnionRejectsStaleProposal(t *testing.T) {
 	assert.Equal(t, needed && !chosen && !dirty, true)
 	assert.Equal(t, revision, uint64(1))
 	assert.Diff(t, f.KeepNamespaces(), map[string]struct{}{"apps": {}})
-	added, retry = f.AddEmitted([]manifest.NamedResource{rejected}, nil, nil, 0)
+	added, retry = f.AddEmitted(
+		MembershipUpdate{Needed: []manifest.NamedResource{rejected}, Ordinary: []manifest.NamedResource{rejected}},
+		0,
+	)
 	assert.Equal(t, retry, true)
 	assert.Equal(t, len(added), 0)
 	assert.Equal(t, f.ShouldReconcile(rejected), false)
-	added, retry = f.AddEmitted(nil, []manifest.NamedResource{support}, nil, revision)
+	added, retry = f.AddEmitted(
+		MembershipUpdate{Selected: []manifest.NamedResource{support}, Ordinary: []manifest.NamedResource{support}},
+		revision,
+	)
 	assert.Equal(t, retry, false)
 	assert.Equal(t, len(added), 0)
 	membership3 := f.Membership(support)
@@ -59,7 +68,10 @@ func TestFilter_UnionRejectsStaleProposal(t *testing.T) {
 	assert.Equal(t, attrs[0].Value.Int64(), int64(2))
 	assert.Diff(t, attrs[1].Value.Any().([]string), f.KeepNames())
 	hidden := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
-	_, retry = f.AddEmitted(nil, []manifest.NamedResource{hidden}, nil, revision)
+	_, retry = f.AddEmitted(
+		MembershipUpdate{Selected: []manifest.NamedResource{hidden}, Ordinary: []manifest.NamedResource{hidden}},
+		revision,
+	)
 	assert.Equal(t, retry, false)
 	assert.Diff(t, f.KeepNamespaces(), map[string]struct{}{"apps": {}, "inputs": {}})
 }

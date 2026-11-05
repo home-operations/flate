@@ -15,7 +15,6 @@ import (
 type sourceExpansion struct {
 	ks     *manifest.Kustomization
 	source *store.SourceArtifact
-	object manifest.BaseManifest
 }
 
 func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *int) error {
@@ -34,7 +33,12 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 		return fmt.Errorf("--path %q is not a directory", d.cfg.Path)
 	}
 	l.IgnoreFile = d.cfg.KRMIgnoreFile
-	if err := d.loadAt(ctx, d.cfg.Path, total, d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)); err != nil {
+	if _, err := d.loadAt(
+		ctx,
+		d.cfg.Path,
+		total,
+		sourceLoad{work: d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)},
+	); err != nil {
 		return err
 	}
 	l.IgnoreFile = ""
@@ -43,17 +47,13 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 
 func (d *Session) enqueueExpansions(
 	kustomizations []store.Child,
-	ksExpanded map[sourceExpansion]struct{},
 	pending []sourceExpansion,
 ) []sourceExpansion {
-	for _, child := range kustomizations {
+	for i := range kustomizations {
+		child := &kustomizations[i]
 		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
 		art, _ := d.cfg.Store.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
-		key := sourceExpansion{ks: ks, source: art, object: d.cfg.Store.GetObject(ks.SourceID())}
-		if _, seen := ksExpanded[key]; seen {
-			continue
-		}
-		ksExpanded[key] = struct{}{}
+		key := sourceExpansion{ks: ks, source: art}
 		pending = append(pending, key)
 	}
 	return pending
@@ -82,22 +82,11 @@ func (d *Session) loadExpansions(
 		if !safepath.Contains(sourceRoot, target) {
 			continue
 		}
-		loaded, loadErr := d.loadSourcePath(
-			ctx,
-			target,
-			total,
-			sourceLoad{
-				input: key.source,
-				work:  d.cfg.Work.Source(ks.SourceID()).Record(manifest.WorkPreparation, target),
-			},
-		)
+		loaded, loadErr := d.loadSourcePath(ctx, target, &key, total)
 		if loadErr != nil {
 			return next, added, loadErr
 		}
-		if !loaded {
-			continue
-		}
-		added++
+		added += loaded
 	}
 	return next, added, nil
 }

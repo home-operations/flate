@@ -174,7 +174,7 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 		l.SourceRoot = root
 
 		{
-			_, err := l.Load(t.Context(), root, nil)
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
@@ -386,7 +386,9 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 		"orphan promotion reread indexed documents",
 	)
 
-	for _, child := range l.Kustomizations() {
+	childValues := l.Kustomizations()
+	for childIndex := range childValues {
+		child := childValues[childIndex]
 		assert.FatalIf(t, child.Obj.Named() == supplied.Named(), "%s", "supplied evidence gained producer eligibility")
 	}
 	r := l.Index.Records[supplied.Named()]
@@ -439,7 +441,7 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	admitDiscoveryForTest(st, root)
 	l := loader.New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	if testCaseInput.indexed {
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [bundle.yaml]\n")
@@ -455,7 +457,10 @@ func testPromoteOrphansNamespaceAdmissionCase(
 			assert.NoError(t, parseErr)
 			batch = append(batch, store.Child{Obj: obj, Doc: document})
 		}
-		l.RegisterBuilt(loader.BuiltInput{Root: root, Source: manifest.BootstrapSourceID}, batch)
+		support := new(store.ReadSet)
+		support.Init(st, manifest.NamedResource{}, nil)
+		support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+		l.RegisterBuilt(loader.BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: support}, batch)
 	}
 	l.Admit(root)
 	bare := testutil.KustomizationID("", "bare")
@@ -536,7 +541,7 @@ func assertOrphanOccurrencesDistinct(t *testing.T, l *loader.Loader, root string
 	t.Helper()
 
 	{
-		_, err := l.Load(t.Context(), root, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
@@ -576,7 +581,7 @@ sops: {version: 3.9.0}
 	st := store.New()
 	l := loader.New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))

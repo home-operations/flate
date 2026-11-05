@@ -4,12 +4,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
+	"github.com/go-git/go-git/v5/plumbing"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -263,4 +269,76 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 		"equal coordinate borrowed another admitted view: %+v",
 		independent,
 	)
+}
+
+func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"flux/consumer.yaml": {
+			Data: []byte(
+				testutil.KustomizationYAML(
+					"consumer",
+					"apps",
+					"  path: ./consumer\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: hello}]}\n",
+				),
+			),
+		},
+		"flux/supplier.yaml": {
+			Data: []byte(testutil.KustomizationYAML("supplier", "apps", "  path: ./supplier\n")),
+		},
+		"supplier/kustomization.yaml": {Data: []byte("resources: [cm.yaml, spare.yaml]\n")},
+		"supplier/cm.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {value: supplied}\n",
+			),
+		},
+		"consumer/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+		"consumer/cm.yaml": {
+			Data: []byte(
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result, namespace: apps}\ndata: {value: '${value}'}\n",
+			),
+		},
+	}
+	files["supplier/spare.yaml"] = &fstest.MapFile{
+		Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: spare, namespace: apps}\n"),
+	}
+	var reads, requiredReads atomic.Int64
+	view, _, err := gittree.New(
+		t.Context(),
+		nil,
+		plumbing.ZeroHash,
+		gittree.ViewOptions{
+			Mode: gittree.Direct,
+			Current: entryReadFS{
+				FS:    files,
+				reads: map[string]*atomic.Int64{"supplier/spare.yaml": &reads, "supplier/cm.yaml": &requiredReads},
+			},
+		},
+	)
+	assert.NoError(t, err)
+	input := &store.SourceArtifact{LocalPath: root, FS: view}
+	selection := manifest.Selection{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")}}
+	cfg := Config{Input: input, Path: filepath.Join(root, "flux"), Selection: selection}
+	entries, err := Plan(t.Context(), cfg)
+	assert.NoError(t, err)
+	before := reads.Load()
+	assert.Equal(t, before, int64(1))
+	assert.Equal(t, requiredReads.Load(), int64(1))
+	cfg.Store = store.New()
+	cfg.Loader = loader.New(cfg.Store)
+	cfg.Loader.Options.Filter = change.NewFilter()
+	cfg.Entry = &entries[0]
+	session, err := Begin(t.Context(), cfg)
+	assert.NoError(t, err)
+	assert.Equal(t, reads.Load(), before)
+	assert.NoError(t, session.refreshDeclarations(t.Context(), root))
+	assert.Equal(t, reads.Load(), before)
+	assert.Equal(t, requiredReads.Load(), int64(2))
+	data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}
+	record, ok := cfg.Loader.Index.Lookup(data)
+	assert.Equal(t, ok, true)
+	assert.Equal(t, record.File, "supplier/cm.yaml")
+	assert.Equal(t, len(cfg.Loader.Options.Filter.KeepNames()), 0)
+	assert.Equal(t, cfg.Store.GetObject(data), nil)
 }

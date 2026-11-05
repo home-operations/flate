@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -35,7 +37,7 @@ func TestAdmit_SourceKinds(t *testing.T) {
 			l := loaderFixture(store.New(), nil)
 			l.SourceRoot = root
 			{
-				_, err := l.Load(t.Context(), root, nil)
+				_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 			}
 			raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "source"}
@@ -80,6 +82,69 @@ func TestAdmit_LateFallback(t *testing.T) {
 
 func TestAdmit_ProjectionLifetime(t *testing.T) {
 	t.Parallel()
+	t.Run("renamed_catalog_after_freeze", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		st := store.New()
+		input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			"entry/kustomization.yaml": {Data: []byte("resources: [factory.yaml]\nnamePrefix: built-\n")},
+			"entry/factory.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: factory, namespace: apps}
+spec:
+  inputsFrom: [{kind: ResourceSetInputProvider, name: provider}]
+  resourcesTemplate: |
+    apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata: {name: child, namespace: apps}
+    spec: {path: ./payload, postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}}
+`)},
+			"payload/kustomization.yaml": {Data: []byte("resources: []\n")},
+		}}
+		st.SetArtifact(manifest.BootstrapSourceID, input)
+		l := New(st)
+		l.SourceRoot = root
+		l.Options.Selection.Changed = true
+		_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
+		assert.NoError(t, err)
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+		id := manifest.NamedResource{
+			Group:     manifest.FluxOperatorDomain,
+			Kind:      manifest.KindResourceSet,
+			Namespace: "apps",
+			Name:      "built-factory",
+		}
+		before := slices.Collect(l.References(id))
+		assert.Equal(
+			t,
+			slices.ContainsFunc(before, func(ref manifest.Reference) bool { return ref.Name == "provider" }),
+			true,
+		)
+		l.projectTemplates()
+		child := testutil.KustomizationID("apps", "child")
+		assert.Equal(
+			t,
+			slices.ContainsFunc(
+				l.Index.Records[child].Productions,
+				func(p manifest.Production) bool { return p.Owner == id },
+			),
+			true,
+		)
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+		assert.Equal(t, l.scopes, nil)
+		assert.Diff(t, slices.Collect(l.References(id)), before)
+		assert.Equal(t, l.CatalogObject(id).Named(), id)
+		_, authored := l.occurrence(id)
+		assert.Equal(t, authored, false)
+		assert.Equal(t, st.GetObject(id), nil)
+		assert.Equal(t, st.GetObject(child), nil)
+		assert.Equal(t, l.Index.Records[id].Builder, "")
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+		l.mountSources()
+		_, retained := l.catalogOccurrence(id)
+		assert.Equal(t, retained, false)
+		assert.Equal(t, st.GetObject(child), nil)
+	})
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "namePrefix: pre-\nnameSuffix: -post\nresources: [object.yaml]\n")
 	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: before}\n")
@@ -87,7 +152,7 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
 	l := New(st)
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	before, err := l.Occurrences(t.Context(), root, "")
 	assert.NoError(t, err)
@@ -99,10 +164,13 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n")
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
 	l.mountSources()
-	if l.scopes == old || l.scopes == nil || l.scopes.projections[0] != nil || l.scopes.projections[1] != nil {
-		t.Fatal("mounted replacement retained the old projection memo")
-	}
-	_, err = l.Load(t.Context(), root, nil)
+	assert.FatalIf(
+		t,
+		l.scopes == old || l.scopes == nil || l.scopes.projections[0] != nil || l.scopes.projections[1] != nil,
+		"%s",
+		"mounted replacement retained the old projection memo",
+	)
+	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	after, err := l.Occurrences(t.Context(), root, "")
 	assert.NoError(t, err)
@@ -161,7 +229,7 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 			t.Errorf("%s namespace = %q, want %q", obj.Named().Kind, obj.Named().Namespace, want)
 		}
 	}
-	_, err := l.Load(t.Context(), filepath.Join(root, "apps"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	l.Store.AddObject(

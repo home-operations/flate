@@ -31,7 +31,7 @@ func testAdmitGraphProjectionEffectiveNamesIncludeNamespaceTransformation(t *tes
 	}
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	for _, side := range []string{"one", "two"} {
 		occurrences, err := l.Occurrences(t.Context(), filepath.Join(root, side), "")
@@ -193,7 +193,7 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf}\n")
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 
@@ -257,7 +257,7 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "apps", "  path: ./leaf\n"))
 	l := New(store.New())
 	l.SourceRoot = root
-	_, err := l.Load(t.Context(), root, nil)
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	packages, err := l.Packages(t.Context())
 	assert.NoError(t, err)
@@ -307,7 +307,7 @@ func TestRecordNamespaces_IndexedOwner(t *testing.T) {
 			l := New(store.New())
 			l.ensureScopes()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "system", TargetNamespace: "apps"}
-			occurrence := compactOccurrence(owner, manifest.ProjectProducer(owner))
+			occurrence := compactOccurrence(owner, projectedProducerForTest(owner))
 			l.locations = map[manifest.NamedResource]Occurrence{owner.Named(): occurrence}
 			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{
 				Authored: owner.Named(),

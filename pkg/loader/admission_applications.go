@@ -98,7 +98,7 @@ func (c *admissionClosure) materializerApplicationObjectKnown(
 	if c.loader.IsFileIndexed(id) && matches(id, object, nil) && c.independent(id, nil) {
 		return true
 	}
-	occurrence, known := c.loader.occurrence(id)
+	occurrence, known := c.loader.catalogOccurrence(id)
 	if !known || occurrence.facts.policy == nil {
 		return false
 	}

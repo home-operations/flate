@@ -412,7 +412,7 @@ func TestAddEmitted_ReplacesHistoricalOrdering(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(st, emitter, nil)
 	defer reads.Close()
-	f.AddEmitted(emitter, store.Child{Obj: incoming, Productions: []manifest.Production{{Owner: emitter}}}, &reads)
+	f.AddEmitted(emitter, new(store.Child{Obj: incoming, Productions: []manifest.Production{{Owner: emitter}}}), &reads)
 	assert.Diff(
 		t,
 		f.keep,

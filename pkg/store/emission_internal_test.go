@@ -421,7 +421,9 @@ func testRecordEmittedConcurrentSupportCase(t *testing.T, testCaseInput *int,
 				Manifests: slices.Clone(accepted.Manifests),
 				Complete:  true,
 			}
-			for j, child := range next.Children {
+			childValues := next.Children
+			for j := range childValues {
+				child := childValues[j]
 				doc := manifest.DeepCopyMap(child.Doc)
 				doc["metadata"].(map[string]any)["labels"] = map[string]any{
 					"kustomize.toolkit.fluxcd.io/name": strconv.Itoa(i),
@@ -462,7 +464,9 @@ func testRecordEmittedConcurrentSupportCase(t *testing.T, testCaseInput *int,
 	})
 	close(start)
 	wg.Wait()
-	for _, child := range accepted.Children {
+	childValues2 := accepted.Children
+	for childIndex := range childValues2 {
+		child := childValues2[childIndex]
 		id := child.Obj.Named()
 		{
 			got := s.GetObject(id)
@@ -513,7 +517,9 @@ func testRecordEmittedConcurrentSupportCaseCompletion(
 	scope.s.SetArtifact(scope.covered.Obj.Named(), &SourceArtifact{Key: "covered"})
 	scope.s.UpdateStatus(scope.covered.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 	accept(t, scope.s, (*scope.p), &Emission{Complete: true})
-	for _, child := range scope.accepted.Children {
+	childValues3 := scope.accepted.Children
+	for childIndex2 := range childValues3 {
+		child := childValues3[childIndex2]
 		parent, ok := scope.s.RenderedParent(child.Obj.Named(), nil)
 		assert.FatalIf(
 			t,
@@ -572,7 +578,9 @@ type testRecordEmittedConcurrentSupportReadState struct {
 
 func testRecordEmittedConcurrentSupportReads(t *testing.T, scope *testRecordEmittedConcurrentSupportReadState) {
 	t.Helper()
-	for _, child := range (*scope.accepted).Children {
+	childValues4 := (*scope.accepted).Children
+	for childIndex3 := range childValues4 {
+		child := childValues4[childIndex3]
 		id := child.Obj.Named()
 		parent, ok := (*scope.s).RenderedParent(id, nil)
 		assert.ErrorIf(

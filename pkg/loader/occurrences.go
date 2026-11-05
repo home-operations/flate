@@ -31,11 +31,12 @@ type OccurrenceID struct {
 
 // Occurrence retains an immutable declaration and its contextual resource identity.
 type Occurrence struct {
-	Declaration OccurrenceID
-	Identity    manifest.NamedResource
-	Authored    manifest.NamedResource
-	object      manifest.BaseManifest
-	facts       *occurrenceFacts
+	Declaration   OccurrenceID
+	Identity      manifest.NamedResource
+	Authored      manifest.NamedResource
+	object        manifest.BaseManifest
+	facts         *occurrenceFacts
+	requiresBuild bool
 }
 
 type producerFact struct {
@@ -538,6 +539,14 @@ func (o Occurrence) references() iter.Seq[manifest.Reference] {
 }
 
 func (l *Loader) occurrence(id manifest.NamedResource) (Occurrence, bool) {
+	o, ok := l.catalogOccurrence(id)
+	if !ok || o.requiresBuild || o.Identity.Name != o.Authored.Name {
+		return Occurrence{}, false
+	}
+	return o, true
+}
+
+func (l *Loader) catalogOccurrence(id manifest.NamedResource) (Occurrence, bool) {
 	if o, ok := l.locations[id]; ok {
 		return o, true
 	}
@@ -571,10 +580,16 @@ func (l *Loader) IsFileIndexed(id manifest.NamedResource) bool {
 //
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
-	if record, ok := l.Index.Lookup(id); ok && record.Builder != "" && record.Declaration != nil {
+	record, _ := l.Index.Lookup(id)
+	return l.catalogObject(id, &record)
+}
+
+//nolint:ireturn // The manifest contract requires polymorphic results.
+func (l *Loader) catalogObject(id manifest.NamedResource, record *manifest.DiscoveryRecord) manifest.BaseManifest {
+	if record.Builder != "" && record.Declaration != nil {
 		return manifest.CatalogObject(record.Declaration, id)
 	}
-	if occurrence, ok := l.occurrence(id); ok && occurrence.facts.catalog != nil {
+	if occurrence, ok := l.catalogOccurrence(id); ok && occurrence.facts.catalog != nil {
 		obj := occurrence.object
 		if obj == nil {
 			obj = occurrence.facts.catalog
@@ -586,8 +601,7 @@ func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest 
 	}
 	obj := l.candidates[id].Obj
 	if obj == nil {
-		record, _ := l.Index.Lookup(id)
-		obj = l.IndexedObject(id, record).Obj
+		obj = l.IndexedObject(id, *record).Obj
 	}
 	if obj == nil {
 		obj = l.Store.GetObject(id)

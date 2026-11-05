@@ -126,6 +126,7 @@ func (c *admissionClosure) outputChanged(
 	}
 	record, _ := c.loader.Index.Lookup(id)
 	if prepared := record.Declaration; prepared != nil && obj != prepared && record.Builder != "" &&
+		!c.loader.Options.Changes.OutputChanged(c.loader.side, source, ref, obj).Known &&
 		manifest.Equal(obj, prepared) {
 		child := c.loader.preparedObject(id)
 		var doc map[string]any

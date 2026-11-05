@@ -569,7 +569,9 @@ func assertIndependentWriterOutputs(b *testing.B, s *store.Store, sets *[2]*mani
 			!cmp.Equal(current.Manifests, expected[i].manifests) {
 			b.Fatal("equal publications changed the complete two-document inventory")
 		}
-		for _, child := range current.Children {
+		childValues := current.Children
+		for childIndex := range childValues {
+			child := childValues[childIndex]
 			if s.GetObject(child.Obj.Named()) == nil {
 				b.Fatalf("rendered identity %s is missing", child.Obj.Named())
 			}

@@ -130,7 +130,7 @@ func TestAddEmitted_CapturedTransitiveReferences(t *testing.T) {
 	st.AddObject(&changed)
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 	child.SourceRef.Kind, child.SourceRef.Name = manifest.KindGitRepository, dependency.Name
-	f.AddEmitted(parent, store.Child{Obj: child}, &reads)
+	f.AddEmitted(parent, new(store.Child{Obj: child}), &reads)
 	assert.Equal(
 		t,
 		f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "captured"}),
@@ -281,7 +281,7 @@ func testAddEmittedStampedHelmReleasePullsChartSourceCase(
 		assert.Equal(t, f.ShouldReconcile(id), false)
 	}
 
-	added := f.AddEmitted(parent, store.Child{Obj: hr}, f.objs)
+	added := f.AddEmitted(parent, new(store.Child{Obj: hr}), f.objs)
 
 	assert.Equal(t, len(added), 2)
 	for _, id := range []manifest.NamedResource{hr.Named(), chartSrc} {
@@ -358,7 +358,7 @@ func testAddEmittedKeptChildUsesIncomingReferencesCase(
 	assert.Equal(t, f.ShouldReconcile(child.Named()), true)
 	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), false)
 
-	added := f.AddEmitted(parent, store.Child{Obj: child}, f.objs)
+	added := f.AddEmitted(parent, new(store.Child{Obj: child}), f.objs)
 
 	want := []manifest.NamedResource{child.ChartSource()}
 	if (*testCaseInput) != "primary" {
@@ -374,6 +374,6 @@ func testAddEmittedKeptChildUsesIncomingReferencesCase(
 	if (*testCaseInput) != "kept_emitter" {
 		sentinels = []manifest.NamedResource{sentinel}
 	}
-	assert.Diff(t, f.AddEmitted(child.Named(), store.Child{Obj: refObj(sentinel)}, f.objs), sentinels)
+	assert.Diff(t, f.AddEmitted(child.Named(), new(store.Child{Obj: refObj(sentinel)}), f.objs), sentinels)
 	assert.Equal(t, f.ShouldReconcile(sentinel), (*testCaseInput) != "kept_emitter")
 }

@@ -18,9 +18,6 @@ func (c *admissionClosure) start(
 ) error {
 	c.collecting = true
 	c.queue = c.queue[:0]
-	if err := c.admitChangedRoots(ctx); err != nil {
-		return err
-	}
 	objects := c.loader.Store.Objects()
 	c.indexStartObjects(objects)
 
@@ -103,7 +100,6 @@ func (c *admissionClosure) start(
 }
 
 func (c *admissionClosure) admitChangedRoots(ctx context.Context) error {
-	roots := c.roots[:0]
 	for _, root := range c.roots {
 		occurrences, err := c.loader.Occurrences(ctx, filepath.Join(c.loader.SourceRoot, filepath.FromSlash(root)), "")
 		if err != nil {
@@ -116,17 +112,16 @@ func (c *admissionClosure) admitChangedRoots(ctx context.Context) error {
 			continue
 		}
 		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root, manifest.NamedResource{}).Named()
-		if !c.loader.Options.Selection.Changed || c.loader.Options.Changes == nil || c.affected(id, c.object(id)) {
+		if c.rootRequired(root) || !c.loader.Options.Selection.Changed || c.loader.Options.Changes == nil ||
+			c.affected(id, c.object(id)) {
 			c.proposal.Blocked = append(c.proposal.Blocked, root)
-			roots = append(roots, root)
 		}
 	}
-	c.roots = roots
 	return nil
 }
 
 func (c *admissionClosure) rootMatches(root string, occurrences []Occurrence) bool {
-	matches := slices.ContainsFunc(
+	matches := c.rootRequired(root) || slices.ContainsFunc(
 		occurrences,
 		func(o Occurrence) bool { return c.loader.Options.Selection.Matches(o.Identity) },
 	)
@@ -148,6 +143,24 @@ func (c *admissionClosure) rootMatches(root string, occurrences []Occurrence) bo
 	}
 
 	return matches
+}
+
+func (c *admissionClosure) rootRequired(root string) bool {
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root, manifest.NamedResource{}).Named()
+	for id := range c.states {
+		role := c.role(id)
+		if !role.needed || !role.ordinary {
+			continue
+		}
+		if role.selected && !c.states[id].requested {
+			continue
+		}
+		evidence := c.declarationEvidence(id)
+		if !evidence.known() && evidence.owner == owner {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *admissionClosure) resetComparisons() {
@@ -175,12 +188,15 @@ func (c *admissionClosure) finishStart(
 	c.proposal.Namespaces = slices.Compact(c.proposal.Namespaces)
 	for i, target := range c.loader.Options.Selection.Roots {
 		if !known[i] || target.Name == "" && target.Namespace != "" {
-			materializers(materializerDemand{target: target, source: c.loader.SourceRoot}, manifest.NamedResource{})
+			materializers(
+				materializerDemand{target: target, source: c.loader.SourceRoot, required: target.Name != ""},
+				manifest.NamedResource{},
+			)
 		}
 	}
 	for _, id := range c.loader.Options.HistoryOwners {
-		if !c.replace[id] {
-			c.add(id, admissionRole{needed: true})
+		if !c.replace[id] && c.loader.declarationLocated(id, c.objects) {
+			c.add(id, admissionRole{needed: true, ordinary: true})
 		}
 	}
 	c.queue = c.queue[:0]
@@ -344,6 +360,7 @@ func (c *admissionClosure) recordDirectState(
 ) {
 	state := c.states[id]
 	state.direct = changed
+	state.requested = state.requested || c.namedSelection(id)
 	state.eligible = record.Origin.Policy(id, nil).Root && c.loader.Options.Selection.Matches(id)
 	state.declarationChanged = state.eligible && !changed &&
 		(c.fileChanged(c.source(id), record.File) || c.inputsChanged(c.source(id), record.Inputs))
@@ -358,6 +375,16 @@ func (c *admissionClosure) recordDirectState(
 		}
 	}
 	c.states[id] = state
+}
+
+func (c *admissionClosure) namedSelection(id manifest.NamedResource) bool {
+	for _, root := range c.loader.Options.Selection.Roots {
+		if root.Name != "" && root.Name == id.Name && root.Group == id.Group && root.Kind == id.Kind &&
+			(root.Namespace == "" || root.Namespace == id.Namespace) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *admissionClosure) noteKnownSelection(
@@ -432,7 +459,7 @@ func (c *admissionClosure) seedChangedReaders(file string) {
 		if c.changedClaim(new(reader), file) {
 			if reader.Materialize {
 				if !c.replace[reader.Reader] {
-					c.add(reader.Reader, admissionRole{needed: true})
+					c.add(reader.Reader, admissionRole{needed: true, ordinary: true})
 				}
 				continue
 			}
@@ -455,7 +482,7 @@ func (c *admissionClosure) admitAncestorClaims(
 		}
 		for source := range c.sources(id) {
 			if c.changedClaim(new(manifest.FileReader{Reader: id, Source: source}), claim.file) {
-				c.add(id, admissionRole{needed: true})
+				c.add(id, admissionRole{needed: true, ordinary: true})
 			}
 		}
 	}
@@ -575,7 +602,7 @@ func (c *admissionClosure) admitInitialStates(claims []admissionStartClaim) {
 	if entry != (manifest.NamedResource{}) {
 		status, _ := c.objects.GetStatus(entry)
 		if status.Outcome() == store.OutcomeFailed {
-			c.add(entry, admissionRole{needed: true})
+			c.add(entry, admissionRole{needed: true, ordinary: true})
 		}
 	}
 }

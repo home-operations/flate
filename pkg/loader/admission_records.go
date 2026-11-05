@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
@@ -49,7 +50,7 @@ func (c *admissionClosure) references(
 }
 
 func (c *admissionClosure) declarationSource(id manifest.NamedResource) string {
-	if occurrence, ok := c.loader.occurrence(id); ok {
+	if occurrence, ok := c.loader.catalogOccurrence(id); ok {
 		return occurrence.Declaration.Source
 	}
 	if _, input, _ := c.delta(c.source(id)); input != nil {
@@ -59,7 +60,7 @@ func (c *admissionClosure) declarationSource(id manifest.NamedResource) string {
 }
 
 func (c *admissionClosure) source(id manifest.NamedResource) manifest.NamedResource {
-	occurrence, located := c.loader.occurrence(id)
+	occurrence, located := c.loader.catalogOccurrence(id)
 	{
 		pValues := c.productions(id)
 		for pIndex := range pValues {
@@ -103,17 +104,70 @@ func (c *admissionClosure) productions(id manifest.NamedResource) []manifest.Pro
 	return c.mergeHistoricalProductions(id, productions)
 }
 
-func (c *admissionClosure) independent(id manifest.NamedResource, owners func() []manifest.BaseManifest) bool {
-	record := c.record(id)
+func (c *admissionClosure) rootEvidence(id manifest.NamedResource) rootEvidence {
 	root := id
 	if occurrence, ok := c.loader.occurrence(id); ok && occurrence.Authored.Namespace == "" {
 		if _, exact := c.loader.Index.Lookup(id); !exact {
 			root.Namespace = ""
 		}
 	}
-	if !c.loader.AdmitsRoot(c.loader.CatalogObject(root), record.Path) ||
-		record.Parent != (manifest.NamedResource{}) && record.Parent != id {
+	if evidence, known := c.loader.roots[root]; known {
+		return c.supportedRoot(id, &evidence)
+	}
+	if _, indexed := c.loader.Index.Lookup(id); indexed {
+		return rootEvidence{}
+	}
+	var object manifest.BaseManifest
+	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
+		object = c.incoming.Obj
+	} else {
+		object = c.objects.GetDeclaration(id)
+	}
+	if object == nil || !manifest.AdmitsRoot(object) {
+		return rootEvidence{}
+	}
+	productions := c.productions(id)
+	for i := range productions {
+		production := &productions[i]
+		if owner := production.Materializer(id); owner != (manifest.NamedResource{}) && owner != id {
+			return rootEvidence{}
+		}
+	}
+	return rootEvidence{admitted: true, independent: true}
+}
+
+func (c *admissionClosure) supportedRoot(id manifest.NamedResource, original *rootEvidence) rootEvidence {
+	evidence := *original
+	if c.incoming.Obj == nil || c.incoming.Obj.Named() != id {
+		if object, policy := c.objects.Lookup(id); object != nil && policy.Origin == manifest.SuppliedDeclaration &&
+			c.objects.GetDeclaration(id) == object && manifest.AdmitsRoot(object) {
+			return rootEvidence{admitted: true, independent: true}
+		}
+	}
+	if !evidence.independent {
+		return evidence
+	}
+	for _, source := range [...]manifest.NamedResource{c.source(id), manifest.BootstrapSourceID} {
+		input, _ := c.objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+		if input != nil && c.objects.SourceAdmission(id, source) {
+			evidence.admitted = true
+			return evidence
+		}
+	}
+	evidence.independent, evidence.occurrence = false, Occurrence{}
+	return evidence
+}
+
+func (c *admissionClosure) independent(id manifest.NamedResource, owners func() []manifest.BaseManifest) bool {
+	if c.bootstrapPrerequisite(id, owners) {
+		return true
+	}
+	evidence := c.rootEvidence(id)
+	if !evidence.admitted {
 		return false
+	}
+	if evidence.occurrence.Declaration != (OccurrenceID{}) {
+		return evidence.independent
 	}
 	c.productions(id)
 	if c.states[id].staticOwner {
@@ -128,6 +182,79 @@ func (c *admissionClosure) independent(id manifest.NamedResource, owners func() 
 		}
 	}
 	return true
+}
+
+func (c *admissionClosure) bootstrapPrerequisite(
+	id manifest.NamedResource,
+	owners func() []manifest.BaseManifest,
+) bool {
+	record := c.record(id)
+	if record.Path == "" && record.Builder == "" || !c.directBootstrap(id) {
+		return false
+	}
+	required := func(owner manifest.BaseManifest) bool { return c.bootstrapInputRequired(owner, id, &record) }
+	if required(c.object(record.Parent)) || c.incoming.Obj != nil && required(c.incoming.Obj) {
+		return true
+	}
+	for _, owner := range c.loader.rootAdmission(record.Path, record.File, id.KindInfo().Structural).owners {
+		if required(c.objects.GetDeclaration(owner)) {
+			return true
+		}
+	}
+	return owners != nil && slices.ContainsFunc(owners(), required)
+}
+
+func (c *admissionClosure) directBootstrap(id manifest.NamedResource) bool {
+	occurrence, found := c.loader.occurrence(id)
+	input, _ := c.objects.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	return found && input != nil &&
+		(input.LocalPath == occurrence.Declaration.Source || input.OriginPath(input.LocalPath) == occurrence.Declaration.Source) &&
+		c.objects.SourceAdmission(id, manifest.BootstrapSourceID)
+}
+
+func (c *admissionClosure) bootstrapInputRequired(
+	owner manifest.BaseManifest,
+	id manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+) bool {
+	if owner == nil || record.Parent != owner.Named() && !c.coversDeclaration(owner, id) {
+		return false
+	}
+	for ref := range manifest.References(owner, manifest.ReferenceRelations) {
+		if !ref.Ordering && !ref.ContentInput() {
+			continue
+		}
+		if ref.NamedResource == id {
+			return true
+		}
+		input := c.record(ref.NamedResource)
+		productions := c.productions(ref.NamedResource)
+		if len(input.Productions) == 0 && len(productions) == 0 && input.Parent == id {
+			return true
+		}
+		for i := range productions {
+			production := &productions[i]
+			if (production.Materializer(ref.NamedResource) == id || production.Declaration == id) &&
+				c.bootstrapProductionCurrent(ref.NamedResource, production) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (c *admissionClosure) bootstrapProductionCurrent(id manifest.NamedResource, production *manifest.Production) bool {
+	location := SourceView(c.objects, production.Source, c.loader.SourceRoot)
+	if location.Pinned || location.External || safepath.Escaped(production.File) {
+		return false
+	}
+	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
+		return true
+	}
+	owner := production.Materializer(id)
+	output, _ := c.objects.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
+	return output == nil || !output.Complete || !output.OutputReads.Valid() ||
+		slices.ContainsFunc(output.Children, func(child store.Child) bool { return child.Obj.Named() == id })
 }
 
 func (c *admissionClosure) coversDeclaration(owner manifest.BaseManifest, id manifest.NamedResource) bool {
@@ -156,38 +283,40 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 			return true
 		}
 	}
-	remember := func() bool {
-		if c.collecting && ownerOrdinal != 0 && ordinal != 0 {
-			identity := &c.identities[ordinal-1]
-			identity.stableOwner, identity.stableObject = ownerOrdinal, object
-		}
-		return true
+	if !c.declarationUnchanged(id, owner, object) {
+		return false
 	}
+	if c.collecting && ownerOrdinal != 0 && ordinal != 0 {
+		identity := &c.identities[ordinal-1]
+		identity.stableOwner, identity.stableObject = ownerOrdinal, object
+	}
+	return true
+}
+
+func (c *admissionClosure) declarationUnchanged(id, owner manifest.NamedResource, object manifest.BaseManifest) bool {
 	declared := c.declarationChanged(id, object)
 	if declared.Known && declared.Changed {
 		return false
 	}
-	if comparison := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), object); comparison.Known {
-		return !comparison.Changed && remember()
-	}
 	record := c.record(id)
+	if comparison := c.outputChanged(id, new(manifest.Reference{NamedResource: id}), object); comparison.Known &&
+		(declared.Known || record.Authored == id) {
+		return !comparison.Changed
+	}
 	if declared.Known &&
 		!c.inputsChanged(manifest.BootstrapSourceID, record.Inputs) {
-		return remember()
+		return true
 	}
 	if stability := c.declarationStable(id, owner, &record); stability.known {
-		if stability.stable {
-			return remember()
-		}
+		return stability.stable
+	}
+	if c.loader.sideKnown && record.Authored != id {
 		return false
 	}
-	if (record.BuilderOwner == (manifest.NamedResource{}) || owner == record.BuilderOwner) &&
+	return (record.BuilderOwner == (manifest.NamedResource{}) || owner == record.BuilderOwner) &&
 		record.File != record.Builder &&
 		record.Declaration != nil &&
-		manifest.Equal(record.Declaration, object) {
-		return remember()
-	}
-	return false
+		manifest.Equal(record.Declaration, object)
 }
 
 func (c *admissionClosure) completeCoversDeclaration(
@@ -222,7 +351,7 @@ func (c *admissionClosure) completeCoversDeclaration(
 }
 
 func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yield func(manifest.Reference) bool) {
-	if occurrence, ok := c.loader.occurrence(id); ok {
+	if occurrence, ok := c.loader.catalogOccurrence(id); ok {
 		for ref := range occurrence.references() {
 			if !yield(ref) {
 				return
@@ -301,7 +430,7 @@ func (c *admissionClosure) extendProductionInput(input []manifest.Production, sc
 			production := productionValues[productionIndex]
 			owner := production.Owner
 			if scope.record.File != "" && scope.record.File != production.File ||
-				!c.loader.IsFileIndexed(owner) && c.objects.GetObject(owner) == nil {
+				!c.loader.declarationLocated(owner, c.objects) {
 				continue
 			}
 			if !slices.Contains((*scope.productions), production) {
@@ -359,7 +488,7 @@ func (c *admissionClosure) declarationOwner(
 	record *manifest.DiscoveryRecord,
 ) (manifest.NamedResource, bool) {
 	declaration := id
-	_, located := c.loader.occurrence(id)
+	_, located := c.loader.catalogOccurrence(id)
 	owned := owner == manifest.Resolve(record.Parent, "", id.Namespace)
 	if !located {
 		declaration = manifest.NamedResource{}
@@ -430,11 +559,11 @@ func (c *admissionClosure) declarationStable(
 	declaration, owned := c.declarationOwner(id, owner, record)
 	ownerRecord := c.record(owner)
 	ownerFile := ownerRecord.File
-	if occurrence, located := c.loader.occurrence(owner); located {
+	if occurrence, located := c.loader.catalogOccurrence(owner); located {
 		ownerFile = c.loader.fileCoordinate(filepath.Join(occurrence.Declaration.Source, occurrence.Declaration.File))
 	}
 	declared := c.record(declaration)
-	if occurrence, located := c.loader.occurrence(
+	if occurrence, located := c.loader.catalogOccurrence(
 		declaration,
 	); located && owner != (manifest.NamedResource{}) && owned && declared.File != "" &&
 		declared.File != declared.Builder {
@@ -466,4 +595,94 @@ func (c *admissionClosure) declarationStable(
 		}
 	}
 	return declarationStability{}
+}
+
+// Declaration authority MUST precede the choice of a preparation owner.
+type declarationEvidence struct {
+	child           store.Child
+	owner           manifest.NamedResource
+	authored, built bool
+	independent     bool
+}
+
+func (e *declarationEvidence) known() bool { return e.child.Obj != nil || e.authored }
+
+func (e *declarationEvidence) allowsOwner(owner manifest.NamedResource) bool {
+	return !e.authored || !owner.ReportHidden()
+}
+
+func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declarationEvidence {
+	record := c.record(id)
+	evidence := declarationEvidence{owner: record.Parent}
+	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
+		evidence.child = c.incoming
+		return evidence
+	}
+	evidence.owner = c.declarationProductionOwner(id, evidence.owner)
+	if object := c.objects.GetDeclaration(id); object != nil {
+		evidence.child.Obj = object
+		return evidence
+	}
+	if record.Builder != "" {
+		root := c.loader.registeredRoot(&record)
+		children, current := c.loader.BuiltChildren(root, record.BuilderOwner, c.proposal.reads)
+		if current {
+			for i := range children {
+				child := &children[i]
+				if child.Obj.Named() == id {
+					evidence.child, evidence.built = *child, true
+					return evidence
+				}
+			}
+		}
+		return evidence
+	}
+	c.classifyAuthoredDeclaration(id, &record, &evidence)
+	return evidence
+}
+
+func (c *admissionClosure) declarationProductionOwner(id, owner manifest.NamedResource) manifest.NamedResource {
+	productions := c.productions(id)
+	for i := range productions {
+		production := &productions[i]
+		materializer := production.Materializer(id)
+		if materializer != (manifest.NamedResource{}) && materializer != id {
+			owner = materializer
+			if !owner.ReportHidden() {
+				break
+			}
+		}
+	}
+	return owner
+}
+
+func (c *admissionClosure) classifyAuthoredDeclaration(
+	id manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+	evidence *declarationEvidence,
+) {
+	occurrence, located := c.loader.occurrence(id)
+	root := c.rootEvidence(id)
+	if root.occurrence.Declaration == (OccurrenceID{}) {
+		return
+	}
+	scope := c.loader.rootAdmission(record.Path, record.File, id.KindInfo().Structural)
+	if scope.admits(c.loader, id, record) {
+		evidence.owner = manifest.NamedResource{}
+	} else {
+		for _, owner := range scope.owners {
+			if owner != id && !owner.ReportHidden() && !c.loader.selfClaim(owner, record.Authored) {
+				evidence.owner = owner
+				return
+			}
+		}
+	}
+	if !located ||
+		evidence.owner != (manifest.NamedResource{}) && !evidence.owner.ReportHidden() && evidence.owner != id {
+		return
+	}
+	input, _ := c.hydrationSource(id, occurrence.Declaration.Source)
+	if input != nil {
+		evidence.authored, evidence.owner = true, manifest.NamedResource{}
+	}
 }

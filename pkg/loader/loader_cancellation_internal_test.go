@@ -24,8 +24,7 @@ metadata: {name: a, namespace: ns}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := New(store.New()).Load(ctx, dir, nil)
-
+	_, err := New(store.New()).Load(ctx, dir, manifest.NamedResource{}, nil)
 	assert.ErrorIf(t, !errors.Is(err, context.Canceled), "expected context.Canceled, got %v", err)
 
 	for _, site := range []string{"graph", "siblings"} {
@@ -115,7 +114,7 @@ func testLoaderRespectsCanceledContextCase(t *testing.T, testCaseInput *string,
 	)
 	l := New(st)
 	l.SourceRoot = root
-	count, err := l.Load(ctx, root, nil)
+	count, err := l.Load(ctx, root, manifest.NamedResource{}, nil)
 	if !errors.Is(err, context.Canceled) || count != 1 || input.after != 0 || !input.canceled {
 		t.Fatalf("Load = (%d, %v), canceled=%t, subsequent I/O=%d", count, err, input.canceled, input.after)
 	}

@@ -26,7 +26,9 @@ func (e *Execution) ParseChildren(
 		}
 	}
 	if e.Store != nil {
-		for i, child := range children {
+		childValues := children
+		for i := range childValues {
+			child := childValues[i]
 			if existing := e.Store.GetObject(
 				child.Obj.Named(),
 			); existing != nil &&
@@ -48,7 +50,9 @@ func (c *Controller) admitChildren(
 	if !next.Reads.Valid() {
 		return children, cloned, nil
 	}
-	for i, child := range next.Children {
+	childValues2 := next.Children
+	for i := range childValues2 {
+		child := childValues2[i]
 		if child.Obj == nil || child.Obj.Named() == id {
 			continue
 		}

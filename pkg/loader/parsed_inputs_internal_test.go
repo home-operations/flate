@@ -52,7 +52,7 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 	}
 	planner := newLoader(nil)
 	for _, side := range []string{"left", "right"} {
-		_, err := planner.Load(t.Context(), filepath.Join(root, side), nil)
+		_, err := planner.Load(t.Context(), filepath.Join(root, side), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	assert.Equal(t, planner.facts, (*ParsedInputs)(nil))
@@ -122,7 +122,7 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
 		l.Options.ParsedInputs = inputs
-		_, err = l.Load(t.Context(), root, nil)
+		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		return l
 	}
@@ -261,7 +261,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		return l
 	}
 	planner := newLoader(input, nil, "planner")
-	_, err := planner.Load(t.Context(), root, nil)
+	_, err := planner.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	for _, side := range []string{"left", "right"} {
 		_, err = planner.Occurrences(t.Context(), filepath.Join(root, side), "")
@@ -281,7 +281,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	directoryCount := directories.Load()
 	for _, side := range []string{"left", "right"} {
 		l := newLoader(input, parsed, side)
-		_, err = l.Load(t.Context(), root, nil)
+		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		occurrences, errInner := l.Occurrences(t.Context(), filepath.Join(root, side), "")
 		assert.NoError(t, errInner)
@@ -320,7 +320,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 
 	for _, side := range []string{"left", "right"} {
 		l := newLoader(input, parsed, side)
-		_, err = l.Load(t.Context(), root, nil)
+		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		occurrences, errInner := l.Occurrences(t.Context(), filepath.Join(root, side), "")
 		assert.NoError(t, errInner)
@@ -346,7 +346,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		"only.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n")},
 	}}
 	l := newLoader(other, parsed, "other")
-	_, err = l.Load(t.Context(), root, nil)
+	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, len(l.Index.Records), 2)
 	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "other"}); !ok {
@@ -376,7 +376,7 @@ func testParsedInputsCompactPhysicalFactsCase1(t *testing.T) {
 			l := New(st)
 			l.SourceRoot = root
 			l.Options.Selection.Changed = true
-			_, err = l.Load(t.Context(), root, nil)
+			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data", Namespace: "apps"}
@@ -425,7 +425,7 @@ func testParsedInputsContentAndAdmissionIsolationIndependentEntries(
 			t.Parallel()
 			l := (*testCaseInput.newLoader)((*testCaseInput.inputs))
 			path := filepath.Join((*testCaseInput.root), side)
-			n, err := l.Load(t.Context(), path, nil)
+			n, err := l.Load(t.Context(), path, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, n, 1)
 			occurrences, err := l.Occurrences(t.Context(), path, "")

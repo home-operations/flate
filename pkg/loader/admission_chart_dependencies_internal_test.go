@@ -206,7 +206,7 @@ func TestFilter_ReverseEdgeHelmChartKeepsEmitter(t *testing.T) {
 		}
 	}
 	assert.Equal(t, f.ShouldReconcile(sibling), false)
-	f.AddEmitted(app.Named(), store.Child{Obj: refObj(sibling)}, f.objs)
+	f.AddEmitted(app.Named(), new(store.Child{Obj: refObj(sibling)}), f.objs)
 	assert.Equal(t, f.ShouldReconcile(sibling), false)
 }
 
@@ -377,7 +377,7 @@ func testFilterTransitiveDepsHelmReleaseViaHelmChartCRDRuntime(
 		assert.Equal(t, f.ShouldReconcile(id), false)
 	}
 
-	added := f.AddEmitted(parent, store.Child{Obj: (*testCaseInput.hr)}, f.objs)
+	added := f.AddEmitted(parent, new(store.Child{Obj: (*testCaseInput.hr)}), f.objs)
 
 	assert.Equal(t, len(added), 3)
 	for _, id := range []manifest.NamedResource{(*testCaseInput.hrID), (*testCaseInput.hcID), (*testCaseInput.ociID)} {

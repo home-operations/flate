@@ -2,10 +2,15 @@ package manifest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
+
+	operatorv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	yaml "go.yaml.in/yaml/v4"
 	"go.yaml.in/yaml/v4/plugin/loaderlimits"
@@ -48,13 +53,15 @@ type DocOccurrence struct {
 }
 
 // DocumentRole determines whether nonmapping documents are required manifests.
-type DocumentRole bool
+type DocumentRole uint8
 
 const (
 	// IncidentalDocuments permits nonmapping repository content.
-	IncidentalDocuments DocumentRole = false
+	IncidentalDocuments DocumentRole = iota
 	// RequiredDocuments requires each nonempty document to be a mapping.
-	RequiredDocuments DocumentRole = true
+	RequiredDocuments
+	// ApplicationDocuments constructs only application identity, source, path and dependencies.
+	ApplicationDocuments
 )
 
 // DecodeDocs retains document and read failures, returning cancellation and deadline errors.
@@ -175,8 +182,12 @@ func loadDocumentNode(
 	var err error
 	shapeFailure := false
 	if mapping.Kind == yaml.MappingNode {
-		m = getDecodedMap()
-		err = node.Load(&m, constructionOption)
+		if role == ApplicationDocuments {
+			m, err = applicationDocument(node, constructionOption)
+		} else {
+			m = getDecodedMap()
+			err = node.Load(&m, constructionOption)
+		}
 	} else {
 		var value any
 		err = node.Load(&value, constructionOption)
@@ -186,4 +197,78 @@ func loadDocumentNode(
 		}
 	}
 	return loadedDocument{document: m, shapeFailure: shapeFailure}, err
+}
+
+func applicationDocument(node *yaml.Node, option yaml.Option) (map[string]any, error) {
+	var fields struct {
+		APIVersion string        `yaml:"apiVersion"`
+		Kind       string        `yaml:"kind"`
+		Metadata   NamedResource `yaml:"metadata"`
+		Spec       yaml.Node     `yaml:"spec"`
+		Items      []yaml.Node   `yaml:"items"`
+	}
+	if err := node.Load(&fields, option); err != nil {
+		return nil, fmt.Errorf("decode application: %w", err)
+	}
+	doc := map[string]any{
+		"apiVersion": fields.APIVersion, "kind": fields.Kind,
+		"metadata": map[string]any{"name": fields.Metadata.Name, "namespace": fields.Metadata.Namespace},
+	}
+	if strings.HasSuffix(fields.Kind, "List") && fields.Items != nil {
+		items := make([]any, 0, len(fields.Items))
+		for i := range fields.Items {
+			item, err := applicationDocument(&fields.Items[i], option)
+			if err != nil {
+				return nil, fmt.Errorf("decode application: %w", err)
+			}
+			items = append(items, item)
+		}
+		doc["items"] = items
+		return doc, nil
+	}
+	id := DocIdentity(doc)
+	if id.Group == FluxKustomizeDomain && id.Kind == KindKustomization {
+		var spec struct {
+			Path      string                                    `yaml:"path"`
+			SourceRef kustomizev1.CrossNamespaceSourceReference `yaml:"sourceRef"`
+			DependsOn []kustomizev1.DependencyReference         `yaml:"dependsOn"`
+		}
+		if err := fields.Spec.Load(&spec, option); err != nil {
+			return nil, fmt.Errorf("decode application: %w", err)
+		}
+		object := &Kustomization{Name: id.Name, Namespace: id.Namespace}
+		object.Path, object.DependsOn = spec.Path, spec.DependsOn
+		object.SourceRef = spec.SourceRef
+		projected, err := object.RenderDocument()
+		if err != nil {
+			return nil, fmt.Errorf("decode application: %w", err)
+		}
+		projected["apiVersion"] = fields.APIVersion
+		return projected, nil
+	}
+	if id.Group != FluxOperatorDomain || id.Kind != "FluxInstance" {
+		return doc, nil
+	}
+	return applicationSyncDocument(doc, &fields.Spec, option)
+}
+
+func applicationSyncDocument(doc map[string]any, node *yaml.Node, option yaml.Option) (map[string]any, error) {
+	var spec struct {
+		Sync *operatorv1.Sync `yaml:"sync"`
+	}
+	if err := node.Load(&spec, option); err != nil {
+		return nil, fmt.Errorf("decode application: %w", err)
+	}
+	if spec.Sync != nil {
+		data, err := json.Marshal(spec.Sync)
+		if err != nil {
+			return nil, fmt.Errorf("decode application: %w", err)
+		}
+		var syncDocument map[string]any
+		if err := json.Unmarshal(data, &syncDocument); err != nil {
+			return nil, fmt.Errorf("decode application: %w", err)
+		}
+		doc["spec"] = map[string]any{"sync": syncDocument}
+	}
+	return doc, nil
 }

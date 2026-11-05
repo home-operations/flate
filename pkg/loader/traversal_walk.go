@@ -49,13 +49,6 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 		if d == nil {
 			return w.opaqueConfiguration(ctx, &v, &cached, yield)
 		}
-		v.deferDecode = false
-		v.namespace = cmp.Or(v.namespace, d.Namespace)
-		v.namePrefix += d.NamePrefix
-		v.nameSuffix = d.NameSuffix + v.nameSuffix
-		if v.namespace == "" {
-			v.namespace = new(w.documents).transformerInjectedNamespace(v.root, v.dir).ns
-		}
 		if !w.publishScope(&v, &d, walkDocument{abs: abs, file: file}, yield) {
 			return false
 		}
@@ -128,7 +121,7 @@ func (w *traversal) admitDocument(ctx context.Context, visit *graphVisit, cached
 		if w.files != nil {
 			*w.files = append(*w.files, fileAdmission{file: input.file, kind: admissionPackage})
 		}
-		n, err := w.loader.loadFile(ctx, input.file)
+		n, err := w.loader.loadFile(ctx, input.file, &w.documents)
 		w.count += n
 		if err != nil {
 			w.loader.Store.AddWarning(manifest.Warning{
@@ -314,6 +307,15 @@ func (w *traversal) publishScope(
 	input walkDocument,
 	yield func(graphVisit) bool,
 ) bool {
+	d := *body
+	visit.deferDecode = false
+	visit.namespace = cmp.Or(visit.namespace, d.Namespace)
+	visit.namePrefix += d.NamePrefix
+	visit.nameSuffix = d.NameSuffix + visit.nameSuffix
+	visit.requiresBuild = visit.requiresBuild || !kustomizeinput.PreservesOperands(d) || len(d.Transformers) != 0
+	if visit.namespace == "" {
+		visit.namespace = new(w.documents).transformerInjectedNamespace(visit.root, visit.dir).ns
+	}
 	visit.file, visit.document, visit.readable = input.file, *body, true
 	visit.coordinate = path.Join(visit.prefix, visit.dir, filepath.Base(input.file))
 	if !yield(*visit) {

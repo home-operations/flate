@@ -37,7 +37,7 @@ func TestAddEmitted_RetainedInputsRemainUnconsumed(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(st, consumer.Named(), nil)
 	defer reads.Close()
-	f.AddEmitted(manifest.NamedResource{}, store.Child{Obj: consumer}, &reads)
+	f.AddEmitted(manifest.NamedResource{}, new(store.Child{Obj: consumer}), &reads)
 	_, _, next := st.GetEmission(producer.Named())
 	defer next.Finish()
 	next.Children = []store.Child{{Obj: target}}
@@ -102,7 +102,7 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 				var reads store.ReadSet
 				reads.Init(st, emitter, nil)
 				defer reads.Close()
-				added := f.AddEmitted(emitter, store.Child{Obj: consumer}, &reads)
+				added := f.AddEmitted(emitter, new(store.Child{Obj: consumer}), &reads)
 				assert.Equal(t, slices.IsSortedFunc(added, manifest.NamedResource.Compare), true)
 				assert.Equal(t, len(added), len(want))
 				assert.Equal(t, reads.Valid(), true)
@@ -142,7 +142,7 @@ func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
 	assert.Equal(t, reads.Valid(), true)
 	st.AddObject(target)
 	assert.Equal(t, reads.GetObject(target.Named()), nil)
-	f.AddEmitted(emitter, store.Child{Obj: child}, &reads)
+	f.AddEmitted(emitter, new(store.Child{Obj: child}), &reads)
 	assert.Diff(
 		t,
 		f.keep,
@@ -162,7 +162,7 @@ func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
 	var current store.ReadSet
 	current.Init(st, emitter, nil)
 	defer current.Close()
-	fresh.AddEmitted(emitter, store.Child{Obj: child}, &current)
+	fresh.AddEmitted(emitter, new(store.Child{Obj: child}), &current)
 	assert.Diff(t, fresh.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary})
 	assert.Equal(t, current.Valid(), true)
 }
@@ -184,6 +184,6 @@ func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
 		t,
 		admissionConfig{changes: change.NewSet([]string{"target.yaml"}), index: index, inventory: st, root: "/repo"},
 	)
-	f.AddEmitted(testutil.KustomizationID("apps", "unchanged"), store.Child{Obj: consumer}, st)
+	f.AddEmitted(testutil.KustomizationID("apps", "unchanged"), new(store.Child{Obj: consumer}), st)
 	assert.Diff(t, f.keep, map[manifest.NamedResource]role{target.Named(): primary})
 }

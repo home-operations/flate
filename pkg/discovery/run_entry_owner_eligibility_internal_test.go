@@ -130,7 +130,7 @@ spec:
 			d := Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 			d.loader.SourceRoot = root
 			{
-				_, err := d.loader.Load(t.Context(), d.cfg.Path, nil)
+				_, err := d.loader.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
 			rawError := d.loader.EntryFailure(t.Context(), root)
@@ -202,7 +202,7 @@ spec:
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			d = Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 			d.loader.SourceRoot = root
-			_, err := d.loader.Load(t.Context(), d.cfg.Path, nil)
+			_, err := d.loader.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
 			assert.NoError(t, d.prepareProducer(t.Context(), owner, source))
@@ -230,7 +230,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, source)
 	d := Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 	d.loader.SourceRoot = root
-	_, err := d.loader.Load(t.Context(), d.cfg.Path, nil)
+	_, err := d.loader.Load(t.Context(), d.cfg.Path, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	owner, err := d.bindEntry(t.Context(), root)
 	assert.NoError(t, err)
@@ -507,7 +507,7 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 	_, err := d.resolveEntrySources(t.Context(), false)
 	assert.NoError(t, err)
 	d.loader.SourceRoot = root
-	_, err = d.loader.Load(t.Context(), root+"/entry", nil)
+	_, err = d.loader.Load(t.Context(), root+"/entry", manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	d.loader.Index.Records[ready.Named()] = manifest.DiscoveryRecord{Declaration: ready}
 	if (*testCaseInput) == "cycle" {
@@ -580,17 +580,17 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 	if (*(*tailCaseInput.testCaseInput)) == "deferred_required" ||
 		(*(*tailCaseInput.testCaseInput)) == "deferred_optional" {
 		{
-			_, prepared := (*tailCaseInput.d).prepared[(*tailCaseInput.owner)]
+			_, prepared := (*tailCaseInput.d).prepared[(*tailCaseInput.owner).Named()]
 			assert.FatalIf(t, prepared, "%v", "referenced substitution admitted an incomplete preparation")
 		}
 	}
 	if (*(*tailCaseInput.testCaseInput)) == "effective_batch" {
 		assert.FatalIf(t, !slices.ContainsFunc((*tailCaseInput.d).
-			prepared[(*tailCaseInput.owner)].children, func(c store.Child) bool { return c.Obj.Named() == testutil.KustomizationID("apps", "sibling") },
+			prepared[(*tailCaseInput.owner).Named()].children, func(c store.Child) bool { return c.Obj.Named() == testutil.KustomizationID("apps", "sibling") },
 		), "%v", "eligibility did not inspect the transformed batch")
 	}
 	if (*(*tailCaseInput.testCaseInput)) == "stable_then_changed" {
-		previous := (*tailCaseInput.d).prepared[(*tailCaseInput.owner)].receipt
+		previous := (*tailCaseInput.d).prepared[(*tailCaseInput.owner).Named()].receipt
 		input, _, err := kustomize.SourceInput((*tailCaseInput.st), selected)
 		assert.NoError(t, err)
 		assert.NoError(t, (*tailCaseInput.d).prepareProducer(t.Context(), selected, input))
@@ -602,13 +602,13 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 			"literal registration erased the original authored declaration",
 		)
 		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), selected)
-		assert.Equal(t, (*tailCaseInput.d).prepared[(*tailCaseInput.owner)].receipt, previous)
+		assert.Equal(t, (*tailCaseInput.d).prepared[(*tailCaseInput.owner).Named()].receipt, previous)
 		independent := *(*tailCaseInput.ready)
 		independent.DependsOn = nil
 		(*tailCaseInput.d).
 			loader.Index.Records[(*tailCaseInput.ready).Named()] = manifest.DiscoveryRecord{Declaration: &independent}
 		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), (*tailCaseInput.owner))
-		assert.Equal(t, (*tailCaseInput.d).prepared[(*tailCaseInput.owner)].receipt, previous)
+		assert.Equal(t, (*tailCaseInput.d).prepared[(*tailCaseInput.owner).Named()].receipt, previous)
 		assert.FatalIf(
 			t,
 			len((*tailCaseInput.ready).DependsOn) != 1,
@@ -641,13 +641,13 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 		(*tailCaseInput.d).
 			substitutions = vars("ready")
 		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), &projected)
-		before := (*tailCaseInput.d).prepared[&projected]
+		before := (*tailCaseInput.d).prepared[projected.Named()]
 		replacement := *before.source
 		replacement.Key = "new-source"
 		replacement.Content = "new-content"
 		(*tailCaseInput.st).
 			SetArtifact(manifest.BootstrapSourceID, &replacement)
 		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), &projected)
-		assert.Equal(t, (*tailCaseInput.d).prepared[&projected].source, &replacement)
+		assert.Equal(t, (*tailCaseInput.d).prepared[projected.Named()].source, &replacement)
 	}
 }

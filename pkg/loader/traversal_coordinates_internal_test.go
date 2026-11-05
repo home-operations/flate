@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
@@ -82,7 +84,7 @@ func testLoaderDotDotPathsCase(t *testing.T, testCaseInput *struct {
 	var wantRoots []string
 	if testCaseInput.accepted {
 		{
-			_, err := l.Load(t.Context(), dir, nil)
+			_, err := l.Load(t.Context(), dir, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
 		wantRoots = []string{testCaseInput.path}

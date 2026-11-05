@@ -20,6 +20,7 @@ const (
 	needed uint8 = 1 << iota
 	selected
 	dirty
+	ordinary
 )
 
 // NewFilter constructs empty restricted execution membership.
@@ -61,10 +62,28 @@ func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	return roles&needed != 0
 }
 
-// AddEmitted commits prepared roles if revision still applies, returning newly needed identities and retry.
+// MembershipUpdate keeps ordinary demand distinct from qualification-only demand.
+type MembershipUpdate struct {
+	Needed, Selected, Dirty, Ordinary []manifest.NamedResource
+}
+
+// OrdinaryDemand reports purpose after the monotone membership transaction.
+func (f *Filter) OrdinaryDemand(id manifest.NamedResource) bool {
+	if f == nil {
+		return true
+	}
+	f.mu.RLock()
+	roles := f.keep[id]
+	f.mu.RUnlock()
+	return roles&ordinary != 0
+}
+
+// AddEmitted MUST return existing identities when they acquire ordinary demand.
 // Callers MUST perform capture validation, inclusion arrivals and publication outside this lock.
+//
+//nolint:gocritic // The membership transaction consumes a stable value snapshot.
 func (f *Filter) AddEmitted(
-	needs, selects, dirties []manifest.NamedResource,
+	update MembershipUpdate,
 	revision uint64,
 ) ([]manifest.NamedResource, bool) {
 	if f == nil {
@@ -77,16 +96,25 @@ func (f *Filter) AddEmitted(
 	}
 	var added []manifest.NamedResource
 	changed := false
-	for axis, ids := range [3][]manifest.NamedResource{needs, selects, dirties} {
-		for _, id := range ids {
-			update := f.addRoles(id, uint8(axis), max(len(needs), len(selects), len(dirties)))
-			if !update.updated {
+	capacity := max(len(update.Needed), len(update.Selected), len(update.Dirty), len(update.Ordinary))
+	for _, axis := range [4]struct {
+		ids  []manifest.NamedResource
+		role uint8
+	}{
+		{update.Ordinary, ordinary},
+		{update.Selected, selected},
+		{update.Needed, needed},
+		{update.Dirty, dirty},
+	} {
+		for _, id := range axis.ids {
+			roleChange := f.addRoles(id, axis.role, capacity)
+			if !roleChange.updated {
 				continue
 			}
 			changed = true
-			if update.needed {
+			if roleChange.needed {
 				if added == nil {
-					added = make([]manifest.NamedResource, 0, max(len(needs), len(selects), len(dirties)))
+					added = make([]manifest.NamedResource, 0, capacity)
 				}
 				added = append(added, id)
 			}
@@ -103,12 +131,19 @@ func (f *Filter) AddEmitted(
 type roleUpdate struct{ needed, updated bool }
 
 // f.mu MUST be held by the caller.
-func (f *Filter) addRoles(id manifest.NamedResource, axis uint8, capacity int) roleUpdate {
+func (f *Filter) addRoles(id manifest.NamedResource, role uint8, capacity int) roleUpdate {
 	if id == (manifest.NamedResource{}) {
 		return roleUpdate{}
 	}
 	previous := f.keep[id]
-	roles := previous | needed | 1<<axis
+	roles := previous | needed | role
+	if role == selected {
+		roles |= ordinary
+	}
+	// Qualification settlement MUST NOT satisfy a newly required ordinary body.
+	if previous&needed != 0 && previous&ordinary == 0 && roles&ordinary != 0 {
+		roles |= dirty
+	}
 	if roles == previous {
 		return roleUpdate{}
 	}
@@ -116,7 +151,7 @@ func (f *Filter) addRoles(id manifest.NamedResource, axis uint8, capacity int) r
 		f.keep = make(map[manifest.NamedResource]uint8, capacity)
 	}
 	f.keep[id] = roles
-	return roleUpdate{needed: previous&needed == 0, updated: true}
+	return roleUpdate{needed: previous&needed == 0 || roles&ordinary != previous&ordinary, updated: true}
 }
 
 // LogValue snapshots membership when the log handler requests it.

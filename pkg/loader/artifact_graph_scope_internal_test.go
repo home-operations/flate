@@ -67,7 +67,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 			},
 		)
 		{
-			_, err := l.Load(t.Context(), view, nil)
+			_, err := l.Load(t.Context(), view, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
 		authored := manifest.NamedResource{
@@ -226,7 +226,7 @@ func TestFinalizeIndex_UntraversedBuilder(t *testing.T) {
 	admitForTest(l.Store, root)
 	l.mountSources()
 	l.documents.read(filepath.Join(root, "evidence"))
-	_, err := l.Load(t.Context(), filepath.Join(root, "selected"), nil)
+	_, err := l.Load(t.Context(), filepath.Join(root, "selected"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
@@ -298,7 +298,7 @@ func testFinalizeIndexArtifactScopeIsolationCase(
 	l.SourceRoot = root
 	admitForTest(s, root)
 	{
-		_, err := l.Load(t.Context(), root, nil)
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
 	{

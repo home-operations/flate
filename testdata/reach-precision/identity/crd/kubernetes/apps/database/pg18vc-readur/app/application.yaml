@@ -1,0 +1,9 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: readur
+spec:
+  cluster:
+    name: pg18vc
+  name: readur
+  owner: readur

@@ -180,6 +180,8 @@ func (f *Fixture) apply(tb testing.TB, op *operation) {
 			tb.Fatal("unknown ref commit")
 		}
 		must(tb, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.ReferenceName(op.Ref.Name), hash)))
+	case op.Registry != nil:
+		f.bindRegistry(tb, op.Registry)
 	}
 }
 

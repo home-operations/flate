@@ -1,0 +1,31 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  labels:
+    app.kubernetes.io/component: litellm
+    app.kubernetes.io/instance: litellm
+    app.kubernetes.io/name: litellm
+  name: litellm
+spec:
+  groups:
+  - name: litellm.rules
+    rules:
+    - alert: LitellmDown
+      annotations:
+        description: litellm proxy has disappeared from Prometheus target discovery.
+        summary: litellm proxy is down.
+      expr: 'absent(up{job=~".*litellm.*"} == 1)
+
+        '
+      for: 5m
+      labels:
+        severity: critical
+    - alert: LitellmHighFailureRate
+      annotations:
+        description: litellm proxy failure rate is {{ $value | humanizePercentage }} over the last 15 minutes.
+        summary: litellm proxy is failing a high proportion of requests.
+      expr: "(\n  sum(rate(litellm_proxy_failed_requests_metric_total[15m]))\n  /\n  sum(rate(litellm_proxy_total_requests_metric_total[15m]))\n\
+        ) > 0.1\n"
+      for: 10m
+      labels:
+        severity: warning

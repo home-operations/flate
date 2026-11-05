@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  value: /volume1/test/music-edited
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: plex
+    kustomize.toolkit.fluxcd.io/namespace: media
+  name: plex
+  namespace: media

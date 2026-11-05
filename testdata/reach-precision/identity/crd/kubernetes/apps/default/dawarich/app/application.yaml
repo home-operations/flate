@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: dawarich
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: mirror.gcr.io/freikin/dawarich:1.15.3

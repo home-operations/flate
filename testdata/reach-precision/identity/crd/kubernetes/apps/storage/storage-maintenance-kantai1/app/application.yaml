@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: smarttest-short-kantai1
+spec:
+  schedule: 0 4 * * 6
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: smarttest
+            image: ghcr.io/jfroy/smarttest:latest@sha256:eabdd5d8a0ce3a6c625d2d00d7b466878fa86286670b593935c231a9f8f4d5a1
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              privileged: true
+              runAsUser: 0
+            volumeMounts:
+            - mountPath: /dev
+              name: dev
+          nodeSelector:
+            kubernetes.io/hostname: kantai1
+          restartPolicy: OnFailure
+          volumes:
+          - hostPath:
+              path: /dev
+              type: Directory
+            name: dev

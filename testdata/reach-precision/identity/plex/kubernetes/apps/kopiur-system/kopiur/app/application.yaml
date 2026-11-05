@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kopiur-configuration
+  namespace: kopiur-system
+data:
+  values.yaml: "features:\n  credentialProjection:\n    enabled: true\n"

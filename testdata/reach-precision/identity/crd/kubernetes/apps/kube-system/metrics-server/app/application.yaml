@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metrics-server-configuration
+  namespace: kube-system
+data:
+  values.yaml: 'args:
+
+    - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+
+    - --kubelet-use-node-status-port
+
+    - --metric-resolution=15s
+
+    '

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ocharted-configuration
+  namespace: flux-system
+data:
+  values.yaml: "config:\n  upstreamAllowlist:\n  - '*.github.io'\n  - helm.plane.so\n  - pkgs.tailscale.com\n  -\
+    \ raw.githubusercontent.com\n"

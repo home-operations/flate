@@ -1,0 +1,9 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: openshell
+spec:
+  cluster:
+    name: pg18vc
+  name: openshell
+  owner: openshell

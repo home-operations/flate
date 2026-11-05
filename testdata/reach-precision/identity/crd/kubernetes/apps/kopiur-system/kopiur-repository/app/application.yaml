@@ -1,0 +1,56 @@
+apiVersion: kopiur.home-operations.com/v1alpha1
+kind: ClusterRepository
+metadata:
+  name: kopiur-r2
+spec:
+  allowedNamespaces:
+    all: true
+  catalog:
+    periodicRefresh: true
+    retain:
+      perIdentity: 0
+  backend:
+    s3:
+      auth:
+        secretRef:
+          name: kopiur-r2
+          namespace: kopiur-system
+      bucket: kantai-kopiur-1
+      endpoint: 2e8a5ea1691a53a5843e2eb2ef6dddeb.r2.cloudflarestorage.com
+      prefix: ''
+  create:
+    enabled: true
+  bootstrap:
+    failurePolicy:
+      activeDeadlineSeconds: 900
+  health:
+    probe:
+      interval: 1h
+  parameters:
+    epoch:
+      minDuration: 6h
+  encryption:
+    passwordSecretRef:
+      name: kopiur-r2
+      namespace: kopiur-system
+      key: KOPIA_PASSWORD
+  maintenance:
+    mover:
+      cache:
+        capacity: 4Gi
+  moverDefaults:
+    cache:
+      capacity: 1Gi
+      contentCacheSizeMb: 512
+      metadataCacheSizeMb: 384
+      mode: Persistent
+      storageClassName: ceph-block
+    podSecurityContext:
+      fsGroup: 1000
+      fsGroupChangePolicy: OnRootMismatch
+    securityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+    ttlSecondsAfterFinished: 300
+  scheduleDefaults:
+    timezone: America/Los_Angeles

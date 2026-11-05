@@ -1,0 +1,11 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: dawarich
+spec:
+  cluster:
+    name: pg18vc
+  name: dawarich
+  owner: dawarich
+  extensions:
+  - name: postgis

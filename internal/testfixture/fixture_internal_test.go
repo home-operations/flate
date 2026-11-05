@@ -249,7 +249,7 @@ func TestFixture_GitFaultsAndFileOperations(t *testing.T) {
 
 func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"unknown field", "unknown overlay", "escape", "duplicate id", "both operations", "missing expectation", "cache policy", "submodule escape", "submodule commit", "submodule overlay"} {
+	for _, name := range []string{"unknown field", "unknown overlay", "escape", "duplicate id", "both operations", "missing expectation", "cache policy", "submodule escape", "submodule commit", "submodule overlay", "registry overlay", "registry chart escape", "registry missing files", "registry missing sentinel", "registry source escape"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := fixtureSource(t, "reset")
@@ -258,6 +258,7 @@ func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
 			assert.NoError(t, err)
 			var s scenario
 			assert.NoError(t, json.Unmarshal(data, &s))
+			var diagnostic string
 			switch name {
 			case "unknown field":
 				data = []byte(strings.Replace(string(data), `"source":`, `"unknown":true,"source":`, 1))
@@ -279,6 +280,27 @@ func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
 				s.Overlays[0].Operations = []operation{{Submodule: &blob{Commit: "base", Path: "module"}}}
 			case "cache policy":
 				s.Cases[0].Cache.Repeat = ""
+			case "registry overlay":
+				s.Overlays[0].Operations = []operation{{Registry: &registry{
+					Chart: "charts/reach", Files: []string{"repo/value"}, Sentinel: "before",
+				}}}
+				diagnostic = "overlay operations require delete, rename, chmod, symlink or cacheFailure"
+			case "registry chart escape", "registry missing files",
+				"registry missing sentinel", "registry source escape":
+				declaration := &registry{Chart: "charts/reach", Files: []string{"repo/value"}, Sentinel: "before"}
+				s.Cases[0].Setup = []operation{{Registry: declaration}}
+				diagnostic = "registry requires a local chart, source files and a sentinel"
+				switch name {
+				case "registry chart escape":
+					declaration.Chart = "../outside"
+				case "registry missing files":
+					declaration.Files = nil
+				case "registry missing sentinel":
+					declaration.Sentinel = ""
+				case "registry source escape":
+					declaration.Files = []string{"../outside"}
+					diagnostic = "operation path escapes fixture"
+				}
 			}
 			if name != "unknown field" {
 				data, err = json.Marshal(s)
@@ -288,6 +310,9 @@ func TestScenario_RejectsInvalidDeclarations(t *testing.T) {
 			_, err = load(dir)
 			if err == nil {
 				t.Fatal("invalid scenario accepted")
+			}
+			if diagnostic != "" {
+				assert.Equal(t, err.Error(), diagnostic)
 			}
 		})
 	}

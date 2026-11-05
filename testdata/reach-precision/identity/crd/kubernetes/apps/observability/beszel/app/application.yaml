@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: beszel
+  namespace: observability
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/henrygd/beszel/beszel:0.21.0@sha256:020d80f5974e66356e6d6440736952edc9b9ea59978ac9f98418b5fb643dc0e2

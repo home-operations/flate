@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: browserr
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/janpuc/browserr:1.2.0@sha256:3ba025efc6dd515a7e1c5655bafb8e7ed571dd43f27daab135a9b8abb67522ce

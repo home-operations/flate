@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kromgo
+  namespace: observability
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/home-operations/kromgo:0.16.3@sha256:98775a53019250a517a09a0fb716404146d1aaa6fb1f67091c58345663e5b7b5

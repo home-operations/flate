@@ -1,0 +1,9 @@
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: multus-ipv4
+spec:
+  config: "{\n  \"cniVersion\": \"0.3.1\",\n  \"name\": \"multus-ipv4\",\n  \"plugins\": [\n    {\n      \"type\"\
+    : \"macvlan\",\n      \"capabilities\": { \"ips\": true },\n      \"mode\": \"bridge\",\n      \"ipam\": {\n\
+    \        \"type\": \"static\",\n        \"routes\": [\n          {\"dst\": \"0.0.0.0/0\", \"gw\": \"10.1.0.1\"\
+    }\n        ]\n      }\n    },\n    {\n      \"type\": \"sbr\"\n    }\n  ]\n}"

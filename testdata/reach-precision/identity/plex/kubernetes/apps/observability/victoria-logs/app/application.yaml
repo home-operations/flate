@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: victoria-logs-configuration
+  namespace: observability
+data:
+  values.yaml: "global:\n  image:\n    registry: quay.io\n"

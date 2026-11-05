@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: renovate-operator
+spec:
+  groups:
+  - name: renovate-operator
+    rules:
+    - alert: RenovateRunFailed
+      expr: renovate_operator_run_failed == 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Renovate run failed for {{ $labels.project }}
+        description: The last Renovate run for project {{ $labels.project }} in job {{ $labels.renovate_job }} failed.
+    - alert: RenovateDependencyIssues
+      expr: renovate_operator_dependency_issues == 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Renovate detected dependency issues for {{ $labels.project }}
+        description: The last Renovate run for project {{ $labels.project }} in job {{ $labels.renovate_job }} had
+          warnings or errors. Check the Dependency Dashboard or Renovate logs for details.

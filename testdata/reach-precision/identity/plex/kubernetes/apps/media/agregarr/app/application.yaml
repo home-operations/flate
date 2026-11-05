@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agregarr
+  namespace: media
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/agregarr/agregarr:v2.4.2@sha256:5f1390bc43fefbbfb67f38a7a8dd65b4086c1f187a37c8df5c6020a498e5d1b5

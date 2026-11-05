@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nextflux
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: docker.io/electh/nextflux:latest@sha256:d0ba604384717db088571d6b9050a0241010da0d55e51ae4e0f964fe6082410e

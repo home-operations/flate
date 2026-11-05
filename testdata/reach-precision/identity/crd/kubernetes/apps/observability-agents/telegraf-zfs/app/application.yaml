@@ -1,0 +1,20 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: telegraf-zfs
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: telegraf-zfs
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    honorLabels: true
+    relabelConfigs:
+    - action: replace
+      targetLabel: instance
+      sourceLabels:
+      - __meta_kubernetes_pod_node_name
+    - action: replace
+      targetLabel: job
+      replacement: telegraf-zfs

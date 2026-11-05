@@ -1,0 +1,17 @@
+apiVersion: tuppr.home-operations.com/v1alpha1
+kind: KubernetesUpgrade
+metadata:
+  name: kubernetes
+spec:
+  kubernetes:
+    version: v1.37.1
+  healthChecks:
+  - apiVersion: kopiur.home-operations.com/v1alpha1
+    kind: Snapshot
+    expr: status.phase != 'Running'
+  - apiVersion: kopiur.home-operations.com/v1alpha1
+    kind: Restore
+    expr: '!(status.phase in [''Resolving'', ''Restoring''])'
+  - apiVersion: ceph.rook.io/v1
+    kind: CephCluster
+    expr: status.ceph.health in ['HEALTH_OK']

@@ -35,6 +35,7 @@ type Fixture struct {
 	repositories  map[string]*git.Repository
 	origins       map[string]string
 	commitOrigins map[string]map[string]string
+	registries    map[string]string
 	runs          int
 }
 

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crd-schema-publisher-configuration
+  namespace: default
+data:
+  values.yaml: "serve:\n  enabled: true\n  port: 8081\n  httpRoute:\n    enabled: true\n    parentRefs:\n    - name:\
+    \ envoy-internal\n      namespace: network\n    hostnames:\n    - crd.kantai.xyz\n"

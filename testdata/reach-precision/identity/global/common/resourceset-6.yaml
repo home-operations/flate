@@ -1,0 +1,15 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  annotations: {fluxcd.controlplane.io/reconcile: disabled}
+  name: tt-rss-db
+  namespace: tt-rss
+spec:
+  resources:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: tt-rss-db-connection
+      namespace: tt-rss
+    data:
+      database: tt-rss-db

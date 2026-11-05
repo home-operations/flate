@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multus-configuration
+  namespace: networking
+data:
+  values.yaml: "resources:\n  requests:\n    cpu: 10m\n  limits:\n    memory: 32Mi\n"

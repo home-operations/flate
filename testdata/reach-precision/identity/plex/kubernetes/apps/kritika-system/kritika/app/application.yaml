@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kritika-configuration
+  namespace: kritika-system
+data:
+  values.yaml: "monitoring:\n  dashboards:\n    enabled: true\n    grafanaOperator:\n      enabled: true\n     \
+    \ matchLabels:\n        dashboards: grafana\n  prometheusRule:\n    enabled: true\n  serviceMonitor:\n    enabled:\
+    \ true\n"

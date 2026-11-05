@@ -1,0 +1,12 @@
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: cloudflared
+  labels:
+    external-dns.kantai.xyz/cloudflare-proxied: 'true'
+spec:
+  endpoints:
+  - dnsName: external.kantai.xyz
+    recordType: CNAME
+    targets:
+    - ${TUNNEL_ID}.cfargotunnel.com

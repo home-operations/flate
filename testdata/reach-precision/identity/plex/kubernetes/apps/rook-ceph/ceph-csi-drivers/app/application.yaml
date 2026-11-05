@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ceph-csi-drivers-configuration
+  namespace: rook-ceph
+data:
+  values.yaml: "drivers:\n  cephfs:\n    name: rook-ceph.cephfs.csi.ceph.com\n    snapshotPolicy: volumeGroupSnapshot\n\
+    \  nfs:\n    enabled: false\n  nvmeof:\n    enabled: false\n  rbd:\n    name: rook-ceph.rbd.csi.ceph.com\n \
+    \   snapshotPolicy: volumeGroupSnapshot\n"

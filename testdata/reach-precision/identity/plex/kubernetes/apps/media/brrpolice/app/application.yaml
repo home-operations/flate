@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: brrpolice-configuration
+  namespace: media
+data:
+  values.yaml: "config:\n  qbittorrent:\n    base_url: http://qbittorrent.media.svc.cluster.local\n"

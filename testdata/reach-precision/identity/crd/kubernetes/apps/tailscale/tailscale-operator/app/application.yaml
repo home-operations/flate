@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tailscale-operator-configuration
+  namespace: tailscale
+data:
+  values.yaml: "operatorConfig:\n  defaultTags:\n  - tag:k8s-operator-kantai\n  hostname: kantai\n"

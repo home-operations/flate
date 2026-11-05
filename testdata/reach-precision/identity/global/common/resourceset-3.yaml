@@ -1,0 +1,15 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  annotations: {fluxcd.controlplane.io/reconcile: disabled}
+  name: maddy-db
+  namespace: maddy
+spec:
+  resources:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: maddy-db-connection
+      namespace: maddy
+    data:
+      database: maddy-db

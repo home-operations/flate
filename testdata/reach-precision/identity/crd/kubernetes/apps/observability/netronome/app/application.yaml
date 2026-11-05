@@ -1,0 +1,19 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-traceroute-icmp
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: netronome
+  ingress:
+  - icmps:
+    - fields:
+      - family: IPv4
+        type: 11
+      - family: IPv6
+        type: 11
+      - family: IPv4
+        type: 3
+      - family: IPv6
+        type: 1

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: echo-configuration
+  namespace: network
+data:
+  values.yaml: "monitoring:\n  serviceMonitor:\n    enabled: true\n"

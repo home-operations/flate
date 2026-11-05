@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    external-dns.kubernetes.io/hostname: kantai1.smb.internal
+    external-dns.kubernetes.io/target: 10.1.2.4
+  name: kantai1-smb-internal
+spec:
+  ports:
+  - name: smbd
+    port: 445
+    targetPort: 445
+  selector:
+    app.kubernetes.io/name: kantai1-samba

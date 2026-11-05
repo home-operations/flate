@@ -1,0 +1,48 @@
+apiVersion: nfd.k8s-sigs.io/v1alpha1
+kind: NodeFeatureRule
+metadata:
+  name: network-speed
+spec:
+  rules:
+  - name: network speed 1G
+    labels:
+      feature.node.kubernetes.io/network-1G: 'true'
+    matchFeatures:
+    - feature: network.device
+      matchExpressions:
+        operstate:
+          op: In
+          value:
+          - up
+        speed:
+          op: In
+          value:
+          - '1000'
+  - name: network speed 10G
+    labels:
+      feature.node.kubernetes.io/network-10G: 'true'
+    matchFeatures:
+    - feature: network.device
+      matchExpressions:
+        operstate:
+          op: In
+          value:
+          - up
+        speed:
+          op: In
+          value:
+          - '10000'
+  - name: network speed 25G
+    labels:
+      feature.node.kubernetes.io/network-25G: 'true'
+    matchFeatures:
+    - feature: network.device
+      matchExpressions:
+        operstate:
+          op: In
+          value:
+          - up
+        speed:
+          op: In
+          value:
+          - '25000'

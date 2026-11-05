@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: stash
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: registry.kantai.xyz/stash/bulk-transcode:latest@sha256:ef916bda71586294a8ebdf2ef32815def4cf7baca8ec77855a0c53bd06e81bfe

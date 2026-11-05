@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: netbox-valkey
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/valkey-io/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd

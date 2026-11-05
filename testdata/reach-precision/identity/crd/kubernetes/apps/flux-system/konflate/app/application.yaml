@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: konflate-configuration
+  namespace: flux-system
+data:
+  values.yaml: "config:\n  repo: github://jfroy/flatops\n  statusChecks: true\n  prComments: true\n  publicUrl:\
+    \ https://{{ .Release.Name }}.kantai.xyz\n  mcp: true\n  verifyImages: true\n  maxDiffConcurrency: 2\n  renderConcurrency:\
+    \ '8'\n  kubeVersion: '{{ .Capabilities.KubeVersion.Version }}'\n  helmApiVersions: '{{ join \",\" .Capabilities.APIVersions\
+    \ }}'\n"

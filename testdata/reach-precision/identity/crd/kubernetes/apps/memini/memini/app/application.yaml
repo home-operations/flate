@@ -1,0 +1,19 @@
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: memini-opencode
+spec:
+  deletionPolicy: Delete
+  refreshInterval: 1h
+  secretStoreRefs:
+  - kind: SecretStore
+    name: push-opencode
+  selector:
+    secret:
+      name: memini
+  data:
+  - match:
+      secretKey: MEMINI_API_KEY
+      remoteRef:
+        remoteKey: opencode-memini
+        property: MEMINI_API_KEY

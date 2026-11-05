@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edns-cf-httproute-proxied-configuration
+  namespace: network
+data:
+  values.yaml: 'extraArgs:
+
+    - --cloudflare-dns-records-per-page=1000
+
+    - --cloudflare-proxied
+
+    - --default-targets=external.kantai.xyz
+
+    - --force-default-targets
+
+    - --gateway-label-filter=external-dns.kantai.xyz/cloudflare-proxied
+
+    '

@@ -1,0 +1,15 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: buildkit-allow-ingress
+spec:
+  endpointSelector:
+    matchExpressions:
+    - key: app.kubernetes.io/instance
+      operator: In
+      values:
+      - buildkit-amd64
+      - buildkit-arm64
+  ingress:
+  - fromEntities:
+    - world

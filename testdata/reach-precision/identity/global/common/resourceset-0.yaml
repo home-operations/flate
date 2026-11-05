@@ -1,0 +1,15 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  annotations: {fluxcd.controlplane.io/reconcile: disabled}
+  name: authentik-db
+  namespace: authentik
+spec:
+  resources:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: authentik-db-connection
+      namespace: authentik
+    data:
+      database: authentik-db

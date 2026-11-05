@@ -1,0 +1,15 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  annotations: {fluxcd.controlplane.io/reconcile: disabled}
+  name: paperless
+  namespace: paperless
+spec:
+  resources:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: paperless-connection
+      namespace: paperless
+    data:
+      database: paperless

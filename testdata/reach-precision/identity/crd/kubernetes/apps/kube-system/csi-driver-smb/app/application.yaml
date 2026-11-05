@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: csi-driver-smb-configuration
+  namespace: kube-system
+data:
+  values.yaml: "driver:\n  name: smb.csi.k8s.io\n  labels: {}\nfeature:\n  enableGetVolumeStats: true\n  enableInlineVolume:\
+    \ true\ncontroller:\n  name: csi-smb-controller\n  replicas: 1\n  dnsPolicy: ClusterFirstWithHostNet\n  metricsPort:\
+    \ 29644\n  livenessProbe:\n    healthPort: 29642\n  runOnMaster: false\n  runOnControlPlane: false\n  logLevel:\
+    \ 5\n  workingMountDir: /tmp\n  resources:\n    csiProvisioner:\n      limits:\n        memory: 400Mi\n    \
+    \  requests:\n        cpu: 10m\n        memory: 20Mi\n    csiResizer:\n      limits:\n        memory: 400Mi\n\
+    \      requests:\n        cpu: 10m\n        memory: 20Mi\n    livenessProbe:\n      limits:\n        memory:\
+    \ 100Mi\n      requests:\n        cpu: 10m\n        memory: 20Mi\n    smb:\n      limits:\n        memory: 200Mi\n\
+    \      requests:\n        cpu: 10m\n        memory: 20Mi\n  extraArgs:\n    csiProvisioner: []\n    csiResizer:\
+    \ []\n  affinity: {}\n  nodeSelector: {}\n  tolerations:\n  - key: node-role.kubernetes.io/master\n    operator:\
+    \ Exists\n    effect: NoSchedule\n  - key: node-role.kubernetes.io/controlplane\n    operator: Exists\n    effect:\
+    \ NoSchedule\n  - key: node-role.kubernetes.io/control-plane\n    operator: Exists\n    effect: NoSchedule\n\
+    \  - key: CriticalAddonsOnly\n    operator: Exists\n    effect: NoSchedule\nnode:\n  maxUnavailable: 1\n  logLevel:\
+    \ 5\n  livenessProbe:\n    healthPort: 29643\n  affinity: {}\n  nodeSelector: {}\n"

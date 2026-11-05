@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zfs-static-csi-configuration
+  namespace: kube-system
+data:
+  values.yaml: "affinity:\n  nodeAffinity:\n    requiredDuringSchedulingIgnoredDuringExecution:\n      nodeSelectorTerms:\n\
+    \      - matchExpressions:\n        - key: extensions.talos.dev/zfs\n          operator: Exists\n"

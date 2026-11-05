@@ -1,0 +1,15 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: etampe
+spec:
+  allowCrossNamespaceImport: true
+  datasources:
+  - datasourceName: prometheus
+    inputName: DS_PROMETHEUS
+  instanceSelector:
+    matchLabels:
+      grafana.internal/instance: grafana
+  configMapRef:
+    name: etampe-dashboards
+    key: etampe-overview.json

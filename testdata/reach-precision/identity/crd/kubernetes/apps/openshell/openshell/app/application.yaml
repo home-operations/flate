@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openshell-configuration
+  namespace: openshell
+data:
+  values.yaml: "server:\n  externalDbSecret: openshell-pg\n  disableTls: true\n  tls:\n    clientCaSecretName: ''\n\
+    \  oidc:\n    issuer: https://pid.kantai.xyz\n    audience: openshell-cli\n  credentialStorage:\n    existingSecret:\
+    \ openshell-cek\n  workspaceStorageClass: ceph-block\n  workspaceDefaultStorageSize: 20Gi\n  telemetryEnabled:\
+    \ false\n  logLevel: info\n"

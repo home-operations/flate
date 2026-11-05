@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: plane-set-bucket-cors
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: setcors
+        image: docker.io/amazon/aws-cli:2.37.12@sha256:ce44b800602264c12298bbf3399055a4cefdb9ed4a098abe564afe26e7071bce
+        command:
+        - /bin/sh
+        - -c
+        - "set -e\naws --endpoint-url http://rook-ceph-rgw-ceph-objectstore.rook-ceph.svc:80 \\\n  s3api put-bucket-cors\
+          \ --bucket plane --cors-configuration '{\n    \"CORSRules\": [\n      {\n        \"AllowedOrigins\": [\"\
+          https://plane.kantai.xyz\"],\n        \"AllowedMethods\": [\"GET\", \"PUT\", \"POST\", \"DELETE\", \"\
+          HEAD\"],\n        \"AllowedHeaders\": [\"*\"],\n        \"ExposeHeaders\": [\"ETag\"],\n        \"MaxAgeSeconds\"\
+          : 3600\n      }\n    ]\n  }'\necho \"CORS applied; reading back:\"\naws --endpoint-url http://rook-ceph-rgw-ceph-objectstore.rook-ceph.svc:80\
+          \ \\\n  s3api get-bucket-cors --bucket plane\n"
+        env:
+        - name: HOME
+          value: /tmp
+        - name: AWS_EC2_METADATA_DISABLED
+          value: 'true'
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: plane-obc
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: plane-obc
+              key: AWS_SECRET_ACCESS_KEY
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000

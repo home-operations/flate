@@ -85,6 +85,7 @@ func assertScenarioFiles(t *testing.T, dir string, s *scenario) map[string]bool 
 
 type packageObservation struct {
 	files, packages map[string]bool
+	complete        map[string]bool
 }
 
 func assertScenarioPackages(t *testing.T, dir string, s *scenario, missing map[string]bool) {
@@ -98,6 +99,7 @@ func assertScenarioPackages(t *testing.T, dir string, s *scenario, missing map[s
 			observation := &observations[caseIndex]
 			observation.files = make(map[string]bool)
 			observation.packages = make(map[string]bool)
+			observation.complete = complete
 			s.assertCasePackages(t, dir, &s.Cases[caseIndex], observation)
 		})
 	}
@@ -170,6 +172,7 @@ func (s *scenario) assertCasePackages(t *testing.T, dir string, c *Case, observa
 		files[filepath.Join(dir, file.Path)] = file
 	}
 	var codes map[int]bool
+	sdkOnly := !slices.ContainsFunc(c.Steps, func(step Step) bool { return step.Invoke != nil })
 	for i, step := range c.Steps {
 		for _, source := range f.origins {
 			rel, err := filepath.Rel(dir, source)
@@ -178,12 +181,15 @@ func (s *scenario) assertCasePackages(t *testing.T, dir string, c *Case, observa
 		}
 		if step.Edit != nil {
 			f.Edit(t, step)
+			if sdkOnly {
+				f.assertMaterializedPackages(t, files, observation, nil)
+			}
 			continue
 		}
 		if i == 0 || c.Steps[i-1].Edit != nil {
 			codes = stateExitCodes(c.Steps[i:])
 		}
-		f.assertMaterializedPackages(t, files, observation.packages, codes)
+		f.assertMaterializedPackages(t, files, observation, codes)
 	}
 }
 
@@ -201,7 +207,7 @@ func stateExitCodes(steps []Step) map[int]bool {
 func (f *Fixture) assertMaterializedPackages(
 	t *testing.T,
 	files map[string]fileUse,
-	seen map[string]bool,
+	observation *packageObservation,
 	codes map[int]bool,
 ) {
 	t.Helper()
@@ -221,7 +227,10 @@ func (f *Fixture) assertMaterializedPackages(
 			if !ok {
 				return fmt.Errorf("package %s requires an active file use for case %s", path, f.Plan.Name)
 			}
-			seen[role.Path] = true
+			if codes == nil && observation.complete[role.Path] {
+				return nil
+			}
+			observation.packages[role.Path] = true
 			return f.assertMaterializedPackage(t, path, &role, codes)
 		}))
 	}
@@ -232,8 +241,11 @@ func (f *Fixture) assertMaterializedPackage(t *testing.T, path string, role *fil
 	target := filepath.Dir(path)
 	observed := &componentRead{FileSystem: filesys.MakeFsOnDisk()}
 	if role.Package == "component" {
-		target = f.path(t, role.Consumer)
-		var err error
+		relative, err := filepath.Rel(f.root, path)
+		must(t, err)
+		repository, _, _ := strings.Cut(filepath.ToSlash(relative), "/")
+		_, consumer, _ := strings.Cut(role.Consumer, "/")
+		target = f.path(t, repository+"/"+consumer)
 		observed.path, err = filepath.EvalSymlinks(path)
 		if err != nil {
 			return fmt.Errorf("resolve component %s: %w", role.Path, err)

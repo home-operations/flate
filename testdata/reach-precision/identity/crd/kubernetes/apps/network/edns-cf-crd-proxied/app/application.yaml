@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edns-cf-crd-proxied-configuration
+  namespace: network
+data:
+  values.yaml: 'extraArgs:
+
+    - --cloudflare-dns-records-per-page=1000
+
+    - --cloudflare-proxied
+
+    - --crd-source-apiversion=externaldns.k8s.io/v1alpha1
+
+    - --crd-source-kind=DNSEndpoint
+
+    - --label-filter=external-dns.kantai.xyz/cloudflare-proxied
+
+    '

@@ -1,0 +1,15 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  annotations: {fluxcd.controlplane.io/reconcile: disabled}
+  name: forgejo-db
+  namespace: forgejo
+spec:
+  resources:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: forgejo-db-connection
+      namespace: forgejo
+    data:
+      database: forgejo-db

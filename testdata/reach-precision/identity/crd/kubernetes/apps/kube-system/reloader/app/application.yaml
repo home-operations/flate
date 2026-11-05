@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reloader-configuration
+  namespace: kube-system
+data:
+  values.yaml: "reloader:\n  deployment:\n    containerSecurityContext:\n      allowPrivilegeEscalation: false\n\
+    \      capabilities:\n        drop:\n        - ALL\n      readOnlyRootFilesystem: true\n  podDisruptionBudget:\n\
+    \    enabled: false\n  podMonitor:\n    enabled: true\n    namespace: kube-system\n  readOnlyRootFileSystem:\
+    \ true\n"

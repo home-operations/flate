@@ -1,7 +1,0 @@
-apiVersion: fluxcd.controlplane.io/v1
-kind: ResourceSet
-metadata:
-  name: paperless
-  namespace: paperless
-spec:
-  resources: []

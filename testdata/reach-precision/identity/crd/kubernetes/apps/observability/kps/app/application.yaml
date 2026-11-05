@@ -1,0 +1,24 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: validating-admission-denial
+  namespace: monitoring
+spec:
+  groups:
+  - name: admission-policy-denials
+    rules:
+    - alert: ValidatingAdmissionPolicyDenied
+      expr: 'sum by(name) (increase(apiserver_admission_webhook_rejection_count{type="validating"}[5m])) > 0
+
+        '
+      for: 1m
+      labels:
+        severity: warning
+        category: admission
+      annotations:
+        summary: Admission policy '{{ $labels.name }}' denied requests
+        description: 'The policy **{{ $labels.name }}** (operation={{ $labels.operation }})
+
+          has denied {{ $value }} request(s) in the last 5 minutes.
+
+          '

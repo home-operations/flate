@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arc-configuration
+  namespace: actions-runner-system
+data:
+  values.yaml: "podSecurityContext:\n  runAsNonRoot: true\n  seccompProfile:\n    type: RuntimeDefault\n"

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: docker-registry-ui
+  namespace: default
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/eznix86/docker-registry-ui:1.6.0@sha256:6da64b22ce8668470e1ca566fe4a7f3e3a97e92116ff245cb4b45c1b0c37f97d

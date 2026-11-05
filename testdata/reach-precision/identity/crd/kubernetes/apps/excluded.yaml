@@ -1,0 +1,2575 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: arc
+  namespace: actions-runner-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/actions-runner-system/arc/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: arc-runners
+  namespace: actions-runner-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/actions-runner-system/arc-runners/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: agent-sandbox
+  namespace: agent-sandbox-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/agent-sandbox-system/agent-sandbox/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/cert-manager/cert-manager/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cert-manager-issuers
+  namespace: cert-manager
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/cert-manager/cert-manager-issuers/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster-ca-bundle
+  namespace: cert-manager
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/cert-manager/cluster-ca-bundle/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: trust-manager
+  namespace: cert-manager
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/cert-manager/trust-manager/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cloudnative-pg
+  namespace: cnpg-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/cnpg-system/cloudnative-pg/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cnpg-barman-cloud
+  namespace: cnpg-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/cnpg-system/cnpg-barman-cloud/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: influxdb
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/influxdb/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-bookorbit
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-bookorbit/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-dashbrr
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-dashbrr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-dawarich
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-dawarich/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-homebox
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-homebox/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-immich
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-immich/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-kite
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-kite/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-litellm
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-litellm/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-mealie
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-mealie/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-memini
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-memini/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-memos
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-memos/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-miniflux
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-miniflux/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-netbox
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-netbox/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-netronome
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-netronome/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-openshell
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-openshell/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-paperless
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-paperless/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-plane
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-plane/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-pocket-id
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-pocket-id/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-prowlarr
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-prowlarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-radarr
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-radarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-readur
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-readur/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-seerr
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-seerr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-sonarr
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-sonarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-spoolman
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-spoolman/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-tenants
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-tenants/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-toolhive-registry
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-toolhive-registry/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-tracearr
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-tracearr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg18vc-zipline
+  namespace: database
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/database/pg18vc-zipline/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: bookorbit
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/bookorbit/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: browserr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/browserr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: buildkit
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/buildkit/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: changedetection
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/changedetection/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cleanrr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/cleanrr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: crd-schema-publisher
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/crd-schema-publisher/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dashbrr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/dashbrr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dawarich
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/dawarich/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: docker-registry-ui
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/docker-registry-ui/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: esphome
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/esphome/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: etampe
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/etampe/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: gluetun-update
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/gluetun-update/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: gpu-claim-templates
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/gpu-claim-templates/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: homebox
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/homebox/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: houndarr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/houndarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: immich
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/immich/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: immich-pet-tagger
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/immich-pet-tagger/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: immich-skylight
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/immich-skylight/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: immich-valkey
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/immich-valkey/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: karakeep
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/karakeep/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: komga
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/komga/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: livesync
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/livesync/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: mealie
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/mealie/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: media-pv
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/media-pv/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: memos
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/memos/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: miniflux
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/miniflux/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: netbox
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/netbox/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: netbox-valkey
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/netbox-valkey/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: nextflux
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/nextflux/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: paperless
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/paperless/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pgadmin
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/pgadmin/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: photon
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/photon/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: plex
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/plex/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pocket-id
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/pocket-id/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: prowlarr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/prowlarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qbittorrent
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/qbittorrent/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qui
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/qui/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: radarr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/radarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: readur
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/readur/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: recyclarr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/recyclarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: sabnzbd
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/sabnzbd/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: seerr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/seerr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: sonarr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/sonarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: spoolman
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/spoolman/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: stash
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/stash/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tracearr
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/tracearr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ytptube
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/ytptube/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: zipline
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/zipline/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: zot
+  namespace: default
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/default/zot/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/external-secrets/external-secrets/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: external-secrets-stores
+  namespace: external-secrets
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/external-secrets/external-secrets-stores/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-instance
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/flux-system/flux-instance/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/flux-system/flux-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: konflate
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/flux-system/konflate/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ocharted
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/flux-system/ocharted/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kopiur
+  namespace: kopiur-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kopiur-system/kopiur/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kopiur-repository
+  namespace: kopiur-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kopiur-system/kopiur-repository/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/cilium/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cilium-config
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/cilium-config/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: coredns
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/coredns/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cpufreq-kantai1
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/cpufreq-kantai1/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: csi-driver-smb
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/csi-driver-smb/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: descheduler
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/descheduler/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: generic-device-plugin
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/generic-device-plugin/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kubelet-csr-approver
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/kubelet-csr-approver/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: metrics-server
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/metrics-server/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: multus-networks
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/multus-networks/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: node-feature-discovery
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/node-feature-discovery/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: node-feature-discovery-custom
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/node-feature-discovery-custom/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: reloader
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/reloader/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: runtimes
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/runtimes/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: snapshot-controller
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/snapshot-controller/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: spegel
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/spegel/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: zfs-static-csi
+  namespace: kube-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/kube-system/zfs-static-csi/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: litellm
+  namespace: litellm
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/litellm/litellm/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: litellm-operator
+  namespace: litellm-operator
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/litellm-operator/litellm-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-operator-mcp
+  namespace: mcp
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/mcp/flux-operator-mcp/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ha-mcp
+  namespace: mcp
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/mcp/ha-mcp/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: telemetry
+  namespace: mcp
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/mcp/telemetry/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: memini
+  namespace: memini
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/memini/memini/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cloudflared
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/cloudflared/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: echo
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/echo/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: edns-cf-crd
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/edns-cf-crd/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: edns-cf-crd-proxied
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/edns-cf-crd-proxied/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: edns-cf-gatewayroutes
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/edns-cf-gatewayroutes/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: edns-cf-httproute-proxied
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/edns-cf-httproute-proxied/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: edns-unifi
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/edns-unifi/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: edns-unifi-crd
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/edns-unifi-crd/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: envoy-gateway
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/envoy-gateway/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: external-dns-common
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/external-dns-common/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: gateway-certificates
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/gateway-certificates/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tailscale-dns
+  namespace: network
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/network/tailscale-dns/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dra-driver-nvidia-gpu
+  namespace: nvidia-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/nvidia-system/dra-driver-nvidia-gpu/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: gpu-operator
+  namespace: nvidia-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/nvidia-system/gpu-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: beszel
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/beszel/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: blackbox-exporter
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/blackbox-exporter/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: dozzle
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/dozzle/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: exportarr
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/exportarr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: gatus-sidecar
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/gatus-sidecar/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: grafana-dashboards
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/grafana-dashboards/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: grafana-instance
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/grafana-instance/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: grafana-operator
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/grafana-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kite
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/kite/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kps
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/kps/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: netronome
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/netronome/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: nut-exporter
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/nut-exporter/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: prometheus-operator-crds
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/prometheus-operator-crds/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: scrutiny
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/scrutiny/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: silence-operator
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/silence-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: silence-operator-silences
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/silence-operator-silences/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: siren
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/siren/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: speedtest-exporter
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/speedtest-exporter/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: trove
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/trove/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unpoller
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/unpoller/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: victoria-logs
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/victoria-logs/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: victoria-metrics
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/victoria-metrics/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: victoria-operator
+  namespace: observability
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability/victoria-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: node-exporter
+  namespace: observability-agents
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability-agents/node-exporter/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: scrutiny-collector
+  namespace: observability-agents
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability-agents/scrutiny-collector/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: scrutiny-collector-zfs
+  namespace: observability-agents
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability-agents/scrutiny-collector-zfs/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: smartctl-exporter
+  namespace: observability-agents
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability-agents/smartctl-exporter/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: telegraf-powerwall
+  namespace: observability-agents
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability-agents/telegraf-powerwall/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: telegraf-zfs
+  namespace: observability-agents
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability-agents/telegraf-zfs/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: vlagent
+  namespace: observability-agents
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/observability-agents/vlagent/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: opencode
+  namespace: opencode
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/opencode/opencode/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: openebs-localpv
+  namespace: openebs-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/openebs-system/openebs-localpv/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: openshell
+  namespace: openshell
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/openshell/openshell/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: plane
+  namespace: plane
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/plane/plane/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: renovate-jobs
+  namespace: renovate
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/renovate/renovate-jobs/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: renovate-operator
+  namespace: renovate
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/renovate/renovate-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ceph-csi-drivers
+  namespace: rook-ceph
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/rook-ceph/ceph-csi-drivers/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: rook-ceph-cluster
+  namespace: rook-ceph
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/rook-ceph/rook-ceph-cluster/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: rook-ceph-operator
+  namespace: rook-ceph
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/rook-ceph/rook-ceph-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: backups
+  namespace: storage
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/storage/backups/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kantai1-samba
+  namespace: storage
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/storage/kantai1-samba/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-maintenance-kantai1
+  namespace: storage
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/storage/storage-maintenance-kantai1/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: storage-pv
+  namespace: storage
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/storage/storage-pv/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: netpols
+  namespace: tailscale
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/tailscale/netpols/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tailscale-operator
+  namespace: tailscale
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/tailscale/tailscale-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: etcd-defrag
+  namespace: talos-admin
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/talos-admin/etcd-defrag/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: talos-backup
+  namespace: talos-admin
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/talos-admin/talos-backup/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tuppr
+  namespace: talos-admin
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/talos-admin/tuppr/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tuppr-upgrades
+  namespace: talos-admin
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/talos-admin/tuppr-upgrades/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: toolhive-crds
+  namespace: toolhive-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/toolhive-system/toolhive-crds/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: toolhive-operator
+  namespace: toolhive-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/toolhive-system/toolhive-operator/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: toolhive-registry-server
+  namespace: toolhive-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/toolhive-system/toolhive-registry-server/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: cluster
+    namespace: flux-system

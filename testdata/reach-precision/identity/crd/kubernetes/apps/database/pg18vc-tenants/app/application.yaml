@@ -1,0 +1,8 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: DatabaseRole
+metadata:
+  name: cert-login
+spec:
+  cluster:
+    name: pg18vc
+  name: cert_login

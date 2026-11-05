@@ -1,0 +1,6 @@
+resources: [helmrelease.yaml]
+configMapGenerator:
+- name: kromgo-configmap
+  files:
+  - config.yaml=./resources/config-renamed.yaml
+generatorOptions: {disableNameSuffixHash: true}

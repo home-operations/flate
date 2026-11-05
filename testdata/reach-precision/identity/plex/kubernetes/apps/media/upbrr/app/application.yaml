@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: upbrr
+  namespace: media
+spec:
+  containers:
+  - name: app
+    image: ghcr.io/autobrr/upbrr:0.4.1@sha256:b8c8f3744884ab7683e23b7cf57b31ae0d017555bb6d53b109a6546e9aa02ccf

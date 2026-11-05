@@ -105,7 +105,32 @@ func (s *Store) assessments() []*ReadSet {
 		}
 		sh.mu.RUnlock()
 	}
-	return slices.DeleteFunc(bundles, func(reads *ReadSet) bool { return !reads.Valid() })
+	return slices.DeleteFunc(bundles, s.obsoleteAssessment)
+}
+
+func (s *Store) obsoleteAssessment(reads *ReadSet) bool {
+	if !reads.Valid() {
+		return true
+	}
+	if !reads.retired.Load() {
+		return false
+	}
+	for input := reads.inputs; input != nil; input = input.next {
+		sh := s.shardFor(input.Ref.NamedResource)
+		sh.mu.RLock()
+		for kind := objectFacet; kind <= bucketFacet; kind++ {
+			cell := input.cell(kind)
+			if cell == nil || cell.head == nil {
+				continue
+			}
+			if sh.headLocked(headKey{input.Ref.NamedResource, kind}).generation != cell.generation.Load() {
+				sh.mu.RUnlock()
+				return true
+			}
+		}
+		sh.mu.RUnlock()
+	}
+	return false
 }
 
 type warningKey struct {

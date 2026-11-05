@@ -1,0 +1,24 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  labels:
+    role: selected
+  name: branches
+  namespace: flux-system
+spec:
+  defaultValues:
+    color: blue
+    tenant: alpha
+  type: Static
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: regions
+  namespace: flux-system
+spec:
+  type: GitHubBranch
+status:
+  exportedInputs:
+  - region: eu
+  - region: us

@@ -14,10 +14,7 @@ import (
 )
 
 // Each migration removes its files from this fixed list. New files receive no exemption.
-const unmigratedFiles = `crds/metadata_test.go
-crds/missing_crds_test.go
-crds/resourceset_test.go
-scope/authoritative_manifest_failures_test.go
+const unmigratedFiles = `scope/authoritative_manifest_failures_test.go
 scope/bootstrap_namespace_projection_test.go
 scope/cache_diff_test.go
 scope/child_kustomization_identity_test.go

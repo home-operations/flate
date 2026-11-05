@@ -1,0 +1,6 @@
+
+  ✓  Kustomization  backend/apps-backend
+  ✓  Kustomization  flux-system/cluster-tenants
+  ✓  Kustomization  frontend/apps-frontend
+
+  ✓ 3 passed   <DUR>

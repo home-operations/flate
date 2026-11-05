@@ -1,0 +1,8 @@
+
+  ✗  Widget  other/missing-widget  not found
+         required by other/unrelated
+
+  ⚠ warnings (1)
+    [MissingCRD] CustomResourceDefinition helmreleases.helm.toolkit.fluxcd.io: CRD CustomResourceDefinition.apiextensions.k8s.io/helmreleases.helm.toolkit.fluxcd.io absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator
+
+  ✗ 1 failed · 1 blocked

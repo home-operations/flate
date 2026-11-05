@@ -1,0 +1,11 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: supplied
+  namespace: flux-system
+spec:
+  type: GitHubBranch
+status:
+  exportedInputs:
+  - color: green
+    tenant: supplied

@@ -1,0 +1,5 @@
+
+  ✓  Kustomization  flux-system/apps
+  ⊘  ResourceSet    flux-system/flux-operator  blocked by flux-system/helmreleases.helm.toolkit.fluxcd.io (not found)
+
+  ✗ 1 passed · 1 blocked   <DUR>

@@ -1,0 +1,418 @@
+{
+  "source": {
+    "repository": "billimek/k8s-gitops",
+    "revision": "127e039d8c739d748e20415dd3fdcaff91b4cb2d",
+    "paths": [
+      "kubernetes/kube-system/nfs-scalers/resourceset-nfs-scalers.yaml"
+    ],
+    "reductions": "Copy the static app input and templated output shape with two ConfigMaps in place of HPAs. Document, metadata and malformed-member variants are authored controls, not copied upstream content."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "duplicate-replicas",
+      "directory": "overlays/duplicate-replicas"
+    },
+    {
+      "name": "malformed-member",
+      "directory": "overlays/malformed-member"
+    },
+    {
+      "name": "metadata",
+      "directory": "overlays/metadata",
+      "operations": [
+        {
+          "delete": "repo/flux.yaml"
+        },
+        {
+          "delete": "repo/apps"
+        },
+        {
+          "delete": "repo/child"
+        }
+      ]
+    },
+    {
+      "name": "billimek-scalers",
+      "directory": "overlays/billimek-scalers"
+    }
+  ],
+  "cases": [
+    {
+      "name": "resource-set-document-boundary",
+      "description": "resource set document boundary.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "documents-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/documents-build.stdout",
+              "stderr": "expect/documents-build.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "duplicate-edit",
+          "edit": {
+            "overlay": "duplicate-replicas"
+          }
+        },
+        {
+          "id": "documents-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--path-orig",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/documents-diff.stdout",
+              "stderr": "expect/documents-diff.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "malformed-edit",
+          "edit": {
+            "overlay": "malformed-member"
+          }
+        },
+        {
+          "id": "documents-malformed",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/documents-malformed.stdout",
+              "stderr": "expect/documents-malformed.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "controller-metadata-ownership",
+      "description": "controller metadata ownership.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "metadata"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "metadata-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@/entry",
+              "--concurrency=2",
+              "--no-progress",
+              "--skip-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/metadata-build.stdout",
+              "stderr": "expect/metadata-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "billimek-scalers",
+      "description": "billimek scalers.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "billimek-scalers"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "billimek-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/billimek-build.stdout",
+              "stderr": "expect/billimek-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/billimek-build.stderr",
+      "cases": [
+        "billimek-scalers"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/billimek-build.stdout",
+      "cases": [
+        "billimek-scalers"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/documents-build.stderr",
+      "cases": [
+        "resource-set-document-boundary"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/documents-build.stdout",
+      "cases": [
+        "resource-set-document-boundary"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/documents-diff.stderr",
+      "cases": [
+        "resource-set-document-boundary"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/documents-diff.stdout",
+      "cases": [
+        "resource-set-document-boundary"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/documents-malformed.stderr",
+      "cases": [
+        "resource-set-document-boundary"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/documents-malformed.stdout",
+      "cases": [
+        "resource-set-document-boundary"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/metadata-build.stderr",
+      "cases": [
+        "controller-metadata-ownership"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/metadata-build.stdout",
+      "cases": [
+        "controller-metadata-ownership"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "overlays/billimek-scalers/repo/apps/rs.yaml",
+      "cases": [
+        "billimek-scalers"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/duplicate-replicas/repo/apps/rs.yaml",
+      "cases": [
+        "resource-set-document-boundary"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/malformed-member/repo/apps/rs.yaml",
+      "cases": [
+        "resource-set-document-boundary"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/metadata/repo/app/kustomization.yaml",
+      "cases": [
+        "controller-metadata-ownership"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/metadata/repo/app/objects.yaml",
+      "cases": [
+        "controller-metadata-ownership"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/metadata/repo/chart/Chart.yaml",
+      "cases": [
+        "controller-metadata-ownership"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/metadata/repo/chart/templates/config.yaml",
+      "cases": [
+        "controller-metadata-ownership"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/metadata/repo/entry/kustomization.yaml",
+      "cases": [
+        "controller-metadata-ownership"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/metadata/repo/entry/root.yaml",
+      "cases": [
+        "controller-metadata-ownership"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/apps/kustomization.yaml",
+      "cases": [
+        "resource-set-document-boundary",
+        "controller-metadata-ownership",
+        "billimek-scalers"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/apps/rs.yaml",
+      "cases": [
+        "resource-set-document-boundary",
+        "controller-metadata-ownership",
+        "billimek-scalers"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/child/kustomization.yaml",
+      "cases": [
+        "resource-set-document-boundary",
+        "controller-metadata-ownership",
+        "billimek-scalers"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/child/result.yaml",
+      "cases": [
+        "resource-set-document-boundary",
+        "controller-metadata-ownership",
+        "billimek-scalers"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/flux.yaml",
+      "cases": [
+        "resource-set-document-boundary",
+        "controller-metadata-ownership",
+        "billimek-scalers"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    }
+  ]
+}

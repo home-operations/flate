@@ -1,0 +1,8 @@
+
+  ✗  ResourceSet  flux-system/documents  document 1: missing metadata.name for List
+
+  ⚠ warnings (1)
+    [SOPSUnreadable] ConfigMap flux-system/sanitized: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      encrypted
+
+  ✗ 1 failed

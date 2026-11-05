@@ -1,0 +1,933 @@
+{
+  "source": {
+    "repository": "xunholy/k8s-gitops",
+    "revision": "2f2e6edc730457a3f45d7a73aad536afc683b5eb",
+    "paths": [
+      "kubernetes/apps/base/preview-system/app/resourcesetinputprovider.yaml"
+    ],
+    "reductions": "Authored offline provider variant of the static fan-out. Keep the provider reference and replace the remote payload with two static tenant inputs."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "static-provider",
+      "directory": "overlays/static-provider"
+    },
+    {
+      "name": "selector-provider",
+      "directory": "overlays/selector-provider"
+    },
+    {
+      "name": "flatten-provider",
+      "directory": "overlays/flatten-provider"
+    },
+    {
+      "name": "permute-provider",
+      "directory": "overlays/permute-provider"
+    },
+    {
+      "name": "supplied-provider",
+      "directory": "overlays/supplied-provider"
+    },
+    {
+      "name": "oci-tags",
+      "directory": "overlays/oci-tags"
+    },
+    {
+      "name": "invalid-template",
+      "directory": "overlays/invalid-template"
+    },
+    {
+      "name": "invalid-selector",
+      "directory": "overlays/invalid-selector"
+    }
+  ],
+  "cases": [
+    {
+      "name": "provider-warnings",
+      "description": "provider warnings.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "provider-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/provider-get.stdout",
+              "stderr": "expect/provider-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "provider-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/provider-build.stdout",
+              "stderr": "expect/provider-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "provider-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/provider-test.stdout",
+              "stderr": "expect/provider-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "static-provider",
+      "description": "static provider.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "static-provider"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "static-provider-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-tenants",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/static-provider-build.stdout",
+              "stderr": "expect/static-provider-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "selector-provider",
+      "description": "selector provider.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "selector-provider"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selector-provider-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-tenants",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/selector-provider-build.stdout",
+              "stderr": "expect/selector-provider-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "flatten-provider",
+      "description": "flatten provider.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "flatten-provider"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "flatten-provider-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-tenants",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/flatten-provider-build.stdout",
+              "stderr": "expect/flatten-provider-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "permute-provider",
+      "description": "permute provider.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "permute-provider"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "permute-provider-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-tenants",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/permute-provider-build.stdout",
+              "stderr": "expect/permute-provider-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "supplied-provider",
+      "description": "supplied provider.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "supplied-provider"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "supplied-provider-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-tenants",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap",
+              "-o",
+              "json",
+              "--supply",
+              "@@inputs@@/provider.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/supplied-provider-build.stdout",
+              "stderr": "expect/supplied-provider-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "oci-tags",
+      "description": "oci tags.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "oci-tags"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "oci-tags-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-tenants",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/oci-tags-build.stdout",
+              "stderr": "expect/oci-tags-build.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid-template",
+      "description": "invalid template.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "invalid-template"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invalid-template-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-tenants",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-template-build.stdout",
+              "stderr": "expect/invalid-template-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid-selector",
+      "description": "invalid selector.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "invalid-selector"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "invalid-selector-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-tenants",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--only-kinds=ConfigMap",
+              "-o",
+              "json"
+            ],
+            "expect": {
+              "stdout": "expect/invalid-selector-build.stdout",
+              "stderr": "expect/invalid-selector-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/flatten-provider-build.stderr",
+      "cases": [
+        "flatten-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/flatten-provider-build.stdout",
+      "cases": [
+        "flatten-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/invalid-selector-build.stderr",
+      "cases": [
+        "invalid-selector"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/invalid-selector-build.stdout",
+      "cases": [
+        "invalid-selector"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/invalid-template-build.stderr",
+      "cases": [
+        "invalid-template"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/invalid-template-build.stdout",
+      "cases": [
+        "invalid-template"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/oci-tags-build.stderr",
+      "cases": [
+        "oci-tags"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/oci-tags-build.stdout",
+      "cases": [
+        "oci-tags"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/permute-provider-build.stderr",
+      "cases": [
+        "permute-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/permute-provider-build.stdout",
+      "cases": [
+        "permute-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/provider-build.stderr",
+      "cases": [
+        "provider-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/provider-build.stdout",
+      "cases": [
+        "provider-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/provider-get.stderr",
+      "cases": [
+        "provider-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/provider-get.stdout",
+      "cases": [
+        "provider-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/provider-test.stderr",
+      "cases": [
+        "provider-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/provider-test.stdout",
+      "cases": [
+        "provider-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selector-provider-build.stderr",
+      "cases": [
+        "selector-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selector-provider-build.stdout",
+      "cases": [
+        "selector-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/static-provider-build.stderr",
+      "cases": [
+        "static-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/static-provider-build.stdout",
+      "cases": [
+        "static-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/supplied-provider-build.stderr",
+      "cases": [
+        "supplied-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/supplied-provider-build.stdout",
+      "cases": [
+        "supplied-provider"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "inputs/empty",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "inputs/manifest.json",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "inputs/provider.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "inputs/tags.json",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/flatten-provider/repo/tenants/apps.yaml",
+      "cases": [
+        "flatten-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/flatten-provider/repo/tenants/provider.yaml",
+      "cases": [
+        "flatten-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/invalid-selector/repo/tenants/apps.yaml",
+      "cases": [
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/invalid-selector/repo/tenants/provider.yaml",
+      "cases": [
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/invalid-template/repo/tenants/apps.yaml",
+      "cases": [
+        "invalid-template"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/invalid-template/repo/tenants/provider.yaml",
+      "cases": [
+        "invalid-template"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/oci-tags/repo/tenants/apps.yaml",
+      "cases": [
+        "oci-tags"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/oci-tags/repo/tenants/provider.yaml",
+      "cases": [
+        "oci-tags"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/permute-provider/repo/tenants/apps.yaml",
+      "cases": [
+        "permute-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/permute-provider/repo/tenants/provider.yaml",
+      "cases": [
+        "permute-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selector-provider/repo/tenants/apps.yaml",
+      "cases": [
+        "selector-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selector-provider/repo/tenants/provider.yaml",
+      "cases": [
+        "selector-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/static-provider/repo/tenants/apps.yaml",
+      "cases": [
+        "static-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/static-provider/repo/tenants/provider.yaml",
+      "cases": [
+        "static-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-provider/repo/tenants/apps.yaml",
+      "cases": [
+        "supplied-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-provider/repo/tenants/provider.yaml",
+      "cases": [
+        "supplied-provider"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/cluster/flux-system.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/apps.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/backend/cm.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/backend/kustomization.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/frontend/cm.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/frontend/kustomization.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/kustomization.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/tenants/provider.yaml",
+      "cases": [
+        "provider-warnings",
+        "static-provider",
+        "selector-provider",
+        "flatten-provider",
+        "permute-provider",
+        "supplied-provider",
+        "oci-tags",
+        "invalid-template",
+        "invalid-selector"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    }
+  ],
+  "inputs": "inputs",
+  "transport": [
+    {
+      "host": "registry.fixture.invalid",
+      "method": "GET",
+      "path": "/v2/images/tags/list",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": "inputs/tags.json"
+    },
+    {
+      "host": "registry.fixture.invalid",
+      "method": "HEAD",
+      "path": "/v2/images/manifests/release-b",
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+        "Docker-Content-Digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "Content-Length": "2"
+      },
+      "body": "inputs/manifest.json"
+    }
+  ]
+}

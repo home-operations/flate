@@ -1,0 +1,4 @@
+
+  ⚠ warnings (1)
+    [OfflineInputProvider] ResourceSet flux-system/apps: dynamic input provider contributes no inputs offline
+      ResourceSetInputProvider.fluxcd.controlplane.io/flux-system/branches, GitHubBranch

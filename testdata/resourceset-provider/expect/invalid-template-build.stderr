@@ -1,0 +1,4 @@
+
+  ✗  ResourceSet  flux-system/apps  spec.resourcesTemplate: parse template: template: resourceset:1: function "undefined" not defined
+
+  ✗ 1 failed

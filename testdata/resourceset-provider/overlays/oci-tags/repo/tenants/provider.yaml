@@ -1,0 +1,16 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: branches
+  namespace: flux-system
+spec:
+  defaultValues:
+    color: blue
+    digest: wrong
+    id: wrong
+    tag: wrong
+  filter:
+    includeTag: ^release-
+    limit: 1
+  type: OCIArtifactTag
+  url: oci://registry.fixture.invalid/images

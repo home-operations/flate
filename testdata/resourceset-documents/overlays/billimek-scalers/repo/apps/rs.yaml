@@ -1,0 +1,18 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: nfs-scalers
+  namespace: kube-system
+spec:
+  inputs:
+  - app: audiobookshelf
+  - app: frigate
+  resources:
+  - apiVersion: v1
+    data:
+      deployment: << inputs.app >>
+    kind: ConfigMap
+    metadata:
+      name: << inputs.app >>-nfs-scaler
+      namespace: default
+  wait: true

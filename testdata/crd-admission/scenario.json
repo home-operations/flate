@@ -1,0 +1,2739 @@
+{
+  "source": {
+    "repository": "toboshii/home-ops",
+    "revision": "b16119e828316df78f73d378bf7c386bad9dac12",
+    "paths": [
+      "cluster/apps/database/cloudnative-pg/helm-release.yaml",
+      "cluster/apps/default/hajimari/helm-release.yaml"
+    ],
+    "reductions": "Authored CRD admission controls around the existing flux-operator ResourceSet. Retain suspended chart/source children. No upstream chart or CRD distribution is copied."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "strict-issue",
+      "directory": "overlays/strict-issue"
+    },
+    {
+      "name": "runtime-class",
+      "directory": "overlays/runtime-class"
+    },
+    {
+      "name": "supplied-crd-dependency",
+      "directory": "overlays/supplied-crd-dependency"
+    },
+    {
+      "name": "supplied-crd-opt-in-dependency",
+      "directory": "overlays/supplied-crd-opt-in-dependency"
+    },
+    {
+      "name": "strict-absent-explicit-crd",
+      "directory": "overlays/strict-absent-explicit-crd"
+    },
+    {
+      "name": "allowed-absent-explicit-crd",
+      "directory": "overlays/allowed-absent-explicit-crd"
+    },
+    {
+      "name": "missing-configmap",
+      "directory": "overlays/missing-configmap"
+    },
+    {
+      "name": "missing-secret",
+      "directory": "overlays/missing-secret"
+    },
+    {
+      "name": "missing-widget",
+      "directory": "overlays/missing-widget"
+    },
+    {
+      "name": "supplied-configmap",
+      "directory": "overlays/supplied-configmap"
+    },
+    {
+      "name": "supplied-configmap-dependency",
+      "directory": "overlays/supplied-configmap-dependency"
+    },
+    {
+      "name": "duplicate-references",
+      "directory": "overlays/duplicate-references"
+    },
+    {
+      "name": "reporting-interval",
+      "directory": "overlays/reporting-interval"
+    },
+    {
+      "name": "selection-strict-absent",
+      "directory": "overlays/selection-strict-absent"
+    },
+    {
+      "name": "selection-allowed-absent",
+      "directory": "overlays/selection-allowed-absent"
+    },
+    {
+      "name": "selection-present",
+      "directory": "overlays/selection-present"
+    },
+    {
+      "name": "selection-foreign-group",
+      "directory": "overlays/selection-foreign-group"
+    }
+  ],
+  "cases": [
+    {
+      "name": "missing-crds-strict-issue",
+      "description": "missing crds strict issue.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "strict-issue"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "strict-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/strict-test.stdout",
+              "stderr": "expect/strict-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "resource-set-runtime-class-dependency",
+      "description": "resource set runtime class dependency.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "runtime-class"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "runtime-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/runtime-test.stdout",
+              "stderr": "expect/runtime-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-reference-crd",
+      "description": "policy reference crd.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-reference-crd-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--supply",
+              "@@inputs@@/dependency.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/policy-reference-crd-test.stdout",
+              "stderr": "expect/policy-reference-crd-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-reference-crd-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--supply",
+              "@@inputs@@/dependency.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/policy-reference-crd-get.stdout",
+              "stderr": "expect/policy-reference-crd-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-reference-crd-skip",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--supply",
+              "@@inputs@@/dependency.yaml",
+              "--skip-kinds=Secret,CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-reference-crd-skip.stdout",
+              "stderr": "expect/policy-reference-crd-skip.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-reference-crd-include",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--supply",
+              "@@inputs@@/dependency.yaml",
+              "--skip-kinds=Secret"
+            ],
+            "expect": {
+              "stdout": "expect/policy-reference-crd-include.stdout",
+              "stderr": "expect/policy-reference-crd-include.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-reference-crd-opt-in",
+      "description": "policy reference crd opt in.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-reference-crd-opt-in-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--supply",
+              "@@inputs@@/dependency.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/policy-reference-crd-opt-in-test.stdout",
+              "stderr": "expect/policy-reference-crd-opt-in-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-reference-crd-opt-in-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--supply",
+              "@@inputs@@/dependency.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/policy-reference-crd-opt-in-get.stdout",
+              "stderr": "expect/policy-reference-crd-opt-in-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-reference-crd-opt-in-skip",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--supply",
+              "@@inputs@@/dependency.yaml",
+              "--skip-kinds=Secret,CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-reference-crd-opt-in-skip.stdout",
+              "stderr": "expect/policy-reference-crd-opt-in-skip.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-reference-crd-opt-in-include",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--supply",
+              "@@inputs@@/dependency.yaml",
+              "--skip-kinds=Secret"
+            ],
+            "expect": {
+              "stdout": "expect/policy-reference-crd-opt-in-include.stdout",
+              "stderr": "expect/policy-reference-crd-opt-in-include.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-strict-absent",
+      "description": "policy strict absent.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-strict-absent-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/policy-strict-absent-test.stdout",
+              "stderr": "expect/policy-strict-absent-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-allowed-absent",
+      "description": "policy allowed absent.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-allowed-absent-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-allowed-absent-test.stdout",
+              "stderr": "expect/policy-allowed-absent-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-allowed-absent-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-allowed-absent-get.stdout",
+              "stderr": "expect/policy-allowed-absent-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-allowed-absent-skip",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--skip-kinds=Secret,CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-allowed-absent-skip.stdout",
+              "stderr": "expect/policy-allowed-absent-skip.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-allowed-absent-include",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--skip-kinds=Secret"
+            ],
+            "expect": {
+              "stdout": "expect/policy-allowed-absent-include.stdout",
+              "stderr": "expect/policy-allowed-absent-include.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-supplied-crd",
+      "description": "policy supplied crd.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "supplied-crd-dependency"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-supplied-crd-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-crd-test.stdout",
+              "stderr": "expect/policy-supplied-crd-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-crd-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-crd-get.stdout",
+              "stderr": "expect/policy-supplied-crd-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-crd-skip",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--skip-kinds=Secret,CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-crd-skip.stdout",
+              "stderr": "expect/policy-supplied-crd-skip.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-crd-include",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--skip-kinds=Secret"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-crd-include.stdout",
+              "stderr": "expect/policy-supplied-crd-include.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-supplied-crd-opt-in",
+      "description": "policy supplied crd opt in.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "supplied-crd-opt-in-dependency"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-supplied-crd-opt-in-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-crd-opt-in-test.stdout",
+              "stderr": "expect/policy-supplied-crd-opt-in-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-crd-opt-in-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-crd-opt-in-get.stdout",
+              "stderr": "expect/policy-supplied-crd-opt-in-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-crd-opt-in-skip",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--skip-kinds=Secret,CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-crd-opt-in-skip.stdout",
+              "stderr": "expect/policy-supplied-crd-opt-in-skip.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-crd-opt-in-include",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--skip-kinds=Secret"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-crd-opt-in-include.stdout",
+              "stderr": "expect/policy-supplied-crd-opt-in-include.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-strict-absent-explicit-crd",
+      "description": "policy strict absent explicit crd.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "strict-absent-explicit-crd"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-strict-absent-explicit-crd-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/policy-strict-absent-explicit-crd-test.stdout",
+              "stderr": "expect/policy-strict-absent-explicit-crd-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-allowed-absent-explicit-crd",
+      "description": "policy allowed absent explicit crd.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "allowed-absent-explicit-crd"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-allowed-absent-explicit-crd-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-allowed-absent-explicit-crd-test.stdout",
+              "stderr": "expect/policy-allowed-absent-explicit-crd-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-allowed-absent-explicit-crd-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-allowed-absent-explicit-crd-get.stdout",
+              "stderr": "expect/policy-allowed-absent-explicit-crd-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-allowed-absent-explicit-crd-skip",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--skip-kinds=Secret,CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-allowed-absent-explicit-crd-skip.stdout",
+              "stderr": "expect/policy-allowed-absent-explicit-crd-skip.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-allowed-absent-explicit-crd-include",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--skip-kinds=Secret"
+            ],
+            "expect": {
+              "stdout": "expect/policy-allowed-absent-explicit-crd-include.stdout",
+              "stderr": "expect/policy-allowed-absent-explicit-crd-include.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-missing-configmap",
+      "description": "policy missing configmap.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-configmap"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-missing-configmap-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-missing-configmap-test.stdout",
+              "stderr": "expect/policy-missing-configmap-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-missing-secret",
+      "description": "policy missing secret.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-secret"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-missing-secret-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-missing-secret-test.stdout",
+              "stderr": "expect/policy-missing-secret-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-missing-widget",
+      "description": "policy missing widget.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-widget"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-missing-widget-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-missing-widget-test.stdout",
+              "stderr": "expect/policy-missing-widget-test.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "policy-supplied-configmap",
+      "description": "policy supplied configmap.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "supplied-configmap"
+        },
+        {
+          "overlay": "supplied-configmap-dependency"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "policy-supplied-configmap-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-configmap-test.stdout",
+              "stderr": "expect/policy-supplied-configmap-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-configmap-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-configmap-get.stdout",
+              "stderr": "expect/policy-supplied-configmap-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-configmap-skip",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--skip-kinds=Secret,CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-configmap-skip.stdout",
+              "stderr": "expect/policy-supplied-configmap-skip.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "policy-supplied-configmap-include",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition",
+              "--skip-kinds=Secret"
+            ],
+            "expect": {
+              "stdout": "expect/policy-supplied-configmap-include.stdout",
+              "stderr": "expect/policy-supplied-configmap-include.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-crds-environment",
+      "description": "missing crds environment.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "env": {
+        "FLATE_ALLOW_MISSING_KINDS": "CustomResourceDefinition"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "environment-allowed",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/environment-allowed.stdout",
+              "stderr": "expect/environment-allowed.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "environment-empty",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/environment-empty.stdout",
+              "stderr": "expect/environment-empty.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-crds-deterministic-warnings",
+      "description": "missing crds deterministic warnings.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "duplicate-references"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "warnings-2-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/warnings-2-test.stdout",
+              "stderr": "expect/warnings-2-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warnings-2-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/warnings-2-build.stdout",
+              "stderr": "expect/warnings-2-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warnings-2-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/warnings-2-get.stdout",
+              "stderr": "expect/warnings-2-get.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warnings-4-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@",
+              "--concurrency=4",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/warnings-4-test.stdout",
+              "stderr": "expect/warnings-4-test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warnings-4-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=4",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/warnings-4-build.stdout",
+              "stderr": "expect/warnings-4-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "warnings-4-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--concurrency=4",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/warnings-4-get.stdout",
+              "stderr": "expect/warnings-4-get.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-crds-diff-sides",
+      "description": "missing crds diff sides.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "reporting-interval"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff-strict",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--path-orig",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/diff-strict.stdout",
+              "stderr": "expect/diff-strict.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "diff-allowed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--path-orig",
+              "@@baseline@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/diff-allowed.stdout",
+              "stderr": "expect/diff-allowed.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-strict-4",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--path-orig",
+              "@@baseline@@",
+              "--concurrency=4",
+              "--no-progress"
+            ],
+            "expect": {
+              "stdout": "expect/diff-strict.stdout",
+              "stderr": "expect/diff-strict.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "diff-allowed-4",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "-o",
+              "json",
+              "--path",
+              "@@repo@@",
+              "--path-orig",
+              "@@baseline@@",
+              "--concurrency=4",
+              "--no-progress",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/diff-allowed.stdout",
+              "stderr": "expect/diff-allowed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "selection-strict-absent",
+      "description": "selection strict absent.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "selection-strict-absent"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selection-strict-absent-namespace",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "-n",
+              "flux-system",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/selection-strict-absent-namespace.stdout",
+              "stderr": "expect/selection-strict-absent-namespace.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "selection-allowed-absent",
+      "description": "selection allowed absent.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "selection-allowed-absent"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selection-allowed-absent-namespace",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "-n",
+              "flux-system",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/selection-allowed-absent-namespace.stdout",
+              "stderr": "expect/selection-allowed-absent-namespace.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selection-allowed-absent-named",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "flux-operator",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/selection-allowed-absent-named.stdout",
+              "stderr": "expect/selection-allowed-absent-named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selection-allowed-absent-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--only-kinds",
+              "HelmRelease",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/selection-allowed-absent-build.stdout",
+              "stderr": "expect/selection-allowed-absent-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "selection-present",
+      "description": "selection present.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "selection-present"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selection-present-namespace",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "-n",
+              "flux-system",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/selection-present-namespace.stdout",
+              "stderr": "expect/selection-present-namespace.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selection-present-named",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "flux-operator",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/selection-present-named.stdout",
+              "stderr": "expect/selection-present-named.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "selection-present-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "-o",
+              "json",
+              "--only-kinds",
+              "HelmRelease",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds="
+            ],
+            "expect": {
+              "stdout": "expect/selection-present-build.stdout",
+              "stderr": "expect/selection-present-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "selection-foreign-group",
+      "description": "selection foreign group.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "selection-foreign-group"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "selection-foreign-group-namespace",
+          "invoke": {
+            "argv": [
+              "get",
+              "hr",
+              "-o",
+              "json",
+              "-n",
+              "flux-system",
+              "--path",
+              "@@repo@@",
+              "--concurrency=2",
+              "--no-progress",
+              "--allow-missing-kinds=",
+              "--allow-missing-kinds=CustomResourceDefinition"
+            ],
+            "expect": {
+              "stdout": "expect/selection-foreign-group-namespace.stdout",
+              "stderr": "expect/selection-foreign-group-namespace.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/diff-allowed.stderr",
+      "cases": [
+        "missing-crds-diff-sides"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/diff-allowed.stdout",
+      "cases": [
+        "missing-crds-diff-sides"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/diff-strict.stderr",
+      "cases": [
+        "missing-crds-diff-sides"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/diff-strict.stdout",
+      "cases": [
+        "missing-crds-diff-sides"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/environment-allowed.stderr",
+      "cases": [
+        "missing-crds-environment"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/environment-allowed.stdout",
+      "cases": [
+        "missing-crds-environment"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/environment-empty.stderr",
+      "cases": [
+        "missing-crds-environment"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/environment-empty.stdout",
+      "cases": [
+        "missing-crds-environment"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-explicit-crd-get.stderr",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-explicit-crd-get.stdout",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-explicit-crd-include.stderr",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-explicit-crd-include.stdout",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-explicit-crd-skip.stderr",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-explicit-crd-skip.stdout",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-explicit-crd-test.stderr",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-explicit-crd-test.stdout",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-get.stderr",
+      "cases": [
+        "policy-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-get.stdout",
+      "cases": [
+        "policy-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-include.stderr",
+      "cases": [
+        "policy-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-include.stdout",
+      "cases": [
+        "policy-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-skip.stderr",
+      "cases": [
+        "policy-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-skip.stdout",
+      "cases": [
+        "policy-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-test.stderr",
+      "cases": [
+        "policy-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-allowed-absent-test.stdout",
+      "cases": [
+        "policy-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-missing-configmap-test.stderr",
+      "cases": [
+        "policy-missing-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-missing-configmap-test.stdout",
+      "cases": [
+        "policy-missing-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-missing-secret-test.stderr",
+      "cases": [
+        "policy-missing-secret"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-missing-secret-test.stdout",
+      "cases": [
+        "policy-missing-secret"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-missing-widget-test.stderr",
+      "cases": [
+        "policy-missing-widget"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-missing-widget-test.stdout",
+      "cases": [
+        "policy-missing-widget"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-get.stderr",
+      "cases": [
+        "policy-reference-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-get.stdout",
+      "cases": [
+        "policy-reference-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-include.stderr",
+      "cases": [
+        "policy-reference-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-include.stdout",
+      "cases": [
+        "policy-reference-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-opt-in-get.stderr",
+      "cases": [
+        "policy-reference-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-opt-in-get.stdout",
+      "cases": [
+        "policy-reference-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-opt-in-include.stderr",
+      "cases": [
+        "policy-reference-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-opt-in-include.stdout",
+      "cases": [
+        "policy-reference-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-opt-in-skip.stderr",
+      "cases": [
+        "policy-reference-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-opt-in-skip.stdout",
+      "cases": [
+        "policy-reference-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-opt-in-test.stderr",
+      "cases": [
+        "policy-reference-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-opt-in-test.stdout",
+      "cases": [
+        "policy-reference-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-skip.stderr",
+      "cases": [
+        "policy-reference-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-skip.stdout",
+      "cases": [
+        "policy-reference-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-test.stderr",
+      "cases": [
+        "policy-reference-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-reference-crd-test.stdout",
+      "cases": [
+        "policy-reference-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-strict-absent-explicit-crd-test.stderr",
+      "cases": [
+        "policy-strict-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-strict-absent-explicit-crd-test.stdout",
+      "cases": [
+        "policy-strict-absent-explicit-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-strict-absent-test.stderr",
+      "cases": [
+        "policy-strict-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-strict-absent-test.stdout",
+      "cases": [
+        "policy-strict-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-configmap-get.stderr",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-configmap-get.stdout",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-configmap-include.stderr",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-configmap-include.stdout",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-configmap-skip.stderr",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-configmap-skip.stdout",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-configmap-test.stderr",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-configmap-test.stdout",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-get.stderr",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-get.stdout",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-include.stderr",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-include.stdout",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-opt-in-get.stderr",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-opt-in-get.stdout",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-opt-in-include.stderr",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-opt-in-include.stdout",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-opt-in-skip.stderr",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-opt-in-skip.stdout",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-opt-in-test.stderr",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-opt-in-test.stdout",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-skip.stderr",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-skip.stdout",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-test.stderr",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/policy-supplied-crd-test.stdout",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/runtime-test.stderr",
+      "cases": [
+        "resource-set-runtime-class-dependency"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/runtime-test.stdout",
+      "cases": [
+        "resource-set-runtime-class-dependency"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-allowed-absent-build.stderr",
+      "cases": [
+        "selection-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-allowed-absent-build.stdout",
+      "cases": [
+        "selection-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-allowed-absent-named.stderr",
+      "cases": [
+        "selection-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-allowed-absent-named.stdout",
+      "cases": [
+        "selection-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-allowed-absent-namespace.stderr",
+      "cases": [
+        "selection-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-allowed-absent-namespace.stdout",
+      "cases": [
+        "selection-allowed-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-foreign-group-namespace.stderr",
+      "cases": [
+        "selection-foreign-group"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-foreign-group-namespace.stdout",
+      "cases": [
+        "selection-foreign-group"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-present-build.stderr",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-present-build.stdout",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-present-named.stderr",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-present-named.stdout",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-present-namespace.stderr",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-present-namespace.stdout",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-strict-absent-namespace.stderr",
+      "cases": [
+        "selection-strict-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/selection-strict-absent-namespace.stdout",
+      "cases": [
+        "selection-strict-absent"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/strict-test.stderr",
+      "cases": [
+        "missing-crds-strict-issue"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/strict-test.stdout",
+      "cases": [
+        "missing-crds-strict-issue"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-2-build.stderr",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-2-build.stdout",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-2-get.stderr",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-2-get.stdout",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-2-test.stderr",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-2-test.stdout",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-4-build.stderr",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-4-build.stdout",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-4-get.stderr",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-4-get.stdout",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-4-test.stderr",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "expect/warnings-4-test.stdout",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Complete reviewed output."
+    },
+    {
+      "path": "inputs/dependency.yaml",
+      "cases": [
+        "missing-crds-strict-issue",
+        "resource-set-runtime-class-dependency",
+        "policy-reference-crd",
+        "policy-reference-crd-opt-in",
+        "policy-strict-absent",
+        "policy-allowed-absent",
+        "policy-supplied-crd",
+        "policy-supplied-crd-opt-in",
+        "policy-strict-absent-explicit-crd",
+        "policy-allowed-absent-explicit-crd",
+        "policy-missing-configmap",
+        "policy-missing-secret",
+        "policy-missing-widget",
+        "policy-supplied-configmap",
+        "missing-crds-environment",
+        "missing-crds-deterministic-warnings",
+        "missing-crds-diff-sides",
+        "selection-strict-absent",
+        "selection-allowed-absent",
+        "selection-present",
+        "selection-foreign-group"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/allowed-absent-explicit-crd/repo/apps/rs.yaml",
+      "cases": [
+        "policy-allowed-absent-explicit-crd"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/duplicate-references/repo/apps/rs.yaml",
+      "cases": [
+        "missing-crds-deterministic-warnings"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/missing-configmap/repo/apps/rs.yaml",
+      "cases": [
+        "policy-missing-configmap"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/missing-secret/repo/apps/rs.yaml",
+      "cases": [
+        "policy-missing-secret"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/missing-widget/repo/apps/rs.yaml",
+      "cases": [
+        "policy-missing-widget"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/reporting-interval/repo/apps/rs.yaml",
+      "cases": [
+        "missing-crds-diff-sides"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/runtime-class/repo/apps/kustomization.yaml",
+      "cases": [
+        "resource-set-runtime-class-dependency"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/runtime-class/repo/apps/rs.yaml",
+      "cases": [
+        "resource-set-runtime-class-dependency"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/runtime-class/repo/apps/runtime.yaml",
+      "cases": [
+        "resource-set-runtime-class-dependency"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selection-allowed-absent/repo/apps/rs.yaml",
+      "cases": [
+        "selection-allowed-absent"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selection-foreign-group/repo/apps/dependency.yaml",
+      "cases": [
+        "selection-foreign-group"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selection-foreign-group/repo/apps/kustomization.yaml",
+      "cases": [
+        "selection-foreign-group"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selection-foreign-group/repo/apps/rs.yaml",
+      "cases": [
+        "selection-foreign-group"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selection-present/repo/apps/dependency.yaml",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selection-present/repo/apps/kustomization.yaml",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selection-present/repo/apps/rs.yaml",
+      "cases": [
+        "selection-present"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/selection-strict-absent/repo/apps/rs.yaml",
+      "cases": [
+        "selection-strict-absent"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/strict-absent-explicit-crd/repo/apps/rs.yaml",
+      "cases": [
+        "policy-strict-absent-explicit-crd"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/strict-issue/repo/apps/rs.yaml",
+      "cases": [
+        "missing-crds-strict-issue"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-configmap/repo/apps/rs.yaml",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-configmap-dependency/repo/apps/dependency.yaml",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-configmap-dependency/repo/apps/kustomization.yaml",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-configmap-dependency/repo/apps/rs.yaml",
+      "cases": [
+        "policy-supplied-configmap"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-crd-dependency/repo/apps/dependency.yaml",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-crd-dependency/repo/apps/kustomization.yaml",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-crd-dependency/repo/apps/rs.yaml",
+      "cases": [
+        "policy-supplied-crd"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-crd-opt-in-dependency/repo/apps/dependency.yaml",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-crd-opt-in-dependency/repo/apps/kustomization.yaml",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "overlays/supplied-crd-opt-in-dependency/repo/apps/rs.yaml",
+      "cases": [
+        "policy-supplied-crd-opt-in"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/apps/kustomization.yaml",
+      "cases": [
+        "missing-crds-strict-issue",
+        "resource-set-runtime-class-dependency",
+        "policy-reference-crd",
+        "policy-reference-crd-opt-in",
+        "policy-strict-absent",
+        "policy-allowed-absent",
+        "policy-supplied-crd",
+        "policy-supplied-crd-opt-in",
+        "policy-strict-absent-explicit-crd",
+        "policy-allowed-absent-explicit-crd",
+        "policy-missing-configmap",
+        "policy-missing-secret",
+        "policy-missing-widget",
+        "policy-supplied-configmap",
+        "missing-crds-environment",
+        "missing-crds-deterministic-warnings",
+        "missing-crds-diff-sides",
+        "selection-strict-absent",
+        "selection-allowed-absent",
+        "selection-present",
+        "selection-foreign-group"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/apps/rs.yaml",
+      "cases": [
+        "missing-crds-strict-issue",
+        "resource-set-runtime-class-dependency",
+        "policy-reference-crd",
+        "policy-reference-crd-opt-in",
+        "policy-strict-absent",
+        "policy-allowed-absent",
+        "policy-supplied-crd",
+        "policy-supplied-crd-opt-in",
+        "policy-strict-absent-explicit-crd",
+        "policy-allowed-absent-explicit-crd",
+        "policy-missing-configmap",
+        "policy-missing-secret",
+        "policy-missing-widget",
+        "policy-supplied-configmap",
+        "missing-crds-environment",
+        "missing-crds-deterministic-warnings",
+        "missing-crds-diff-sides",
+        "selection-strict-absent",
+        "selection-allowed-absent",
+        "selection-present",
+        "selection-foreign-group"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    },
+    {
+      "path": "repo/flux/ks.yaml",
+      "cases": [
+        "missing-crds-strict-issue",
+        "resource-set-runtime-class-dependency",
+        "policy-reference-crd",
+        "policy-reference-crd-opt-in",
+        "policy-strict-absent",
+        "policy-allowed-absent",
+        "policy-supplied-crd",
+        "policy-supplied-crd-opt-in",
+        "policy-strict-absent-explicit-crd",
+        "policy-allowed-absent-explicit-crd",
+        "policy-missing-configmap",
+        "policy-missing-secret",
+        "policy-missing-widget",
+        "policy-supplied-configmap",
+        "missing-crds-environment",
+        "missing-crds-deterministic-warnings",
+        "missing-crds-diff-sides",
+        "selection-strict-absent",
+        "selection-allowed-absent",
+        "selection-present",
+        "selection-foreign-group"
+      ],
+      "purpose": "Authored input or complete overlay for the named behavior."
+    }
+  ],
+  "inputs": "inputs"
+}

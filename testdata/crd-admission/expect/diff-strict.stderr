@@ -1,0 +1,8 @@
+
+  ✗  orig snapshot: CustomResourceDefinition  helmreleases.helm.toolkit.fluxcd.io  not found
+         orig snapshot: required by flux-system/flux-operator
+
+  ✗  current snapshot: CustomResourceDefinition  helmreleases.helm.toolkit.fluxcd.io  not found
+         current snapshot: required by flux-system/flux-operator
+
+  ✗ 2 failed · 2 blocked

@@ -21,7 +21,7 @@ func TestAdmission_OrderingEmittedPathProof_LiveOwnership(t *testing.T) {
 	if !l.AdmitsRoot(object, record.Path) {
 		t.Fatal("ownerless indexed declaration has no static root scope")
 	}
-	static := l.roots[child]
+	static := l.roots.get(child)
 	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(
@@ -60,7 +60,7 @@ func TestAdmission_OrderingEmittedPathProof_LiveOwnership(t *testing.T) {
 		slices.ContainsFunc(proposal.Objects, func(c store.Child) bool { return c.Obj.Named() == child }),
 		true,
 	)
-	assert.Equal(t, reflect.DeepEqual(l.roots[child], static), true)
+	assert.Equal(t, reflect.DeepEqual(l.roots.get(child), static), true)
 	assert.Equal(t, l.Store.GetArtifact(source.Named(), store.ArtifactContent) != nil, true)
 }
 

@@ -140,11 +140,12 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 	return Occurrence{Identity: id, Authored: id, facts: facts}
 }
 
-// PackageEvidence borrows parsed package and scan provenance, without deciding root ownership.
+// PackageEvidence retains package provenance and shared root admission.
 type PackageEvidence struct {
 	Path        string
 	Scans       []string
 	Occurrences []Occurrence
+	Independent bool
 }
 
 // OccurrenceClaims derives claims from mounted source views without admitting document identities.
@@ -217,48 +218,40 @@ func (l *Loader) PathObjects() []Occurrence {
 
 // Packages snapshots resource graph inputs already traversed by Load.
 func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+	}
 	l.mountSources()
 	l.ensureScopes()
 	packages := map[string]struct{}{}
 	scans := map[string]string{}
 	l.collectPackages(packages, scans)
 	covered := map[OccurrenceID]bool{}
-	var evidence []PackageEvidence
+	byPath := map[string]PackageEvidence{}
 	for _, dir := range slices.Sorted(maps.Keys(packages)) {
 		objects, err := l.Occurrences(ctx, dir, "")
 		if err != nil {
 			return nil, err
 		}
-		{
-			oValues2 := objects
-			for oIndex2 := range oValues2 {
-				o := oValues2[oIndex2]
-				covered[o.Declaration] = true
-			}
+		for i := range objects {
+			covered[objects[i].Declaration] = true
 		}
 		relative, _ := filepath.Rel(l.SourceRoot, dir)
-		evidence = append(evidence, PackageEvidence{Path: filepath.ToSlash(relative), Occurrences: objects})
+		byPath[dir] = PackageEvidence{Path: filepath.ToSlash(relative), Occurrences: objects}
 	}
-	l.collectUncoveredPackages(packages, covered)
-	byPath := map[string]PackageEvidence{}
-	for _, e := range evidence {
-		byPath[filepath.Join(l.SourceRoot, e.Path)] = e
+	uncovered, err := l.collectUncoveredPackages(covered)
+	if err != nil {
+		return nil, err
 	}
-	evidence = nil
-	for _, dir := range slices.Sorted(maps.Keys(packages)) {
-		e, ok := byPath[dir]
-		if !ok {
-			objects, err := l.Occurrences(ctx, dir, "")
-			if err != nil {
-				return nil, err
-			}
+	for dir, objects := range uncovered {
+		if _, native := byPath[dir]; !native {
 			relative, _ := filepath.Rel(l.SourceRoot, dir)
-			objects = slices.DeleteFunc(objects, func(o Occurrence) bool {
-				return o.Declaration.Source != l.SourceRoot ||
-					filepath.ToSlash(filepath.Dir(o.Declaration.File)) != filepath.ToSlash(relative)
-			})
-			e = PackageEvidence{Path: filepath.ToSlash(relative), Occurrences: objects}
+			byPath[dir] = PackageEvidence{Path: filepath.ToSlash(relative), Occurrences: objects}
 		}
+	}
+	var evidence []PackageEvidence
+	for _, dir := range slices.Sorted(maps.Keys(byPath)) {
+		e := byPath[dir]
 		for scan, relative := range scans {
 			if safepath.Contains(scan, dir) {
 				e.Scans = append(e.Scans, relative)
@@ -267,6 +260,7 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 		slices.Sort(e.Scans)
 		evidence = append(evidence, e)
 	}
+	l.classifyPackages(evidence)
 	return evidence, nil
 }
 
@@ -279,15 +273,22 @@ func (l *Loader) Occurrences(ctx context.Context, dir, targetNamespace string) (
 		return nil, nil
 	}
 	relative, _ := filepath.Rel(root, dir)
-	visits := l.scopeWalk(
-		new(graphVisit{
-			root:      root,
-			dir:       filepath.ToSlash(relative),
-			namespace: targetNamespace,
-			fallback:  targetNamespace,
-			role:      kustomizeinput.Resource,
-		}),
-	)
+	visit := graphVisit{
+		root:      root,
+		dir:       filepath.ToSlash(relative),
+		namespace: targetNamespace,
+		fallback:  targetNamespace,
+		role:      kustomizeinput.Resource,
+	}
+	repoRoot := l.SourceRoot
+	if repoRoot == "" {
+		repoRoot = root
+	}
+	location := sourceView(manifest.NamedResource{}, repoRoot, l.documents.artifacts[root], nil)
+	if !new(l.documents).scopeCoordinates(&visit, repoRoot, location.Pinned) {
+		return nil, nil
+	}
+	visits := l.scopeWalk(&visit)
 	var out []Occurrence
 	{
 		vValues := visits
@@ -419,14 +420,7 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 	relative, _ := filepath.Rel(repoRoot, l.entryPath)
 	var files []string
 	{
-		walkVisits := l.scopeWalk(
-			new(graphVisit{
-				root:           repoRoot,
-				dir:            filepath.ToSlash(relative),
-				role:           kustomizeinput.Resource,
-				entryResources: true,
-			}),
-		)
+		walkVisits := l.entryFailureVisits(repoRoot, filepath.ToSlash(relative))
 		for walkIndex := range walkVisits {
 			visit := walkVisits[walkIndex]
 
@@ -453,7 +447,24 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 	return l.entryFilesFailure(ctx, files)
 }
 
-func (l *Loader) exactObject(
+func (l *Loader) entryFailureVisits(repoRoot, relative string) []graphVisit {
+	if l.entry != entryPlain {
+		return l.scopeWalk(
+			new(graphVisit{root: repoRoot, dir: relative, role: kustomizeinput.Resource, entryResources: true}),
+		)
+	}
+	var visits []graphVisit
+	for file := range l.documents.cache {
+		doc := l.documents.cache[file]
+		if doc.loaded && doc.initial && filepath.Dir(file) == l.entryPath {
+			visits = append(visits, graphVisit{file: file, coordinate: l.fileCoordinate(file), readable: true})
+		}
+	}
+	return visits
+}
+
+// OccurrenceObject MUST hydrate only the declaration in its admitted source view.
+func (l *Loader) OccurrenceObject(
 	ctx context.Context,
 	occurrenceValue *Occurrence,
 	input *store.SourceArtifact,
@@ -463,54 +474,62 @@ func (l *Loader) exactObject(
 	if err := ctx.Err(); err != nil {
 		return store.Child{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
+	if input != nil && input.LocalPath != occurrence.Declaration.Source {
+		return store.Child{}, nil
+	}
 	reader := l.documents
-	reader.cache, reader.parsed = nil, nil
+	mounted := reader.artifacts[occurrence.Declaration.Source]
+	matching := input == nil || mounted != nil && parsedInputIdentity(input) == parsedInputIdentity(mounted) &&
+		input.Input(
+			store.ArtifactContent|store.ArtifactRevision,
+		) == mounted.Input(
+			store.ArtifactContent|store.ArtifactRevision,
+		)
+	cached := !reader.compact && matching
+	if !cached {
+		reader.cache = nil
+	}
+	reader.parsed = nil
 	reader.coordinate = &occurrence.Declaration
-	if input != nil {
-		if input.LocalPath != occurrence.Declaration.Source {
-			return store.Child{}, nil
-		}
+	if input != nil && !cached {
 		reader.views = nil
 		reader.artifacts = nil
 		reader.setSources(map[string]*store.SourceArtifact{input.LocalPath: input})
 	}
-	file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
-	parsed, err := reader.fileObjects(file, manifest.ParseDocOptions{})
-	if err != nil {
-		return store.Child{}, manifest.NewError(
-			manifest.ErrInput,
-			fmt.Errorf("hydrate %s: %w", occurrence.Identity, err),
-			"",
-		)
+	var child store.Child
+	var facts parsedSource
+	if reader.compact && matching && !l.frozen {
+		facts = l.sourceFacts(occurrence.Declaration.Source)
+		child = facts.hydrated[occurrence.Declaration]
+	}
+	children := []store.Child{child}
+	var parseErr error
+	if child.Obj == nil {
+		file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
+		children, parseErr = reader.parseFile(ctx, file, manifest.ParseDocOptions{})
 	}
 	if err := ctx.Err(); err != nil {
 		return store.Child{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
-	var children []store.Child
-	{
-		childValues6 := parsed
-		for childIndex6 := range childValues6 {
-			child := childValues6[childIndex6]
-			if child.outcome.Err != nil {
-				return store.Child{}, manifest.NewError(
-					manifest.ErrInput,
-					fmt.Errorf(
-						"hydrate %s: %w",
-						occurrence.Identity,
-						manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}),
-					),
-					"",
-				)
-			}
-			if child.Obj != nil && manifest.KindOf(child.Obj).Tracked {
-				children = append(children, child.Child)
-			}
-		}
+	if parseErr != nil {
+		return store.Child{}, manifest.NewError(
+			manifest.ErrInput,
+			fmt.Errorf("hydrate %s: %w", occurrence.Identity, parseErr),
+			"",
+		)
 	}
-	if len(children) != 1 || children[0].Obj.Named() != occurrence.Authored {
+	if len(children) != 1 {
 		return store.Child{}, nil
 	}
-	child := children[0]
+	child = children[0]
+	if child.Obj == nil || child.Obj.Named() != occurrence.Authored {
+		return store.Child{}, nil
+	}
+	if facts.hydrated != nil {
+		facts.hydrated[occurrence.Declaration] = child
+	}
+	child.Doc = manifest.DeepCopyMap(child.Doc)
+	child.Warnings = slices.Clone(child.Warnings)
 	if child.Obj.Named().Namespace != occurrence.Identity.Namespace {
 		child.Obj = child.Obj.WithNamespace(occurrence.Identity.Namespace)
 	}
@@ -684,32 +703,32 @@ func (l *Loader) collectPackages(packages map[string]struct{}, scans map[string]
 	}
 }
 
-func (l *Loader) collectUncoveredPackages(packages map[string]struct{}, covered map[OccurrenceID]bool) {
-	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-	for file, doc := range l.documents.cache {
+func (l *Loader) collectUncoveredPackages(covered map[OccurrenceID]bool) (map[string][]Occurrence, error) {
+	packages := map[string][]Occurrence{}
+	for _, file := range slices.Sorted(maps.Keys(l.documents.cache)) {
+		doc := l.documents.cache[file]
 		if !doc.loaded || len(doc.objects) == 0 || doc.bootstrap ||
 			new(l.documents).mountedRoot(file) != l.SourceRoot {
 			continue
 		}
-		relative, _ := filepath.Rel(l.SourceRoot, file)
-		{
-			childValues2 := doc.objects
-			for childIndex2 := range childValues2 {
-				child := childValues2[childIndex2]
-				if child.Obj != nil && child.outcome.Err == nil &&
-					!covered[OccurrenceID{Source: l.SourceRoot, File: filepath.ToSlash(relative), Document: child.outcome.Ordinal}] {
-					packages[filepath.Dir(file)] = struct{}{}
-					break
-				}
+		objects, err := l.appendVisitOccurrences(nil, new(graphVisit{file: file}))
+		if err != nil {
+			return nil, err
+		}
+		dir := filepath.Dir(file)
+		for i := range objects {
+			if !covered[objects[i].Declaration] {
+				packages[dir] = append(packages[dir], objects[i])
 			}
 		}
 	}
+	return packages, nil
 }
 
 func (l *Loader) appendVisitOccurrences(out []Occurrence, vValue *graphVisit) ([]Occurrence, error) {
 	v := *vValue
 	doc := l.documents.cache[v.file]
-	if doc.eligible == fileInactive {
+	if doc.eligible == fileInactive && !doc.initial {
 		return out, nil
 	}
 	origin := new(l.documents).localPath(v.file)
@@ -735,6 +754,7 @@ func (l *Loader) appendVisitOccurrences(out []Occurrence, vValue *graphVisit) ([
 						Source:   source,
 						File:     filepath.ToSlash(file),
 						Document: child.outcome.Ordinal,
+						item:     child.item,
 					},
 					Authored: child.Obj.Named(),
 					Identity: child.Obj.Named(),

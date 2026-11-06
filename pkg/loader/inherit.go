@@ -120,19 +120,11 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 			authored2.objects[id], authored2.records[id] = obj, r
 		}
 	}
-	allowed := l.roots
-	for id := range allowed {
-		if !allowed[id].independent {
-			delete(allowed, id)
-		}
-	}
-	if allowed == nil && (len(authored2.objects) != 0 || len(authored2.records) != 0) {
-		allowed = make(map[manifest.NamedResource]rootEvidence, len(authored2.objects))
-	}
+	allowed := &l.roots
+	allowed.retainIndependent()
 	l.allowAuthoredObjects(authored2.records, authored2.objects, allowed, scopes)
 	l.allowAuthoredRecords(authored2.records, authored2.objects, allowed, scopes)
 	l.scopes.candidates, l.candidates = l.candidates, authored2.objects
-	l.roots = allowed
 	return l.applyAuthored(authored2.records, authored2.objects, allowed)
 }
 
@@ -321,7 +313,7 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 func (l *Loader) applyAuthored(
 	next map[manifest.NamedResource]manifest.DiscoveryRecord,
 	objects map[manifest.NamedResource]store.Child,
-	allowed map[manifest.NamedResource]rootEvidence,
+	allowed *rootInventory,
 ) bool {
 	var deletes []manifest.NamedResource
 	changed := false

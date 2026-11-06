@@ -108,7 +108,7 @@ func (l *Loader) hydratePathInput(ctx context.Context, inputID manifest.NamedRes
 	cached := l.documents.cache[file]
 	data := cached.pathInputs[inputID]
 	if data == nil {
-		child, err := l.exactObject(ctx, new(occurrence), nil)
+		child, err := l.OccurrenceObject(ctx, new(occurrence), nil)
 		if ctx.Err() != nil {
 			return false
 		}

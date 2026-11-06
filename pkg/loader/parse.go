@@ -81,6 +81,9 @@ func (r documentReader) parseFile(
 		childValues := out
 		for childIndex := range childValues {
 			child := childValues[childIndex]
+			if child.outcome.Err != nil && r.coordinate != nil {
+				return nil, manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome})
+			}
 			if child.Obj != nil && child.outcome.Err == nil && manifest.KindOf(child.Obj).Tracked {
 				tracked = append(tracked, child.Child)
 			}
@@ -214,7 +217,14 @@ func (r documentReader) censusFile(
 		outcome.Document = nil
 		facts = append(
 			facts,
-			parsedObject{Obj: structural, Warnings: child.Warnings, fact: &o, outcome: outcome, version: child.version},
+			parsedObject{
+				Obj:      structural,
+				Warnings: child.Warnings,
+				item:     child.item,
+				fact:     &o,
+				outcome:  outcome,
+				version:  child.version,
+			},
 		)
 	})
 	if projectionErr != nil {

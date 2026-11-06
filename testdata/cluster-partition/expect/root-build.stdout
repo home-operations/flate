@@ -1,0 +1,62 @@
+[
+  {
+    "cluster": "kubernetes/clusters/main",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "data": {
+          "marker": "main"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "cluster-marker",
+          "namespace": "apps"
+        }
+      }
+    ]
+  },
+  {
+    "cluster": "kubernetes/clusters/test",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "data": {
+          "marker": "test"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "cluster-marker",
+          "namespace": "apps"
+        }
+      }
+    ]
+  },
+  {
+    "cluster": "kubernetes/clusters/utility",
+    "documents": [
+      {
+        "apiVersion": "v1",
+        "data": {
+          "marker": "utility"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          },
+          "name": "cluster-marker",
+          "namespace": "apps"
+        }
+      }
+    ]
+  }
+]

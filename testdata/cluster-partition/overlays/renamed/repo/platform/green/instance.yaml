@@ -1,0 +1,10 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: flux-system}
+spec:
+  sync:
+    name: flux-system
+    kind: GitRepository
+    url: https://example.invalid/cluster.git
+    ref: refs/heads/main
+    path: ./platform/green

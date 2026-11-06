@@ -25,6 +25,7 @@ type scopeConstruction struct {
 	contributions []scopeContribution
 	claims        []manifest.KSClaim
 	roots         []string
+	traversalWork map[string]*manifest.WorkRecord
 }
 
 type scopeInput struct {

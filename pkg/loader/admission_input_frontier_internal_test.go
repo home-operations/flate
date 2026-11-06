@@ -333,7 +333,7 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
 	l.Options.Filter = change.NewFilter()
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	l.roots = map[manifest.NamedResource]rootEvidence{provider: {admitted: true}}
+	l.roots.set(provider, &rootEvidence{admitted: true})
 	st.AddObjects(
 		[]manifest.BaseManifest{
 			providerChild.Obj,

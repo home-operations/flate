@@ -149,6 +149,7 @@ func TestPackages_ScanProvenance(t *testing.T) {
 	for i, dir := range []string{"one", "two"} {
 		assert.Equal(t, packages[i].Path, filepath.ToSlash(filepath.Join(dir, "pkg")))
 		assert.Diff(t, packages[i].Scans, []string{".", dir, dir + "/pkg"})
+		assert.Equal(t, packages[i].Independent, false)
 	}
 }
 

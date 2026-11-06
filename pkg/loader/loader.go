@@ -71,7 +71,7 @@ type Loader struct {
 	entryPath             string
 	candidates            map[manifest.NamedResource]store.Child
 	admitted              map[manifest.NamedResource]manifest.BaseManifest
-	roots                 map[manifest.NamedResource]rootEvidence
+	roots                 rootInventory
 	locations             map[manifest.NamedResource]Occurrence
 	bindings              atomic.Pointer[map[manifest.NamedResource]admissionSource]
 	inputReaders          map[manifest.NamedResource][]manifest.NamedResource
@@ -349,21 +349,25 @@ func (l *Loader) Load(
 }
 
 func (l *Loader) loadRoot(ctx context.Context, root string, w *traversal) bool {
-	if w.documents.compact {
-		factsSource := l.sourceFacts(root)
-		key := loadContext{path: root, ignore: l.IgnoreFile}
-		if facts := factsSource.loads[key]; facts.err != nil && ctx.Err() == nil {
-			w.work, w.err = nil, facts.err
-			return false
+	if w.work != nil && w.work.Key.Source != (manifest.NamedResource{}) {
+		if l.scopes.traversalWork == nil {
+			l.scopes.traversalWork = map[string]*manifest.WorkRecord{}
 		}
-		defer func() {
-			if w.err != nil && ctx.Err() == nil {
-				facts := factsSource.loads[key]
-				facts.err = w.err
-				factsSource.loads[key] = facts
-			}
-		}()
+		l.scopes.traversalWork[new(l.documents).mountedRoot(root)] = l.Options.Work.Traversal(w.work.Key.Source)
 	}
+	factsSource := l.sourceFacts(root)
+	key := loadContext{path: root, ignore: l.IgnoreFile}
+	if facts := factsSource.loads[key]; facts.err != nil && ctx.Err() == nil {
+		w.work, w.err = nil, facts.err
+		return false
+	}
+	defer func() {
+		if w.err != nil && ctx.Err() == nil {
+			facts := factsSource.loads[key]
+			facts.err = w.err
+			factsSource.loads[key] = facts
+		}
+	}()
 	l.scopes.complete = false
 	ignore, skip, err := l.loadRootIgnore(ctx, root)
 	if skip || err != nil {
@@ -371,11 +375,7 @@ func (l *Loader) loadRoot(ctx context.Context, root string, w *traversal) bool {
 		return false
 	}
 	w.ignore = ignore
-	if w.documents.compact {
-		l.loadCompact(ctx, root, w)
-	} else {
-		w.walk(ctx, graphVisit{root: root, file: root}, nil)
-	}
+	l.loadCached(ctx, root, w)
 	return true
 }
 
@@ -619,6 +619,7 @@ func (l *Loader) recordLoadedObjects(path string, objs []parsedObject) int {
 		for childIndex := range childValues {
 			child := childValues[childIndex]
 			if child.fact != nil {
+				l.roots.remember(child.fact, filepath.ToSlash(filepath.Dir(child.fact.Declaration.File)))
 				l.recordOccurrence(path, child.fact)
 				if !child.fact.facts.uncertain && child.fact.Identity.KindInfo().Discovery {
 					count++
@@ -629,6 +630,14 @@ func (l *Loader) recordLoadedObjects(path string, objs []parsedObject) int {
 			if obj == nil || child.outcome.Err != nil {
 				continue
 			}
+			origin := new(l.documents).localPath(path)
+			sourceRoot := new(l.documents).mountedRoot(origin)
+			file, _ := filepath.Rel(sourceRoot, origin)
+			occurrence := compactOccurrence(obj, manifest.TemplateProjection{})
+			occurrence.Declaration = OccurrenceID{
+				Source: sourceRoot, File: filepath.ToSlash(file), Document: child.outcome.Ordinal, item: child.item,
+			}
+			l.roots.remember(&occurrence, filepath.ToSlash(filepath.Dir(file)))
 			info := manifest.KindOf(obj)
 			if !info.Tracked {
 				_, _, hasPath := obj.SourcePath()
@@ -684,7 +693,7 @@ func (l *Loader) yieldSource(
 	if l.documents.compact {
 		var err error
 		if occurrence, ok := l.occurrence(id); ok && obj.Obj == nil {
-			obj, err = l.exactObject(ctx, new(occurrence), nil)
+			obj, err = l.OccurrenceObject(ctx, new(occurrence), nil)
 		}
 		if err != nil {
 			yield(store.Child{}, err)
@@ -777,13 +786,13 @@ func (l *Loader) loadRootIgnore(ctx context.Context, abs string) (*ignoreSet, bo
 	return ignore, false, nil
 }
 
-func (l *Loader) loadCompact(ctx context.Context, abs string, w *traversal) {
+func (l *Loader) loadCached(ctx context.Context, abs string, w *traversal) {
 	sourceState := l.sourceFacts(abs)
 	key := loadContext{path: abs, ignore: l.IgnoreFile}
 	facts, replay := sourceState.loads[key]
 	if replay && facts.complete {
 		w.work = nil
-		l.replayCompact(ctx, &facts, w)
+		l.replayLoad(ctx, &facts, w)
 		facts.complete = w.proceed(ctx)
 	} else {
 		facts = loadFacts{directories: map[string]loadDirectory{}}
@@ -805,7 +814,7 @@ func (l *Loader) loadCompact(ctx context.Context, abs string, w *traversal) {
 	sourceState.loads[key] = facts
 }
 
-func (l *Loader) replayCompact(ctx context.Context, facts *loadFacts, w *traversal) {
+func (l *Loader) replayLoad(ctx context.Context, facts *loadFacts, w *traversal) {
 	for file, directory := range facts.directories {
 		l.documents.restore(file)
 		doc := l.documents.cache[file]
@@ -860,5 +869,5 @@ func (l *Loader) setEntry(abs, builder string) {
 func (l *Loader) declarationLocated(id manifest.NamedResource, objects admissionReader) bool {
 	record, _ := l.Index.Lookup(id)
 	return record.Path != "" || record.Builder != "" || objects.GetDeclaration(id) != nil ||
-		l.roots[record.Parent].independent
+		l.roots.get(record.Parent).independent
 }

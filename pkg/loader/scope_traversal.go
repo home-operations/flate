@@ -35,7 +35,7 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 	walk, seen := l.scopes.walks[root.graphContext]
 	var source parsedSource
 	var key physicalContext
-	if !seen && l.documents.compact {
+	if !seen {
 		source = l.sourceFacts(root.root)
 		key = physicalContext{
 			graphContext: root.graphContext,
@@ -43,7 +43,8 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 			prefix:       root.prefix,
 			localBase:    root.localBase,
 		}
-		walk.visits, seen = source.walks[key]
+		physical, known := source.walks[key]
+		walk.visits, seen = physical.visits, known
 		if seen {
 			l.scopes.walks[root.graphContext] = walk
 		}
@@ -59,6 +60,10 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 	var work *manifest.WorkRecord
 	if l.work != nil {
 		work = l.work
+		if sourceWork := l.scopes.traversalWork[root.root]; root.source == (manifest.NamedResource{}) &&
+			sourceWork != nil {
+			work = sourceWork
+		}
 		if root.input != 0 {
 			source := &l.scopes.sources[l.scopes.inputs[root.input-1].source]
 			if source.id == root.source && source.root == root.root {
@@ -66,7 +71,7 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 			}
 		}
 	}
-	w := traversal{work: work, documents: l.documents}
+	w := traversal{work: work, documents: l.documents, loader: l, scopeVisits: &visits}
 	collect := func(v graphVisit) bool {
 		if origin := new(l.documents).localPath(v.file); origin != v.file {
 			v.origin = origin
@@ -78,14 +83,10 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 		return true
 	}
 	physical := root
-	if l.documents.compact {
-		physical.owner, physical.source, physical.input, physical.membershipOnly = manifest.NamedResource{}, manifest.NamedResource{}, 0, false
-	}
+	physical.owner, physical.source, physical.input, physical.membershipOnly = manifest.NamedResource{}, manifest.NamedResource{}, 0, false
 	w.walk(context.TODO(), physical, collect)
 	walk.visits = visits
-	if l.documents.compact {
-		source.walks[key] = visits
-	}
+	source.walks[key] = physicalWalk{visits: visits}
 	l.scopes.walks[root.graphContext] = walk
 
 	return walk.visits

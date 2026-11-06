@@ -25,22 +25,24 @@ const (
 )
 
 type traversal struct {
-	work        *manifest.WorkRecord
-	files       *[]fileAdmission
-	documents   documentReader
-	policy      traversalPolicy
-	visited     map[graphContext]struct{}
-	visitBuf    [8]graphContext
-	visitCount  int
-	directories map[string]struct{}
-	depth       int
-	loader      *Loader
-	ignore      *ignoreSet
-	build       bool
-	ignoreCache map[ignoreKey]bool
-	count       int
-	err         error
-	canceled    bool
+	work         *manifest.WorkRecord
+	files        *[]fileAdmission
+	documents    documentReader
+	policy       traversalPolicy
+	visited      map[graphContext]struct{}
+	visitBuf     [8]graphContext
+	visitCount   int
+	directories  map[string]struct{}
+	depth        int
+	loader       *Loader
+	ignore       *ignoreSet
+	build        bool
+	ignoreCache  map[ignoreKey]bool
+	scopeVisits  *[]graphVisit
+	scopeSkipped int
+	count        int
+	err          error
+	canceled     bool
 }
 
 func (w *traversal) proceed(ctx context.Context) bool {
@@ -182,9 +184,21 @@ func (w *traversal) reference(
 		}
 	}
 	count := w.count
+	start, skipped := 0, w.scopeSkipped
+	if w.scopeVisits != nil {
+		start = len(*w.scopeVisits)
+	}
 	w.depth++
 	more := w.walk(ctx, child, yield)
 	w.depth--
+	if more && w.scopeVisits != nil && w.scopeSkipped == skipped && len(*w.scopeVisits) > start {
+		key := physicalContext{
+			graphContext: child.graphContext,
+			sourceRoot:   w.loader.SourceRoot, prefix: child.prefix, localBase: child.localBase,
+		}
+		facts := w.loader.sourceFacts(child.root)
+		facts.walks[key] = physicalWalk{visits: (*w.scopeVisits)[start:]}
+	}
 	if !more && !w.canceled {
 		w.count = count
 	}

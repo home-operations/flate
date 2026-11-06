@@ -214,6 +214,7 @@ func (l *Loader) refreshSources() {
 		return
 	}
 	for _, root := range changed {
+		l.roots.removeSource(root)
 		if len(l.Index.Records) != 0 {
 			l.documents.changed = appendUniqueProducer(l.documents.changed, root)
 		}

@@ -289,7 +289,7 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 	}
 	if d.cfg.Trees == nil {
 		if admission.qualification != nil {
-			*admission.qualification = entryQualification{}
+			admission.qualification.close()
 		}
 		admission.qualification = nil
 	}

@@ -482,7 +482,7 @@ func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, 
 	a.entryBound.Store(true)
 	if q := a.qualification; q != nil {
 		a.loader, a.trees = q.loader, q.trees
-		*q = entryQualification{}
+		q.close()
 		a.qualification = nil
 	}
 	if a.loader != nil {

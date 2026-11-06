@@ -119,3 +119,35 @@ func acceptEntryForTest(t *testing.T, admission *Admission, binding *Binding) Bi
 	assert.NoError(t, err)
 	return accepted
 }
+
+func TestEntryQualification_PreparationReuse(t *testing.T) {
+	t.Parallel()
+	fixture := newPreparedConstructionFixture(t, false)
+	var recorder manifest.WorkRecorder
+	fixture.cfg.Work = recorder.Scope()
+	fixture.cfg.Store.SetWorkTree(manifest.TreeID{}, fixture.cfg.Work)
+	fixture.cfg.Loader = loader.New(fixture.cfg.Store)
+	d := newDiscoverer(&fixture.cfg)
+	t.Cleanup(d.Close)
+	assert.NoError(t, d.loadManifests(t.Context(), fixture.cfg.Input.LocalPath, false))
+	q := d.admission().qualification
+	commit := func() {
+		var reads store.ReadSet
+		reads.Init(fixture.cfg.Store, manifest.BootstrapSourceID, nil)
+		reads.RequireQualification(fixture.parent.Named())
+		walk := qualificationWalk{q: q, admission: d.admission(), store: fixture.cfg.Store, reads: &reads}
+		committed, err := walk.commit(t.Context(), &loader.PrepareRequest{Invocation: true, Reads: &reads})
+		assert.NoError(t, err)
+		assert.Equal(t, committed, true)
+		reads.Retire()
+		reads.ReleaseCapture()
+	}
+	commit()
+	commit()
+	assert.Equal(t, recorder.Scope().Admission().Counts.OwnerPrepares, uint64(1))
+	replacement := *fixture.cfg.Input
+	replacement.Content = "replacement"
+	fixture.cfg.Store.SetArtifact(fixture.parent.SourceID(), &replacement)
+	commit()
+	assert.Equal(t, recorder.Scope().Admission().Counts.OwnerPrepares, uint64(2))
+}

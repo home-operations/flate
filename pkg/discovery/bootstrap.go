@@ -226,6 +226,10 @@ func (d *Session) addLoadedSources(
 	return nil
 }
 
+func entrySourceReference(ref *manifest.Reference) bool {
+	return ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact")
+}
+
 func (d *Session) addMissingSources(groups map[manifest.NamedResource]entrySourceGroup) {
 	for kind := range manifest.Kinds() {
 		if !kind.Runnable {
@@ -233,7 +237,7 @@ func (d *Session) addMissingSources(groups map[manifest.NamedResource]entrySourc
 		}
 		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-				if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
+				if entrySourceReference(&ref) {
 					addEntrySource(groups, ref.NamedResource, obj.Named())
 				}
 			}
@@ -254,7 +258,7 @@ func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]ent
 			continue
 		}
 		for ref := range d.loader.References(id) {
-			if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
+			if entrySourceReference(&ref) {
 				addEntrySource(groups, ref.NamedResource, manifest.NamedResource{})
 			}
 		}

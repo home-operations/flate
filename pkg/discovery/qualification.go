@@ -15,6 +15,7 @@ import (
 )
 
 type entryQualification struct {
+	preparation    *loader.Preparation
 	arrivals       *applicationEvidence
 	loader         *loader.Loader
 	trees          *kustomize.TreeCache
@@ -510,6 +511,9 @@ func (w *qualificationWalk) execution(
 func (w *qualificationWalk) commit(ctx context.Context, request *loader.PrepareRequest) (bool, error) {
 	if w.q.session != nil {
 		*request = w.q.session.prepareRequest(request)
+	}
+	if request.Preparation == nil {
+		request.Preparation = &w.q.preparation
 	}
 	proposal, err := w.q.loader.Prepare(ctx, *request)
 	if err != nil {

@@ -72,7 +72,7 @@ func TestClaims_ReadinessViews(t *testing.T) {
 		assert.FatalIf(t, len(claims) != 0, "unresolved source claimed bootstrap files: %v", claims)
 	}
 	st.SetArtifact(ks.SourceID(), input)
-	l.refreshSources()
+	l.refreshSources(nil)
 	l.refreshClaims(root, l.kustomizations())
 	assert.Equal(t, reads.Load(), int64(0))
 	claims := l.Claims(root)

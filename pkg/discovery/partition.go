@@ -19,7 +19,7 @@ type entryRoot struct {
 	Anchors     []string
 	pinned      []manifest.KSClaim
 	views       map[string]*store.SourceArtifact
-	resolutions map[manifest.NamedResource]entryResolution
+	parsed      *loader.ParsedInputs
 }
 
 type occurrenceProjection struct {
@@ -60,11 +60,12 @@ func (d *Session) partitionRoots(ctx context.Context) ([]entryRoot, error) {
 		}
 		root := entryRoot{
 			Path: pkg.Path, Scans: pkg.Scans, views: map[string]*store.SourceArtifact{},
-			resolutions: map[manifest.NamedResource]entryResolution{},
 		}
 		if err := planner.reach(ctx, &root, pkg.Occurrences); err != nil {
 			return nil, err
 		}
+		// Independent roots can admit different source views at the same path.
+		root.parsed = d.loader.ParsedInputs()
 		roots = append(roots, root)
 	}
 	return d.unpinnedRoots(roots), nil
@@ -145,6 +146,22 @@ func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []loade
 		}
 		seen[visit.occurrence] = true
 		root.Occurrences = append(root.Occurrences, visit.occurrence)
+		if _, _, hasPath := visit.occurrence.SourcePath(); !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
+			continue
+		}
+		child, err := p.object(ctx, &visit.occurrence)
+		if err != nil {
+			return err
+		}
+		application, _ := manifest.ApplicationFor(child.Obj)
+		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
+			if !entrySourceReference(&ref) || ref.NamedResource == application.Source {
+				continue
+			}
+			if _, sourceErr := p.source(ctx, root, &visit, ref.NamedResource); sourceErr != nil {
+				return sourceErr
+			}
+		}
 		children, err := p.follow(ctx, root, &visit, coordinates[visit.occurrence.Declaration])
 		if err != nil {
 			return err
@@ -162,18 +179,12 @@ func (p *entryPlanner) follow(
 	seed bool,
 ) ([]partitionVisit, error) {
 	occurrence := &visit.occurrence
-	if _, _, hasPath := occurrence.SourcePath(); !hasPath {
-		return nil, nil
-	}
-	child, err := p.object(ctx, occurrence)
-	if err != nil {
-		return nil, err
-	}
-	application, valid := manifest.ApplicationFor(child.Obj)
+	object := p.objects[*occurrence].Obj
+	application, valid := manifest.ApplicationFor(object)
 	if !valid {
 		return nil, nil
 	}
-	binding, err := p.source(ctx, visit, &application)
+	binding, err := p.source(ctx, root, visit, application.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -181,10 +192,7 @@ func (p *entryPlanner) follow(
 	if input == nil {
 		return nil, nil
 	}
-	root.resolutions[application.Source] = binding
-	if binding.viewKey != "" {
-		root.views[binding.viewKey] = input
-	}
+
 	target := filepath.ToSlash(filepath.Clean(manifest.NormalizeClaimBase(application.Path)))
 	absolute := filepath.Join(input.LocalPath, target)
 	if !safepath.Contains(input.LocalPath, absolute) {
@@ -202,7 +210,7 @@ func (p *entryPlanner) follow(
 	pinned := p.session.pinnedWorkingTreeClaims(p.session.cfg.Input.LocalPath, []loader.Occurrence{*occurrence})
 	root.pinned = append(root.pinned, pinned.claims...)
 	key := occurrenceProjection{path: absolute}
-	if producer, ok := child.Obj.(interface {
+	if producer, ok := object.(interface {
 		EmissionPolicy() manifest.EmissionPolicy
 	}); ok {
 		key.namespace = producer.EmissionPolicy().Namespace
@@ -242,10 +250,11 @@ func (p *entryPlanner) object(ctx context.Context, occurrence *loader.Occurrence
 
 func (p *entryPlanner) source(
 	ctx context.Context,
+	root *entryRoot,
 	visit *partitionVisit,
-	app *manifest.EntryApplication,
+	id manifest.NamedResource,
 ) (entryResolution, error) {
-	id := app.Source
+	application, _ := manifest.ApplicationFor(p.objects[visit.occurrence].Obj)
 	var selected *loader.Occurrence
 	for i := range visit.scope {
 		candidate := &visit.scope[i]
@@ -270,24 +279,27 @@ func (p *entryPlanner) source(
 			return entryResolution{}, err
 		}
 		group.evidence = child
-	} else if group.evidence.Obj == nil {
-		group.evidence.Obj = app.Declaration
-		if app.Declaration != nil {
+	} else if group.evidence.Obj == nil && id == application.Source {
+		group.evidence.Obj = application.Declaration
+		if application.Declaration != nil {
 			coordinate.declaration = visit.occurrence.Declaration
 			coordinate.root = ""
 		}
 	}
-	if binding, known := p.resolved[coordinate]; known {
-		return binding, nil
+	binding, known := p.resolved[coordinate]
+	if !known {
+		admission := p.session.admission()
+		if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
+			return entryResolution{}, err
+		}
+		binding = p.session.resolvedSources[id]
+		if binding.artifact != nil {
+			p.inputs[binding.artifact.LocalPath] = binding.artifact
+		}
+		p.resolved[coordinate] = binding
 	}
-	admission := p.session.admission()
-	if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
-		return entryResolution{}, err
+	if binding.viewKey != "" {
+		root.views[binding.viewKey] = binding.artifact
 	}
-	binding := p.session.resolvedSources[id]
-	if binding.artifact != nil {
-		p.inputs[binding.artifact.LocalPath] = binding.artifact
-	}
-	p.resolved[coordinate] = binding
 	return binding, nil
 }

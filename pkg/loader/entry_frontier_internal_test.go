@@ -234,3 +234,34 @@ func TestEntryFrontier_RequiredDocumentCoverage(t *testing.T) {
 	assert.FatalIf(t, child.Obj == nil, "required source declaration disappeared")
 	assert.Equal(t, child.Obj.(*manifest.GitRepository).Reference.Tag, "pin")
 }
+
+func TestEntryFrontier_SourceLifetime(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	var reads atomic.Int64
+	input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{
+		FS: fstest.MapFS{
+			"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
+			"object.yaml":        {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ordinary}\n")},
+		},
+		reads: map[string]*atomic.Int64{"object.yaml": &reads},
+	}}
+	l := New(store.New())
+	for range 2 {
+		possible, err := l.EntryFrontier(t.Context(), input, ".")
+		assert.NoError(t, err)
+		assert.Equal(t, possible, false)
+	}
+	assert.Equal(t, reads.Load(), int64(1))
+	replacement := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
+		"object.yaml":        {Data: []byte(testutil.KustomizationYAML("applier", "apps", "  path: ./entry\n"))},
+	}}
+	possible, err := l.EntryFrontier(t.Context(), replacement, ".")
+	assert.NoError(t, err)
+	assert.Equal(t, possible, true)
+	possible, err = l.EntryFrontier(t.Context(), input, ".")
+	assert.NoError(t, err)
+	assert.Equal(t, possible, false)
+	assert.Equal(t, reads.Load(), int64(2))
+}

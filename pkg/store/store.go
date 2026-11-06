@@ -291,6 +291,7 @@ type objectUpdate struct {
 	independent                 bool
 	classified                  bool
 	reads                       *ReadSet
+	inventory                   *registration
 }
 
 func (u *objectUpdate) compare() {
@@ -457,10 +458,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 	sh.cells[id] = cell
 	if !u.membershipEqual && bucket.update(nameID{id.Namespace, id.Name}, cell.static != nil, true, bucket.generation) {
 		sh.admitAbsenceLocked(manifest.NamedResource{Group: id.Group, Kind: id.Kind}, bucketFacet, u.reads)
-		if captured := u.collection; captured != nil && captured.head != nil && captured.absent == nil &&
-			captured.generation.Load()+1 == bucket.generation {
-			captured.generation.Store(bucket.generation)
-		}
+		u.advanceCollection(bucket.generation)
 		bucket.authority = sh.enqueueLocked(bucket.authority)
 		sh.byName[kindID{id.Group, id.Kind}] = bucket
 	}
@@ -755,6 +753,7 @@ func (s *Store) addAnchor(uValue *objectUpdate, index *manifest.DiscoveryIndex) 
 	cell.publication++
 	sh.cells[id] = cell
 	dispatches := s.reachabilityLocked(region)
+	u.advanceCollection(sh.byName[kindID{id.Group, id.Kind}].generation)
 	s.unlockAll()
 	dispatchPublications(dispatches)
 	return true

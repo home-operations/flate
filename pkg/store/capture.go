@@ -683,11 +683,16 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 	}
 	id := child.Obj.Named()
 	for input := r.inputs; input != nil; input = input.next {
-		if input.Ref.NamedResource == id && input.object.head != nil && input.view.child.Obj == nil {
+		if input.Ref.NamedResource == id && input.object.head != nil && input.view.declaration() == nil {
 			update.target = &input.object
 		}
 		if input.Ref.NamedResource == (manifest.NamedResource{Group: id.Group, Kind: id.Kind}) {
 			update.collection = input.cell(bucketFacet)
+		}
+		if input.Ref.NamedResource == (manifest.NamedResource{}) {
+			if details := input.details.Load(); details != nil && details.inventory != nil {
+				update.inventory = &details.inventory[kindShardIndex(id.Kind)]
+			}
 		}
 	}
 	r.store.addObject(&update)

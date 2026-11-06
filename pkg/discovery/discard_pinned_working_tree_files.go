@@ -246,9 +246,9 @@ func (d *Session) admitRequiredObjects(ctx context.Context, proposal *loader.Adm
 			}
 		}
 		if child.Obj != nil && d.cfg.Store.GetObject(child.Obj.Named()) == nil {
-			changed = true
 			_, _, hasPath := child.Obj.SourcePath()
 			_, source := child.Obj.(entrySource)
+			changed = changed || hasPath || source || child.Entry != nil
 			refresh = refresh || hasPath || source
 		}
 	}

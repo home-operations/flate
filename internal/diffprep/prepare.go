@@ -17,10 +17,11 @@ type Doc struct {
 
 // Options controls normalization before canonical pairing.
 type Options struct {
-	Subjects    [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
-	StripAttrs  []string
-	StripFields []string
-	Normalize   func(map[string]any)
+	Subjects     [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
+	ProducerKeys [2]map[manifest.NamedResource]manifest.NamedResource
+	StripAttrs   []string
+	StripFields  []string
+	Normalize    func(map[string]any)
 }
 
 // Prepared retains unchanged pairs for native document-count and ordering semantics.

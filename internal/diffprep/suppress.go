@@ -160,6 +160,9 @@ func Suppress(orig, current Snapshot) SuppressionResult {
 				note.Subject = orig.subject(key)
 			}
 		}
+		if _, separate := plans[note.Subject.ID]; separate && note.Subject.ID != key {
+			note.Subject = manifest.DiagnosticIdentity{}
+		}
 		suppressed = append(suppressed, note)
 	}
 	slices.SortFunc(suppressed, func(a, b Suppression) int {

@@ -580,6 +580,9 @@ func (l *Loader) IsFileIndexed(id manifest.NamedResource) bool {
 //
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
+	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
+		return l.nativeEntry
+	}
 	record, _ := l.Index.Lookup(id)
 	return l.catalogObject(id, &record)
 }

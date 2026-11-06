@@ -247,6 +247,6 @@ func testInput(root string) *store.SourceArtifact {
 }
 
 func projectedProducerForTest(object manifest.BaseManifest) manifest.TemplateProjection {
-	projection := manifest.ProjectProducer(object)
+	projection, _ := manifest.ProjectProducer(object, nil)
 	return projection
 }

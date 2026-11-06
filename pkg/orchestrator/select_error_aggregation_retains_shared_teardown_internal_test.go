@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -675,7 +676,8 @@ func testSelectRequiredFailureOutsideOutputNamespaceUnscopedRequiredDescendant(t
 	reads.RequireData(child.Named())
 	reads.Accept(store.AssessmentReconciled)
 	reads.Retire()
-	assert.Equal(t, slices.Contains(slices.Collect(run.store.RequiredInputs(parent.Named())), child.Named()), true)
+	_, required := maps.Collect(run.store.RequiredInputs(parent.Named()))[child.Named()]
+	assert.Equal(t, required, true)
 	run.filter = change.NewFilter()
 	_, retry := run.filter.AddEmitted(
 		change.MembershipUpdate{

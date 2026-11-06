@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -27,11 +28,11 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 				Detail:   []string{o.repoRoot},
 			},
 		)
-		if o.loader == nil {
+		if !o.filter.Enabled() {
 			return nil
 		}
 	}
-	if o.loader == nil {
+	if !o.filter.Enabled() {
 		return nil
 	}
 	o.loader.Options.Changes = o.cfg.ExternalChanges
@@ -57,9 +58,6 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	}()
 	o.configureControllers()
 	if err := o.prepareNeededHistory(ctx, proposal.Needed, history); err != nil {
-		return err
-	}
-	if _, err := o.admitEntry(ctx); err != nil {
 		return err
 	}
 	o.history = history
@@ -110,6 +108,9 @@ func (o *Orchestrator) prepareProducerHistory(
 	if obj == nil {
 		obj = o.index.Records[id].Declaration
 	}
+	if obj == nil && len(o.loader.Options.HistoryOwners[id]) != 0 {
+		obj = o.loader.CatalogObject(id)
+	}
 	currentInput := o.cfg.Input == o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
 	if obj == nil || currentInput && o.index.Records[id].StaticOutput {
 		return nil, false
@@ -154,7 +155,10 @@ func (o *Orchestrator) lookupHistory(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	o.loader.Options.HistoryOwners = append([]manifest.NamedResource{}, producers...)
+	if producers == nil {
+		producers = map[manifest.NamedResource][]manifest.SourceEvidence{}
+	}
+	o.loader.Options.HistoryOwners = producers
 	return nil
 }
 
@@ -188,31 +192,38 @@ func (o *Orchestrator) appendHistoryQuery(
 }
 
 func (o *Orchestrator) installAdmission(ctx context.Context) error {
+	if !o.filter.Enabled() && len(o.admission.EntryProducers()) == 0 {
+		return nil
+	}
 	o.loader.Options.Changes = o.cfg.ExternalChanges
-	if entry := o.entryBinding.Entry; entry != nil {
-		if o.history == nil {
-			o.history = map[manifest.NamedResource]struct {
-				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-				Complete bool
-			}{}
-		}
-		history := o.history[entry.Owner]
-		history.Records, history.Complete = entry.Records, true
-		o.history[entry.Owner] = history
+	root, binding, err := o.admission.BindEntry(ctx, o.store)
+	if err != nil {
+		return err
 	}
-	var proposal *loader.Admission
-	var err error
-	if inputs := o.admission.EntryInputs(); len(inputs) != 0 {
-		var reads store.ReadSet
-		reads.Init(o.store, manifest.NamedResource{}, nil)
+	defer o.store.Retire(binding.Reads)
+	defer binding.Reads.ReleaseCapture()
+	current := o.entryBinding
+	if binding.Reads != nil {
+		current = binding
+	}
+
+	o.setEntryHistory(current.Entry)
+	request := loader.PrepareRequest{Invocation: true, History: o.history, Reads: binding.Reads}
+	if binding.Reads != nil && root != nil && root != o.store.GetDeclaration(root.Named()) {
+		application := manifest.EntryApplication{Source: current.Source, Path: current.Path}
+		request.Incoming = store.Child{Obj: root, Entry: &application}
+	}
+	var reads store.ReadSet
+	if inputs := o.admission.EntryProducers(); binding.Reads == nil && len(inputs) != 0 {
+		request.Invocation = false
+		reads.Init(o.store, manifest.BootstrapSourceID, nil)
+		defer o.store.Retire(&reads)
 		for _, id := range inputs {
-			reads.RequireData(id)
+			reads.RequireQualification(id)
 		}
-		proposal, err = o.loader.Prepare(ctx, loader.PrepareRequest{Reads: &reads})
-		defer reads.Retire()
-	} else {
-		proposal, err = o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
+		request.Reads = &reads
 	}
+	proposal, err := o.loader.Prepare(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -223,9 +234,16 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	if !committed {
 		return nil
 	}
+	if binding.Reads != nil {
+		accepted, acceptErr := o.acceptEntry(ctx, &binding)
+		if acceptErr != nil || !accepted {
+			return acceptErr
+		}
+	}
+
 	o.changeNamespaces = proposal.Namespaces
 	o.preparation = nil
-	if len(o.admission.EntryInputs()) == 0 {
+	if len(o.admission.EntryProducers()) == 0 {
 		o.history = nil
 	}
 	o.loader.Options.HistoryOwners = nil
@@ -240,4 +258,18 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	}
 	slog.Debug("orchestrator: changed-only keep set", "filter", o.filter)
 	return nil
+}
+
+func (o *Orchestrator) setEntryHistory(entry *kustomize.EntryEvidence) {
+	if entry != nil {
+		if o.history == nil {
+			o.history = map[manifest.NamedResource]struct {
+				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+				Complete bool
+			}{}
+		}
+		history := o.history[entry.Owner]
+		history.Records, history.Complete = entry.Records, true
+		o.history[entry.Owner] = history
+	}
 }

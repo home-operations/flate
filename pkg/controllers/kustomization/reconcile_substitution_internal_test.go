@@ -360,7 +360,7 @@ func TestReconcile_ImmutableRootChangedRemoteLiteral(t *testing.T) {
 			level manifest.DrainLevel,
 		) *base.Execution {
 			ex := second.ReconcileNode(ctx, id, level)
-			reused = ex.Reused
+			reused = ex.Disposition == store.AssessmentReused
 			return ex
 		},
 	})
@@ -443,7 +443,7 @@ func testReconcileEffectiveSubstitutionsCase(
 				level manifest.DrainLevel,
 			) *base.Execution {
 				ex := c.ReconcileNode(ctx, id, level)
-				replayed = ex.Reused
+				replayed = ex.Disposition == store.AssessmentReused
 				return ex
 			},
 		})
@@ -573,7 +573,7 @@ func testReconcileEffectiveSubstitutionDiagnosticsCase(
 			level manifest.DrainLevel,
 		) *base.Execution {
 			ex := c.ReconcileNode(ctx, id, level)
-			reused = ex.Reused
+			reused = ex.Disposition == store.AssessmentReused
 			return ex
 		},
 	})

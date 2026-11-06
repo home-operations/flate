@@ -170,7 +170,6 @@ func (c *execution) render(
 	acceptance := kustomize.RenderAcceptance{
 		Work:                    c.run.Reads.Work().Scope().RenderWork(),
 		Owner:                   id,
-		Entry:                   ks.EntryReceipt,
 		Source:                  source.HistoryIdentity(ks.SourceID()),
 		Content:                 content,
 		DependencySubstitutions: c.DependencySubstitutions,

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"testing"
 
@@ -400,9 +401,10 @@ func testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(
 		"%s",
 		"closing discarded the accepted read snapshot",
 	)
+	_, required := maps.Collect(scope.first.Required())[scope.parent.Named()]
 	assert.FatalIf(
 		t,
-		!slices.Contains(slices.Collect(scope.first.Required()), scope.parent.Named()),
+		!required,
 		"%s",
 		"closing discarded the accepted required-input footprint",
 	)

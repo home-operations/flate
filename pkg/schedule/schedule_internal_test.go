@@ -183,6 +183,7 @@ func TestScheduler_InvalidAcceptance(t *testing.T) {
 	old.invalid.Store(true)
 	old.retire = func() { retired.Add(1) }
 	fresh.close = func() { closed.Add(1) }
+	swept := false
 	s := New(task.NewBounded(2), sweepDispatcher{
 		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel) Result {
 			if runs.Add(1) == 1 {
@@ -190,7 +191,13 @@ func TestScheduler_InvalidAcceptance(t *testing.T) {
 			}
 			return Result{Assessment: fresh}
 		},
-		sweep: func(context.Context) []NodeID { return []NodeID{id, id} },
+		sweep: func(context.Context) []NodeID {
+			if swept {
+				return nil
+			}
+			swept = true
+			return []NodeID{id, id}
+		},
 	})
 	s.Seed([]NodeID{id})
 	assert.NoError(t, s.Run(t.Context()))
@@ -376,6 +383,45 @@ func TestScheduler_FinalReclamationCanceled(t *testing.T) {
 	})
 	assert.NoError(t, s.Run(t.Context()))
 	assert.Diff(t, canceled, []bool{false, true})
+}
+
+func TestScheduler_QuiescentSweepProgress(t *testing.T) {
+	t.Parallel()
+	for _, publication := range []bool{false, true} {
+		t.Run(fmt.Sprintf("publication=%v", publication), func(t *testing.T) {
+			t.Parallel()
+			var s *Scheduler
+			var runs atomic.Int64
+			sweeps := 0
+			child := testutil.HelmReleaseID("apps", "child")
+			s = New(task.NewBounded(2), sweepDispatcher{
+				dispatchFunc: func(_ context.Context, id NodeID, _ manifest.DrainLevel) Result {
+					assert.Equal(t, id, child)
+					runs.Add(1)
+					return Result{}
+				},
+				sweep: func(ctx context.Context) []NodeID {
+					if ctx.Err() != nil {
+						return nil
+					}
+					sweeps++
+					switch sweeps {
+					case 1:
+						if publication {
+							s.OnPublication()
+							return nil
+						}
+						return []NodeID{testutil.KustomizationID("apps", "binding-probe")}
+					case 2:
+						s.OnArrival(child, true)
+					}
+					return nil
+				},
+			})
+			assert.NoError(t, s.Run(t.Context()))
+			assert.Equal(t, runs.Load(), int64(1))
+		})
+	}
 }
 
 func TestScheduler_UnprogressedInvalidAssessment(t *testing.T) {

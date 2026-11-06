@@ -13,6 +13,9 @@ func (r *ReadSet) matchesInput(input *Input, exact bool) bool {
 		!reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
 		return false
 	}
+	if input.ordinaryDemand && r.OrdinaryDemand(id) != input.view.ordinary {
+		return false
+	}
 	if input.declaration && (r.GetDeclaration(id) == nil) != (new(input.view).declaration() == nil) {
 		return false
 	}

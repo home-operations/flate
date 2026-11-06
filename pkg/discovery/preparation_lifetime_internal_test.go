@@ -46,13 +46,13 @@ func TestPrepareDocuments_ReplacementRetiresSupport(t *testing.T) {
 	first := owner.SourceID()
 	st.SetArtifact(first, source)
 	d := Session{cfg: Config{Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
-	_, err := d.prepareDocuments(t.Context(), owner, source)
+	_, err := d.prepareDocuments(t.Context(), owner, source, nil)
 	assert.NoError(t, err)
 	replacement := *owner
 	replacement.SourceRef.Name = "second"
 	second := replacement.SourceID()
 	st.SetArtifact(second, source)
-	_, err = d.prepareDocuments(t.Context(), &replacement, source)
+	_, err = d.prepareDocuments(t.Context(), &replacement, source, nil)
 	assert.NoError(t, err)
 	st.SetArtifact(first, &store.SourceArtifact{LocalPath: root + "-first", FS: source.FS})
 	assert.Equal(t, slices.Contains(slices.Collect(st.Sweep()), owner.Named()), false)

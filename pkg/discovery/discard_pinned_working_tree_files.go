@@ -129,7 +129,7 @@ func (d *Session) loadSourcePath(
 ) (int, error) {
 	input := expansion.source
 	owner := expansion.ks.Named()
-	if d.loadPurpose == manifest.IncidentalDocuments {
+	if !d.constructionStarted {
 		owner = manifest.NamedResource{}
 	}
 	n, err := d.loadAt(ctx, dir, total, sourceLoad{
@@ -166,7 +166,6 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
 		return nil, err
 	}
-	d.loadPurpose = manifest.ApplicationDocuments
 	return d, nil
 }
 
@@ -179,16 +178,24 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 	if d.result != nil || admission == nil {
 		return false, nil
 	}
+	d.constructionStarted = true
+	d.request = admission.Request
+	d.request.Incoming = store.Child{}
+	// Admission can retire provisional relations, so construction MUST capture their owners first.
+	owners := d.neededMaterializers(admission.Needed)
 	admitRequiredObjectsResult2, admitRequiredObjectsResult2Err := d.admitRequiredObjects(ctx, admission)
 	changed, refresh, err := admitRequiredObjectsResult2.changed, admitRequiredObjectsResult2.refresh, admitRequiredObjectsResult2Err
 	if err != nil {
 		return false, err
 	}
 	root := d.cfg.Input.LocalPath
-	owners := d.neededMaterializers(admission.Needed)
+	d.entryState.changed = false
 	pending, err := d.pendingProducers(ctx, admission, root, owners)
 	if err != nil {
 		return false, err
+	}
+	if d.entryState.changed {
+		changed, refresh = true, true
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(pending), manifest.NamedResource.Compare) {
 		ks := pending[id]
@@ -276,9 +283,28 @@ func (d *Session) pendingProducers(
 	owners map[manifest.NamedResource]bool,
 ) (map[manifest.NamedResource]*manifest.Kustomization, error) {
 	pending := map[manifest.NamedResource]*manifest.Kustomization{}
-	childValues := d.loader.Kustomizations()
-	for childIndex := range childValues {
-		child := childValues[childIndex]
+	for _, packageRoot := range d.loader.StandaloneRoots(root) {
+		if !slices.Contains(admission.Blocked, packageRoot) {
+			continue
+		}
+		ks := manifest.NewEntryKustomization(manifest.BootstrapSourceID, packageRoot, manifest.NamedResource{})
+		if filepath.Join(root, packageRoot) == d.cfg.Path {
+			d.entryDemand = true
+			var err error
+			ks, err = d.bindEntry(ctx, root)
+			if err != nil {
+				return nil, err
+			}
+			if ks == nil {
+				continue
+			}
+		}
+		pending[ks.Named()] = ks
+	}
+	d.loader.Admit(root)
+	kustomizations := d.loader.Kustomizations()
+	for i := range kustomizations {
+		child := &kustomizations[i]
 		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
 		if !owners[ks.Named()] || ks.IsFragment() {
 			continue
@@ -287,21 +313,6 @@ func (d *Session) pendingProducers(
 		if d.cfg.Store.GetDeclaration(ks.Named()) != nil || record.Builder != "" {
 			pending[ks.Named()] = ks
 		}
-	}
-	for _, packageRoot := range d.loader.StandaloneRoots(root) {
-		if !slices.Contains(admission.Blocked, packageRoot) {
-			continue
-		}
-		ks := manifest.NewEntryKustomization(manifest.BootstrapSourceID, packageRoot, manifest.NamedResource{})
-		if filepath.Join(root, packageRoot) == d.cfg.Path {
-			var err error
-			ks, err = d.bindEntry(ctx, root)
-			if err != nil {
-				return nil, err
-			}
-			d.cfg.Store.AddObject(ks)
-		}
-		pending[ks.Named()] = ks
 	}
 	return pending, nil
 }
@@ -312,10 +323,10 @@ func (d *Session) preparePendingProducer(ctx context.Context, ks *manifest.Kusto
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}
 	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered &&
-		previous.matches(ks, input, d.substitutions) {
+		previous.matches(ks, input, d.substitutions, nil) {
 		return false, nil
 	}
-	if err := d.prepareProducer(ctx, ks, input); err != nil {
+	if err := d.prepareProducer(ctx, ks, input, nil); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -341,13 +352,18 @@ func (d *Session) Freeze(ctx context.Context) (*Result, error) {
 	}
 	cfg := d.cfg
 	cfg.session = d
-	if _, err := d.bindEntry(ctx, d.cfg.Input.LocalPath); err != nil {
+	if err := d.loadManifests(ctx, d.cfg.Input.LocalPath, d.requiresEntry()); err != nil {
 		return nil, err
 	}
 	result, err := Run(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
+	result.Admission.session = nil
+	if result.Admission.qualification != nil {
+		result.Admission.qualification.session = nil
+	}
+	d.request = loader.PrepareRequest{}
 	d.result = result
 	return result, nil
 }

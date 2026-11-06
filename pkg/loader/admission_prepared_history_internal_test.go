@@ -263,7 +263,16 @@ func testAdmissionHistoryOwnerDeclarationAndInputsCase(
 	l.Options.Filter = change.NewFilter()
 	owner := testutil.HelmReleaseID("apps", "emitter")
 	if *testCaseInput {
-		l.Options.HistoryOwners = []manifest.NamedResource{owner}
+		l.Options.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
+			owner: {
+				{
+					Source: st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
+						manifest.BootstrapSourceID,
+					),
+					Path: "input.yaml",
+				},
+			},
+		}
 	}
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)

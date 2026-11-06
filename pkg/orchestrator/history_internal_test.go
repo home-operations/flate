@@ -482,7 +482,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	}
 	owners, err := reopened.ProducersForPaths(t.Context(), query)
 	assert.NoError(t, err)
-	assert.Equal(t, slices.Contains(owners, owner), true)
+	assert.Equal(t, len(owners[owner]) != 0, true)
 
 	{
 		_, self := before[owner]
@@ -676,7 +676,7 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 		},
 	)
 	assert.NoError(t, err)
-	assert.Equal(t, slices.Contains(owners, owner), true)
+	assert.Equal(t, len(owners[owner]) != 0, true)
 	again, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
 
 	assert.FatalIf(

@@ -148,7 +148,7 @@ func (c *Controller) KeepEmitted(
 	if child.Obj == nil {
 		return true, nil
 	}
-	c.Store.SetIncluded(child.Obj.Named(), f.ShouldReconcile(child.Obj.Named()))
+	c.Store.SetIncluded(child.Obj.Named(), f.ShouldReconcile(child.Obj.Named()), f.OrdinaryDemand(child.Obj.Named()))
 	return f.ShouldReconcile(child.Obj.Named()), nil
 }
 
@@ -156,8 +156,12 @@ func (c *Controller) admissionProof(reads *store.ReadSet) *store.ReadSet {
 	proof := &store.ReadSet{}
 	proof.Init(c.Store, reads.ID(), nil)
 	proof.SetWork(reads.Work())
-	for id := range reads.Required() {
-		proof.RequireData(id)
+	for id, qualification := range reads.Required() {
+		if qualification {
+			proof.RequireQualification(id)
+		} else {
+			proof.RequireData(id)
+		}
 	}
 	return proof
 }

@@ -625,7 +625,7 @@ type templateResult struct {
 	receipt      *manifest.RenderReceipt
 }
 
-func (r *templateResult) admit(request *templateRequest) (bool, error) {
+func (r *templateResult) admit(ctx context.Context, c *Client, request *templateRequest) (bool, error) {
 	r.observed = true
 	admission := RenderAdmission{Key: request.key, Receipt: r.receipt}
 	if r.record != nil {
@@ -633,6 +633,80 @@ func (r *templateResult) admit(request *templateRequest) (bool, error) {
 			admission.Documents, admission.Accepted = normalizeLists(r.docs), true
 		}
 	}
-	r.handled, r.admissionErr = request.input.Admit(admission)
+	r.handled, r.admissionErr = request.admit(ctx, c, admission)
 	return r.handled, r.admissionErr
+}
+
+func (r *templateRequest) template(
+	ctx context.Context,
+	c *Client,
+) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
+	render := func(ctx context.Context, cacheErr error) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
+		return r.render(ctx, c, cacheErr)
+	}
+	if r.key == "" || r.loaded.valuesErr != nil || r.capabilityErr != nil {
+		if r.input.Admit != nil {
+			if handled, admitErr := r.admit(
+				ctx,
+				c,
+				RenderAdmission{Key: r.key},
+			); handled ||
+				admitErr != nil {
+				return nil, nil, admitErr
+			}
+		}
+		return render(ctx, nil)
+	}
+	// Callback state MUST share one allocation to preserve cache-hit allocation counts.
+	var result templateResult
+	blobKey := cache.BlobKey{
+		Content: r.key,
+		Render:  cache.RenderPending,
+		Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
+			return r.validate(ctx, c, &result, generation)
+		},
+	}
+	if r.input.Admit != nil {
+		blobKey.Observe = func(ctx context.Context, _ fs.FS) (bool, error) {
+			return result.admit(ctx, c, r)
+		}
+	}
+	_, _, _, err := c.cache.Blob(
+		ctx,
+		blobKey,
+		&cache.Policy{MaxAge: cache.Forever, Work: r.input.Work.Pending(), HistoryWork: r.input.Work.History()},
+		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			return r.produce(ctx, c, &result, w)
+		},
+	)
+	if err == nil {
+		if result.handled {
+			return nil, nil, nil
+		}
+		return normalizeLists(result.docs), result.receipt, nil
+	}
+	if result.admissionErr != nil {
+		return nil, nil, result.admissionErr
+	}
+	if _, storage := errors.AsType[*cache.CacheError](err); !storage {
+		return nil, nil, err
+	}
+	if r.input.Admit != nil && !result.observed {
+		if handled, admitErr := result.admit(ctx, c, r); handled || admitErr != nil {
+			return nil, nil, admitErr
+		}
+	}
+	return render(ctx, err)
+}
+
+func (r *templateRequest) admit(ctx context.Context, c *Client, admission RenderAdmission) (bool, error) {
+	admission.Possible = admission.Accepted
+	if !admission.Accepted {
+		var err error
+		admission.Possible, err = r.entryPrecondition(ctx, c)
+		if err != nil {
+			return false, err
+		}
+	}
+	return r.input.Admit(admission)
 }

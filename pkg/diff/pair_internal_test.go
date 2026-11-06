@@ -160,7 +160,7 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 	if got := diffprep.Prepare(
 		prepareDocs(l),
 		prepareDocs(r),
-		diffprep.Options{},
+		&diffprep.Options{},
 	).Pairs; len(
 		got,
 	) != testCaseInput.pairs {
@@ -171,7 +171,7 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 		t.Fatalf("changes = %+v, want %d", changes, testCaseInput.pairs)
 	}
 	count := 0
-	prepared := diffprep.Prepare(prepareDocs(l), prepareDocs(r), diffprep.Options{})
+	prepared := diffprep.Prepare(prepareDocs(l), prepareDocs(r), &diffprep.Options{})
 	lines, err := output.PrepareLines(prepared)
 	assert.NoError(t, err)
 	{

@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -237,12 +238,12 @@ func (r *historyRecord) matches(hValue *RenderHistory, acceptance string) bool {
 func (c *Cache) ProducersForPaths(
 	ctx context.Context,
 	query []manifest.SourceEvidence,
-) ([]manifest.NamedResource, error) {
+) (map[manifest.NamedResource][]manifest.SourceEvidence, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, &CacheError{err}
 	}
 	if !c.CanPersistRenders() || len(query) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // Disabled persistence or an empty query supplies no history evidence.
 	}
 	changes := changedHistoryPaths(query)
 
@@ -254,23 +255,45 @@ func (c *Cache) ProducersForPaths(
 	}); err != nil {
 		return nil, &CacheError{err}
 	}
-	owners := map[manifest.NamedResource]struct{}{}
+	owners := map[manifest.NamedResource][]manifest.SourceEvidence{}
 	seen := map[historyVersion]struct{}{}
 	for _, tag := range tags {
 		producer, matched, err := c.pathProducer(ctx, tag, changes, seen)
 		if err != nil {
 			return nil, err
 		}
-		if matched {
-			owners[producer] = struct{}{}
+		if len(matched) != 0 {
+			owners[producer] = append(owners[producer], matched...)
 		}
 	}
 
-	return slices.SortedFunc(maps.Keys(owners), manifest.NamedResource.Compare), nil
+	for owner, evidence := range owners {
+		slices.SortFunc(evidence, func(a, b manifest.SourceEvidence) int {
+			order := cmp.Or(
+				strings.Compare(a.Source.Kind, b.Source.Kind),
+				strings.Compare(a.Source.URL, b.Source.URL),
+				strings.Compare(
+					a.Source.Key,
+					b.Source.Key,
+				),
+				strings.Compare(a.Source.Root, b.Source.Root),
+				strings.Compare(a.Path, b.Path),
+			)
+			if order != 0 || a.Subtree == b.Subtree {
+				return order
+			}
+			if a.Subtree {
+				return 1
+			}
+			return -1
+		})
+		owners[owner] = slices.Compact(evidence)
+	}
+	return owners, nil
 }
 
-func changedHistoryPaths(query []manifest.SourceEvidence) map[string]map[string]struct{} {
-	changes := map[string]map[string]struct{}{}
+func changedHistoryPaths(query []manifest.SourceEvidence) map[string][]manifest.SourceEvidence {
+	changes := map[string][]manifest.SourceEvidence{}
 	identities := map[manifest.SourceIdentity]string{}
 	for _, evidence := range query {
 		if evidence.Source == (manifest.SourceIdentity{}) {
@@ -285,25 +308,26 @@ func changedHistoryPaths(query []manifest.SourceEvidence) map[string]map[string]
 		if !fs.ValidPath(file) {
 			continue
 		}
-		if changes[id] == nil {
-			changes[id] = map[string]struct{}{}
-		}
-		changes[id][file] = struct{}{}
+		evidence.Path = file
+		changes[id] = append(changes[id], evidence)
 	}
 
 	return changes
 }
 
-func (r *historyRecord) reaches(changes map[string]map[string]struct{}) bool {
-	matched := false
+func (r *historyRecord) reaches(changes map[string][]manifest.SourceEvidence) []manifest.SourceEvidence {
+	var matched []manifest.SourceEvidence
 	for _, source := range r.Sources {
-		for file := range changes[source.Source] {
+		for _, evidence := range changes[source.Source] {
 			for _, root := range source.Paths {
 				if !fs.ValidPath(root.Path) {
 					continue
 				}
-				matched = matched || file == root.Path ||
-					root.Subtree && (root.Path == "." || strings.HasPrefix(file, root.Path+"/"))
+				if evidence.Path == root.Path ||
+					root.Subtree && (root.Path == "." || strings.HasPrefix(evidence.Path, root.Path+"/")) {
+					matched = append(matched, evidence)
+					break
+				}
 			}
 		}
 	}
@@ -315,29 +339,29 @@ type historyVersion struct{ digest, metadata string }
 func (c *Cache) pathProducer(
 	ctx context.Context,
 	tag string,
-	changes map[string]map[string]struct{},
+	changes map[string][]manifest.SourceEvidence,
 	seen map[historyVersion]struct{},
-) (manifest.NamedResource, bool, error) {
+) (manifest.NamedResource, []manifest.SourceEvidence, error) {
 	if !strings.HasPrefix(tag, "render-") {
-		return manifest.NamedResource{}, false, nil
+		return manifest.NamedResource{}, nil, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return manifest.NamedResource{}, false, &CacheError{err}
+		return manifest.NamedResource{}, nil, &CacheError{err}
 	}
 	descriptor, err := c.store.Resolve(ctx, tag)
 	if errors.Is(err, errdef.ErrNotFound) {
-		return manifest.NamedResource{}, false, nil
+		return manifest.NamedResource{}, nil, nil
 	}
 	if err != nil {
-		return manifest.NamedResource{}, false, &CacheError{err}
+		return manifest.NamedResource{}, nil, &CacheError{err}
 	}
 	data := descriptor.Annotations[historyAnnotation]
 	if data == "" {
-		return manifest.NamedResource{}, false, nil
+		return manifest.NamedResource{}, nil, nil
 	}
 	identity := historyVersion{descriptor.Digest.String(), data}
 	if _, ok := seen[identity]; ok {
-		return manifest.NamedResource{}, false, nil
+		return manifest.NamedResource{}, nil, nil
 	}
 	seen[identity] = struct{}{}
 	var record historyRecord
@@ -346,17 +370,21 @@ func (c *Cache) pathProducer(
 		record.Acceptance == "" ||
 		record.Acceptance != descriptor.Annotations[acceptedRenderAnnotation] {
 		//nolint:nilerr // Invalid persisted history metadata is a cache miss, including decode failures.
-		return manifest.NamedResource{}, false, nil
+		return manifest.NamedResource{}, nil, nil
 	}
-	if !record.reaches(changes) {
-		return manifest.NamedResource{}, false, nil
+	matched := record.reaches(changes)
+	if len(matched) == 0 {
+		return manifest.NamedResource{}, nil, nil
 	}
 	info, err := c.root.Stat(blobPath(descriptor.Digest))
 	if errors.Is(err, fs.ErrNotExist) {
-		return manifest.NamedResource{}, false, nil
+		return manifest.NamedResource{}, nil, nil
 	}
 	if err != nil {
-		return manifest.NamedResource{}, false, &CacheError{err}
+		return manifest.NamedResource{}, nil, &CacheError{err}
 	}
-	return record.Owner, info.Mode().IsRegular() && info.Size() == descriptor.Size, nil
+	if !info.Mode().IsRegular() || info.Size() != descriptor.Size {
+		return manifest.NamedResource{}, nil, nil
+	}
+	return record.Owner, matched, nil
 }

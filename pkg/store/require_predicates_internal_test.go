@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -124,7 +125,7 @@ func testRequireRetainsPredicatesCase(t *testing.T, testCaseInput *[]string,
 		}
 	}
 	assert.Diff(t, slices.Collect(reads.Gates()), want)
-	assert.Diff(t, slices.Collect(reads.Required()), []manifest.NamedResource{obj.Named()})
+	assert.Diff(t, maps.Collect(reads.Required()), map[manifest.NamedResource]bool{obj.Named(): false})
 	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(obj))
 	assert.FatalIf(
 		t,
@@ -188,7 +189,7 @@ func testRequireRetainsPredicatesCase2(t *testing.T, testCaseInput *bool,
 		want = append(want, materializer)
 	}
 	assert.Diff(t, slices.Collect(reads.Gates()), want)
-	assert.Diff(t, slices.Collect(reads.Required()), []manifest.NamedResource{obj.Named()})
+	assert.Diff(t, maps.Collect(reads.Required()), map[manifest.NamedResource]bool{obj.Named(): false})
 	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(obj))
 	assert.FatalIf(
 		t,

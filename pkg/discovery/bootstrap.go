@@ -16,11 +16,14 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/baseline"
+	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type entrySource interface {
@@ -363,6 +366,8 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) {
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
+	entryRequest  kustomize.RenderRequest
+	entryEvidence *kustomize.EntryEvidence
 	applications  atomic.Pointer[applicationEvidence]
 	entryBound    atomic.Bool
 	sources       map[manifest.NamedResource]entryResolution
@@ -370,27 +375,53 @@ type Admission struct {
 	path          string
 	remotes       map[string]struct{}
 	aliasViews    map[string]*store.SourceArtifact
+	entryDemand   bool
 	qualification *entryQualification
+	store         *store.Store
+	assessment    *store.ReadSet
+	loader        *loader.Loader
+	trees         *kustomize.TreeCache
+	session       *Session
+	substitutions values.DependencySubstitutions
 }
 
 func (d *Session) admission() *Admission {
+	if d.entryAdmission != nil {
+		d.entryAdmission.sources = maps.Clone(d.resolvedSources)
+		d.entryAdmission.substitutions = d.substitutions
+		d.entryAdmission.entryDemand = d.requiresEntry()
+		if d.entryAdmission.entryDemand {
+			d.entryAdmission.session = d
+		}
+		if q := d.entryAdmission.qualification; q != nil && !d.entryAdmission.entryBound.Load() {
+			q.closed = !d.entryAdmission.entryDemand
+			if d.entryAdmission.entryDemand {
+				q.session = d
+			}
+		}
+		return d.entryAdmission
+	}
 	input, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	if input == nil {
 		input = d.cfg.Input
 	}
 	admission := &Admission{
-		input:      input,
-		path:       d.cfg.Path,
-		remotes:    maps.Clone(d.remotes),
-		aliasViews: maps.Clone(d.aliasViews),
-		sources:    maps.Clone(d.resolvedSources),
+		input:         input,
+		path:          d.cfg.Path,
+		remotes:       maps.Clone(d.remotes),
+		aliasViews:    maps.Clone(d.aliasViews),
+		sources:       maps.Clone(d.resolvedSources),
+		store:         d.cfg.Store,
+		loader:        d.loader,
+		trees:         d.cfg.Trees,
+		session:       d,
+		substitutions: d.substitutions,
 	}
-	admission.entryBound.Store(d.binding != (Binding{}))
-	d.entryState = entryQualification{}
-	if d.cfg.Trees != nil && !admission.entryBound.Load() {
-		d.entryState.loader, d.entryState.trees = d.loader, d.cfg.Trees
-		admission.qualification = &d.entryState
-	}
+	d.entryState = entryQualification{loader: d.loader, trees: d.cfg.Trees, session: d}
+	admission.entryDemand = d.requiresEntry()
+	d.entryState.closed = !admission.entryDemand
+	admission.qualification = &d.entryState
+	d.entryAdmission = admission
 	return admission
 }
 

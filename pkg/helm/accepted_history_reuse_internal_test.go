@@ -380,9 +380,11 @@ func testTemplateAcceptedHistoryDurableSourceMetadataReplacement(
 				[]manifest.SourceEvidence{{Source: source, Path: candidate + "/cm.yaml"}},
 			)
 			assert.NoError(t, producersForPathsErr)
-			var want []manifest.NamedResource
+			want := map[manifest.NamedResource][]manifest.SourceEvidence{}
 			if candidate == selected {
-				want = []manifest.NamedResource{(*(*testCaseInput).hr).Named()}
+				want[(*(*testCaseInput).hr).Named()] = []manifest.SourceEvidence{
+					{Source: source, Path: candidate + "/cm.yaml"},
+				}
 			}
 			assert.Diff(t, owners, want)
 		}

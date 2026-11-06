@@ -28,6 +28,7 @@ type RenderOptions struct {
 
 // RenderAdmission carries accepted cache evidence bound to the current request.
 type RenderAdmission struct {
+	Possible  bool
 	Accepted  bool
 	Key       string
 	Documents []manifest.DocOccurrence

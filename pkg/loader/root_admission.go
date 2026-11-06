@@ -1,11 +1,13 @@
 package loader
 
 import (
+	"iter"
 	"path/filepath"
 	"slices"
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 type fileEligibility uint8
@@ -95,14 +97,17 @@ func (a rootAdmission) independent(l *Loader, id manifest.NamedResource, record 
 		return false
 	}
 	location := SourceView(l.Store, app.Source, l.SourceRoot)
+	input, _ := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	source, _ := l.Store.GetArtifact(app.Source, store.ArtifactContent).(*store.SourceArtifact)
+	target := filepath.Join(location.Path, manifest.NormalizeClaimBase(app.Path))
 	return !l.nativeOperand(record.Path) && !id.KindInfo().Structural || !location.Pinned && !location.External &&
-		filepath.Join(location.Path, manifest.NormalizeClaimBase(app.Path)) == l.entryPath
+		sameOriginPath(input, source, l.entryPath, target)
 }
 
 func (l *Loader) nativeOperand(file string) bool {
 	for i := range l.scopes.contributions {
 		contribution := &l.scopes.contributions[i]
-		if contribution.owner != (manifest.NamedResource{}) ||
+		if contribution.membershipOnly || contribution.owner != (manifest.NamedResource{}) ||
 			l.documents.cache[filepath.Join(contribution.context.root, contribution.context.dir)].body == nil {
 			continue
 		}
@@ -115,6 +120,114 @@ func (l *Loader) nativeOperand(file string) bool {
 		}
 	}
 	return false
+}
+
+// AdmitsEntry MUST use current independent bootstrap evidence.
+func (l *Loader) AdmitsEntry(id manifest.NamedResource) bool {
+	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
+		return true
+	}
+	evidence := l.roots[id]
+	return evidence.independent && evidence.occurrence.Declaration != (OccurrenceID{})
+}
+
+// EntryRoots MUST use captured admission evidence without I/O or publication.
+func (l *Loader) EntryRoots(published iter.Seq[manifest.BaseManifest], reads *store.ReadSet) []Occurrence {
+	var roots []Occurrence
+	var objects admissionReader = l.Store
+	if reads != nil {
+		objects = reads
+	}
+	closure := admissionClosure{loader: l, objects: objects}
+	seen := map[manifest.NamedResource]bool{}
+	add := func(id manifest.NamedResource) {
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+		if occurrence, valid := l.entryRoot(id, &closure); valid {
+			roots = append(roots, occurrence)
+		}
+	}
+	for id := range l.roots {
+		add(id)
+	}
+	if published != nil {
+		for object := range published {
+			add(object.Named())
+		}
+	}
+	slices.SortFunc(roots, func(a, b Occurrence) int { return a.Identity.Compare(b.Identity) })
+	if l.nativeEntry != nil {
+		add(l.nativeEntry.Named())
+	}
+	return roots
+}
+
+func (l *Loader) entryRoot(id manifest.NamedResource, closure *admissionClosure) (Occurrence, bool) {
+	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
+		return Occurrence{
+			Identity: id,
+			object:   l.nativeEntry,
+		}, closure.objects.SourceAdmission(
+			id,
+			manifest.BootstrapSourceID,
+		)
+	}
+	evidence := closure.rootEvidence(id)
+	object := closure.objects.GetDeclaration(id)
+	_, policy := closure.objects.Lookup(id)
+	if l.AdmitsEntry(id) && object != nil {
+		evidence = l.roots[id]
+		evidence.admitted = true
+	}
+	if !evidence.independent || !evidence.admitted ||
+		evidence.occurrence.Declaration == (OccurrenceID{}) && !closure.role(id).needed &&
+			policy.Origin != manifest.SuppliedDeclaration {
+		return Occurrence{}, false
+	}
+	if object == nil && evidence.occurrence.Declaration != (OccurrenceID{}) {
+		object = evidence.occurrence.object
+		if object == nil && evidence.occurrence.facts != nil {
+			object = evidence.occurrence.facts.catalog
+		}
+	}
+	if !l.entryRootAvailable(id, object, closure.objects) {
+		return Occurrence{}, false
+	}
+	occurrence, _ := l.occurrence(id)
+	occurrence.Declaration, occurrence.Identity = evidence.occurrence.Declaration, id
+	if occurrence.Authored == (manifest.NamedResource{}) {
+		record, _ := l.Index.Lookup(id)
+		occurrence.Authored = record.Authored
+	}
+	if occurrence.object == nil {
+		occurrence.object = object
+	}
+	return occurrence, true
+}
+
+func (l *Loader) entryRootAvailable(
+	id manifest.NamedResource,
+	object manifest.BaseManifest,
+	objects admissionReader,
+) bool {
+	app, application := manifest.ApplicationFor(object)
+	if application {
+		location := SourceView(objects, app.Source, l.SourceRoot)
+		known := objects.GetObject(app.Source) != nil || objects.GetArtifact(app.Source, store.ArtifactContent) != nil
+		if location.Pinned || known && location.External && app.Declaration == nil {
+			return false
+		}
+	}
+	_, producer := object.(interface {
+		EmissionPolicy() manifest.EmissionPolicy
+	})
+	if producer || application {
+		return true
+	}
+	output, _ := objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)
+	return output != nil
 }
 
 func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdmission {
@@ -162,7 +275,8 @@ func (l *Loader) fileOwners(file, coordinate string, yield func(manifest.NamedRe
 		}
 	}
 	for reader := range l.Index.ReadersOfFile(coordinate) {
-		if reader.Declaration == (manifest.NamedResource{}) && !reader.Exact && !yield(reader.Reader) {
+		if reader.Declaration == (manifest.NamedResource{}) && !reader.Exact && !reader.Materialize &&
+			!yield(reader.Reader) {
 			return
 		}
 	}

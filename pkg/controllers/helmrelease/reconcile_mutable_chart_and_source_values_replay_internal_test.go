@@ -101,7 +101,8 @@ func TestReconcile_MutableChartAndSourceValuesReplay(t *testing.T) {
 		c.Tasks.BlockTillDone()
 		assert.FatalIf(
 			t,
-			c.Tasks.Failures() != 0 || next == nil || next.Outcome() == schedule.Blocked || next.Reused != reused,
+			c.Tasks.Failures() != 0 || next == nil || next.Outcome() == schedule.Blocked ||
+				(next.Disposition == store.AssessmentReused) != reused,
 			"reconcile: failures=%d execution=%+v, want reused=%t",
 			c.Tasks.Failures(),
 			next,
@@ -537,7 +538,8 @@ func testReconcileSuppliedAdvisoriesOnReplaySegment(
 
 		assert.FatalIf(
 			t,
-			next.Outcome() == schedule.Blocked || !next.Valid() || next.Reused != (i == 1 || i == 2),
+			next.Outcome() == schedule.Blocked || !next.Valid() ||
+				(next.Disposition == store.AssessmentReused) != (i == 1 || i == 2),
 			"phase %d: execution=%+v",
 			i,
 			next,

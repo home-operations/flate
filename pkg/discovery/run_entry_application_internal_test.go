@@ -97,7 +97,7 @@ func TestBindEntry_EvidenceAuthority(t *testing.T) {
 		{name: "effective_publication", publication: true, livePath: "./entry", qualified: true, reuse: "current"},
 		{name: "same_content_replacement", publication: true, livePath: "./entry", qualified: true, reuse: "current"},
 		{name: "receipt_only", history: true, qualified: true, reuse: "history"},
-		{name: "receipt_unrelated_live", history: true, livePath: "./elsewhere", qualified: true},
+		{name: "receipt_unrelated_live", history: true, livePath: "./elsewhere", qualified: false},
 		{name: "current_then_receipt", history: true, livePath: "./entry", qualified: true, reuse: "current"},
 		{name: "receipt_then_current", history: true, historyFirst: true, livePath: "./entry", qualified: true, reuse: "current"},
 		{name: "dependent_receipt", history: true, dependent: true, qualified: true},
@@ -119,6 +119,8 @@ func TestBindEntry_ReemittedPublication(t *testing.T) {
 	input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{}}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, input)
+	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(input.LocalPath)
+	st.AddObject(bootstrap)
 	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./generator"}
 	st.AddObject(producer)
 	a := &Admission{input: input, path: filepath.Join(repo, "entry")}
@@ -147,7 +149,11 @@ func TestBindEntry_ReemittedPublication(t *testing.T) {
 	}, nil)
 	assert.Equal(t, publications, 1)
 	assert.Equal(t, st.GetObject(applier.Named()), manifest.BaseManifest(replacement))
-	appliers, err := a.qualifyEntry(t.Context(), st, nil)
+	var appliers []manifest.BaseManifest
+	for publication := a.applications.Load(); publication != nil; publication = publication.next {
+		appliers = append(appliers, publication.object)
+	}
+	_, err := a.qualifyEntry(t.Context(), st, nil)
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(appliers) != 1, "qualifying publications: got %d, want 1", len(appliers))
 	assert.Equal(t, appliers[0], manifest.BaseManifest(applier))
@@ -427,6 +433,8 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 	}}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, input)
+	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(input.LocalPath)
+	st.AddObject(bootstrap)
 	a := &Admission{input: input, path: filepath.Join(repo, "entry")}
 	current := &manifest.Kustomization{
 		Name:            "applier",
@@ -466,6 +474,22 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 	case "wrong_id":
 		id.Name = "different"
 	}
+	if testCaseInput.history && testCaseInput.invalid == "" {
+		parent := &manifest.Kustomization{
+			Name:              "history-owner",
+			Namespace:         "apps",
+			KustomizationSpec: current.KustomizationSpec,
+		}
+		parent.Path = "./generator"
+		st.AddObject(parent)
+		parsed, parseErr := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+		assert.NoError(t, parseErr)
+		st.RecordEmitted(
+			parent.Named(),
+			&store.Emission{Children: []store.Child{{Obj: parsed.Object, Doc: document}}, Complete: true},
+			nil,
+		)
+	}
 	addHistory := func() {
 		if testCaseInput.history {
 			a.AddHistory(st, id, record)
@@ -475,17 +499,12 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 		addHistory()
 	}
 	if testCaseInput.livePath != "" {
-		if testCaseInput.supplied {
-			st.AddDeclaration(store.Declaration{
-				Obj:    current,
-				Doc:    testutil.ObjectDocument(current),
-				Origin: manifest.SuppliedDeclaration,
-			})
-		} else {
-			st.AddObject(current)
-		}
-		current = st.GetObject(current.Named()).(*manifest.Kustomization)
-		a.AddApplication(st, current)
+		current = a.publishEntryAuthorityFixture(
+			st,
+			current,
+			testCaseInput.supplied,
+			testCaseInput.history && testCaseInput.invalid == "",
+		)
 	}
 	if !testCaseInput.historyFirst {
 		addHistory()
@@ -509,8 +528,38 @@ func testBindEntryEvidenceAuthorityCase(t *testing.T, testCaseInput *struct {
 	case "history":
 		assert.Equal(t, root.TargetNamespace, "history")
 	}
+	binding = acceptEntryForTest(t, a, &binding)
+	assert.Equal(t, binding.Reads, (*store.ReadSet)(nil))
 	assert.Equal(t, a.entryBound.Load(), true)
 	assert.Equal(t, a.applications.Load(), (*applicationEvidence)(nil))
+}
+
+func (a *Admission) publishEntryAuthorityFixture(
+	st *store.Store,
+	current *manifest.Kustomization,
+	supplied, history bool,
+) *manifest.Kustomization {
+	switch {
+	case supplied:
+		st.AddDeclaration(
+			store.Declaration{
+				Obj:    current,
+				Doc:    testutil.ObjectDocument(current),
+				Origin: manifest.SuppliedDeclaration,
+			},
+		)
+	case history:
+		st.RecordEmitted(
+			testutil.KustomizationID("apps", "history-owner"),
+			&store.Emission{Children: []store.Child{{Obj: current}}, Complete: true},
+			nil,
+		)
+	default:
+		st.AddObject(current)
+	}
+	current = st.GetObject(current.Named()).(*manifest.Kustomization)
+	a.AddApplication(st, current)
+	return current
 }
 
 func addEntrySourceFixture(input fstest.MapFS, kind, url string, pinned bool) {

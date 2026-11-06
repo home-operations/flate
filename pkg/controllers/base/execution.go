@@ -18,25 +18,25 @@ import (
 type Execution struct {
 	*Controller
 
-	Reads      store.ReadSet
-	Unreadable []manifest.NamedResource
-	Blocked    []manifest.NamedResource
-	Reused     bool
-	kind       schedule.Kind
-	pending    error
-	resume     func(context.Context, manifest.DrainLevel) error
-	initial    store.StatusInfo
-	unresolved []manifest.NamedResource
-	recovering bool
-	generated  []store.Child
-	prepared   bool
+	Reads       store.ReadSet
+	Unreadable  []manifest.NamedResource
+	Blocked     []manifest.NamedResource
+	Disposition store.AssessmentKind
+	kind        schedule.Kind
+	pending     error
+	resume      func(context.Context, manifest.DrainLevel) error
+	initial     store.StatusInfo
+	unresolved  []manifest.NamedResource
+	recovering  bool
+	generated   []store.Child
+	prepared    bool
 }
 
 // Init starts capture in caller-owned storage before declaration or dependency assessment.
 // The execution MUST remain live until its registrations and output borrowers retire.
 func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
 	if c.filterActive() {
-		c.Store.SetIncluded(id, c.filter.ShouldReconcile(id))
+		c.Store.SetIncluded(id, c.filter.ShouldReconcile(id), c.filter.OrdinaryDemand(id))
 	}
 	if c.preflight != nil {
 		message, failed := c.preflight(id)
@@ -55,7 +55,7 @@ func (e *Execution) Valid() bool {
 	if !e.Reads.Valid() {
 		return false
 	}
-	if e.Outcome() == schedule.Blocked || !e.Reads.Admitted() {
+	if e.Outcome() == schedule.Blocked || !e.Reads.Admitted() || e.Disposition == store.AssessmentQualificationSettled {
 		return true
 	}
 	if output, ok := e.Store.GetArtifact(e.Reads.ID(), store.ArtifactContent).(*store.SourceArtifact); ok &&
@@ -90,7 +90,7 @@ func (e *Execution) bindEmission(next *store.Emission) {
 	borrowed := next.Reads
 	next.Children = e.generatedChildren(next.Children)
 	e.Reads.Bind(next)
-	if e.Reused && borrowed.Valid() && next.Complete && len(next.Failures) == 0 {
+	if e.Disposition == store.AssessmentReused && borrowed.Valid() && next.Complete && len(next.Failures) == 0 {
 		next.Reads = borrowed
 	}
 	next.Unreadable = e.Unreadable
@@ -204,6 +204,12 @@ func (e *Execution) Settle(ctx context.Context, level manifest.DrainLevel) {
 }
 
 func (e *Execution) finish(ctx context.Context, err error) {
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil && e.Disposition == store.AssessmentQualificationSettled {
+		e.Disposition = store.AssessmentReconciled
+	}
 	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 		e.Blocked = blocked.Deps
 		e.kind = schedule.Blocked
@@ -214,11 +220,7 @@ func (e *Execution) finish(ctx context.Context, err error) {
 	if !e.Reads.Valid() {
 		return
 	}
-	kind := store.AssessmentReconciled
-	if e.Reused {
-		kind = store.AssessmentReused
-	}
-	defer e.Reads.Accept(kind)
+	defer e.Reads.Accept(e.Disposition)
 	id := e.Reads.ID()
 	e.Blocked = nil
 	e.kind = schedule.Terminal
@@ -233,6 +235,9 @@ func (e *Execution) finish(ctx context.Context, err error) {
 	}
 	if err != nil {
 		e.finishFailure(ctx, id, err)
+		return
+	}
+	if e.Disposition == store.AssessmentQualificationSettled {
 		return
 	}
 	if prior, ok := e.Store.GetStatus(
@@ -365,7 +370,7 @@ func (e *Execution) acceptReads(ctx context.Context) {
 		e.finish(ctx, err)
 		return
 	}
-	e.Reads.Accept(store.AssessmentReconciled)
+	e.Reads.Accept(e.Disposition)
 }
 
 func (e *Execution) reconcile[T manifest.BaseManifest](
@@ -485,6 +490,15 @@ type Deduplication struct {
 	Reused      bool
 }
 
+// AdmitQualification settles a negative precondition only without ordinary demand.
+func (e *Execution) AdmitQualification(possible bool) bool {
+	if !possible && !e.Reads.OrdinaryDemand(e.Reads.ID()) {
+		e.Disposition = store.AssessmentQualificationSettled
+		return true
+	}
+	return false
+}
+
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
 func (e *Execution) FingerprintDedup(
@@ -500,10 +514,10 @@ func (e *Execution) FingerprintDedup(
 		return Deduplication{Fingerprint: "", Reused: true}, err
 	}
 	if e.filter != nil {
-		membershipResult1 := e.filter.Membership(id)
-		_, selected, dirty, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
+		membership := e.filter.Membership(id)
+		selected, dirty := membership.Selected, membership.Dirty
 		if selected && !dirty {
-			e.Reused = true
+			e.Disposition = store.AssessmentReused
 			e.Store.UpdateStatus(
 				id,
 				store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
@@ -537,7 +551,7 @@ func (e *Execution) FingerprintDedup(
 	if err := e.Checkpoint(); err != nil {
 		return Deduplication{Fingerprint: fp, Reused: true}, err
 	}
-	e.Reused = true
+	e.Disposition = store.AssessmentReused
 	if slices.Equal(output.Unreadable, e.Unreadable) {
 		e.Reads.CarryWarnings(output)
 	}
@@ -553,7 +567,7 @@ func (e *Execution) FingerprintDedup(
 func (e *Execution) Outcome() schedule.Kind { return e.kind }
 
 // Progressed reports an execution that performed work beyond equal-input replay.
-func (e *Execution) Progressed() bool { return !e.Reused }
+func (e *Execution) Progressed() bool { return e.Disposition == store.AssessmentReconciled }
 
 // Close retires all provenance borrowed by the completed invocation.
 func (e *Execution) Close() {
@@ -737,7 +751,7 @@ func (e *Execution) dispatchMissing(ctx context.Context, level manifest.DrainLev
 				},
 			)
 		}
-		e.Reads.Accept(store.AssessmentReconciled)
+		e.Reads.Accept(e.Disposition)
 	}
 }
 

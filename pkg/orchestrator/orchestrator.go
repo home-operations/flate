@@ -209,11 +209,11 @@ func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task
 		o.cfg.work.Init(&manifest.WorkKey{Tree: tree.ID, Source: manifest.BootstrapSourceID}, manifest.WorkScope{})
 	}
 	st.SetWorkTree(tree.ID, o.cfg.work.Scope())
+	o.loader = loader.New(st)
+	o.loader.Options.AllowMissingKinds = cfg.AllowMissingKinds
 	o.cfg.Selection.Changed = cfg.Selection.Changed || tree.ExternalChanges != nil
 	if o.cfg.Selection.Changed || len(o.cfg.Selection.Roots) != 0 {
 		o.filter = change.NewFilter()
-		o.loader = loader.New(st)
-		o.loader.Options.AllowMissingKinds = cfg.AllowMissingKinds
 		o.loader.Options.Selection, o.loader.Options.Changes, o.loader.Options.Filter = o.cfg.Selection, tree.ExternalChanges, o.filter
 	}
 	if cfg.StatusListener != nil {
@@ -334,7 +334,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	}
 	var res *discovery.Result
 	var err error
-	if o.loader != nil {
+	if o.filter.Enabled() {
 		if o.session == nil {
 			return o.beginDiscovery(ctx, &config)
 		}

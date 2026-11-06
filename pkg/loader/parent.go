@@ -306,5 +306,15 @@ func AppliesToEntry(
 		return false
 	}
 	target := filepath.Join(location2.Path, manifest.NormalizeClaimBase(application.Path))
-	return safepath.Contains(location2.Path, target) && source.OriginPath(target) == input.OriginPath(entry)
+	return safepath.Contains(location2.Path, target) && sameOriginPath(input, source, entry, target)
+}
+
+func sameOriginPath(input, source *store.SourceArtifact, entry, target string) bool {
+	if input != nil {
+		entry = input.OriginPath(entry)
+	}
+	if source != nil {
+		target = source.OriginPath(target)
+	}
+	return entry == target
 }

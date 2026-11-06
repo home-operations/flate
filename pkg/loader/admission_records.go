@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"encoding/json"
 	"iter"
 	"path/filepath"
 	"slices"
@@ -115,7 +116,7 @@ func (c *admissionClosure) rootEvidence(id manifest.NamedResource) rootEvidence 
 		return c.supportedRoot(id, &evidence)
 	}
 	if _, indexed := c.loader.Index.Lookup(id); indexed {
-		return rootEvidence{}
+		return c.supportedRoot(id, &rootEvidence{})
 	}
 	var object manifest.BaseManifest
 	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
@@ -433,6 +434,7 @@ func (c *admissionClosure) extendProductionInput(input []manifest.Production, sc
 				!c.loader.declarationLocated(owner, c.objects) {
 				continue
 			}
+			c.qualifyProductionSource(&production)
 			if !slices.Contains((*scope.productions), production) {
 				if !(*scope.extended) {
 					next := make(
@@ -461,9 +463,10 @@ func (c *admissionClosure) mergeHistoricalProductions(
 			func(p manifest.Production) bool { return c.replace[p.Owner] },
 		)
 	}
-	for _, records := range c.accepted {
-		if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
-			break
+	for owner, records := range c.accepted {
+		if c.incoming.Obj != nil && c.incoming.Obj.Named() == id &&
+			!c.acceptedDeclaration(id, owner, c.incoming.Obj) {
+			continue
 		}
 		if record, ok := records[id]; ok && len(record.Productions) != 0 {
 			if !owned {
@@ -569,7 +572,9 @@ func (c *admissionClosure) declarationStable(
 		declared.File != declared.Builder {
 		source := c.source(declaration)
 		delta, input, _ := c.delta(source)
-		stable := ownerRecord.File != ownerRecord.Builder && delta != nil && input != nil && input.FS != nil &&
+		ownerKnown := ownerRecord.File != ownerRecord.Builder || c.objects.GetDeclaration(owner) != nil ||
+			c.declarationEvidence(owner).accepted
+		stable := ownerKnown && delta != nil && input != nil && input.FS != nil &&
 			input.Reads.Valid() &&
 			input.OriginPath(input.LocalPath) == occurrence.Declaration.Source &&
 			!c.fileChanged(source, declared.File) &&
@@ -602,43 +607,80 @@ type declarationEvidence struct {
 	child           store.Child
 	owner           manifest.NamedResource
 	authored, built bool
+	accepted        bool
+	qualification   bool
 	independent     bool
 }
 
 func (e *declarationEvidence) known() bool { return e.child.Obj != nil || e.authored }
 
 func (e *declarationEvidence) allowsOwner(owner manifest.NamedResource) bool {
-	return !e.authored || !owner.ReportHidden()
+	return (!e.authored && !e.accepted || !owner.ReportHidden()) && (!e.accepted || owner != e.owner) &&
+		(!e.built || !e.qualification || owner != e.owner)
 }
 
 func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declarationEvidence {
 	record := c.record(id)
-	evidence := declarationEvidence{owner: record.Parent}
+	evidence := declarationEvidence{owner: c.declarationProductionOwner(id, record.Parent)}
 	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
 		evidence.child = c.incoming
+		evidence.accepted = c.acceptedDeclaration(id, evidence.owner, c.incoming.Obj)
 		return evidence
 	}
-	evidence.owner = c.declarationProductionOwner(id, evidence.owner)
 	if object := c.objects.GetDeclaration(id); object != nil {
 		evidence.child.Obj = object
-		return evidence
+		evidence.accepted = c.acceptedDeclaration(id, evidence.owner, object)
 	}
-	if record.Builder != "" {
-		root := c.loader.registeredRoot(&record)
-		children, current := c.loader.BuiltChildren(root, record.BuilderOwner, c.proposal.reads)
-		if current {
-			for i := range children {
-				child := &children[i]
-				if child.Obj.Named() == id {
-					evidence.child, evidence.built = *child, true
-					return evidence
-				}
-			}
+
+	if record.Builder == "" {
+		if evidence.child.Obj == nil {
+			c.classifyAuthoredDeclaration(id, &record, &evidence)
 		}
 		return evidence
 	}
-	c.classifyAuthoredDeclaration(id, &record, &evidence)
+	root := c.loader.registeredRoot(&record)
+	children, current := c.loader.BuiltChildren(root, record.BuilderOwner, c.proposal.reads)
+	if !current {
+		return evidence
+	}
+	for i := range children {
+		child := &children[i]
+		if child.Obj.Named() != id {
+			continue
+		}
+		if evidence.child.Obj == nil {
+			evidence.child = *child
+		}
+		evidence.built = manifest.Equal(evidence.child.Obj, child.Obj)
+		return evidence
+	}
+
 	return evidence
+}
+
+func (c *admissionClosure) acceptedDeclaration(id, owner manifest.NamedResource, object manifest.BaseManifest) bool {
+	if (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) && owner != (manifest.NamedResource{}) && owner != id {
+		output, _ := c.objects.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
+		if output != nil && len(output.Failures) == 0 && output.OutputReads.Valid() &&
+			slices.ContainsFunc(output.Children, func(child store.Child) bool {
+				return (output.Complete || child.Generated) && manifest.Equal(child.Obj, object)
+			}) {
+			return true
+		}
+	}
+	if !c.replace[owner] {
+		return false
+	}
+	record := c.accepted[owner][id]
+	if record.Application == "" {
+		return false
+	}
+	var document map[string]any
+	if json.Unmarshal([]byte(record.Application), &document) != nil {
+		return false
+	}
+	parsed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	return err == nil && manifest.Equal(parsed.Object, object)
 }
 
 func (c *admissionClosure) declarationProductionOwner(id, owner manifest.NamedResource) manifest.NamedResource {
@@ -684,5 +726,23 @@ func (c *admissionClosure) classifyAuthoredDeclaration(
 	input, _ := c.hydrationSource(id, occurrence.Declaration.Source)
 	if input != nil {
 		evidence.authored, evidence.owner = true, manifest.NamedResource{}
+	}
+}
+
+func (c *admissionClosure) qualifyProductionSource(production *manifest.Production) {
+	object := c.object(production.Owner)
+	if object == nil {
+		object = c.loader.CatalogObject(production.Owner)
+	}
+	if object == nil {
+		return
+	}
+	source, _, applies := object.SourcePath()
+	if !applies || source == production.Source {
+		return
+	}
+	location := SourceView(c.objects, source, c.loader.SourceRoot)
+	if location.Pinned || location.External {
+		production.Source = source
 	}
 }

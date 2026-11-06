@@ -51,7 +51,7 @@ func pairDuplicateDocumentsWarnAndLastWinsSide(t *testing.T, parent *Parent, sid
 	prepared := Prepare(
 		left,
 		right,
-		Options{
+		&Options{
 			StripAttrs: []string{"helm.sh/chart", "checksum/", "app.kubernetes.io/version", "chart"},
 			Normalize: func(m map[string]any) {
 				meta := m["metadata"].(map[string]any)
@@ -124,4 +124,26 @@ func pairDuplicateDocumentsWarnAndLastWinsSide(t *testing.T, parent *Parent, sid
 			},
 		},
 	})
+}
+
+func TestPair_EntryComparisonPreservesCurrentParent(t *testing.T) {
+	t.Parallel()
+	old := Parent{NamedResource: testutil.KustomizationID("apps", "old"), Path: "entry"}
+	current := Parent{NamedResource: testutil.KustomizationID("apps", "current"), Path: "entry"}
+	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "payload", Namespace: "apps"}
+	prepared := Prepare(
+		[]Doc{cmDoc(&old, id, "before", "")},
+		[]Doc{cmDoc(&current, id, "after", "")},
+		&Options{ProducerKeys: [2]map[manifest.NamedResource]manifest.NamedResource{
+			{old.NamedResource: key}, {current.NamedResource: key},
+		}},
+	)
+	assert.Equal(t, len(prepared.Pairs), 1)
+	assert.Equal(t, len(prepared.Warnings), 0)
+	pair := prepared.Pairs[0]
+	assert.Equal(t, pair.Parent, current)
+	assert.Equal(t, pair.Status(), "changed")
+	assert.Equal(t, pair.Old["data"].(map[string]any)["k"], any("before"))
+	assert.Equal(t, pair.New["data"].(map[string]any)["k"], any("after"))
 }

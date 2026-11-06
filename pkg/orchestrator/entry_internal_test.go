@@ -23,7 +23,7 @@ import (
 func TestRender_EntryDeclarationQualifiesOpaqueApplier(t *testing.T) {
 	t.Run("settled_candidates", testRenderChangedLiteralEntryDrainsSettledCandidates)
 	t.Run("supplied applications", testSuppliedApplications)
-	for _, scenario := range []string{"declaration", "mutable_chart", "nested_chart", "nested_unchanged", "incomplete_inputs", "content", "owned_source"} {
+	for _, scenario := range []string{"declaration", "templated_group", "mutable_chart", "nested_chart", "nested_unchanged", "incomplete_inputs", "content", "owned_source"} {
 		t.Run(scenario, func(t *testing.T) {
 			testRenderEntryDeclarationQualifiesOpaqueApplierCase(
 				t,
@@ -101,6 +101,14 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCase(
 		"fixture/templates/application.yaml",
 		"apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: applies-entry, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: main, path: ./entry}\n",
 	)
+	if (*testCaseInput) == "templated_group" {
+		testutil.WriteFile(
+			t,
+			chart,
+			"fixture/templates/application.yaml",
+			"apiVersion: '{{ printf \"%s.%s\" \"fluxcd\" \"controlplane.io/v1\" }}'\nkind: FluxInstance\nmetadata: {name: applies-entry, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: main, path: ./entry}\n",
+		)
+	}
 	var charts map[manifest.NamedResource]string
 	if nested {
 		child := t.TempDir()
@@ -242,7 +250,7 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 		}
 		wantReuse := 0
 		if run == 1 &&
-			((*(*tailCaseInput.testCaseInput)) == "declaration" || (*(*tailCaseInput.testCaseInput)) == "nested_unchanged") &&
+			((*(*tailCaseInput.testCaseInput)) == "declaration" || (*(*tailCaseInput.testCaseInput)) == "templated_group" || (*(*tailCaseInput.testCaseInput)) == "nested_unchanged") &&
 			o.cache.CanPersistRenders() {
 			wantReuse = 1
 		}
@@ -331,12 +339,12 @@ func (i *testRenderEntryDeclarationQualifiesOpaqueApplierCaseTailInputs) assertE
 	}
 	output.Finish()
 	assert.Equal(t, found, true)
-	root, ok := o.store.GetObject(o.entryBinding.Producer).(*manifest.Kustomization)
+	_, ok := o.store.GetObject(o.entryBinding.Producer).(*manifest.Kustomization)
 	if !ok {
 		t.Fatalf("entry producer absent after qualification: %v\n%s", o.entryBinding, logs.String())
 	}
-	assert.Equal(t, root.EntryReceipt == nil, (*(*i.testCaseInput)) == "incomplete_inputs")
-	if root.EntryReceipt == nil && (*(*i.testCaseInput)) != "incomplete_inputs" {
+	assert.Equal(t, o.entryBinding.Entry == nil, (*(*i.testCaseInput)) == "incomplete_inputs")
+	if o.entryBinding.Entry == nil && (*(*i.testCaseInput)) != "incomplete_inputs" {
 		t.Log(logs.String())
 	}
 }

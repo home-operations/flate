@@ -456,6 +456,7 @@ func sharedRepositorySource(
 		repo: {Productions: []manifest.Production{{Owner: p, Source: manifest.BootstrapSourceID}}},
 		p:    {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
 	}}
+	o.loader.Index = o.index
 	return doc, children, original, repo
 }
 

@@ -36,7 +36,7 @@ func (e *orchestratorExistence) Promote(
 	if e.o.preparation != nil {
 		return e.promotePrepared(ctx, reads, id)
 	}
-	if e.o.loader != nil {
+	if e.o.filter.Enabled() {
 		captured := reads
 		if captured == nil {
 			captured = &store.ReadSet{}
@@ -140,7 +140,7 @@ func (e *orchestratorExistence) admit(ctx context.Context, child store.Child, re
 
 func (o *Orchestrator) run(ctx context.Context) error {
 	o.cfg.work.Scope().Reserve(len(o.index.Records))
-	if o.loader == nil {
+	if !o.filter.Enabled() {
 		o.configureControllers()
 	}
 	// Cycle failures MUST publish before scheduler admission of emitted objects.

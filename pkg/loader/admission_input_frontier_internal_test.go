@@ -262,7 +262,16 @@ func assertAdmissionUnrelatedMembership(t *testing.T, l *Loader, proposal *Admis
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
-	l.Options.HistoryOwners = []manifest.NamedResource{producer}
+	l.Options.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
+		producer: {
+			{
+				Source: l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
+					manifest.BootstrapSourceID,
+				),
+				Path: "input.yaml",
+			},
+		},
+	}
 	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)

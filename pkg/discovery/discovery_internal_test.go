@@ -117,9 +117,9 @@ func packageHistory(
 	owner manifest.NamedResource,
 ) map[manifest.NamedResource]manifest.DiscoveryRecord {
 	t.Helper()
-	evidence := trees.PreviousEntry(t.Context(), *req)
-	records := evidence.Records
-	assert.FatalIf(t, evidence.Owner != owner || records == nil, "package %q has no complete accepted history",
+	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
+	records, complete := trees.RenderHistory(owner, receipt, req.Content(docs))
+	assert.FatalIf(t, !available || !complete || records == nil, "package %q has no complete accepted history",
 		req.SubPath,
 	)
 	history := maps.Collect(records)
@@ -760,4 +760,18 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 	assert.Equal(t, l.Options.Filter.OrdinaryDemand(supplier), false)
 	assert.Equal(t, st.GetObject(unused), nil)
 	assert.Equal(t, st.GetArtifact(unused, store.ArtifactContent), nil)
+}
+
+func previousPackageHistory(
+	t *testing.T,
+	trees *kustomize.TreeCache,
+	req *kustomize.RenderRequest,
+) kustomize.EntryEvidence {
+	t.Helper()
+	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
+	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, req.Content(docs))
+	if !available || !complete {
+		return kustomize.EntryEvidence{}
+	}
+	return kustomize.EntryEvidence{Owner: req.Spec.Named(), Records: records}
 }

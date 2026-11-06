@@ -173,7 +173,7 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 				next.Suspend = true
 				s.AddObject(&next)
 			case "excluded":
-				s.SetIncluded(object.Named(), false)
+				s.SetIncluded(object.Named(), false, false)
 			case "preflight":
 				s.SetPreflight(object.Named(), "cycle")
 			}
@@ -408,12 +408,12 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		},
 	)
 	if testCaseInput.readmitted {
-		s.SetIncluded(object.Named(), false)
+		s.SetIncluded(object.Named(), false, false)
 		s.UpdateStatus(
 			object.Named(),
 			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged},
 		)
-		s.SetIncluded(object.Named(), true)
+		s.SetIncluded(object.Named(), true, true)
 
 		{
 			info, _ := s.GetStatus(object.Named())
@@ -474,7 +474,7 @@ func testGeneratedObjectsReplayReadinessAndReceiptCase(
 		output, _ := s.GetArtifact(object.Named(), store.ArtifactContent).(*store.Emission)
 		assert.FatalIf(t, output == nil ||
 			output.Render != wantReceipt ||
-			!second.Reused, "replay receipt = %v, reused = %t", output, second.Reused)
+			second.Disposition != store.AssessmentReused, "replay receipt = %v, reused = %t", output, second.Disposition == store.AssessmentReused)
 	}
 
 	{

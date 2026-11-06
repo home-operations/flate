@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -105,12 +106,23 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 			st.AddObject(data, testutil.ObjectDocument(data))
 		}
 	}
+	provider := &manifest.ResourceSet{Name: "provider", Namespace: "apps"}
+	membership := q.loader.Options.Filter.Membership(provider.Named())
+	_, retry := q.loader.Options.Filter.AddEmitted(
+		change.MembershipUpdate{Needed: []manifest.NamedResource{provider.Named()}},
+		membership.Revision,
+	)
+	assert.Equal(t, retry, false)
+	st.AddObject(provider)
+	evidence.Owner, evidence.Root = provider.Named(), provider.Named()
+	a.entryDemand = true
+	q.closed = false
 	q.previous = evidence
 	pending, _, err := a.BindEntry(t.Context(), st)
 	assert.NoError(t, err)
 	assert.Equal(t, pending == nil, true)
 	assert.Equal(t, a.applications.Load() == nil, true)
-	assert.Diff(t, a.EntryInputs(), q.refresh)
+	assert.Diff(t, a.EntryProducers(), q.refresh)
 	for i := range evidence.Inputs {
 		expected := &evidence.Inputs[i]
 		if !expected.Binding.Present {
@@ -167,7 +179,9 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			}
 			st := store.New()
 			l := loader.New(st)
-			l.Options.HistoryOwners = []manifest.NamedResource{testutil.KustomizationID("apps", "child")}
+			l.Options.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
+				testutil.KustomizationID("apps", "child"): nil,
+			}
 			cfg := Config{
 				Store:  st,
 				Loader: l,
@@ -212,6 +226,9 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, bound != nil, true)
 			assert.Equal(t, binding.Producer, object.Named())
+			if binding.Reads != nil {
+				acceptEntryForTest(t, a, &binding)
+			}
 			assert.Equal(t, a.entryBound.Load(), true)
 			assert.Equal(t, a.qualification == nil, true)
 			assert.Equal(t, q.loader == nil, true)

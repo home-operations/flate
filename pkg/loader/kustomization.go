@@ -28,6 +28,7 @@ type document struct {
 	built         []store.Child
 	builtInput    *BuiltInput
 	lookup        map[manifest.NamedResource]store.Child
+	pathInputs    map[manifest.NamedResource]manifest.Data
 	plugins       *[]pluginInputs
 	selected      bool
 	eligible      fileEligibility
@@ -221,21 +222,22 @@ func (l *Loader) refreshSources() {
 		}
 	}
 	l.resetAdmissions()
-	if l.scopes != nil {
-		previous := l.scopes
-		l.scopes = nil
-		l.ensureScopes()
-		{
-			scopeValues := previous.sources
-			for scopeIndex := range scopeValues {
-				scope := scopeValues[scopeIndex]
-				if scope.sourceState == l.sourceState(scope.id, scope.repoRoot) {
-					l.scopes.sources = append(l.scopes.sources, scope)
-				}
+	if l.scopes == nil {
+		return
+	}
+	previous := l.scopes
+	l.scopes = nil
+	l.ensureScopes()
+	{
+		scopeValues := previous.sources
+		for scopeIndex := range scopeValues {
+			scope := scopeValues[scopeIndex]
+			if scope.sourceState == l.sourceState(scope.id, scope.repoRoot) {
+				l.scopes.sources = append(l.scopes.sources, scope)
 			}
 		}
-		*previous = scopeConstruction{}
 	}
+	*previous = scopeConstruction{}
 }
 
 func (l *Loader) mountSources() {

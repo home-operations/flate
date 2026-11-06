@@ -380,12 +380,14 @@ func testReconcileProviderAcquisitionRefreshCase(
 		)
 		tasks.BlockTillDone()
 		defer run.Close()
-		assert.FatalIf(t, run.Outcome() != schedule.Terminal || run.Reused || !run.Reads.Valid(),
-
+		assert.FatalIf(
+			t,
+			run.Outcome() != schedule.Terminal || run.Disposition == store.AssessmentReused || !run.Reads.Valid(),
 			"fresh acquisition outcome=%v reused=%t valid=%t",
 			run.Outcome(),
-			run.Reused,
-			run.Reads.Valid())
+			run.Disposition == store.AssessmentReused,
+			run.Reads.Valid(),
+		)
 
 		info, _ := st.GetStatus(rs.Named())
 		assert.Equal(t, info.Status, store.StatusReady)

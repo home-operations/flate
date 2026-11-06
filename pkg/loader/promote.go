@@ -532,7 +532,7 @@ func (l *Loader) publishBuiltRecords(
 		independent := l.roots[id].independent
 		if existing := l.Store.GetObject(
 			id,
-		); !independent && existing != nil && !manifest.Equal(existing, obj) && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
+		); !independent && existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&
 			(existing == l.candidates[id].Obj || existing == l.admitted[id]) {
 			l.Store.DeleteObject(id)
 		}

@@ -165,8 +165,11 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 	defer attempt.Finish()
 	handled := false
 	docs, warnings, err := resourceset.Render(rs, c.inputs, func(content any) (bool, error) {
-		fingerprintDedupResult1, fingerprintDedupResult1Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
-		fp, hit, err := fingerprintDedupResult1.Fingerprint, fingerprintDedupResult1.Reused, fingerprintDedupResult1Err
+		if c.run.AdmitQualification(c.entryPrecondition(rs)) {
+			return true, nil
+		}
+		dedup, err := c.run.FingerprintDedup(ctx, id, content, &attempt)
+		fp, hit := dedup.Fingerprint, dedup.Reused
 		handled = hit
 		if hit || err != nil {
 			return hit, err
@@ -175,6 +178,9 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 		attempt.Fingerprint = fp
 		return false, nil
 	}, c.run.Reads.Work().Scope().Record(manifest.WorkEvaluation, ""))
+	if c.run.Disposition == store.AssessmentQualificationSettled && err == nil {
+		return nil
+	}
 	for i := range warnings {
 		c.run.Reads.AddWarning(warnings[i])
 	}
@@ -223,4 +229,26 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 			),
 		},
 	)
+}
+
+func (c *execution) entryPrecondition(rs *manifest.ResourceSet) bool {
+	complete := true
+	inputs := func(yield func([]byte) bool) {
+		for _, provider := range c.inputs {
+			if provider.State != resourceset.ProviderInputEvaluated {
+				complete = false
+				continue
+			}
+			data, err := json.Marshal(provider.Inputs)
+			if err != nil {
+				complete = false
+				return
+			}
+			if !yield(data) {
+				return
+			}
+		}
+	}
+	_, possible := manifest.ProjectProducer(rs, inputs)
+	return possible || !complete
 }

@@ -375,8 +375,8 @@ func TestCommit_ProposalLifetime(t *testing.T) {
 			}
 			assert.Equal(t, proposal.reads, nil)
 			assert.Equal(t, len(proposal.Objects)+len(proposal.sources), 0)
-			assert.Equal(t, proposal.request.Incoming.Obj, nil)
-			assert.Equal(t, proposal.request.Reads, nil)
+			assert.Equal(t, proposal.Request.Incoming.Obj, nil)
+			assert.Equal(t, proposal.Request.Reads, nil)
 			assert.Diff(t, proposal.Needed, needed)
 			assert.Equal(t, guard.Valid(), outcome != "stale")
 			if outcome == "success" || outcome == "retry" {

@@ -87,7 +87,8 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 		t.Cleanup(next.Close)
 		assert.FatalIf(
 			t,
-			next.Outcome() == schedule.Blocked || !next.Valid() || next.Reused != (i == 1 || i == 2),
+			next.Outcome() == schedule.Blocked || !next.Valid() ||
+				(next.Disposition == store.AssessmentReused) != (i == 1 || i == 2),
 			"phase %d: execution=%+v",
 			i,
 			next,

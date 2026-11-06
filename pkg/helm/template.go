@@ -51,57 +51,7 @@ func (c *Client) Template(
 	}
 	prepared.release = hr
 
-	render := func(ctx context.Context, cacheErr error) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
-		return prepared.render(ctx, c, cacheErr)
-	}
-	if prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
-		if input.Admit != nil {
-			if handled, admitErr := input.Admit(RenderAdmission{Key: prepared.key}); handled || admitErr != nil {
-				return nil, nil, admitErr
-			}
-		}
-		return render(ctx, nil)
-	}
-	// Callback state MUST share one allocation to preserve cache-hit allocation counts.
-	var result templateResult
-	blobKey := cache.BlobKey{
-		Content: prepared.key,
-		Render:  cache.RenderPending,
-		Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
-			return prepared.validate(ctx, c, &result, generation)
-		},
-	}
-	if input.Admit != nil {
-		blobKey.Observe = func(_ context.Context, _ fs.FS) (bool, error) {
-			return result.admit(&prepared)
-		}
-	}
-	_, _, _, err = c.cache.Blob(
-		ctx,
-		blobKey,
-		&cache.Policy{MaxAge: cache.Forever, Work: input.Work.Pending(), HistoryWork: input.Work.History()},
-		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			return prepared.produce(ctx, c, &result, w)
-		},
-	)
-	if err == nil {
-		if result.handled {
-			return nil, nil, nil
-		}
-		return normalizeLists(result.docs), result.receipt, nil
-	}
-	if result.admissionErr != nil {
-		return nil, nil, result.admissionErr
-	}
-	if _, storage := errors.AsType[*cache.CacheError](err); !storage {
-		return nil, nil, err
-	}
-	if input.Admit != nil && !result.observed {
-		if handled, admitErr := result.admit(&prepared); handled || admitErr != nil {
-			return nil, nil, admitErr
-		}
-	}
-	return render(ctx, err)
+	return prepared.template(ctx, c)
 }
 
 type templateRequest struct {

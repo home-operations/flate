@@ -30,7 +30,7 @@ type options struct {
 	// Projections shares source-free producer facts during paired planning.
 	Projections *manifest.ProducerProjections
 	// HistoryOwners supplies immutable positive owner reach from accepted source paths.
-	HistoryOwners []manifest.NamedResource
+	HistoryOwners map[manifest.NamedResource][]manifest.SourceEvidence
 	// Selection controls compact retention for restricted requests.
 	Selection manifest.Selection
 	// Changes supplies frozen source-qualified comparison facts.
@@ -67,6 +67,7 @@ type Loader struct {
 	facts                 *ParsedInputs
 	scopes                *scopeConstruction
 	entry                 entryKind
+	nativeEntry           *manifest.Kustomization
 	entryPath             string
 	candidates            map[manifest.NamedResource]store.Child
 	admitted              map[manifest.NamedResource]manifest.BaseManifest
@@ -325,6 +326,9 @@ func (l *Loader) Load(
 	reader := l.documents
 	purpose := l.constructionPurpose.Load()
 	ordinary := purpose != nil && slices.Contains(*purpose, owner)
+	closure := admissionClosure{loader: l, objects: l.Store}
+	evidence := closure.rootEvidence(owner)
+	ordinary = ordinary || !l.frozen && evidence.independent && evidence.occurrence.Declaration != (OccurrenceID{})
 	switch {
 	case !reader.compact, owner == (manifest.NamedResource{}), l.Options.Filter.OrdinaryDemand(owner), ordinary:
 	default:
@@ -861,6 +865,12 @@ func (l *Loader) setEntry(abs, builder string) {
 		l.entry = entryPlain
 		if builder != "" {
 			l.entry = entryKustomize
+			relative, _ := filepath.Rel(l.documents.bootstrap, abs)
+			l.nativeEntry = manifest.NewEntryKustomization(
+				manifest.BootstrapSourceID,
+				filepath.ToSlash(relative),
+				manifest.NamedResource{},
+			)
 		}
 	}
 }

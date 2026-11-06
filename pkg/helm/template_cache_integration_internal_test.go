@@ -546,6 +546,7 @@ extra: {sequence: [{value: original}]}
 			Sources: cliSources,
 			Admit: func(admission RenderAdmission) (bool, error) {
 				key := admission.Key
+				assert.Equal(t, admission.Receipt != nil, true)
 				admittedKey = key
 				return true, nil
 			},

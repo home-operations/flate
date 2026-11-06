@@ -207,7 +207,7 @@ func (d *Session) finishDiscovery(
 		return nil, err
 	}
 	if !cfg.Selection.Changed && len(cfg.Selection.Roots) == 0 {
-		if err := d.promoteOrphans(ctx); err != nil {
+		if err := l.PromoteOrphans(ctx); err != nil {
 			return nil, err
 		}
 	}

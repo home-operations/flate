@@ -61,7 +61,7 @@ func (c *admissionClosure) materializerApplicationKnown(entry manifest.NamedReso
 		if object == nil {
 			object = c.loader.CatalogObject(id)
 		}
-		if c.loader.IsFileIndexed(id) && matches(id, object, nil) && c.independent(id, nil) {
+		if c.loader.IsFileIndexed(id) && matches(id, object, nil) && c.rootEvidence(id).independent {
 			c.applied = true
 			return true
 		}
@@ -95,7 +95,7 @@ func (c *admissionClosure) materializerApplicationObjectKnown(
 	if object == nil {
 		return false
 	}
-	if c.loader.IsFileIndexed(id) && matches(id, object, nil) && c.independent(id, nil) {
+	if c.loader.IsFileIndexed(id) && matches(id, object, nil) && c.rootEvidence(id).independent {
 		return true
 	}
 	occurrence, known := c.loader.catalogOccurrence(id)

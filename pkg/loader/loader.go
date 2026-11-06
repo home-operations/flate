@@ -151,28 +151,10 @@ func (l *Loader) Sources(ctx context.Context) iter.Seq2[store.Child, error] {
 	}
 }
 
-// AdmitsRoot applies the source-qualified scope boundary to every indexed document.
+// AdmitsRoot requires the winning indexed occurrence and current root support.
 func (l *Loader) AdmitsRoot(obj manifest.BaseManifest, file string) bool {
-	if obj == nil || !manifest.AdmitsRoot(obj) {
-		return false
-	}
-	id := obj.Named()
-	r, ok := l.Index.Lookup(id)
-	if !ok || r.Path != file || file != "" && l.terminalInput(file) {
-		return false
-	}
-	if admitted, known := l.roots[id]; known {
-		return admitted.admitted
-	}
-	if r.Path == "" {
-		native := l.documents.compact && r.Parent.ReportHidden() && r.Parent == r.BuilderOwner
-		return r.Authored == (manifest.NamedResource{}) && (r.Parent == (manifest.NamedResource{}) || native) &&
-			l.candidates[id].Obj != nil
-	}
-	if doc := l.documents.cache[file]; !id.KindInfo().Discovery && doc.rootKnown {
-		return doc.rootAdmitted
-	}
-	return l.rootAdmission(file, r.File, id.KindInfo().Structural).admits(l, id, new(r))
+	query := rootQuery{loader: l}
+	return query.admitsRoot(obj, file)
 }
 
 // Kustomizations returns eligible source-qualified owner evidence.

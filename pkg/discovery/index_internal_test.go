@@ -1,11 +1,8 @@
 package discovery
 
 import (
-	"os"
-
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func filesForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]string {
@@ -29,11 +26,4 @@ func parentsForTest(index *manifest.DiscoveryIndex) map[manifest.NamedResource]m
 func renderersForTest(index *manifest.DiscoveryIndex, id manifest.NamedResource) []manifest.NamedResource {
 	r, _ := index.Lookup(id)
 	return testutil.Owners(r.Productions)
-}
-
-func admitDiscoveryForTest(s *store.Store, root string) {
-	s.SetArtifact(
-		manifest.BootstrapSourceID,
-		&store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)},
-	)
 }

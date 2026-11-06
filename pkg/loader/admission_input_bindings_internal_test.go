@@ -100,9 +100,11 @@ func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 type admissionArtifactReads struct {
 	admissionReader
 
-	calls    int
-	lists    int
-	bySource map[manifest.NamedResource]int
+	calls       int
+	lists       int
+	wideLists   int
+	productions []manifest.NamedResource
+	bySource    map[manifest.NamedResource]int
 }
 
 //nolint:ireturn // The reader contract returns heterogeneous artifact implementations.
@@ -116,6 +118,9 @@ func (r *admissionArtifactReads) GetArtifact(id manifest.NamedResource, read sto
 
 func (r *admissionArtifactReads) ListObjects(group, kind string) []manifest.BaseManifest {
 	r.lists++
+	if group == "" && kind == "" {
+		r.wideLists++
+	}
 	return r.admissionReader.ListObjects(group, kind)
 }
 
@@ -406,4 +411,21 @@ func testAdmissionUnreferencedInputCollisionCase(
 			t.Errorf("side %d admitted unrelated objects: %v", side, proposal.Needed)
 		}
 	}
+}
+
+func (r *admissionArtifactReads) ListProductionCandidates(
+	group, kind string,
+	index *manifest.DiscoveryIndex,
+	prospective map[manifest.NamedResource]bool,
+) []manifest.BaseManifest {
+	r.lists++
+	return r.admissionReader.ListProductionCandidates(group, kind, index, prospective)
+}
+
+func (r *admissionArtifactReads) Productions(
+	id manifest.NamedResource,
+	index *manifest.DiscoveryIndex,
+) []manifest.Production {
+	r.productions = append(r.productions, id)
+	return r.admissionReader.Productions(id, index)
 }

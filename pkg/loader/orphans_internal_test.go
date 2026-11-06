@@ -1,4 +1,4 @@
-package discovery
+package loader
 
 import (
 	"encoding/json"
@@ -13,7 +13,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -122,8 +121,8 @@ spec: {sources: [{alias: repo, kind: GitRepository, name: source}]}
 `,
 	)
 	st := store.New()
-	admitDiscoveryForTest(st, dir)
-	l := loader.New(st)
+	admitForTest(st, dir)
+	l := New(st)
 	self := testutil.KustomizationID("apps", "self")
 	child := testutil.HelmReleaseID("apps", "child")
 	generator := manifest.NamedResource{
@@ -143,11 +142,8 @@ spec: {sources: [{alias: repo, kind: GitRepository, name: source}]}
 		}
 		l.Index.Records[id] = record
 	}
-	d := &Session{
-		cfg: Config{Store: st}, loader: l,
-	}
 	l.Index.Claims = map[string][]manifest.NamedResource{"apps/": {self}}
-	d.promoteOrphans(t.Context())
+	l.PromoteOrphans(t.Context())
 
 	assert.ErrorIf(t, st.GetObject(self) == nil, "%v", "self-excluded orphan must be admitted")
 
@@ -170,7 +166,7 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 		testutil.WriteFile(t, root, "apps/disabled.yaml", body)
 		testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: []\n")
 		st := store.New()
-		l := loader.New(st)
+		l := New(st)
 		l.SourceRoot = root
 
 		{
@@ -185,8 +181,7 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
-		d := Session{cfg: Config{Store: st}, loader: l}
-		d.promoteOrphans(t.Context())
+		l.PromoteOrphans(t.Context())
 		for _, id := range []manifest.NamedResource{testutil.KustomizationID("apps", "disabled"), testutil.HelmReleaseID("apps", "sibling")} {
 			assert.FatalIf(t, st.GetObject(id) != nil, "omitted file promoted %s", id)
 		}
@@ -206,7 +201,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	testutil.WriteFile(t, dir, "bundle.yaml", body)
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../bundle.yaml]\n")
 	st := store.New()
-	admitDiscoveryForTest(st, dir)
+	admitForTest(st, dir)
 	docs, err := testutil.SplitDocs([]byte(body))
 
 	assert.FatalIf(t, err != nil, "%v", err)
@@ -223,7 +218,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 		source.Named(),
 		st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
 	)
-	l := loader.New(st)
+	l := New(st)
 
 	{
 		err := l.FinalizeIndex(t.Context(), dir, true)
@@ -240,8 +235,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 			File:     "bundle.yaml",
 		}
 	}
-	d := &Session{cfg: Config{Store: st}, loader: l}
-	d.promoteOrphans(t.Context())
+	l.PromoteOrphans(t.Context())
 
 	assert.ErrorIf(t, st.GetObject(self) == nil, "%v", "self-owned Kustomization must be admitted")
 
@@ -272,7 +266,7 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 		view[path.Join(testCaseInput.tc.chartPath, name)] = file
 	}
 	var documentReads atomic.Int64
-	inputFS := entryReadFS{
+	inputFS := parsedReadFS{
 		FS:    view,
 		reads: map[string]*atomic.Int64{path.Join(testCaseInput.tc.chartPath, "a.yaml"): &documentReads},
 	}
@@ -280,7 +274,7 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 		manifest.BootstrapSourceID,
 		&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: inputFS},
 	)
-	l := loader.New(st)
+	l := New(st)
 	supplied := &manifest.Kustomization{Name: "supplied", Namespace: "default", Path: "."}
 	l.AdmitDeclarations([]store.Declaration{{
 		Obj:    supplied,
@@ -349,23 +343,22 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 	}
-	d := &Session{cfg: Config{Store: st}, loader: l}
 	readsBefore := documentReads.Load()
 	if testCaseInput.tc.order == nil {
-		d.promoteOrphans(t.Context())
+		l.PromoteOrphans(t.Context())
 	} else {
 		for _, id := range testCaseInput.tc.order {
 			record, _ := l.Index.Lookup(id)
 			admit := func(obj manifest.BaseManifest) (bool, error) {
-				return d.loader.AdmitsRoot(obj, record.Path), nil
+				return l.AdmitsRoot(obj, record.Path), nil
 			}
 
 			{
-				promoted, err := loader.Promote(
+				promoted, err := Promote(
 					t.Context(),
 					st,
 					id,
-					loader.PromoteOptions{
+					PromoteOptions{
 						Record: manifest.Production{
 							Authored: record.Authored,
 							Path:     record.Path,
@@ -378,7 +371,7 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 					!promoted, "promotion failed for %s", id)
 			}
 		}
-		d.promoteOrphans(t.Context())
+		l.PromoteOrphans(t.Context())
 	}
 
 	assert.FatalIf(
@@ -438,8 +431,8 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	}
 	testutil.WriteFile(t, root, "bundle.yaml", body)
 	st := store.New()
-	admitDiscoveryForTest(st, root)
-	l := loader.New(st)
+	admitForTest(st, root)
+	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -460,7 +453,7 @@ func testPromoteOrphansNamespaceAdmissionCase(
 		support := new(store.ReadSet)
 		support.Init(st, manifest.NamedResource{}, nil)
 		support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-		l.RegisterBuilt(loader.BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: support}, batch)
+		l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Support: support}, batch)
 	}
 	l.Admit(root)
 	bare := testutil.KustomizationID("", "bare")
@@ -500,8 +493,7 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	assert.NoError(t, err)
 	document := manifest.DeepCopyMap(child.Doc)
 	object := child.Obj.(*manifest.Kustomization).Clone()
-	d := Session{cfg: Config{Store: st}, loader: l}
-	d.promoteOrphans(t.Context())
+	l.PromoteOrphans(t.Context())
 
 	assert.ErrorIf(
 		t,
@@ -537,7 +529,7 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	}
 }
 
-func assertOrphanOccurrencesDistinct(t *testing.T, l *loader.Loader, root string, shared *manifest.NamedResource) {
+func assertOrphanOccurrencesDistinct(t *testing.T, l *Loader, root string, shared *manifest.NamedResource) {
 	t.Helper()
 
 	{
@@ -549,7 +541,7 @@ func assertOrphanOccurrencesDistinct(t *testing.T, l *loader.Loader, root string
 
 	assert.FatalIf(t, err != nil, "%v", err)
 
-	var sharedDeclarations []loader.OccurrenceID
+	var sharedDeclarations []OccurrenceID
 	{
 		oValues := occurrences
 		for oIndex := range oValues {
@@ -579,14 +571,13 @@ data: {password: "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"}
 sops: {version: 3.9.0}
 `)
 	st := store.New()
-	l := loader.New(st)
+	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	d := Session{cfg: Config{Store: st}, loader: l}
-	assert.NoError(t, d.promoteOrphans(t.Context()))
+	assert.NoError(t, l.PromoteOrphans(t.Context()))
 	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
 	secret, ok := st.GetObject(id).(*manifest.Secret)
 	assert.FatalIf(t, !ok, "orphan Secret was not promoted")

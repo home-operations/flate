@@ -59,9 +59,9 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
-				4,
-				30,
-				25,
+				3,
+				18,
+				15,
 				2,
 			),
 			selectionPreparationKey(alias, alias): preparationCounts(
@@ -411,9 +411,9 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 				0,
 			),
 			selectionPreparationKey(manifest.NamedResource{}, manifest.BootstrapSourceID): preparationCounts(
-				4,
-				30,
-				25,
+				3,
+				18,
+				15,
 				2,
 			),
 			selectionPreparationKey(alias, alias): preparationCounts(

@@ -45,7 +45,15 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
-	entries, err := Plan(t.Context(), Config{Input: input, Path: root})
+	var recorder manifest.WorkRecorder
+	entries, err := Plan(t.Context(), Config{Input: input, Path: root, Work: recorder.Scope()})
+	var counts manifest.WorkCounts
+	for _, record := range recorder.Scope().Snapshot(0) {
+		counts.Add(&record.Counts)
+	}
+	assert.Equal(t, counts.OwnerPrepares, uint64(3))
+	assert.Equal(t, counts.FileEntries, uint64(25))
+	assert.Equal(t, counts.ReaderEdges, uint64(10))
 	assert.NoError(t, err)
 	// The owner ruling restores #1379's two owner-scoped prepared entries.
 	assert.FatalIf(t, len(entries) != 2 || len(entries[0].prepared.aliasViews) == 0,

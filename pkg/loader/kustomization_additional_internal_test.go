@@ -142,7 +142,7 @@ func TestDocumentReader_IndexedSource(t *testing.T) {
 		id: {File: "source.yaml"},
 	}}
 	reader := documentReader{cache: map[string]document{}}
-	reader.mountSources(st, index)
+	reader.mountSources(st, nil, index)
 	body := reader.read(root).body
 	assert.FatalIf(
 		t,

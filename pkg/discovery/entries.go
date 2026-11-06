@@ -64,54 +64,23 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	parsed := l.ParsedInputs()
 	for i := range entries {
-		if err := d.prepareEntry(ctx, &entries[i], roots, parsed); err != nil {
-			return nil, err
+		entry := &entries[i]
+		views := map[string]*store.SourceArtifact{}
+		var parsed *loader.ParsedInputs
+		for j := range roots {
+			root := &roots[j]
+			if safepath.Contains(entry.Path, filepath.Join(input.LocalPath, root.Path)) {
+				maps.Copy(views, root.views)
+				parsed = root.parsed
+			}
 		}
+		if parsed == nil {
+			parsed = l.ParsedInputs()
+		}
+		entry.prepared = &entryInputs{input: *input, parsed: parsed, aliasViews: views}
 	}
 	return entries, nil
-}
-
-func (d *Session) prepareEntry(
-	ctx context.Context,
-	entry *Entry,
-	roots []entryRoot,
-	parsed *loader.ParsedInputs,
-) error {
-	input := entry.Input
-	views := map[string]*store.SourceArtifact{}
-	resolutions := map[manifest.NamedResource]entryResolution{}
-	for i := range roots {
-		root := &roots[i]
-		if safepath.Contains(entry.Path, filepath.Join(input.LocalPath, root.Path)) {
-			maps.Copy(views, root.views)
-			maps.Copy(resolutions, root.resolutions)
-		}
-	}
-	entry.prepared = &entryInputs{input: *input, parsed: parsed, aliasViews: views}
-	scoped := d.cfg
-	scoped.Path, scoped.Entry, scoped.Input, scoped.Loader, scoped.Store = entry.Path, entry, input, nil, store.New()
-	scoped.Store.SetWorkTree(scoped.Work.Identity().Tree, scoped.Work)
-	native := newDiscoverer(&scoped)
-	if _, err := native.resolveEntrySources(ctx, false); err != nil {
-		return err
-	}
-	for _, id := range slices.SortedFunc(maps.Keys(resolutions), manifest.NamedResource.Compare) {
-		resolution := resolutions[id]
-		native.cfg.Store.AddObject(resolution.object)
-		for i := range resolution.warnings {
-			native.cfg.Store.AddWarning(resolution.warnings[i])
-		}
-		native.publishResolvedSource(&resolution)
-	}
-	if err := native.loadManifests(ctx, input.LocalPath, false); err != nil {
-		return err
-	}
-	entry.prepared = &entryInputs{
-		input: *input, parsed: native.loader.ParsedInputs(), aliasViews: maps.Clone(native.aliasViews),
-	}
-	return nil
 }
 
 func partitionEntries(roots []entryRoot, input *store.SourceArtifact, scan string) ([]Entry, error) {

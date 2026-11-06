@@ -2,7 +2,6 @@ package loader
 
 import (
 	"context"
-	"maps"
 	"path/filepath"
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
@@ -19,13 +18,7 @@ func (l *Loader) EntryFrontier(ctx context.Context, input *store.SourceArtifact,
 	if input == nil || input.FS == nil || !input.Reads.Valid() {
 		return true, nil
 	}
-	l.refreshSources()
-	mounted := maps.Clone(l.documents.artifacts)
-	if mounted == nil {
-		mounted = map[string]*store.SourceArtifact{}
-	}
-	mounted[input.LocalPath] = input
-	l.documents.setSources(mounted)
+	l.refreshSources(input)
 	reader := l.documents
 	reader.intent = manifest.ApplicationDocuments
 	dir := filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(path))

@@ -45,7 +45,7 @@ func TestRenderTrees_FullDiscoveryOnce(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(results), 1)
 	assert.Equal(t, len(results[0].Result.Manifests), 0)
-	assert.Equal(t, input.walks.Load(), int32(2))
+	assert.Equal(t, input.walks.Load(), int32(1))
 }
 
 func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {

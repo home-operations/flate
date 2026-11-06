@@ -7,6 +7,11 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
+func (q *entryQualification) close() {
+	q.preparation.Retire()
+	*q = entryQualification{}
+}
+
 // TakePreparation MUST run only on the matching owner after construction freezes.
 func (r *Result) TakePreparation(
 	cache *kustomize.TreeCache,
@@ -57,6 +62,9 @@ func (r *Result) Close() {
 		delete(r.prepared, id)
 	}
 	if r.Admission != nil {
+		if q := r.Admission.qualification; q != nil {
+			q.close()
+		}
 		r.Admission.entryPreparation.Retire()
 		r.Admission.entryRequest = kustomize.RenderRequest{}
 	}
@@ -81,6 +89,9 @@ func (d *Session) Close() {
 		delete(d.prepared, id)
 	}
 	if d.entryAdmission != nil {
+		if q := d.entryAdmission.qualification; q != nil {
+			q.close()
+		}
 		d.entryAdmission.entryPreparation.Retire()
 		d.entryAdmission.entryRequest = kustomize.RenderRequest{}
 	}

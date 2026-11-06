@@ -22,7 +22,7 @@ func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomizatio
 		func(ks *manifest.Kustomization) bool { return !s.Policy(ks.Named()).Root },
 	)
 	reader := documentReader{cache: map[string]document{}}
-	reader.mountSources(s)
+	reader.mountSources(s, nil)
 	var claimBuf [16]ownerClaims
 	built := new(reader).buildClaims(repoRoot, candidates, func(id manifest.NamedResource) sourceScope {
 		location := SourceView(s, id, repoRoot)
@@ -39,7 +39,7 @@ func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomizatio
 
 // Claims reuses discovery's source-view documents while the Loader is mutable.
 func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
-	l.refreshSources()
+	l.refreshSources(nil)
 	l.refreshClaims(repoRoot, l.kustomizations())
 	claims, borrowed := l.claimView(repoRoot, func(input scopeInput) bool {
 		r, _ := l.Index.Lookup(input.owner.Named())

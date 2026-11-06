@@ -116,7 +116,11 @@ func mountSource(mounted map[string]*store.SourceArtifact, artifact store.Artifa
 	}
 }
 
-func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.DiscoveryIndex) []string {
+func (r *documentReader) mountSources(
+	s sourceReader,
+	input *store.SourceArtifact,
+	candidates ...*manifest.DiscoveryIndex,
+) []string {
 	mounted := map[string]*store.SourceArtifact{}
 	for info := range manifest.Kinds() {
 		if info.SourceArtifact {
@@ -137,6 +141,9 @@ func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.Di
 	mountSource(mounted, artifact)
 	if bootstrap, ok := artifact.(*store.SourceArtifact); ok {
 		r.bootstrap = bootstrap.LocalPath
+	}
+	if input != nil {
+		mounted[input.LocalPath] = input
 	}
 	return r.setSources(mounted)
 }
@@ -199,7 +206,7 @@ func (r *documentReader) invalidateSourceDocuments(changed []string) {
 	}
 }
 
-func (l *Loader) refreshSources() {
+func (l *Loader) refreshSources(input *store.SourceArtifact) {
 	l.documents.projections = l.Options.Projections
 	if l.documents.projections == nil {
 		l.documents.projections = &l.projections
@@ -209,7 +216,7 @@ func (l *Loader) refreshSources() {
 		inputs.compact == l.documents.compact {
 		l.documents.parsed = inputs
 	}
-	changed := l.documents.mountSources(l.Store, l.Index)
+	changed := l.documents.mountSources(l.Store, input, l.Index)
 	if len(changed) == 0 {
 		return
 	}
@@ -242,7 +249,7 @@ func (l *Loader) refreshSources() {
 }
 
 func (l *Loader) mountSources() {
-	l.refreshSources()
+	l.refreshSources(nil)
 	for _, root := range l.documents.changed {
 		//nolint:gocritic // Filtered iterator values remain snapshots during record deletion.
 		for id, r := range l.Index.Files() {

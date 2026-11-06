@@ -10,30 +10,48 @@ import (
 
 func TestReadSet_AdmissionMutationPreconditions(t *testing.T) {
 	t.Parallel()
-	for _, listing := range []string{"all", "empty-kind", "present-kind"} {
-		t.Run(listing, func(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		all, present, producer bool
+	}{
+		{name: "all", all: true},
+		{name: "empty-kind"},
+		{name: "present-kind", present: true},
+		{name: "producer-kind", producer: true},
+		{name: "producer-all", all: true, producer: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := New()
 			source := manifest.BootstrapSourceID
 			s.SetArtifact(source, &SourceArtifact{Content: "source", FS: fstest.MapFS{}})
-			if listing == "present-kind" {
+			if tc.present {
 				s.AddObject(&manifest.ConfigMap{Name: "existing", Namespace: "apps"})
 			}
-			first := &manifest.ConfigMap{Name: "first", Namespace: "apps"}
-			second := &manifest.ConfigMap{Name: "second", Namespace: "apps"}
+			var first, second manifest.BaseManifest = &manifest.ConfigMap{Name: "first", Namespace: "apps"},
+				&manifest.ConfigMap{Name: "second", Namespace: "apps"}
+			if tc.producer {
+				first = &manifest.Kustomization{Name: "first", Namespace: "apps"}
+				second = &manifest.Kustomization{Name: "second", Namespace: "apps"}
+			}
 			var reads, observer ReadSet
 			reads.Init(s, ownerID("admission"), nil)
 			observer.Init(s, ownerID("observer"), nil)
 			defer reads.Retire()
 			defer observer.Retire()
+			id := first.Named()
+			group, kind := id.Group, id.Kind
+			if tc.all {
+				group, kind = "", ""
+			}
 			for _, r := range []*ReadSet{&reads, &observer} {
+				if tc.producer {
+					r.SourceAdmission(first.Named(), source)
+					r.SourceAdmission(second.Named(), source)
+				}
 				r.GetDeclaration(first.Named())
 				r.GetDeclaration(second.Named())
-				kind := manifest.KindConfigMap
-				if listing == "all" {
-					kind = ""
-				}
-				r.ListObjects("", kind)
+				r.ListObjects(group, kind)
 			}
 			reads.Admit(Child{Obj: first, SourceSupport: source}, source, manifest.NamedResource{})
 			assert.Equal(t, reads.Valid(), true)
@@ -41,13 +59,13 @@ func TestReadSet_AdmissionMutationPreconditions(t *testing.T) {
 			assert.Equal(t, reads.GetDeclaration(first.Named()), nil)
 			reads.Admit(Child{Obj: second, SourceSupport: source}, source, manifest.NamedResource{})
 			assert.Equal(t, reads.Valid(), true)
-			assert.Equal(t, s.GetDeclaration(second.Named()), manifest.BaseManifest(second))
+			assert.Equal(t, s.GetDeclaration(second.Named()), second)
 			for range s.Sweep() {
 			}
 			assert.Equal(t, reads.Valid(), true)
 			published := make(chan struct{})
 			go func() {
-				s.AddObject(&manifest.ConfigMap{Name: "foreign", Namespace: "apps"})
+				s.AddObject(second.WithNamespace("foreign"))
 				close(published)
 			}()
 			<-published

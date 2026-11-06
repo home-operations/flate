@@ -510,12 +510,12 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 	}
 	prepares := map[manifest.WorkKey]manifest.WorkCounts{
 		{Tree: side.ID, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
-			Attempts:       7,
-			Completed:      7,
-			OwnerPrepares:  7,
+			Attempts:       6,
+			Completed:      6,
+			OwnerPrepares:  6,
 			RawKeyPrepares: 7,
-			FileEntries:    322,
-			ReaderEdges:    89,
+			FileEntries:    260,
+			ReaderEdges:    68,
 		},
 		{Tree: side.ID, Source: alias, Phase: manifest.WorkPreparation}: {FileEntries: 20, ReaderEdges: 14},
 		{
@@ -542,18 +542,18 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation,
 		}] = manifest.WorkCounts{
-			Attempts:       7,
-			Completed:      7,
-			OwnerPrepares:  7,
+			Attempts:       6,
+			Completed:      6,
+			OwnerPrepares:  6,
 			RawKeyPrepares: 7,
-			FileEntries:    570,
-			ReaderEdges:    97,
+			FileEntries:    442,
+			ReaderEdges:    76,
 		}
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: alias, Source: alias, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
 			Attempts:      4,
 			Completed:     4,
 			OwnerPrepares: 4,
-			FileEntries:   304,
+			FileEntries:   238,
 			ReaderEdges:   7,
 		}
 	}

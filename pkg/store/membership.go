@@ -551,7 +551,7 @@ func (s *Store) publishRegionVisibilityLocked(region objectRegion) {
 		sh := s.shardFor(id)
 		sh.derived = true
 		if slot := sh.slots[id]; slot != nil {
-			if (slot.visible.Load() != state.live || slot.hidden.Load() == state.live) &&
+			if slot.current.Load() != nil && (slot.visible.Load() != state.live || slot.hidden.Load() == state.live) &&
 				slot.generation == state.producerGeneration {
 				slot.authority = sh.advanceLocked(slot.authority)
 			}
@@ -658,4 +658,17 @@ func (s *Store) appendRegionArtifactLocked(
 		}
 	}
 	return publications
+}
+
+func (u *objectUpdate) advanceCollection(generation uint64) {
+	if captured := u.collection; captured != nil && captured.head != nil {
+		if captured.absent != nil {
+			captured.generation.Store(0)
+		} else {
+			captured.generation.Store(generation)
+		}
+	}
+	if captured := u.inventory; captured != nil && captured.head != nil {
+		captured.generation.Store(0)
+	}
 }

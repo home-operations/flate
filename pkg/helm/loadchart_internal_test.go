@@ -553,7 +553,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	if !(*testCaseInput.persistent) {
 		return
 	}
-	d, newErr := renderer.describeChart(t.Context(), selected, rendererSources)
+	d, newErr := renderer.describeChart(t.Context(), selected, rendererSources.chartInput(selected))
 	assert.NoError(t, newErr)
 	d.values, newErr = renderer.observeValuesFiles(t.Context(), &d, selected.ChartValuesFiles, false)
 	assert.NoError(t, newErr)

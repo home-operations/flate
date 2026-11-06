@@ -27,6 +27,14 @@ func (g *configGenerator) GeneratedObjects() ([]manifest.BaseManifest, error) {
 	return g.objects, g.err
 }
 
+func (g *configGenerator) GeneratedTargets() ([]manifest.ProducerTarget, error) {
+	targets := make([]manifest.ProducerTarget, len(g.objects))
+	for i, object := range g.objects {
+		targets[i] = manifest.ProducerTarget{NamedResource: object.Named()}
+	}
+	return targets, g.err
+}
+
 func TestGeneratedObjects_Lifecycle(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"complete_empty", "replay", "failure", "removed", "invalid_rule", "collision"} {

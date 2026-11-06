@@ -40,9 +40,11 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 		Namespace: "apps",
 		Name:      "readonly",
 	}
+	var preparation *Preparation
+	defer func() { preparation.Retire() }()
 	for _, freeze := range []bool{false, true} {
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, freeze))
-		proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+		proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
 		assert.NoError(t, err)
 		present := slices.ContainsFunc(
 			proposal.Objects,
@@ -52,7 +54,10 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 		assert.Equal(t, l.CatalogObject(readonly).Named(), readonly)
 		assert.Equal(t, st.GetObject(readonly) == nil, true)
 		assert.Equal(t, slices.Contains(proposal.Needed, readonly), false)
+		proposal.Retire()
 	}
+	preparation.Retire()
+	assert.Equal(t, preparation.evidence == nil && preparation.closure.loader == nil, true)
 }
 
 func TestAdmission_PreparedDeclarationUsesFullDocument(t *testing.T) {
@@ -163,7 +168,7 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 	if testCaseInput.absent {
 		child.Doc = nil
 	}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: child})
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{child}})
 	assert.NoError(t, err)
 	assert.Equal(
 		t,

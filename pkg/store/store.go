@@ -370,6 +370,7 @@ func (s *Store) addObject(update *objectUpdate) {
 			return
 		}
 		sh.mu.RLock()
+		index := s.index.Load()
 		cell := sh.cells[id]
 		supplied := binding != nil && cell.reference != nil && cell.reference.Obj == obj &&
 			cell.reference.Origin == manifest.SuppliedDeclaration
@@ -384,12 +385,13 @@ func (s *Store) addObject(update *objectUpdate) {
 		}
 		u := *update
 		u.cell, u.needsRoot = cell, needsRoot
+		u.effective.child.Obj, u.effective.child.Doc = cell.static, cell.document
 		if sh.derived {
 			sh.captureLocked(id, new(cell), &u.effective)
-		} else {
-			u.effective.child.Obj, u.effective.child.Doc = cell.static, cell.document
 		}
 		sh.mu.RUnlock()
+		u.classified = update.classified && rawDeclarationAuthority(index, id, true)
+		u.independent = rawDeclarationAuthority(index, id, false)
 		u.compare()
 		if u.staticEqual && u.effectiveEqual && (!u.explicit || manifest.ValueEqual(u.cell.document, u.document)) &&
 			!u.cell.hidden &&
@@ -397,8 +399,7 @@ func (s *Store) addObject(update *objectUpdate) {
 			!u.needsRoot {
 			return
 		}
-		u.independent = declarationIndependent(s.index.Load(), id)
-		if s.commitObjectUpdate(sh, id, &u) != publicationRetry {
+		if s.commitObjectUpdate(sh, id, &u, index) != publicationRetry {
 			return
 		}
 	}
@@ -478,7 +479,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 		i := kindShardIndex(obj.Named().Kind)
 		buckets[i] = append(
 			buckets[i],
-			objectUpdate{obj: obj, independent: declarationIndependent(s.index.Load(), obj.Named())},
+			objectUpdate{obj: obj, independent: rawDeclarationAuthority(s.index.Load(), obj.Named(), false)},
 		)
 	}
 	var anchors []objectUpdate
@@ -720,7 +721,7 @@ func (s *Store) Objects() []manifest.BaseManifest {
 	return out
 }
 
-func (s *Store) addAnchor(uValue *objectUpdate) bool {
+func (s *Store) addAnchor(uValue *objectUpdate, index *manifest.DiscoveryIndex) bool {
 	u := *uValue
 	id := u.obj.Named()
 	sh := s.shardFor(id)
@@ -736,7 +737,7 @@ func (s *Store) addAnchor(uValue *objectUpdate) bool {
 		s.unlockAll()
 		return true
 	}
-	if !new(u).currentLocked(sh) || u.binding != nil && !u.binding.sourceCurrent() ||
+	if s.index.Load() != index || !new(u).currentLocked(sh) || u.binding != nil && !u.binding.sourceCurrent() ||
 		u.support != nil && !u.support.productionCurrent() {
 		s.unlockAll()
 		return false
@@ -829,33 +830,6 @@ func artifactReadEqual(a, b Artifact, read ArtifactRead) bool {
 			x.Input(read) == y.Input(read)
 	}
 	return artifactValueEqual(a, b)
-}
-
-func (s *Store) commitObjectUpdate(sh *shard, id manifest.NamedResource, update *objectUpdate) publicationResult {
-	u := *update
-	sh.mu.Lock()
-	if !u.reads.Valid() || u.binding != nil && !u.binding.sourceCurrent() ||
-		u.support != nil && !u.support.productionCurrent() {
-		sh.mu.Unlock()
-		return publicationRejected
-	}
-	current := sh.cells[id]
-	if current.publication != u.cell.publication || current.generation != u.cell.generation {
-		sh.mu.Unlock()
-		return publicationRetry
-	}
-	if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
-		sh.mu.Unlock()
-		if s.addAnchor(new(u)) {
-			return publicationAccepted
-		}
-		return publicationRetry
-	}
-	u.cell.authority = current.authority
-	dispatch := s.admitLocked(sh, id, &u)
-	sh.mu.Unlock()
-	dispatch.run()
-	return publicationAccepted
 }
 
 func compactObjectBucket(bucket []objectUpdate) []objectUpdate {

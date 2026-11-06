@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"strings"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -69,8 +71,10 @@ func (c *Controller) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	ex := c.newExecution(id)
+	ex.run.Take(previous)
 	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
 	return &ex.run
 }

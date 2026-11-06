@@ -114,8 +114,8 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 	proposal, err := l.Prepare(
 		t.Context(),
 		PrepareRequest{
-			Incoming: store.Child{Obj: provider, Productions: []manifest.Production{{Owner: parent}}},
-			Reads:    reads,
+			Generation: []store.Child{{Obj: provider, Productions: []manifest.Production{{Owner: parent}}}},
+			Reads:      reads,
 		},
 	)
 	assert.NoError(t, err)
@@ -175,8 +175,8 @@ func TestAdmission_ExcludedSelectorKeepsQueryObservation(t *testing.T) {
 	proposal, err := l.Prepare(
 		t.Context(),
 		PrepareRequest{
-			Incoming: store.Child{Obj: consumer, Productions: []manifest.Production{{Owner: parent}}},
-			Reads:    reads,
+			Generation: []store.Child{{Obj: consumer, Productions: []manifest.Production{{Owner: parent}}}},
+			Reads:      reads,
 		},
 	)
 	assert.NoError(t, err)
@@ -309,7 +309,10 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 						manifest.TreeSide(side) == tc.side,
 					)
 
-					proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: consumers[side]}})
+					proposal, err = l.Prepare(
+						t.Context(),
+						PrepareRequest{Generation: []store.Child{{Obj: consumers[side]}}},
+					)
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Selected, app), true)
 					assert.Equal(t, slices.Contains(proposal.Dirty, app), true)
@@ -324,7 +327,10 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 						0,
 					)
 					assert.Equal(t, retry, false)
-					proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: providers[side]}})
+					proposal, err = l.Prepare(
+						t.Context(),
+						PrepareRequest{Generation: []store.Child{{Obj: providers[side]}}},
+					)
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Selected, app), true)
 					assert.Equal(t, slices.Contains(proposal.Dirty, app), true)
@@ -359,7 +365,7 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 						)
 						proposal, err = l.Prepare(
 							t.Context(),
-							PrepareRequest{Incoming: store.Child{Obj: consumers[side]}},
+							PrepareRequest{Generation: []store.Child{{Obj: consumers[side]}}},
 						)
 						assert.NoError(t, err)
 						assert.Equal(t, slices.Contains(proposal.Selected, app), false)
@@ -590,7 +596,10 @@ func testSelectorVisibilityCase(t *testing.T, incoming bool, visibleSide manifes
 		if incoming {
 			child = prepared[side][app.Named()]
 		}
-		proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: child, Invocation: child.Obj == nil})
+		proposal, err := l.Prepare(
+			t.Context(),
+			PrepareRequest{Generation: []store.Child{child}, Invocation: child.Obj == nil},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, slices.Contains(proposal.Selected, app.Named()), true)
 		assert.Equal(t, slices.Contains(proposal.Dirty, app.Named()), true)

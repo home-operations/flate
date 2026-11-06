@@ -75,7 +75,7 @@ func (s *Store) commitReplacement(
 			}
 		}
 	}
-	independent := declarationIndependent(s.index.Load(), id)
+	independent := rawDeclarationAuthority(s.index.Load(), id, false)
 	ps := s.shardFor(id)
 	s.lockAll()
 	slot := ps.slots[id]
@@ -125,7 +125,7 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 			changed = changed.add(
 				target.NamedResource,
 				direct,
-				declarationIndependent(s.index.Load(), target.NamedResource),
+				rawDeclarationAuthority(s.index.Load(), target.NamedResource, false),
 			)
 		}
 	}
@@ -429,4 +429,36 @@ func (s *Store) appendReplacementArtifactLocked(
 		publications = append(publications, objectPublication{event: event, force: true})
 	}
 	return publications
+}
+
+func (s *Store) commitObjectUpdate(
+	sh *shard,
+	id manifest.NamedResource,
+	update *objectUpdate,
+	index *manifest.DiscoveryIndex,
+) publicationResult {
+	u := *update
+	sh.mu.Lock()
+	if !u.reads.Valid() || u.binding != nil && !u.binding.sourceCurrent() ||
+		u.support != nil && !u.support.productionCurrent() {
+		sh.mu.Unlock()
+		return publicationRejected
+	}
+	current := sh.cells[id]
+	if s.index.Load() != index || current.publication != u.cell.publication || current.generation != u.cell.generation {
+		sh.mu.Unlock()
+		return publicationRetry
+	}
+	if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
+		sh.mu.Unlock()
+		if s.addAnchor(new(u), index) {
+			return publicationAccepted
+		}
+		return publicationRetry
+	}
+	u.cell.authority = current.authority
+	dispatch := s.admitLocked(sh, id, &u)
+	sh.mu.Unlock()
+	dispatch.run()
+	return publicationAccepted
 }

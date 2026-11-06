@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
 	src "github.com/home-operations/flate/pkg/source"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -176,7 +177,7 @@ func testRenderTreesClusterAdvisoriesWarmAcquisitionTail(
 				for _, id := range []manifest.NamedResource{(*tailCaseInput.source), (*tailCaseInput.consumer)} {
 					var execution *base.Execution
 					o.tasks.Go(t.Context(), "warm/"+id.String(), func(ctx context.Context) {
-						execution = o.controllers.ReconcileNode(ctx, id, manifest.DrainNone)
+						execution = o.controllers.ReconcileNode(ctx, id, manifest.DrainNone, schedule.Result{})
 					})
 					o.tasks.BlockTillDone()
 					assert.FatalIf(

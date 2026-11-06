@@ -17,6 +17,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -167,7 +169,7 @@ func testDAGSourceEffectiveWarmCacheTail(t *testing.T, tailCaseInput *testDAGSou
 		d := dagDispatcher{o}
 		dispatch := fixtureDispatcher{
 			store: s,
-			dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+			dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 				if id == parent.Named() {
 					o.tasks.YieldSlot(func() {
 						select {
@@ -192,7 +194,7 @@ func testDAGSourceEffectiveWarmCacheTail(t *testing.T, tailCaseInput *testDAGSou
 					)
 					return schedule.Result{}
 				}
-				out := d.Dispatch(ctx, id, level)
+				out := d.Dispatch(ctx, id, level, schedule.Result{})
 				if id == effective.Named() {
 					once.Do(func() { close(parked) })
 				}
@@ -365,7 +367,7 @@ func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCovered
 	d := dagDispatcher{o}
 	dispatch := fixtureDispatcher{
 		store: s,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id == parent.Named() {
 				if (*testCaseInput.order) == "excluded then refire" {
 					once.Do(func() { close(entered) })
@@ -402,7 +404,11 @@ func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCovered
 					o.tasks.YieldSlot(func() {
 						waitSharedRepositoryBarrier(ctx, extendPermit)
 					})
-					o.ksc.KeepEmitted(t.Context(), id, store.Child{Obj: &accepted}, nil)
+					o.ksc.KeepEmitted(
+						t.Context(),
+						id,
+						loader.PrepareRequest{Generation: []store.Child{{Obj: &accepted}}, Reads: nil},
+					)
 				} else {
 					s.RecordEmitted(
 						id,
@@ -418,7 +424,7 @@ func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCovered
 				return schedule.Result{}
 			}
 			call := dispatches.Add(1)
-			out := d.Dispatch(ctx, id, level)
+			out := d.Dispatch(ctx, id, level, schedule.Result{})
 			if call == 1 {
 				initial = out.Assessment.Outcome()
 				signalCoveredArrival(testCaseInput, &once, entered)

@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -266,7 +268,11 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 		o.configureControllers()
 		var reads store.ReadSet
 		reads.Init(o.store, owner, nil)
-		records, _ := o.controllers.PreviousRender(t.Context(), record.Declaration, &reads)
+		preparedHistory271 := o.controllers.PreviousRender(t.Context(), record.Declaration, schedule.Result{})
+		if preparedHistory271.Assessment != nil {
+			defer preparedHistory271.Assessment.Close()
+		}
+		records, _ := preparedHistory271.Records, preparedHistory271.Complete
 		reads.Retire()
 
 		assert.FatalIf(
@@ -468,7 +474,11 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		var reads store.ReadSet
 		reads.Init(o.store, owner, nil)
 		defer reads.Retire()
-		records, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+		preparedHistory473 := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), schedule.Result{})
+		if preparedHistory473.Assessment != nil {
+			defer preparedHistory473.Assessment.Close()
+		}
+		records, complete := preparedHistory473.Records, preparedHistory473.Complete
 
 		assert.FatalIf(t, records == nil || !complete, "%v", "entry lacks complete controller history")
 
@@ -561,7 +571,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 			)
 			proposal, failure := fixture.Prepare(
 				t.Context(),
-				loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: map[manifest.NamedResource]struct {
+				loader.PrepareRequest{Generation: nil, Reads: nil, History: map[manifest.NamedResource]struct {
 					Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 					Complete bool
 				}{owner: {Records: maps.All(records), Complete: true}}, Invocation: true},
@@ -578,7 +588,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	selected := selection(before)
 	var execution *base.Execution
 	o.tasks.Go(t.Context(), "entry history", func(ctx context.Context) {
-		execution = o.controllers.ReconcileNode(ctx, owner, manifest.DrainNone)
+		execution = o.controllers.ReconcileNode(ctx, owner, manifest.DrainNone, schedule.Result{})
 	})
 	o.tasks.BlockTillDone()
 	assert.Equal(t, o.tasks.Failures(), int64(0))
@@ -644,7 +654,11 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	var reads store.ReadSet
 	reads.Init(o.store, owner, nil)
 	defer reads.Retire()
-	records, narrow := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+	preparedHistory649 := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), schedule.Result{})
+	if preparedHistory649.Assessment != nil {
+		defer preparedHistory649.Assessment.Close()
+	}
+	records, narrow := preparedHistory649.Records, preparedHistory649.Complete
 
 	assert.FatalIf(
 		t,
@@ -677,7 +691,11 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(owners[owner]) != 0, true)
-	again, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+	preparedHistory682 := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), schedule.Result{})
+	if preparedHistory682.Assessment != nil {
+		defer preparedHistory682.Assessment.Close()
+	}
+	again, complete := preparedHistory682.Records, preparedHistory682.Complete
 
 	assert.FatalIf(
 		t,

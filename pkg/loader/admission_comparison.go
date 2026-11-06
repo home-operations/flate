@@ -30,23 +30,21 @@ func (c *admissionClosure) bindSource(evidence *admissionSource) *admissionSourc
 	}
 	source := evidence.source
 	delta, snapshots, declarations := evidence.changes, evidence.snapshots, evidence.declarations
-	input, _ := c.objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+	input, _ := c.objects.GetArtifact(source, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
 	declaration := c.objects.GetObject(source)
 	if bindings := c.loader.bindings.Load(); bindings != nil {
 		cached := (*bindings)[source]
-		if cached.bound && cached.comparison == c.loader.Options.Changes && cached.changes == delta &&
-			cached.snapshots == snapshots &&
-			cached.declarations == declarations &&
-			cached.input == input &&
-			cached.declaration == declaration &&
-			(input == nil || input.Reads.Valid()) {
+		if cached.matchesComparison(c.loader, evidence) && cached.matchesInputs(input, declaration) {
 			*evidence = cached
 			return evidence
 		}
-		evidence.initial = cached.initial
+		evidence.initial, evidence.initialKnown = cached.initial, cached.initialKnown
 	}
+
+	c.derive()
 	c.comparisons.changed = true
-	evidence.comparison, evidence.declaration = c.loader.Options.Changes, declaration
+	evidence.declaration = declaration
+	evidence.frozen, evidence.sideKnown, evidence.side = c.loader.frozen, c.loader.sideKnown, c.loader.side
 	evidence.delta, evidence.input, evidence.bound, evidence.paired = delta, input, true, false
 	evidence.origin = c.loader.SourceRoot
 	if input != nil {
@@ -82,6 +80,24 @@ func (c *admissionClosure) bindSource(evidence *admissionSource) *admissionSourc
 	}
 	evidence.delta = nil
 	return evidence
+}
+
+func (e *admissionSource) matchesComparison(l *Loader, current *admissionSource) bool {
+	comparison := e.bound && e.changes == current.changes
+	if !e.paired && e.source != manifest.BootstrapSourceID {
+		location := sourceView(e.source, l.SourceRoot, e.input, e.declaration)
+		if !location.Pinned && !location.External {
+			delta, _, _ := l.Options.Changes.ForSource(manifest.BootstrapSourceID)
+			comparison = comparison && e.delta == delta
+		}
+	}
+	inputs := e.snapshots == current.snapshots && e.declarations == current.declarations
+	interpretation := e.frozen == l.frozen && e.sideKnown == l.sideKnown && e.side == l.side
+	return comparison && inputs && interpretation
+}
+
+func (e *admissionSource) matchesInputs(input *store.SourceArtifact, declaration manifest.BaseManifest) bool {
+	return e.input == input && e.declaration == declaration && (input == nil || input.Reads.Valid())
 }
 
 func (c *admissionClosure) fileChanged(source manifest.NamedResource, file string) bool {
@@ -130,8 +146,8 @@ func (c *admissionClosure) outputChanged(
 		manifest.Equal(obj, prepared) {
 		child := c.loader.preparedObject(id)
 		var doc map[string]any
-		if c.incoming.Obj != nil && c.incoming.Obj.Named() == id && c.incoming.Doc != nil {
-			doc = c.incoming.Doc
+		if c.incoming(id).Obj != nil && c.incoming(id).Doc != nil {
+			doc = c.incoming(id).Doc
 		} else if c.objects.GetDeclaration(id) == obj {
 			_, current, output := c.objects.GetEmission(id)
 			defer output.Finish()
@@ -163,8 +179,8 @@ func (c *admissionClosure) declarationChanged(
 ) change.Comparison {
 	var document map[string]any
 	if c.loader.sideKnown && object != nil {
-		if c.incoming.Obj == object {
-			document = c.incoming.Doc
+		if c.incoming(id).Obj == object {
+			document = c.incoming(id).Doc
 		} else if c.objects.GetDeclaration(id) == object {
 			_, current, output := c.objects.GetEmission(id)
 			document = current
@@ -177,6 +193,21 @@ func (c *admissionClosure) declarationChanged(
 }
 
 func (c *admissionClosure) affected(id manifest.NamedResource, obj manifest.BaseManifest) bool {
+	if c.loader.Options.Changes == nil {
+		return false
+	}
+	state := c.states[id]
+	if state.affectedKnown {
+		return state.affected
+	}
+	affected := c.deriveAffected(id, obj)
+	state = c.states[id]
+	state.affected, state.affectedKnown = affected, true
+	c.states[id] = state
+	return affected
+}
+
+func (c *admissionClosure) deriveAffected(id manifest.NamedResource, obj manifest.BaseManifest) bool {
 	if c.loader.Options.Changes == nil {
 		return false
 	}
@@ -236,7 +267,7 @@ func (c *admissionClosure) publishComparisons() {
 				maps.Copy(next, *previous)
 			}
 			for source, evidence := range c.comparisons.bindings {
-				if evidence.bound {
+				if evidence.bound || evidence.initialKnown {
 					next[source] = *evidence
 				}
 			}
@@ -373,7 +404,7 @@ func (c *admissionClosure) affectedSourceRoots(
 	if delta == nil || len(roots) == 0 || record.Pinned && !paired {
 		return false
 	}
-	files := delta.Paths()
+	files := c.sourcePaths(c.boundSource(source))
 	for _, root := range roots {
 		root = c.affectedRoot(source, root)
 		for _, file := range files {
@@ -426,7 +457,7 @@ func (c *admissionClosure) contentRoots(
 		c.populateContentRoots(id, obj, roots)
 	}
 
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id && (record.ContentRoots == nil || !id.ReportHidden()) {
+	if c.incoming(id).Obj != nil && (record.ContentRoots == nil || !id.ReportHidden()) {
 		source := c.incomingContentSource(obj, record)
 		roots = map[manifest.NamedResource][]string{source: slices.Collect(manifest.RenderRoots(obj))}
 	}

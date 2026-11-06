@@ -29,7 +29,6 @@ func preparationCounts(attempts, files, readers, keys uint64) manifest.WorkCount
 }
 
 func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCounts {
-	const varying = variablePreparation
 	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
 	hr := testutil.HelmReleaseID("apps", "release")
 	rs := manifest.NamedResource{
@@ -134,13 +133,13 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				6,
+				5,
 				0,
 				0,
 				3,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				14,
 				0,
 				3,
@@ -172,13 +171,13 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 				0,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				7,
 				0,
 				3,
 			),
 			selectionPreparationKey(a, alias): preparationCounts(
-				5,
+				3,
 				0,
 				0,
 				3,
@@ -210,31 +209,31 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 				0,
 			),
 			selectionPreparationKey(chart, chart): preparationCounts(
-				varying,
+				1,
 				0,
 				0,
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				varying,
+				5,
 				0,
 				0,
 				3,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				0,
 				0,
 				3,
 			),
 			selectionPreparationKey(a, alias): preparationCounts(
-				varying,
+				3,
 				0,
 				0,
 				3,
 			),
 			selectionPreparationKey(b, alias): preparationCounts(
-				varying,
+				3,
 				0,
 				0,
 				3,
@@ -278,13 +277,13 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				8,
+				5,
 				0,
 				0,
 				3,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				14,
 				0,
 				3,
@@ -322,13 +321,13 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				8,
+				5,
 				0,
 				0,
 				3,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				14,
 				0,
 				3,
@@ -366,13 +365,13 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				8,
+				5,
 				0,
 				0,
 				3,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				14,
 				0,
 				3,
@@ -382,7 +381,6 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 }
 
 func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCounts {
-	const varying = variablePreparation
 	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
 	hr := testutil.HelmReleaseID("apps", "release")
 	rs := manifest.NamedResource{
@@ -487,13 +485,13 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				6,
+				5,
 				0,
 				0,
 				5,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				14,
 				0,
 				6,
@@ -525,13 +523,13 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 				0,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				7,
 				0,
 				6,
 			),
 			selectionPreparationKey(a, alias): preparationCounts(
-				5,
+				3,
 				0,
 				0,
 				5,
@@ -563,37 +561,37 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 				0,
 			),
 			selectionPreparationKey(chart, chart): preparationCounts(
-				varying,
+				1,
 				0,
 				0,
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				varying,
+				5,
 				0,
 				0,
 				5,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				0,
 				0,
 				6,
 			),
 			selectionPreparationKey(a, alias): preparationCounts(
-				varying,
+				3,
 				0,
 				0,
 				5,
 			),
 			selectionPreparationKey(b, alias): preparationCounts(
-				varying,
+				3,
 				0,
 				0,
 				5,
 			),
 			selectionPreparationKey(rs, manifest.BootstrapSourceID): preparationCounts(
-				varying,
+				2,
 				0,
 				0,
 				2,
@@ -631,13 +629,13 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				8,
+				5,
 				0,
 				0,
 				5,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				14,
 				0,
 				6,
@@ -669,19 +667,19 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 				0,
 			),
 			selectionPreparationKey(chart, chart): preparationCounts(
-				varying,
+				1,
 				0,
 				0,
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				8,
+				5,
 				0,
 				0,
 				5,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				14,
 				0,
 				6,
@@ -719,13 +717,13 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 				0,
 			),
 			selectionPreparationKey(hr, chart): preparationCounts(
-				8,
+				5,
 				0,
 				0,
 				5,
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
-				7,
+				2,
 				14,
 				0,
 				6,

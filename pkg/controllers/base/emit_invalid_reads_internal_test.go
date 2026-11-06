@@ -46,7 +46,7 @@ func TestEmit_InvalidReads(t *testing.T) {
 	assert.FatalIf(t, !filter.ShouldReconcile(parent.Named()) || filter.ShouldReconcile(child.Named()) ||
 		s.GetObject(child.Named()) != nil ||
 		s.HasInventory(parent.Named()), "%v", "invalid emission fixture already selected or published the child")
-	c.emit(t.Context(), parent.Named(), &next, nil)
+	(&Execution{Controller: c}).emit(t.Context(), parent.Named(), &next, nil)
 	assert.ErrorIf(t, filter.ShouldReconcile(child.Named()), "%v", "invalid reads extended changed-only selection")
 	assert.ErrorIf(
 		t,
@@ -151,7 +151,7 @@ func TestEmit_RejectedAttemptClearsFootprint(t *testing.T) {
 			if caller == "store" {
 				st.RecordEmitted(owner.Named(), &next, nil)
 			} else {
-				controller.emit(t.Context(), owner.Named(), &next, nil)
+				(&Execution{Controller: controller}).emit(t.Context(), owner.Named(), &next, nil)
 			}
 			assert.FatalIf(
 				t,

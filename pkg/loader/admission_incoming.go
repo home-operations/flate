@@ -7,10 +7,9 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (c *admissionClosure) selectIncoming() error {
-	id := c.incoming.Obj.Named()
+func (c *admissionClosure) selectIncoming(id manifest.NamedResource) error {
 	role := c.role(id)
-	if c.incoming.Entry != nil && !role.needed {
+	if c.incoming(id).Entry != nil && !role.needed {
 		return nil
 	}
 	eligible := c.loader.Options.Selection.Matches(id)
@@ -20,7 +19,7 @@ func (c *admissionClosure) selectIncoming() error {
 	}
 	role = c.productionRole(id, role, eligible)
 	if (!role.selected || !role.dirty) && (eligible || role.needed || c.loader.Options.Selection.MatchesScope(id)) {
-		affected, footprintRead = c.affected(id, c.incoming.Obj), true
+		affected, footprintRead = c.affected(id, c.incoming(id).Obj), true
 	}
 	if (!role.selected || !role.dirty) &&
 		(eligible || role.needed || c.loader.Options.Selection.MatchesScope(id)) &&
@@ -51,7 +50,7 @@ func (c *admissionClosure) productionRole(id manifest.NamedResource, role admiss
 			inherited = inherited && (!production.Owner.ReportHidden() || !c.loader.IsFileIndexed(id))
 			selected := inherited || c.changedProduction(production) && eligible
 			if selected &&
-				(!c.loader.Options.Selection.Changed || !c.unchangedDeclaration(id, production.Owner, c.incoming.Obj)) {
+				(!c.loader.Options.Selection.Changed || !c.unchangedDeclaration(id, production.Owner, c.incoming(id).Obj)) {
 				role.needed, role.selected, role.dirty = true, true, true
 			}
 		}
@@ -65,8 +64,8 @@ func (c *admissionClosure) reverseInputRole(
 	role admissionRole,
 	eligible bool,
 ) admissionRole {
-	for ref := range c.references(id, c.incoming.Obj) {
-		if !c.reverse(id, c.incoming.Obj, new(ref)) {
+	for ref := range c.references(id, c.incoming(id).Obj) {
+		if !c.reverse(id, c.incoming(id).Obj, new(ref)) {
 			continue
 		}
 		inputs, err := c.matchingInputs(new(ref), true)
@@ -77,7 +76,12 @@ func (c *admissionClosure) reverseInputRole(
 			if !c.role(input).dirty && !c.affected(input, c.object(input)) && !c.changedInput(id, input) {
 				continue
 			}
-			if comparison := c.outputChanged(id, new(ref), c.incoming.Obj); comparison.Known && !comparison.Changed {
+			if comparison := c.outputChanged(
+				id,
+				new(ref),
+				c.incoming(id).Obj,
+			); comparison.Known &&
+				!comparison.Changed {
 				continue
 			}
 			role.needed = true
@@ -90,14 +94,14 @@ func (c *admissionClosure) reverseInputRole(
 }
 
 func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionRole) admissionRole {
-	if _, _, applies := c.incoming.Obj.SourcePath(); !applies || role.needed {
+	if _, _, applies := c.incoming(id).Obj.SourcePath(); !applies || role.needed {
 		return role
 	}
 	if output, ok := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission); ok && output.Complete &&
 		output.OutputReads.Valid() {
 		return role
 	}
-	if c.incoming.Entry != nil {
+	if c.incoming(id).Entry != nil {
 		return role
 	}
 	if c.namespaceProductionDemand(id) {
@@ -108,7 +112,7 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
 		needed := c.role(target).needed
 		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
-			!c.coversDeclaration(c.incoming.Obj, target) {
+			!c.coversDeclaration(c.incoming(id).Obj, target) {
 			continue
 		}
 		evidence := c.declarationEvidence(target)
@@ -161,7 +165,7 @@ func (c *admissionClosure) completeSelectIncoming(scope *completeSelectIncomingS
 	(*scope.role) = c.sourceRole((*scope.id), (*scope.role))
 	c.add((*scope.id), (*scope.role))
 	if !scope.role.dirty && !(*scope.footprintRead) {
-		(*scope.affected) = c.affected((*scope.id), c.incoming.Obj)
+		(*scope.affected) = c.affected((*scope.id), c.incoming(*scope.id).Obj)
 	}
 	if scope.role.dirty || (*scope.affected) {
 		if err := c.selectInputReaders((*scope.id)); err != nil {
@@ -194,7 +198,7 @@ func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) 
 }
 
 func (c *admissionClosure) namespaceProductionDemand(id manifest.NamedResource) bool {
-	if producer, ok := c.incoming.Obj.(interface {
+	if producer, ok := c.incoming(id).Obj.(interface {
 		EmissionPolicy() manifest.EmissionPolicy
 	}); ok &&
 		slices.ContainsFunc(c.loader.Options.Selection.Roots, func(root manifest.NamedResource) bool {
@@ -202,7 +206,7 @@ func (c *admissionClosure) namespaceProductionDemand(id manifest.NamedResource) 
 		}) &&
 		slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
 			return p.Owner != (manifest.NamedResource{}) && c.role(p.Owner).needed
-		}) && (!c.loader.Options.Selection.Changed || c.affected(id, c.incoming.Obj) || c.changedInput(id, id)) {
+		}) && (!c.loader.Options.Selection.Changed || c.affected(id, c.incoming(id).Obj) || c.changedInput(id, id)) {
 		return true
 	}
 	return false

@@ -52,8 +52,8 @@ func (c *admissionClosure) record(id manifest.NamedResource) manifest.DiscoveryR
 		}
 		record.ContentRoots = map[manifest.NamedResource][]string{source: occurrence.facts.roots}
 	}
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
-		record.Origin = c.incoming.Origin
+	if c.incoming(id).Obj != nil {
+		record.Origin = c.incoming(id).Origin
 	} else if !record.Origin.Policy(id, nil).Root && c.loader.Store.Policy(id).Root {
 		record.Origin = manifest.RepositoryDeclaration
 	}

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"slices"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -222,6 +223,21 @@ func testFilterLateProducerIndexedDeclarationsOciProviderCredentials(t *testing.
 				provider.Named(): compactOccurrence(provider, projectedProducerForTest(provider)),
 			}
 			filter.prepare(new(store.Child{}), nil, false)
+			var preparation *Preparation
+			defer func() { preparation.Retire() }()
+			for range 2 {
+				proposal, err := filter.loader.Prepare(
+					t.Context(),
+					PrepareRequest{Invocation: true, Preparation: &preparation},
+				)
+				assert.NoError(t, err)
+				for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
+					assert.Equal(t, slices.Contains(proposal.Needed, id), true)
+				}
+				assert.Equal(t, slices.Contains(proposal.Needed, sibling.Named()), false)
+				proposal.Retire()
+			}
+
 			for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
 				assert.Equal(t, filter.ShouldReconcile(id), true)
 			}

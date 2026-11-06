@@ -64,8 +64,19 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				),
 			)
 			{
-				_, complete := renderer.PreviousRender(t.Context(), hr, nil, input)
+				var work manifest.WorkRecorder
+				work.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
+				observed := input
+				observed.Work = work.Scope().RenderWork()
+				_, complete := renderer.PreviousRender(t.Context(), hr, nil, observed)
 				assert.FatalIf(t, !complete, "%s", "matching source binding missed")
+				var lookup manifest.WorkCounts
+				for _, row := range work.Scope().Snapshot(0) {
+					if row.Key.Phase == manifest.WorkCache {
+						lookup.Add(&row.Counts)
+					}
+				}
+				assert.Equal(t, lookup, manifest.WorkCounts{Attempts: 1, Completed: 1})
 			}
 			changed := hr.Clone()
 			source := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)

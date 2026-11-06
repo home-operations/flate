@@ -130,7 +130,14 @@ data:
 		)
 	}
 	st.AddObject(hr)
-	if blocked := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone).Blocked; len(blocked) == 0 {
+	if blocked := c.ReconcileNode(
+		t.Context(),
+		hr.Named(),
+		manifest.DrainNone,
+		schedule.Result{},
+	).Blocked; len(
+		blocked,
+	) == 0 {
 		t.Fatal("expected reconciliation to wait for a dependency")
 	}
 	assert.Equal(t, len(st.Warnings()), 0)
@@ -341,7 +348,11 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 			for range st.Sweep() {
 			}
 		}()
-		records, narrow := c.PreviousRender(t.Context(), hr, reads)
+		preparedHistory344 := c.PreviousRender(t.Context(), hr, schedule.Result{})
+		if preparedHistory344.Assessment != nil {
+			t.Cleanup(preparedHistory344.Assessment.Close)
+		}
+		records, narrow := preparedHistory344.Records, preparedHistory344.Complete
 		if records != nil {
 			assert.Equal(t, narrow, true)
 		}
@@ -511,7 +522,11 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				}
 				reads := &store.ReadSet{}
 				reads.Init(st, hr.Named(), nil)
-				records, _ := c.PreviousRender(t.Context(), hr, reads)
+				preparedHistory514 := c.PreviousRender(t.Context(), hr, schedule.Result{})
+				if preparedHistory514.Assessment != nil {
+					t.Cleanup(preparedHistory514.Assessment.Close)
+				}
+				records, _ := preparedHistory514.Records, preparedHistory514.Complete
 				reads.Retire()
 
 				assert.FatalIf(
@@ -678,7 +693,7 @@ func testControllerPrepareRequiresDeclarationCase(
 			nil,
 		)
 	}
-	run := c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone)
+	run := c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone, schedule.Result{})
 
 	info, _ := st.GetStatus(input.Named())
 	assert.FatalIf(t, (*testCaseInput) == "suspended" && run.Outcome() == schedule.Blocked ||

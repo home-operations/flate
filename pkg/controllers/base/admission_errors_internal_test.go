@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -17,7 +19,7 @@ import (
 type admissionFailure struct{ cause error }
 
 func (admissionFailure) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p admissionFailure) Promote(context.Context, *store.ReadSet, manifest.NamedResource) (bool, error) {
+func (p admissionFailure) Promote(context.Context, loader.PrepareRequest, manifest.NamedResource) (bool, error) {
 	return false, p.cause
 }
 

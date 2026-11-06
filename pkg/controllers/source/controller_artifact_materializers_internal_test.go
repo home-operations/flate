@@ -91,7 +91,7 @@ func TestController_ArtifactMaterializersProduction(t *testing.T) {
 			)
 			var blocked []manifest.NamedResource
 			c.Tasks.Go(t.Context(), "predicted", func(ctx context.Context) {
-				run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
+				run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone, schedule.Result{})
 				blocked = run.Blocked
 			})
 			c.Tasks.BlockTillDone()
@@ -164,7 +164,7 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 	)
 	var blocked []manifest.NamedResource
 	c.Tasks.Go(t.Context(), "complete-empty", func(ctx context.Context) {
-		run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
+		run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone, schedule.Result{})
 		blocked = run.Blocked
 	})
 	c.Tasks.BlockTillDone()
@@ -185,10 +185,14 @@ func (d *materializerDispatcher) Dispatch(
 	ctx context.Context,
 	id schedule.NodeID,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) schedule.Result {
 	d.drains[level].Add(1)
 	return schedule.Result{
-		Assessment: &materializerAssessment{Execution: d.controller.ReconcileNode(ctx, id, level), drains: &d.drains},
+		Assessment: &materializerAssessment{
+			Execution: d.controller.ReconcileNode(ctx, id, level, previous),
+			drains:    &d.drains,
+		},
 	}
 }
 
@@ -456,7 +460,7 @@ func testControllerArtifactMaterializersCase(
 	var blocked []manifest.NamedResource
 	var outcome schedule.Kind
 	c.Tasks.Go(t.Context(), "materializer", func(ctx context.Context) {
-		run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
+		run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone, schedule.Result{})
 		outcome, blocked = run.Outcome(), run.Blocked
 		if outcome == schedule.DependencyFailed {
 			status, _ := st.GetStatus(obj.Named())
@@ -515,7 +519,7 @@ func testControllerArtifactMaterializersCase(
 	before := fetcher.calls
 	st.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 	c.Tasks.Go(t.Context(), "accepted", func(ctx context.Context) {
-		run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone)
+		run := c.ReconcileNode(ctx, obj.Named(), manifest.DrainNone, schedule.Result{})
 		blocked = run.Blocked
 	})
 	c.Tasks.BlockTillDone()

@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -208,7 +210,11 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 		reads := &store.ReadSet{}
 		reads.Init(o.store, owner, nil)
 		defer reads.Retire()
-		records, narrow := o.controllers.PreviousRender(ctx, o.store.GetObject(owner), reads)
+		preparedHistory212 := o.controllers.PreviousRender(ctx, o.store.GetObject(owner), schedule.Result{})
+		if preparedHistory212.Assessment != nil {
+			defer preparedHistory212.Assessment.Close()
+		}
+		records, narrow := preparedHistory212.Records, preparedHistory212.Complete
 		assert.Equal(t, records == nil, true)
 		assert.Equal(t, narrow, false)
 		assert.NoError(t, ctx.Err())
@@ -636,7 +642,11 @@ spec:
 	reads := &store.ReadSet{}
 	reads.Init(warm.store, owner, nil)
 	declaration := warm.index.Records[owner].Declaration
-	records, narrow := warm.controllers.PreviousRender(t.Context(), declaration, reads)
+	preparedHistory640 := warm.controllers.PreviousRender(t.Context(), declaration, schedule.Result{})
+	if preparedHistory640.Assessment != nil {
+		defer preparedHistory640.Assessment.Close()
+	}
+	records, narrow := preparedHistory640.Records, preparedHistory640.Complete
 	assert.Equal(t, records == nil, true)
 	assert.Equal(t, narrow, false)
 	if (*testCaseInput) == "helm_values_from" {
@@ -708,7 +718,11 @@ spec:
 		)
 		assert.Equal(t, info.Status, store.StatusReady)
 	}
-	records, narrow = warm.controllers.PreviousRender(t.Context(), declaration, reads)
+	preparedHistory700 := warm.controllers.PreviousRender(t.Context(), declaration, schedule.Result{})
+	if preparedHistory700.Assessment != nil {
+		defer preparedHistory700.Assessment.Close()
+	}
+	records, narrow = preparedHistory700.Records, preparedHistory700.Complete
 	assert.Equal(t, records != nil, true)
 	assert.Equal(t, narrow, true)
 	if (*testCaseInput) == "helm_values_from" {

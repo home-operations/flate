@@ -65,7 +65,7 @@ func TestPrepareRender_OwnerScaleWork(t *testing.T) {
 
 func TestPrepareRender_InputGeneration(t *testing.T) {
 	t.Parallel()
-	for _, first := range []string{"history", "render"} {
+	for _, first := range []string{"entry", "history", "render"} {
 		t.Run(first, func(t *testing.T) {
 			t.Parallel()
 			testPrepareRenderInputGeneration(t, first)
@@ -86,7 +86,10 @@ func testPrepareRenderInputGeneration(t *testing.T, first string) {
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	var recorder manifest.WorkRecorder
 	recorder.Init(&manifest.WorkKey{Owner: owner.Named()}, manifest.WorkScope{})
+	var preparation Preparation
+	defer preparation.Retire()
 	req := RenderRequest{
+		Preparation: &preparation,
 		Source: localSource(
 			t,
 			root,
@@ -96,6 +99,9 @@ func testPrepareRenderInputGeneration(t *testing.T, first string) {
 			"Pod",
 		},
 		Work: recorder.Scope().RenderWork(),
+	}
+	if first == "entry" {
+		cache.PreviousEntry(t.Context(), req)
 	}
 	if first == "history" {
 		cache.PreviousRender(t.Context(), req)
@@ -119,16 +125,16 @@ func testPrepareRenderInputGeneration(t *testing.T, first string) {
 			counts.Add(&record.Counts)
 		}
 	}
-	prepares := uint64(3)
-	if renderPersistenceEligible(t) {
-		prepares++
-		if first == "history" {
-			prepares++
-		}
-	}
+	prepares := uint64(2)
 	assert.Equal(
 		t,
 		counts,
 		manifest.WorkCounts{Attempts: prepares, Completed: prepares, OwnerPrepares: prepares},
+	)
+	preparation.Retire()
+	assert.Equal(
+		t,
+		preparation.complete || preparation.source != nil || preparation.spec != nil || preparation.lower != nil,
+		false,
 	)
 }

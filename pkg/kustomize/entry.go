@@ -200,7 +200,6 @@ type entrySnapshot struct {
 
 func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (renderRequest, error) {
 	req.Spec = nil
-	req.SubPath = manifest.NormalizeClaimBase(req.SubPath)
 	prepared, err := c.prepareRender(ctx, req)
 	if err != nil {
 		return renderRequest{}, err
@@ -208,7 +207,7 @@ func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (rende
 	prepared.key = manifest.Fingerprint(struct {
 		EntryPath string
 		Source    renderBinding
-	}{req.SubPath, prepared.binding})
+	}{manifest.NormalizeClaimBase(req.SubPath), prepared.binding})
 	req.Work.Fingerprint(prepared.key)
 	return prepared, nil
 }

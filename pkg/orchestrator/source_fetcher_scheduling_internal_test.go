@@ -132,7 +132,7 @@ func testDAGSourceWithoutFetcherIsNotSeededCase(
 	var completed atomic.Bool
 	d := fixtureDispatcher{
 		store: o.store,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			switch id {
 			case producer:
 				o.tasks.YieldSlot(func() { <-attempted })
@@ -156,7 +156,7 @@ func testDAGSourceWithoutFetcherIsNotSeededCase(
 			// Sources must be scheduled under the identity they reconcile.
 			case obj.Named():
 				dispatched.Add(1)
-				return dagDispatcher{o}.Dispatch(ctx, id, level)
+				return dagDispatcher{o}.Dispatch(ctx, id, level, schedule.Result{})
 			}
 			return schedule.Result{}
 		},

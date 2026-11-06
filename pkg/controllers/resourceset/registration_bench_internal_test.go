@@ -62,7 +62,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		}
 	}, false)
 	defer unsub()
-	first := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
+	first := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer first.Close()
 	assert.FatalIf(t, first.Outcome() == schedule.Blocked || first.Valid(),
 
@@ -70,7 +70,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		first.Outcome() == schedule.Blocked,
 		first.Valid())
 
-	settled := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
+	settled := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer settled.Close()
 	first.Retire()
 	info, _ := s.GetStatus(rs.Named())
@@ -159,7 +159,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		statusChange.Store(change)
 	}, false)
 	defer unsubStatus()
-	second := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
+	second := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer second.Close()
 	settled.Retire()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
@@ -188,7 +188,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	fresh := *rs
 	fresh.ResourcesTemplate += "\n"
 	s.AddObject(&fresh)
-	third := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
+	third := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer third.Close()
 	changed := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(
@@ -283,7 +283,7 @@ func benchmarkReadRegistrationCollectionCase(b *testing.B, count *int, mode *str
 	s.AddObject(rs)
 	registrationProvidersResult1 := registrationProviders(s, count, mode)
 	pivot, versions := registrationProvidersResult1.pivot, registrationProvidersResult1.versions
-	assessment := c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone)
+	assessment := c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer func() { assessment.Close() }()
 	var renders atomic.Int64
 	unsub := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
@@ -303,7 +303,7 @@ func benchmarkReadRegistrationCollectionCase(b *testing.B, count *int, mode *str
 					defer start()
 					start()
 					tasks.YieldSlot(func() { <-written })
-					next := c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone)
+					next := c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone, schedule.Result{})
 					assessment.Retire()
 					assessment = next
 				} else {
@@ -543,7 +543,7 @@ func (w *independentWriterRounds) republish(b *testing.B, artifacts *[2]*store.E
 			publishResourceSetDocuments(b, (*w.c), w.sets[i].Named(), docs)
 			(*w.tasks).Go(b.Context(), "equal", func(ctx context.Context) {
 				w.dispatches.Add(1)
-				next := (*w.c).ReconcileNode(ctx, w.sets[i].Named(), manifest.DrainNone)
+				next := (*w.c).ReconcileNode(ctx, w.sets[i].Named(), manifest.DrainNone, schedule.Result{})
 				if previous := w.assessments[i]; previous != nil {
 					previous.Retire()
 				}

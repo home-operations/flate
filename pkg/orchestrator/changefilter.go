@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -42,7 +43,10 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	proposal := o.preparation
 	if proposal == nil {
 		var err error
-		proposal, err = o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
+		proposal, err = o.loader.Prepare(
+			ctx,
+			loader.PrepareRequest{Invocation: true, History: o.history, Preparation: &o.admissionPreparation},
+		)
 		if err != nil {
 			return err
 		}
@@ -97,14 +101,7 @@ func (o *Orchestrator) prepareProducerHistory(
 	ctx context.Context,
 	id manifest.NamedResource,
 ) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
-	reads := &store.ReadSet{}
-	reads.Init(o.store, id, nil)
-
-	_, _, output := reads.GetEmission(id)
-	defer reads.Retire()
-	defer reads.ReleaseCapture()
-	defer output.Finish()
-	obj := reads.GetDeclaration(id)
+	obj := o.store.GetDeclaration(id)
 	if obj == nil {
 		obj = o.index.Records[id].Declaration
 	}
@@ -115,11 +112,23 @@ func (o *Orchestrator) prepareProducerHistory(
 	if obj == nil || currentInput && o.index.Records[id].StaticOutput {
 		return nil, false
 	}
-	reads.BeginExecution(obj)
-	records, canNarrow := o.controllers.PreviousRender(ctx, obj, reads)
+	slot := o.probeSlot(id)
+	previous := *slot
+	history := o.controllers.PreviousRender(ctx, obj, schedule.Result{Assessment: previous})
+	if history.Assessment != nil {
+		defer o.store.Retire(&history.Assessment.Reads)
+		if previous != nil {
+			history.Assessment.ProbeLeft, history.Assessment.ProbeRight = previous.ProbeLeft, previous.ProbeRight
+			previous.ProbeLeft, previous.ProbeRight = nil, nil
+			previous.Retire()
+		}
+		*slot = history.Assessment
+	}
+	records, canNarrow := history.Records, history.Complete
 	if records == nil {
 		return nil, false
 	}
+	reads := &history.Assessment.Reads
 	materialized := make(map[manifest.NamedResource]manifest.DiscoveryRecord)
 	for child, record := range records { //nolint:gocritic // The iterator yields records by value.
 		record.Refs = slices.Clone(record.Refs)
@@ -211,7 +220,7 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	request := loader.PrepareRequest{Invocation: true, History: o.history, Reads: binding.Reads}
 	if binding.Reads != nil && root != nil && root != o.store.GetDeclaration(root.Named()) {
 		application := manifest.EntryApplication{Source: current.Source, Path: current.Path}
-		request.Incoming = store.Child{Obj: root, Entry: &application}
+		request.Generation = []store.Child{{Obj: root, Entry: &application}}
 	}
 	var reads store.ReadSet
 	if inputs := o.admission.EntryProducers(); binding.Reads == nil && len(inputs) != 0 {
@@ -223,6 +232,7 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 		}
 		request.Reads = &reads
 	}
+	request.Preparation = &o.admissionPreparation
 	proposal, err := o.loader.Prepare(ctx, request)
 	if err != nil {
 		return err

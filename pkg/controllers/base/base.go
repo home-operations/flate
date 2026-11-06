@@ -94,16 +94,15 @@ func (c *Controller) Configure(opts Options) {
 	c.AllowMissingKinds = opts.AllowMissingKinds
 }
 
-// KeepEmitted admits the incoming child and reports whether it is selected.
-// Admission MUST precede publication; a nil child admits the captured required inputs only.
+// KeepEmitted MUST admit every child in the immutable generation before publication.
 //
-//nolint:gocritic // Admission retains the child snapshot after the caller can change its slice.
+//nolint:gocritic // Admission retains the immutable generation and required inputs.
 func (c *Controller) KeepEmitted(
 	ctx context.Context,
 	parent manifest.NamedResource,
-	child store.Child,
-	reads *store.ReadSet,
+	request loader.PrepareRequest,
 ) (bool, error) {
+	reads := request.Reads
 	f := c.filter
 	if !f.Enabled() {
 		return true, nil
@@ -123,16 +122,8 @@ func (c *Controller) KeepEmitted(
 		reads.Init(c.Store, parent, nil)
 		defer reads.Retire()
 	}
-	admission := emittedAdmission{
-		controller:       c,
-		filter:           f,
-		reads:            reads,
-		incoming:         child,
-		inferProductions: child.Obj != nil && parent == (manifest.NamedResource{}) && len(child.Productions) == 0,
-	}
-	if child.Obj != nil && parent != (manifest.NamedResource{}) && parent != child.Obj.Named() {
-		admission.incoming.Productions = append(slices.Clone(child.Productions), manifest.Production{Owner: parent})
-	}
+	request.Reads, request.Owner = reads, parent
+	admission := emittedAdmission{controller: c, reads: reads, request: request}
 	defer func() { admission.proof.Retire() }()
 	for {
 		prepareResult1, prepareResult1Err := admission.prepare(ctx)
@@ -145,11 +136,15 @@ func (c *Controller) KeepEmitted(
 		}
 		break
 	}
-	if child.Obj == nil {
-		return true, nil
+	selected := len(request.Generation) == 0
+	for i := range request.Generation {
+		if child := &request.Generation[i]; child.Obj != nil {
+			keep := f.ShouldReconcile(child.Obj.Named())
+			c.Store.SetIncluded(child.Obj.Named(), keep, f.OrdinaryDemand(child.Obj.Named()))
+			selected = selected || keep
+		}
 	}
-	c.Store.SetIncluded(child.Obj.Named(), f.ShouldReconcile(child.Obj.Named()), f.OrdinaryDemand(child.Obj.Named()))
-	return f.ShouldReconcile(child.Obj.Named()), nil
+	return selected, nil
 }
 
 func (c *Controller) admissionProof(reads *store.ReadSet) *store.ReadSet {
@@ -200,12 +195,10 @@ func (c *Controller) filterActive() bool {
 }
 
 type emittedAdmission struct {
-	controller       *Controller
-	filter           *change.Filter
-	reads            *store.ReadSet
-	incoming         store.Child
-	proof            *store.ReadSet
-	inferProductions bool
+	controller *Controller
+	reads      *store.ReadSet
+	proof      *store.ReadSet
+	request    loader.PrepareRequest
 }
 
 type admissionState struct {
@@ -216,10 +209,8 @@ type admissionState struct {
 func (a *emittedAdmission) prepare(ctx context.Context) (admissionState, error) {
 	a.proof.Retire()
 	a.proof = a.controller.admissionProof(a.reads)
-	if a.inferProductions {
-		a.incoming.Productions = a.proof.Promotions(a.incoming.Obj.Named(), nil)
-	}
-	proposal, err := a.controller.loader.Prepare(ctx, loader.PrepareRequest{Incoming: a.incoming, Reads: a.proof})
+	a.request.Reads = a.proof
+	proposal, err := a.controller.loader.Prepare(ctx, a.request)
 	if err != nil {
 		return admissionState{committed: false, retry: false}, err
 	}

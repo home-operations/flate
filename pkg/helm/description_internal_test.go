@@ -256,7 +256,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 			want = out
 		}
 		assert.Diff(t, out, want)
-		d, err := cli.describeChart(t.Context(), hr, cliSources)
+		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.FatalIf(t, d.chart == nil, "%s", "ineligible input hydrated without a real decode")
 		assert.FatalIf(t, validOutput && validChartTemplates(d.chart), "%s", "invalid template bytes were changed")
@@ -386,7 +386,7 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 			want = out
 		}
 		assert.Diff(t, out, want)
-		d, err := cli.describeChart(t.Context(), hr, cliSources)
+		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.Equal(t, d.chart == nil, (*testCaseInput) && i == 1)
 		if !(*testCaseInput) || i == 0 {
@@ -428,7 +428,7 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 			}
 
 			assert.NoError(t, err)
-			hit, describeChartErr := cli.describeChart(t.Context(), hr, cliSources)
+			hit, describeChartErr := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 			assert.NoError(t, describeChartErr)
 			var receipt4 *manifest.RenderReceipt
 			_, receipt4, describeChartErr = testutil.RenderMaps(
@@ -450,14 +450,14 @@ func testDescriptionHitHydrationCase(t *testing.T, testCaseInput *bool,
 			}
 
 			assert.NoError(t, describeChartErr)
-			repeated, describeChartErr := cli.describeChart(t.Context(), hr, cliSources)
+			repeated, describeChartErr := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 			assert.NoError(t, describeChartErr)
 			assert.FatalIf(t, hit.record == nil || hit.record != repeated.record ||
 				hit.record.Analysis != repeated.record.Analysis, "%s", "same record did not share its immutable typed projection")
 			assert.FatalIf(t, hit.analysis != hit.record.Analysis, "%s", "record did not share canonical analysis")
 			assert.FatalIf(t, (*testCaseInput) && i == 1 && hit.chart != nil, "%s", "fresh hit decoded the chart")
 		}
-		after, err := cli.describeChart(t.Context(), hr, cliSources)
+		after, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.Equal(t, after.chart == d.chart, true)
 	}
@@ -482,7 +482,7 @@ func testDescriptionHydrationKeepsDecodedCase(
 	}
 	cli := NewClient(cachetest.New(t, "", cache.New))
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	ch, err := d.captured.load()
 	assert.NoError(t, err)
@@ -519,7 +519,7 @@ func testDescriptionHydrationKeepsDecodedCase(
 	}
 	cli.rememberDescription(&d, late)
 	cli.rememberDescription(&d, nil)
-	current, err := cli.describeChart(t.Context(), hr, cliSources)
+	current, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	assert.Equal(t, current.chart != nil && current.chart == decoded.chart, true)
 	assert.Equal(t, current.record == late, true)
@@ -593,7 +593,7 @@ func testReviewNestedWarningsCase(t *testing.T, testCaseInput *string,
 			"%s",
 			"real nested loader diagnostics were suppressed",
 		)
-		d, err := cli.describeChart(t.Context(), hr, cliSources)
+		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,

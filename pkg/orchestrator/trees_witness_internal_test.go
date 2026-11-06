@@ -128,8 +128,6 @@ func assertWitnessSources(t *testing.T, run Rendered) {
 	}
 }
 
-const variablePreparation = ^uint64(0)
-
 func testRemovedRequiredInputWork(t *testing.T, name string) {
 	t.Helper()
 	before := maps.Clone(workWitnessFiles())
@@ -381,60 +379,19 @@ func TestRenderTrees_SelectedFailureWork(t *testing.T) {
 	}
 }
 
-func witnessPreparationLimit(identities int) uint64 {
-	// These acyclic fixtures publish at most one declaration, artifact and inventory
-	// per identity, with pending and ready status transitions and three membership
-	// roles. Each of those eight changes can invalidate one admission attempt.
-	// Required inputs and emitted children each start at most one admission per
-	// identity, in addition to two startup admissions. Each attempt can prepare
-	// a replay key and pending/accepted render keys. This bounds every schedule;
-	// the preparation deduplication lane restores exact preparation/cache vectors.
-	n := uint64(identities)
-	return 3 * (2 + 2*n) * (1 + 8*n)
-}
-
-func assertWitnessPreparations(
-	t *testing.T,
-	got, want map[manifest.WorkKey]manifest.WorkCounts,
-	limit uint64,
-) {
+func assertWitnessPreparations(t *testing.T, got, want map[manifest.WorkKey]manifest.WorkCounts) {
 	t.Helper()
-	for key, counts := range got {
-		expected := want[key]
-		for _, field := range [...]struct {
-			actual *uint64
-			want   uint64
-		}{
-			{&counts.FileEntries, expected.FileEntries},
-			{&counts.ReaderEdges, expected.ReaderEdges},
-		} {
-			if field.want == variablePreparation {
-				assert.Equal(t, *field.actual != 0, true)
-				*field.actual = variablePreparation
-			}
-		}
-		for _, field := range [...]struct {
-			actual *uint64
-			want   uint64
-		}{
-			{&counts.Attempts, expected.Attempts},
-			{&counts.Completed, expected.Completed},
-			{&counts.OwnerPrepares, expected.OwnerPrepares},
-			{&counts.RawKeyPrepares, expected.RawKeyPrepares},
-		} {
-			if key.Owner == (manifest.NamedResource{}) || field.want == 0 {
-				continue
-			}
-			if *field.actual < 1 || *field.actual > limit {
-				t.Errorf("preparation %v: count=%d, want 1..%d", key, *field.actual, limit)
-			}
-			*field.actual = field.want
-		}
-		assert.Equal(t, got[key].Attempts, got[key].Completed+got[key].Failures)
-		assert.Equal(t, got[key].OwnerPrepares, got[key].Attempts)
-		got[key] = counts
+	for _, counts := range got {
+		assert.Equal(t, counts.Attempts, counts.Completed+counts.Failures)
+		assert.Equal(t, counts.OwnerPrepares, counts.Attempts)
 	}
 	assert.Diff(t, got, want)
+}
+
+func witnessCacheLimit(identities int) uint64 {
+	// Readiness, membership, and publication can each repeat a cache lookup.
+	n := uint64(identities)
+	return 3 * (2 + 2*n) * (1 + 8*n)
 }
 
 func assertWitnessCacheCounts(t *testing.T, got, want *manifest.WorkCounts, limit uint64) {

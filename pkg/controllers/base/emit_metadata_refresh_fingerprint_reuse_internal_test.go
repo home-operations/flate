@@ -8,6 +8,8 @@ import (
 	"testing"
 	"weak"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -53,7 +55,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 		_, _, next := s.GetEmission(parent.Named())
 		defer next.Finish()
 		next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(docs), true
-		c.emit(t.Context(), parent.Named(), &next, nil)
+		(&Execution{Controller: c}).emit(t.Context(), parent.Named(), &next, nil)
 	}
 	publish("first", "app")
 	_, _, next := s.GetEmission(childID)
@@ -209,11 +211,11 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	assert.FatalIf(t, len(children) != 3 || len(docs) != 3, "%v", "invalid predecessor fixture")
 	_, _, next := s.GetEmission(root.Named())
 	next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(docs), true
-	c.emit(t.Context(), root.Named(), &next, nil)
+	(&Execution{Controller: c}).emit(t.Context(), root.Named(), &next, nil)
 	next.Finish()
 	_, _, inherited := s.GetEmission(root.Named())
 	inherited.Children = nil
-	c.emit(t.Context(), root.Named(), &inherited, nil)
+	(&Execution{Controller: c}).emit(t.Context(), root.Named(), &inherited, nil)
 	_, _, retained := s.GetEmission(root.Named())
 	{
 		diff := cmp.Diff(docs, testutil.DocumentMaps(retained.Manifests))
@@ -234,7 +236,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	incoming, incomingDocs := parseChildrenForTestResult6.Children, parseChildrenForTestResult6.Documents
 	_, _, partial := s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, testutil.DocumentOccurrences(incomingDocs)
-	c.emit(t.Context(), root.Named(), &partial, nil)
+	(&Execution{Controller: c}).emit(t.Context(), root.Named(), &partial, nil)
 	partial.Finish()
 	_, _, retained = s.GetEmission(root.Named())
 	want := append([]map[string]any{fresh}, docs...)
@@ -252,7 +254,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	incoming, incomingDocs = parseChildrenForTestResult7.Children, parseChildrenForTestResult7.Documents
 	_, _, partial = s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, testutil.DocumentOccurrences(incomingDocs)
-	c.emit(t.Context(), root.Named(), &partial, nil)
+	(&Execution{Controller: c}).emit(t.Context(), root.Named(), &partial, nil)
 	partial.Finish()
 	_, _, retained = s.GetEmission(root.Named())
 	want = append([]map[string]any{fresh}, docs...)
@@ -275,7 +277,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	incoming, incomingDocs = parseChildrenForTestResult8.Children, parseChildrenForTestResult8.Documents
 	_, _, partial = s.GetEmission(root.Named())
 	partial.Children, partial.Manifests = incoming, testutil.DocumentOccurrences(incomingDocs)
-	c.emit(t.Context(), root.Named(), &partial, nil)
+	(&Execution{Controller: c}).emit(t.Context(), root.Named(), &partial, nil)
 	partial.Finish()
 	_, _, retained = s.GetEmission(root.Named())
 	want = []map[string]any{valid, fresh, docs[0], invalid}
@@ -288,7 +290,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 			diff,
 		)
 	}
-	c.emit(t.Context(), root.Named(), &store.Emission{Complete: true}, nil)
+	(&Execution{Controller: c}).emit(t.Context(), root.Named(), &store.Emission{Complete: true}, nil)
 	_, _, retained = s.GetEmission(root.Named())
 	assert.FatalIf(
 		t,
@@ -407,8 +409,8 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		captured[obj.Named()] = execution
 	}
 
-	c.KeepEmitted(t.Context(), parent, store.Child{Obj: consumer}, nil)
-	c.KeepEmitted(t.Context(), parent, store.Child{Obj: release}, nil)
+	c.KeepEmitted(t.Context(), parent, loader.PrepareRequest{Generation: []store.Child{{Obj: consumer}}, Reads: nil})
+	c.KeepEmitted(t.Context(), parent, loader.PrepareRequest{Generation: []store.Child{{Obj: release}}, Reads: nil})
 
 	for _, tc := range []struct {
 		obj      manifest.BaseManifest
@@ -504,7 +506,7 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	children, retained = parseChildrenForTestResult10.Children, parseChildrenForTestResult10.Documents
 	next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
 	next.Complete = true
-	c.emit(t.Context(), parent.Named(), &next, nil)
+	(&Execution{Controller: c}).emit(t.Context(), parent.Named(), &next, nil)
 	next.Finish()
 	accepted := s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission)
 	assert.ErrorIf(t, accepted.Fingerprint != "",
@@ -602,7 +604,7 @@ func testEmitDefaultsNamespaceCase(t *testing.T, testCaseInput testEmitDefaultsN
 	)
 	parseChildrenForTestResult12 := parseChildrenForTest(parent, docs, opts)
 	children, retained := parseChildrenForTestResult12.Children, parseChildrenForTestResult12.Documents
-	c.emit(
+	(&Execution{Controller: c}).emit(
 		t.Context(),
 		parent,
 		&store.Emission{
@@ -626,7 +628,7 @@ func testEmitDefaultsNamespaceCase(t *testing.T, testCaseInput testEmitDefaultsN
 	assert.Diff(t, retained, before)
 	parseChildrenForTestResult13 := parseChildrenForTest(parent, retained, opts)
 	replayed, replay := parseChildrenForTestResult13.Children, parseChildrenForTestResult13.Documents
-	c.emit(
+	(&Execution{Controller: c}).emit(
 		t.Context(),
 		parent,
 		&store.Emission{
@@ -679,7 +681,11 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 	execution := newExecution(c, obj.Named())
 	t.Cleanup(execution.Close)
 	assert.FatalIf(t, execution.Reads.Admitted(), "%v", "child admitted before publication")
-	c.KeepEmitted(t.Context(), (*testCaseInput.parent), store.Child{Obj: obj}, nil)
+	c.KeepEmitted(
+		t.Context(),
+		(*testCaseInput.parent),
+		loader.PrepareRequest{Generation: []store.Child{{Obj: obj}}, Reads: nil},
+	)
 	assert.Equal(t, execution.Reads.Valid(), false)
 	next := newExecution(c, obj.Named())
 	t.Cleanup(next.Close)

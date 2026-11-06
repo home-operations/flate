@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -47,7 +49,7 @@ func TestController_RemoteValidationSlots(t *testing.T) {
 			ready <- struct{}{}
 			<-begin
 			{
-				blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone).Blocked
+				blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone, schedule.Result{}).Blocked
 				assert.ErrorIf(t, len(blocked) != 0, "unexpected blocked dependencies: %v", blocked)
 			}
 		})

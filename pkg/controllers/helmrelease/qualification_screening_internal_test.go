@@ -132,7 +132,7 @@ func reconcileQualificationRelease(t *testing.T, c *Controller, id manifest.Name
 	t.Helper()
 	var run *base.Execution
 	c.Tasks.Go(t.Context(), "qualification", func(ctx context.Context) {
-		run = c.ReconcileNode(ctx, id, manifest.DrainNone)
+		run = c.ReconcileNode(ctx, id, manifest.DrainNone, schedule.Result{})
 	})
 	c.Tasks.BlockTillDone()
 	assert.Equal(t, c.Tasks.Failures(), 0)

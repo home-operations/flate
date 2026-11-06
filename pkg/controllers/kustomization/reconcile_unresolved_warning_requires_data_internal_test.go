@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -103,7 +105,11 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	s.AddObject(stamped)
-	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+	c.Tasks.Go(
+		t.Context(),
+		"reconcile",
+		func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0, schedule.Result{}) },
+	)
 	c.Tasks.BlockTillDone()
 	secondFP := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
 	assert.ErrorIf(
@@ -207,7 +213,11 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	changed := ks.Clone()
 	changed.TargetNamespace = "elsewhere"
 	s.AddObject(changed)
-	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+	c.Tasks.Go(
+		t.Context(),
+		"reconcile",
+		func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0, schedule.Result{}) },
+	)
 	c.Tasks.BlockTillDone()
 
 	var secondFP string
@@ -351,7 +361,7 @@ func testReconcileUnresolvedWarningReplayCase(
 		c.Tasks.Go(t.Context(), ks.Named().String(), func(ctx context.Context) {
 			<-start
 			{
-				deps := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone).Blocked
+				deps := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone, schedule.Result{}).Blocked
 				assert.ErrorIf(t, len(deps) != 0, "blocked dependencies = %v", deps)
 			}
 			if i == 0 {
@@ -422,7 +432,12 @@ func testReconcileUnresolvedWarningReplayCaseTail(
 		(*tailCaseInput.c).
 			Tasks.Go(t.Context(), "metadata replay", func(ctx context.Context) {
 			{
-				deps := (*tailCaseInput.c).ReconcileNode(ctx, (*tailCaseInput.first), manifest.DrainNone).Blocked
+				deps := (*tailCaseInput.c).ReconcileNode(
+					ctx,
+					(*tailCaseInput.first),
+					manifest.DrainNone,
+					schedule.Result{},
+				).Blocked
 				assert.ErrorIf(t, len(deps) != 0, "replay blocked dependencies = %v", deps)
 			}
 		})
@@ -530,7 +545,11 @@ func testReconcileAlreadyReadyNoTransientPendingCase(
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	s.AddObject(stamped)
-	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+	c.Tasks.Go(
+		t.Context(),
+		"reconcile",
+		func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0, schedule.Result{}) },
+	)
 	c.Tasks.BlockTillDone()
 	assert.ErrorIf(
 		t,
@@ -549,7 +568,11 @@ func testReconcileAlreadyReadyNoTransientPendingCase(
 			"apps/cm.yaml",
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: default}\ndata: {greeting: changed}\n",
 		)
-		c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+		c.Tasks.Go(
+			t.Context(),
+			"reconcile",
+			func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0, schedule.Result{}) },
+		)
 		c.Tasks.BlockTillDone()
 		next := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 		if !sawPending.Load() || next.Fingerprint == first.Fingerprint ||

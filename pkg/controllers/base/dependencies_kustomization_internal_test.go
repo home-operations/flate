@@ -347,7 +347,7 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 			},
 		},
 	}
-	c.emit(
+	(&Execution{Controller: c}).emit(
 		t.Context(),
 		producer.Named(),
 		&store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true},

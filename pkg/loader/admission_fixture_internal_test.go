@@ -102,7 +102,13 @@ func (f *admissionFixture) prepare(child *store.Child, reads *store.ReadSet, com
 	if reads != nil {
 		reader = reads
 	}
-	c := admissionClosure{loader: f.loader, objects: reader, incoming: *child, proposal: proposal, history: f.history}
+	c := admissionClosure{
+		loader:     f.loader,
+		objects:    reader,
+		generation: []store.Child{*child},
+		proposal:   proposal,
+		history:    f.history,
+	}
 	proposal, err := c.evaluate(
 		f.tb.Context(),
 		new(PrepareRequest{Reads: reads, Invocation: child.Obj == nil && reads == nil}),

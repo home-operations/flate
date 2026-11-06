@@ -89,7 +89,7 @@ func testDAGDispatchWithdrawalNotificationDrainCase(
 		defer releaseDelivery()
 		dispatch := fixtureDispatcher{
 			store: s,
-			dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+			dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 				if id == consumer {
 					execution := controllertest.NewExecution(base.New(s, tasks), id)
 					execution.Dispatch(

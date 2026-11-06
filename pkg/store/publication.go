@@ -109,7 +109,7 @@ func (s *Store) prepareChildren(children *[]Child, index *manifest.DiscoveryInde
 			child.policy = child.Policy(child.Obj.Named())
 			prepared = append(
 				prepared,
-				admission{child: child, independent: declarationIndependent(index, child.Obj.Named())},
+				admission{child: child, independent: rawDeclarationAuthority(index, child.Obj.Named(), false)},
 			)
 		}
 	}

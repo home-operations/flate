@@ -155,17 +155,13 @@ func (h *HelmRelease) ResolveChartSource(lookup func(NamedResource) BaseManifest
 	return nil
 }
 
-// GeneratedObjects implements Flux's chart-template rule without mutating the release.
+// GeneratedObjects MUST leave the release immutable.
 func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
-	view := *h
-	if err := view.normalizeChartSource(); err != nil {
+	template, id, err := h.generatedTemplate()
+	if err != nil || template == nil {
 		return nil, err
 	}
-	if view.HelmReleaseSpec.Chart == nil || view.Suspended() {
-		return nil, nil
-	}
-	template := view.HelmReleaseSpec.Chart.DeepCopy()
-	id := view.source
+	template = template.DeepCopy()
 	metadata := metav1.ObjectMeta{Name: id.Name, Namespace: id.Namespace}
 	if template.ObjectMeta != nil {
 		metadata.Labels, metadata.Annotations = maps.Clone(
@@ -178,7 +174,7 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 		metadata.Labels = make(map[string]string, chartOwnerLabelCount)
 	}
 	metadata.Labels[HelmReleaseDomain+"/name"], metadata.Labels[HelmReleaseDomain+"/namespace"] = h.Name, h.Namespace
-	release := helmv2.HelmRelease{Spec: view.HelmReleaseSpec}
+	release := helmv2.HelmRelease{Spec: h.HelmReleaseSpec}
 	interval := release.GetTemplateInterval()
 	var object BaseManifest
 	if id.Kind == KindOCIRepository {
@@ -217,6 +213,26 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 		object = generated
 	}
 	return []BaseManifest{object}, nil
+}
+
+// GeneratedTargets MUST NOT construct full auxiliary objects.
+func (h *HelmRelease) GeneratedTargets() ([]ProducerTarget, error) {
+	template, id, err := h.generatedTemplate()
+	if err != nil || template == nil {
+		return nil, err
+	}
+	return []ProducerTarget{{NamedResource: id}}, nil
+}
+
+func (h *HelmRelease) generatedTemplate() (*helmv2.HelmChartTemplate, NamedResource, error) {
+	view := *h
+	if err := view.normalizeChartSource(); err != nil {
+		return nil, NamedResource{}, err
+	}
+	if view.HelmReleaseSpec.Chart == nil || view.Suspended() {
+		return nil, NamedResource{}, nil
+	}
+	return view.HelmReleaseSpec.Chart, view.source, nil
 }
 
 // OCIRepository adapts a HelmRepository transport request without publishing a source.

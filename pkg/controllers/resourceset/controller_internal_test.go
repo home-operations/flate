@@ -98,7 +98,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 
 	// First dispatch (no RSIP yet): the named dep is absent, so the node
 	// blocks rather than terminalizing.
-	blocked := c.ReconcileNode(context.Background(), rs.Named(), 0).Blocked
+	blocked := c.ReconcileNode(context.Background(), rs.Named(), 0, schedule.Result{}).Blocked
 	assert.FatalIf(
 		t,
 		len(blocked) != 1,
@@ -182,10 +182,12 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	defer unsub()
 	dispatches := 0
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
-		Tasks: tasks, Store: s, ID: rs.Named(),
-		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+		Tasks: tasks,
+		Store: s,
+		ID:    rs.Named(),
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, previous schedule.Result) *base.Execution {
 			dispatches++
-			return c.ReconcileNode(ctx, id, level)
+			return c.ReconcileNode(ctx, id, level, previous)
 		},
 	})
 	assert.FatalIf(
@@ -372,7 +374,7 @@ func TestReconcile_NamedOnlyRetainsNamedGate(t *testing.T) {
 		InputsFrom: []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Name: "rsip"}},
 	}
 	s.AddObject(rs)
-	execution := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
+	execution := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer execution.Close()
 	want := manifest.NamedResource{
 		Group:     manifest.FluxOperatorDomain,
@@ -387,6 +389,7 @@ func TestReconcile_NamedOnlyRetainsNamedGate(t *testing.T) {
 		t.Context(),
 		manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "ghost"},
 		manifest.DrainNone,
+		schedule.Result{},
 	)
 	defer unknown.Close()
 	assert.FatalIf(t, unknown.Outcome() == schedule.Blocked,
@@ -422,7 +425,7 @@ metadata: {name: output}`}
 		)
 	}, false)
 	t.Cleanup(unsub)
-	c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
+	c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	{
 		info, _ := s.GetStatus(rs.Named())
 		assert.ErrorIf(t, info.Status != store.StatusReady, "final status = %+v, want Ready", info)
@@ -457,7 +460,7 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 			obj := parsed.Object
 			assert.FatalIf(t, err != nil, "%v", err)
 			s.AddObject(obj)
-			blocked := c.ReconcileNode(t.Context(), obj.Named(), manifest.DrainNone).Blocked
+			blocked := c.ReconcileNode(t.Context(), obj.Named(), manifest.DrainNone, schedule.Result{}).Blocked
 			assert.FatalIf(t, len(blocked) != 0, "disabled ResourceSet blocked on %v", blocked)
 			info, _ := s.GetStatus(obj.Named())
 			assert.FatalIf(

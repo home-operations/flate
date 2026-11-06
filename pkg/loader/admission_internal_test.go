@@ -299,7 +299,11 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 	reads.Init(st, requester, nil)
 	defer reads.Retire()
 	reads.RequireData(consumer)
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Reads: &reads})
+	var preparation *Preparation
+	defer func() { preparation.Retire() }()
+	var work manifest.WorkRecorder
+	reads.SetWork(&work)
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Reads: &reads, Preparation: &preparation})
 	assert.NoError(t, err)
 	producer := manifest.NamedResource{
 		Group:     "fluxcd.controlplane.io",
@@ -309,10 +313,41 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 	}
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
 	assert.Equal(t, reads.Valid(), true)
+	committed, err := l.Commit(t.Context(), proposal, Construction)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
+	assert.Equal(t, proposal.reads == nil && proposal.preparation == nil, true)
+	before := work.Scope().Admission().Counts.OwnerPrepares
+	for range st.Sweep() {
+	}
 	st.SetArtifact(requester, &store.SourceArtifact{LocalPath: root + "/acquired", FS: fstest.MapFS{}})
 	if !reads.Valid() {
 		t.Fatal("an unrelated source publication invalidated the consumer's materializer proof")
 	}
+	st.UpdateStatus(requester, store.StatusInfo{Status: store.StatusReady})
+	unrelated := manifest.NewConfigMap(
+		manifest.NamedResource{Name: "unrelated", Namespace: "apps"},
+		map[string]any{"value": "runtime"},
+	)
+	st.AddObject(unrelated)
+	var fresh store.ReadSet
+	fresh.Init(st, requester, nil)
+	fresh.SetWork(&work)
+	defer fresh.Close()
+	fresh.RequireData(consumer)
+	proposal, err = l.Prepare(t.Context(), PrepareRequest{Reads: &fresh, Preparation: &preparation})
+	assert.NoError(t, err)
+	assert.Equal(t, proposal.reads != preparation.evidence, false)
+	_, derived := preparation.closure.states[unrelated.Named()]
+	assert.Equal(t, derived, false)
+	committed, err = l.Commit(t.Context(), proposal, Execution)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
+	assert.Equal(t, l.Options.Filter.Membership(consumer).Needed, true)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
+	assert.Equal(t, fresh.Valid(), true)
+	assert.Equal(t, before, uint64(1))
+	assert.Equal(t, work.Scope().Admission().Counts.OwnerPrepares, before)
 }
 
 func TestAdmission_MultipleReferences(t *testing.T) {
@@ -425,7 +460,10 @@ func TestAdmission_UnchangedInputDoesNotCaptureConsumers(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(st, input, nil)
 	defer reads.Retire()
-	_, err = l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: st.GetObject(input)}, Reads: &reads})
+	_, err = l.Prepare(
+		t.Context(),
+		PrepareRequest{Generation: []store.Child{{Obj: st.GetObject(input)}}, Reads: &reads},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, reads.Valid(), true)
 	consumer := manifest.NamedResource{
@@ -455,7 +493,7 @@ func TestAdmission_IncomingChildPublicationPreservesProof(t *testing.T) {
 	_, _, next := reads.GetEmission(parent.Named())
 	defer next.Finish()
 	incoming := store.Child{Obj: child, Productions: []manifest.Production{{Owner: parent.Named()}}}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: incoming, Reads: &reads})
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{incoming}, Reads: &reads})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Selected, child.Named()), true)
 	assert.Equal(t, reads.Valid(), true)
@@ -514,7 +552,7 @@ func TestAdmission_EmittedNamespaceChildren(t *testing.T) {
 			children := make([]store.Child, 0, 3)
 			for _, obj := range []manifest.BaseManifest{selected, excluded, required} {
 				incoming := store.Child{Obj: obj, Productions: []manifest.Production{{Owner: parent.Named()}}}
-				proposal, prepareErr := l.Prepare(t.Context(), PrepareRequest{Incoming: incoming})
+				proposal, prepareErr := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{incoming}})
 				assert.NoError(t, prepareErr)
 				assert.Equal(t, slices.Contains(proposal.Selected, obj.Named()), obj == selected || allChildren)
 				assert.Equal(t, slices.Contains(proposal.Needed, obj.Named()), obj != excluded || allChildren)
@@ -657,7 +695,7 @@ func TestAdmission_EmittedNamespaceChildrenChanged(t *testing.T) {
 				return
 			}
 			for _, child := range children {
-				proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: child})
+				proposal, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{child}})
 				assert.NoError(t, err)
 				assert.Equal(t, slices.Contains(proposal.Selected, child.Obj.Named()), child.Obj == changed)
 				assert.Equal(t, slices.Contains(proposal.Dirty, child.Obj.Named()), child.Obj == changed)

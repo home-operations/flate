@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -163,7 +165,11 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 	fresh.store.AddObject(declaration)
 	reads := &store.ReadSet{}
 	reads.Init(fresh.store, owner, nil)
-	history, complete := fresh.controllers.PreviousRender(t.Context(), declaration, reads)
+	preparedHistory166 := fresh.controllers.PreviousRender(t.Context(), declaration, schedule.Result{})
+	if preparedHistory166.Assessment != nil {
+		defer preparedHistory166.Assessment.Close()
+	}
+	history, complete := preparedHistory166.Records, preparedHistory166.Complete
 	assert.Equal(t, complete, testCaseInput.same)
 	assert.Equal(t, history != nil, testCaseInput.same)
 	reads.Close()

@@ -289,7 +289,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 
 	assert.NoError(t, err)
 	assert.FatalIf(t, !hasRenderField(first, "marker", "packaged"), "%v", first)
-	initial, err := newClientCli2.describeChart(t.Context(), hr, newSourcesCliSources2)
+	initial, err := newClientCli2.describeChart(t.Context(), hr, newSourcesCliSources2.chartInput(hr))
 	assert.NoError(t, err)
 	key := computeTemplateKey(&initial, map[string]any{}, Options{}, hr)
 	assert.FatalIf(t, key == "", "%s", "fixture has no completed-output key")
@@ -341,7 +341,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 		err,
 	)
 	assert.FatalIf(t, !strings.Contains(err.Error(), `read values file "prod.yaml"`), "%v", err)
-	missing, err := fresh.describeChart(t.Context(), sourceHR, freshSources)
+	missing, err := fresh.describeChart(t.Context(), sourceHR, freshSources.chartInput(sourceHR))
 	assert.NoError(t, err)
 	missing.values, missing.valuesErr = fresh.observeValuesFiles(
 		t.Context(), &missing, sourceHR.ChartValuesFiles,

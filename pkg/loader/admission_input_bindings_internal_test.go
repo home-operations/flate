@@ -142,9 +142,19 @@ func TestAdmission_InputChangesQualifiedOnce(t *testing.T) {
 			}
 			inputs[len(inputs)-1] = "selected.yaml"
 			l.Index.Records[id] = manifest.DiscoveryRecord{File: "settings.yaml", Inputs: inputs}
-			reads := &admissionArtifactReads{admissionReader: st}
+			var captured store.ReadSet
+			captured.Init(st, id, nil)
+			t.Cleanup(captured.Close)
+			var work manifest.WorkRecorder
+			captured.SetWork(&work)
+			reads := &admissionArtifactReads{admissionReader: &captured}
 			c := admissionClosure{loader: l, objects: reads}
 			assert.Equal(t, c.affected(id, nil), changed == "selected.yaml")
+			calls := reads.calls
+			assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(1))
+			assert.Equal(t, c.affected(id, nil), changed == "selected.yaml")
+			assert.Equal(t, reads.calls, calls)
+			assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(1))
 			if reads.calls > 3 {
 				t.Fatalf(
 					"qualified one changed path %d times for %d recorded inputs; want at most 3 artifact reads",
@@ -222,8 +232,8 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 		var captured store.ReadSet
 		captured.Init(stores[1], consumer.Named(), nil)
 		reads := &admissionArtifactReads{admissionReader: &captured, bySource: map[manifest.NamedResource]int{}}
-		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
-		c.proposal = &c.result
+		c := admissionClosure{loader: l, objects: reads, generation: []store.Child{{Obj: consumer}}}
+		c.proposal = new(Admission)
 		proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 		assert.NoError(t, err)
 		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), !replaced)
@@ -277,8 +287,8 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 		captured[i].Init(stores[1], consumer.Named(), nil)
 		closers = append(closers, captured[i].Close)
 		reads := &admissionArtifactReads{admissionReader: &captured[i], bySource: map[manifest.NamedResource]int{}}
-		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
-		c.proposal = &c.result
+		c := admissionClosure{loader: l, objects: reads, generation: []store.Child{{Obj: consumer}}}
+		c.proposal = new(Admission)
 		proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
 		assert.NoError(t, err)
 		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), true)
@@ -314,7 +324,7 @@ func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
 	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"before.yaml"})
 	c := admissionClosure{loader: l, objects: st}
-	c.proposal = &c.result
+	c.proposal = new(Admission)
 	before, _, _ := c.delta(source)
 	assert.Equal(t, before.Contains("before.yaml"), true)
 	_, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
@@ -428,4 +438,56 @@ func (r *admissionArtifactReads) Productions(
 ) []manifest.Production {
 	r.productions = append(r.productions, id)
 	return r.admissionReader.Productions(id, index)
+}
+
+func TestAdmission_NarrowerSuccessorKeepsCompleteEvidence(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	root := t.TempDir()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	first := &manifest.Kustomization{Name: "first", Namespace: "apps", Path: "first"}
+	second := &manifest.Kustomization{
+		Name:      "second",
+		Namespace: "apps",
+		Path:      "second",
+		PostBuild: &kustomizev1.PostBuild{
+			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}},
+		},
+	}
+	input := manifest.NewConfigMap(
+		manifest.NamedResource{Name: "values", Namespace: "apps"},
+		map[string]any{"value": "before"},
+	)
+	st.AddObjects([]manifest.BaseManifest{first, second, input})
+	l := New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	l.Options.Selection.Roots = []manifest.NamedResource{first.Named(), second.Named()}
+	var preparation *Preparation
+	defer func() { preparation.Retire() }()
+	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
+	assert.NoError(t, err)
+	assert.Equal(t, preparation.closure.states[second.Named()].initialKnown, true)
+	proposal.Retire()
+	for range st.Sweep() {
+	}
+	var guard store.ReadSet
+	guard.Init(st, first.Named(), nil)
+	guard.RequireData(first.Named())
+	defer guard.Close()
+	proposal, err = l.Prepare(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
+	assert.NoError(t, err)
+	assert.Equal(t, preparation.closure.states[second.Named()].initialKnown, true)
+	assert.Equal(t, slices.Contains(slices.Collect(proposal.reads.Inputs()), input.Named()), true)
+	proposal.Retire()
+	for range st.Sweep() {
+	}
+	st.AddObject(manifest.NewConfigMap(input.Named(), map[string]any{"value": "after"}))
+	proposal, err = l.Prepare(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
+	assert.NoError(t, err)
+	defer proposal.Retire()
+	assert.Equal(t, preparation.closure.states[first.Named()].initialKnown, true)
+	assert.Equal(t, preparation.closure.states[second.Named()].initialKnown, false)
+	assert.Equal(t, proposal.reads.Valid(), true)
 }

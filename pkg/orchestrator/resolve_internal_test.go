@@ -209,7 +209,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 	var first sync.Once
 	d := fixtureDispatcher{
 		store: f.o.store,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id == f.supplier {
 				close(started)
 				f.waitForRelease(before, release)
@@ -220,7 +220,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 					waitForR4Supplier(before, supplierDone, started)
 				})
 			}
-			assessment := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+			assessment := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 			if id == f.reader && !before {
 				first.Do(func() {
 					assert.ErrorIf(
@@ -277,8 +277,8 @@ func TestResolve_OptionalBindingArrival(t *testing.T) {
 			var admitted atomic.Bool
 			d := fixtureDispatcher{
 				store: f.o.store,
-				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
+					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 					if id == f.reader && admitted.CompareAndSwap(false, true) {
 						assert.ErrorIf(
 							t,
@@ -314,11 +314,11 @@ func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
 			var first sync.Once
 			d := fixtureDispatcher{
 				store: f.o.store,
-				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 					if id == f.supplier {
 						f.o.tasks.YieldSlot(func() { <-release })
 					}
-					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 					if id == f.reader {
 						first.Do(func() {
 							assert.ErrorIf(
@@ -372,8 +372,8 @@ func TestResolve_OptionalBindingSetChange(t *testing.T) {
 			var changed atomic.Bool
 			d := fixtureDispatcher{
 				store: f.o.store,
-				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
+					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 					if id == f.reader && changed.CompareAndSwap(false, true) {
 						switch reader := f.o.store.GetObject(id).(type) {
 						case *manifest.Kustomization:
@@ -615,7 +615,7 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 
 		o.configureControllers()
 		d := dagDispatcher{o}
-		assessment := d.Dispatch(t.Context(), reader, manifest.DrainNone).Assessment
+		assessment := d.Dispatch(t.Context(), reader, manifest.DrainNone, schedule.Result{}).Assessment
 		closeAssessments = append(closeAssessments, assessment.Close)
 		assert.FatalIf(
 			t,

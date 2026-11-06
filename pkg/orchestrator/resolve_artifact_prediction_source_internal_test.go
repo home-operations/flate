@@ -99,7 +99,12 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 					store.ArtifactContent,
 				) != nil, "source-qualified prediction supplied content or disappeared: %+v", facts)
 
-			reader := d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.DrainNone).Assessment
+			reader := d.Dispatch(
+				t.Context(),
+				testutil.KustomizationID("apps", "reader"),
+				manifest.DrainNone,
+				schedule.Result{},
+			).Assessment
 			defer reader.Close()
 			assert.FatalIf(
 				t,
@@ -213,7 +218,7 @@ func testResolveOptionalForceCutInvalidationCase(
 
 	f := newR4Fixture(t, (*testCaseInput.kind), "data", false)
 	f.o.configureControllers()
-	prior := (dagDispatcher{f.o}).Dispatch(t.Context(), f.reader, manifest.DrainNone).Assessment.(*base.Execution)
+	prior := (dagDispatcher{f.o}).Dispatch(t.Context(), f.reader, manifest.DrainNone, schedule.Result{}).Assessment.(*base.Execution)
 	defer prior.Close()
 	assert.FatalIf(
 		t,
@@ -309,7 +314,7 @@ func testResolveOptionalQueuedSuccessorCase(t *testing.T, testCaseInput *string,
 	var sched *schedule.Scheduler
 	d := fixtureDispatcher{
 		store: f.o.store,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id == keeper {
 				close(keeping)
 				<-releaseKeeper
@@ -321,7 +326,7 @@ func testResolveOptionalQueuedSuccessorCase(t *testing.T, testCaseInput *string,
 			if id == f.reader {
 				<-keeping
 			}
-			result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+			result := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 			if id == f.reader && queued.CompareAndSwap(false, true) {
 				assert.ErrorIf(
 					t,

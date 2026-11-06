@@ -16,10 +16,10 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel) Result
+type dispatchFunc func(context.Context, NodeID, manifest.DrainLevel, Result) Result
 
-func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.DrainLevel) Result {
-	return f(ctx, id, drain)
+func (f dispatchFunc) Dispatch(ctx context.Context, id NodeID, drain manifest.DrainLevel, previous Result) Result {
+	return f(ctx, id, drain, previous)
 }
 
 func (dispatchFunc) Sweep(context.Context, bool) []NodeID { return nil }
@@ -113,7 +113,7 @@ func TestScheduler_RunDispatchPanic(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				tasks := task.NewBounded(workers)
-				s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+				s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 					panic("dispatch panic")
 				}))
 				s.Seed([]NodeID{testutil.KustomizationID("ns", "panic")})
@@ -146,12 +146,15 @@ func TestScheduler_RunCancellationBoundary(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
-				if tc.cancelDispatch {
-					cancel()
-				}
-				return Result{Assessment: &testAssessment{}}
-			}))
+			s := New(
+				task.NewBounded(2),
+				dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
+					if tc.cancelDispatch {
+						cancel()
+					}
+					return Result{Assessment: &testAssessment{}}
+				}),
+			)
 			if tc.seed {
 				s.Seed([]NodeID{testutil.KustomizationID("ns", "last")})
 			}
@@ -185,7 +188,7 @@ func TestScheduler_InvalidAcceptance(t *testing.T) {
 	fresh.close = func() { closed.Add(1) }
 	swept := false
 	s := New(task.NewBounded(2), sweepDispatcher{
-		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel) Result {
+		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 			if runs.Add(1) == 1 {
 				return Result{Assessment: old}
 			}
@@ -215,7 +218,7 @@ func TestScheduler_RetirementPrecedesStructuralBoundary(t *testing.T) {
 		old.invalid.Store(true)
 		var runs, sweeps atomic.Int64
 		s := New(task.NewBounded(2), sweepDispatcher{
-			dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel) Result {
+			dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 				if runs.Add(1) == 1 {
 					return Result{Assessment: old}
 				}
@@ -239,7 +242,7 @@ func TestScheduler_SettleBoundedRetainedAssessment(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		entered, release := make(chan struct{}, 2), make(chan struct{})
 		var runs, active, retired, closed atomic.Int64
-		s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+		s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 			runs.Add(1)
 			a := &testAssessment{unresolved: true}
 			a.retire = func() { retired.Add(1) }
@@ -279,7 +282,7 @@ func TestScheduler_SettleBoundedRetainedAssessment(t *testing.T) {
 func TestScheduler_UnresolvedAfterForce(t *testing.T) {
 	t.Parallel()
 	var levels []manifest.DrainLevel
-	s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+	s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 		return Result{
 			Assessment: &testAssessment{unresolved: true, settle: func(_ context.Context, level manifest.DrainLevel) {
 				levels = append(levels, level)
@@ -297,7 +300,7 @@ func TestScheduler_UnresolvedAfterForce(t *testing.T) {
 func TestScheduler_LateArrivalAfterDrain(t *testing.T) {
 	t.Parallel()
 	s := New(task.NewBounded(2), sweepDispatcher{
-		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel) Result { return Result{} },
+		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel, Result) Result { return Result{} },
 		sweep:        func(context.Context) []NodeID { return nil },
 	})
 	assert.NoError(t, s.Run(t.Context()))
@@ -310,17 +313,20 @@ func TestScheduler_SettleArrivalRestartsNormalDispatch(t *testing.T) {
 	parent, child := testutil.KustomizationID("ns", "parent"), testutil.KustomizationID("ns", "child")
 	var runs atomic.Int64
 	var s *Scheduler
-	s = New(task.NewBounded(2), dispatchFunc(func(_ context.Context, id NodeID, level manifest.DrainLevel) Result {
-		runs.Add(1)
-		assert.Equal(t, level, manifest.DrainNone)
-		a := &testAssessment{unresolved: id == parent}
-		a.settle = func(_ context.Context, level manifest.DrainLevel) {
-			assert.Equal(t, level, manifest.DrainCascade)
-			a.unresolved = false
-			s.OnArrival(child, true)
-		}
-		return Result{Assessment: a}
-	}))
+	s = New(
+		task.NewBounded(2),
+		dispatchFunc(func(_ context.Context, id NodeID, level manifest.DrainLevel, _ Result) Result {
+			runs.Add(1)
+			assert.Equal(t, level, manifest.DrainNone)
+			a := &testAssessment{unresolved: id == parent}
+			a.settle = func(_ context.Context, level manifest.DrainLevel) {
+				assert.Equal(t, level, manifest.DrainCascade)
+				a.unresolved = false
+				s.OnArrival(child, true)
+			}
+			return Result{Assessment: a}
+		}),
+	)
 	s.Seed([]NodeID{parent})
 	assert.NoError(t, s.Run(t.Context()))
 	assert.Equal(t, runs.Load(), int64(2))
@@ -335,7 +341,7 @@ func TestScheduler_RunSettleCancellation(t *testing.T) {
 		started, stopping := make(chan struct{}, 2), make(chan struct{}, 2)
 		release := make(chan struct{})
 		var active, closed atomic.Int64
-		s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+		s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 			return Result{Assessment: &testAssessment{
 				unresolved: true,
 				settle: func(ctx context.Context, _ manifest.DrainLevel) {
@@ -375,7 +381,7 @@ func TestScheduler_FinalReclamationCanceled(t *testing.T) {
 	t.Parallel()
 	var canceled []bool
 	s := New(task.NewBounded(2), sweepDispatcher{
-		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel) Result { return Result{} },
+		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel, Result) Result { return Result{} },
 		sweep: func(ctx context.Context) []NodeID {
 			canceled = append(canceled, errors.Is(ctx.Err(), context.Canceled))
 			return nil
@@ -395,7 +401,7 @@ func TestScheduler_QuiescentSweepProgress(t *testing.T) {
 			sweeps := 0
 			child := testutil.HelmReleaseID("apps", "child")
 			s = New(task.NewBounded(2), sweepDispatcher{
-				dispatchFunc: func(_ context.Context, id NodeID, _ manifest.DrainLevel) Result {
+				dispatchFunc: func(_ context.Context, id NodeID, _ manifest.DrainLevel, _ Result) Result {
 					assert.Equal(t, id, child)
 					runs.Add(1)
 					return Result{}
@@ -435,7 +441,7 @@ func TestScheduler_UnprogressedInvalidAssessment(t *testing.T) {
 			settlements.Add(1)
 			retained.unresolved = false
 		}
-		s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+		s := New(task.NewBounded(2), dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 			if runs.Add(1) == 1 {
 				stale := &testAssessment{reused: true}
 				stale.invalid.Store(true)
@@ -485,7 +491,7 @@ func testSchedulerWakeOrderCase(t *testing.T, testCaseInput *testSchedulerWakeOr
 		assessments[id] = &testAssessment{}
 	}
 	s := New(tasks, sweepDispatcher{
-		dispatchFunc: func(_ context.Context, id NodeID, level manifest.DrainLevel) Result {
+		dispatchFunc: func(_ context.Context, id NodeID, level manifest.DrainLevel, _ Result) Result {
 			assert.Equal(t, level, manifest.DrainNone)
 			if assessments[id].invalid.Load() {
 				return Result{Assessment: &testAssessment{}}
@@ -526,7 +532,7 @@ func testSchedulerRunStopDrainsCase(t *testing.T, testCaseInput *bool,
 		var active, runs atomic.Int64
 		s := New(
 			task.NewBounded(2),
-			dispatchFunc(func(ctx context.Context, id NodeID, _ manifest.DrainLevel) Result {
+			dispatchFunc(func(ctx context.Context, id NodeID, _ manifest.DrainLevel, _ Result) Result {
 				active.Add(1)
 				defer active.Add(-1)
 				runs.Add(1)
@@ -604,7 +610,7 @@ func testSchedulerCompletionRetainsRunningInvalidationCase(
 			return valid
 		}
 		var runs atomic.Int64
-		s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel) Result {
+		s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
 			if runs.Add(1) == 1 {
 				return Result{Assessment: current}
 			}

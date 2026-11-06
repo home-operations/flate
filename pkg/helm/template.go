@@ -37,6 +37,9 @@ const sourceHeader = "# Source: "
 
 // Template renders a HelmRelease and returns independently owned documents.
 // The immutable receipt may be persisted after complete accepted publication.
+// When input.Preparation is non-nil, hrValues and all reachable maps and slices
+// MUST remain immutable until that preparation and every transferred owner retire.
+// Callers MUST replace values or retire their preparation before mutation.
 //
 //nolint:gocritic // Preserve the existing value API and its snapshot semantics.
 func (c *Client) Template(
@@ -49,92 +52,8 @@ func (c *Client) Template(
 	if err != nil {
 		return nil, nil, err
 	}
-	prepared.release = hr
 
 	return prepared.template(ctx, c)
-}
-
-type templateRequest struct {
-	input         RenderOptions
-	release       *manifest.HelmRelease
-	loaded        chartDescription
-	caps          *common.Capabilities
-	capabilityErr error
-	key           string
-	binding       templateBinding
-	values        map[string]any
-}
-
-func (c *Client) prepareTemplate(
-	ctx context.Context,
-	hr *manifest.HelmRelease,
-	hrValues map[string]any,
-	input *RenderOptions,
-) (templateRequest, error) {
-	work := input.Work.Preparation()
-	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-	opts := input.Options
-	if err := ctx.Err(); err != nil {
-		work.Finish(err)
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
-		return templateRequest{}, err
-	}
-	loaded, err := c.describeChart(ctx, hr, input.Sources)
-	if err != nil {
-		work.Finish(err)
-		return templateRequest{}, err
-	}
-	if hr.TracksDigest() {
-		loaded.oci = &ociChartContent{
-			Digest:          loaded.artifact.Digest,
-			Revision:        loaded.artifact.Revision,
-			DisableTracking: opts.DisableChartDigestTracking,
-		}
-	}
-	caps, capabilityErr := opts.capabilities()
-	if loaded.valuesFS != nil {
-		loaded.values, loaded.valuesErr = c.observeValuesFiles(
-			ctx, &loaded, hr.ChartValuesFiles,
-			hr.IgnoreMissingValuesFiles,
-		)
-	}
-	if hrValues == nil {
-		hrValues = map[string]any{}
-	}
-	key := computeTemplateKey(&loaded, hrValues, opts, hr)
-	input.Work.Fingerprint(key)
-	binding := templateBinding{
-		Policy:       hr.HistoryPolicy(),
-		Source:       hr.ChartSource(),
-		Kind:         loaded.artifact.Kind,
-		URL:          loaded.artifact.URL,
-		Path:         loaded.artifact.LocalPath,
-		Root:         loaded.artifact.LocalRoot,
-		Key:          loaded.artifact.Key,
-		Revision:     loaded.artifact.Revision,
-		Digest:       loaded.artifact.Digest,
-		Alias:        loaded.artifact.InputAlias,
-		Options:      input.Options,
-		Dependencies: input.DependencySubstitutions,
-	}
-	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(&binding) {
-		binding = loaded.record.binding
-	} else {
-		binding.Options.SkipKinds = nil
-		if len(input.SkipKinds) > 0 {
-			binding.Options.SkipKinds = slices.Clone(input.SkipKinds)
-		}
-	}
-	work.Finish(nil)
-	return templateRequest{
-		input:         *input,
-		loaded:        loaded,
-		caps:          caps,
-		capabilityErr: capabilityErr,
-		key:           key,
-		values:        hrValues,
-		binding:       binding,
-	}, nil
 }
 
 func normalizeLists(docs []manifest.DocOccurrence) []manifest.DocOccurrence {

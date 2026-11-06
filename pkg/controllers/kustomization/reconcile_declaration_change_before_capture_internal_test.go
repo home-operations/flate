@@ -77,7 +77,9 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 		c.Tasks.Go(
 			t.Context(),
 			"reconcile",
-			func(ctx context.Context) { next = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone) },
+			func(ctx context.Context) {
+				next = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone, schedule.Result{})
+			},
 		)
 		c.Tasks.BlockTillDone()
 		if previous != nil {
@@ -211,7 +213,7 @@ func testReconcileDeclarationChangeBeforeCaptureCase(
 	var run *base.Execution
 	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) {
 		defer close(finished)
-		run = c.ReconcileNode(ctx, input.Named(), manifest.DrainNone)
+		run = c.ReconcileNode(ctx, input.Named(), manifest.DrainNone, schedule.Result{})
 	})
 	c.Tasks.Go(t.Context(), "replace", func(context.Context) {
 		reached := false
@@ -273,6 +275,7 @@ func testReconcileDeclarationChangeBeforeCaptureCaseTail(
 		func(ctx context.Context) {
 			(*tailCaseInput.run) = (*tailCaseInput.c).ReconcileNode(
 				ctx, (*tailCaseInput.input).Named(), manifest.DrainNone,
+				schedule.Result{},
 			)
 		},
 	)

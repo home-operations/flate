@@ -43,11 +43,16 @@ func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest 
 	return new(view).declaration()
 }
 
-func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedResource) bool {
+// Discovery preserves a distinct authored File only for unchanged builder output;
+// raw self evidence MUST NOT override another builder's transformed declaration.
+func rawDeclarationAuthority(index *manifest.DiscoveryIndex, id manifest.NamedResource, classified bool) bool {
 	record, _ := index.Lookup(id)
-	return len(record.Productions) == 0 || slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
-		return p.Owner == (manifest.NamedResource{}) || p.Owner == id
-	})
+	self := record.BuilderOwner == (manifest.NamedResource{}) || record.BuilderOwner == id ||
+		record.Authored == id && record.File != "" && record.Builder != "" && record.File != record.Builder
+	return self && (classified || len(record.Productions) == 0) ||
+		slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+			return p.Owner == (manifest.NamedResource{}) || self && p.Owner == id
+		})
 }
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
@@ -464,8 +469,12 @@ func (s *Store) discoveryCoverage(index *manifest.DiscoveryIndex) map[manifest.N
 		if len(r.Productions) == 0 {
 			continue
 		}
-		independent := declarationIndependent(index, id)
-		s.addDiscoveryCoverage(coverage, id, &r, independent)
+		record := footprint{
+			id: id, record: r,
+			independent: rawDeclarationAuthority(index, id, false),
+			classified:  rawDeclarationAuthority(index, id, true),
+		}
+		s.addDiscoveryCoverage(coverage, &record)
 	}
 	return coverage
 }
@@ -484,6 +493,7 @@ func (s *Store) installDiscoveryCoverageLocked(
 					sh := s.shardFor(record.id)
 					if cell, exists := sh.cells[record.id]; exists {
 						cell.independent = record.independent
+						cell.classified = cell.classified && record.classified
 						sh.cells[record.id] = cell
 					}
 				}
@@ -505,10 +515,9 @@ func (s *Store) installDiscoveryCoverageLocked(
 
 func (s *Store) addDiscoveryCoverage(
 	coverage map[manifest.NamedResource]*contributor,
-	id manifest.NamedResource,
-	r *manifest.DiscoveryRecord,
-	independent bool,
+	record *footprint,
 ) {
+	id, r := record.id, &record.record
 	{
 		pValues5 := r.Productions
 		for pIndex4 := range pValues5 {
@@ -523,7 +532,7 @@ func (s *Store) addDiscoveryCoverage(
 			}
 			// Each identity is visited once, so repeated owner evidence can only match the tail.
 			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
-				c.records = append(c.records, footprint{id: id, record: *r, independent: independent})
+				c.records = append(c.records, *record)
 			}
 			if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
 				c.binding.artifact = a

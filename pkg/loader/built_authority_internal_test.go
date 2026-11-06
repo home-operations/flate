@@ -98,7 +98,7 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			current[0].Entry = &manifest.EntryApplication{}
 			proposal, err := l.Prepare(
 				t.Context(),
-				PrepareRequest{Incoming: current[0], Reads: binding, Invocation: true},
+				PrepareRequest{Generation: []store.Child{current[0]}, Reads: binding, Invocation: true},
 			)
 			assert.NoError(t, err)
 			committed, err := l.Commit(t.Context(), proposal, Construction)
@@ -114,7 +114,7 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			current[0].Entry = &manifest.EntryApplication{}
 			proposal, err = l.Prepare(
 				t.Context(),
-				PrepareRequest{Incoming: current[0], Reads: binding, Invocation: true},
+				PrepareRequest{Generation: []store.Child{current[0]}, Reads: binding, Invocation: true},
 			)
 			assert.NoError(t, err)
 			committed, err = l.Commit(t.Context(), proposal, Construction)
@@ -149,6 +149,8 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			_, complete = l.BuiltChildren(packageRoot, owner.Named(), binding)
 			assert.FatalIf(t, complete, "frozen loader retained construction authority")
 			l.Retire()
+			assert.Equal(t, l.documents.cache[packageRoot].builtInput != nil, true)
+			l.Close()
 			assert.FatalIf(
 				t,
 				l.documents.cache[packageRoot].builtInput != nil,

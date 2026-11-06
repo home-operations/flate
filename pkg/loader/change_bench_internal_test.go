@@ -381,13 +381,14 @@ func benchmarkSupplierEmission(b *testing.B, suppliers int, match bool) {
 			},
 		}
 	}
-	setup := admissionClosure{loader: filter.loader, objects: st, incoming: children[0]}
+	setup := admissionClosure{loader: filter.loader, objects: st, generation: []store.Child{children[0]}}
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name, Namespace: "apps"}
 	if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) ||
 		filter.ShouldReconcile(children[0].Obj.Named()) ||
 		setup.affected(children[0].Obj.Named(), children[0].Obj) {
 		b.Fatal("supplier scan would be bypassed")
 	}
+	setup.captureIncoming()
 	productions := st.IncomingProductions(children[0], index)
 	for i := range productions {
 		production := productions[i]

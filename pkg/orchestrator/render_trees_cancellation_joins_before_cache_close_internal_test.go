@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
 	src "github.com/home-operations/flate/pkg/source"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -69,21 +69,22 @@ type countedNodeController struct {
 
 type reconcileController interface {
 	Owns(manifest.NamedResource) bool
-	ReconcileNode(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution
+	ReconcileNode(context.Context, manifest.NamedResource, manifest.DrainLevel, schedule.Result) *base.Execution
 	PreviousRender(
 		context.Context,
 		manifest.BaseManifest,
-		*store.ReadSet,
-	) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool)
+		schedule.Result,
+	) base.History
 }
 
 func (c countedNodeController) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	c.calls[id].Add(1)
-	execution := c.reconcileController.ReconcileNode(ctx, id, level)
+	execution := c.reconcileController.ReconcileNode(ctx, id, level, previous)
 	if execution != nil && execution.Reads.Admitted() {
 		c.admitted[id].Add(1)
 	}

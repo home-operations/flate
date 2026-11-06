@@ -492,7 +492,7 @@ func (w *qualificationWalk) execution(
 	committed, err := w.commit(
 		ctx,
 		&loader.PrepareRequest{
-			Incoming:   store.Child{Obj: literal, Entry: &application},
+			Generation: []store.Child{{Obj: literal, Entry: &application}},
 			Reads:      w.reads,
 			Invocation: w.q.session != nil,
 		},
@@ -534,7 +534,10 @@ func (w *qualificationWalk) admitConstructed(ctx context.Context, evidence *appl
 	}
 	incoming := *evidence.child
 	incoming.Entry = &application
-	committed, err := w.commit(ctx, &loader.PrepareRequest{Incoming: incoming, Reads: w.reads, Invocation: true})
+	committed, err := w.commit(
+		ctx,
+		&loader.PrepareRequest{Generation: []store.Child{incoming}, Reads: w.reads, Invocation: true},
+	)
 	if err != nil {
 		return false, err
 	}

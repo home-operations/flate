@@ -13,29 +13,54 @@ import (
 
 // Admission is a temporary proposal computed outside execution-membership locks.
 type Admission struct {
-	Needed     []manifest.NamedResource
-	Selected   []manifest.NamedResource
-	Dirty      []manifest.NamedResource
-	Ordinary   []manifest.NamedResource
-	Objects    []store.Child
-	Blocked    []string
-	Revision   uint64
-	Namespaces []string
-	reads      *store.ReadSet
-	Request    PrepareRequest
-	stale      bool
-	sources    []manifest.NamedResource
+	Needed      []manifest.NamedResource
+	Selected    []manifest.NamedResource
+	Dirty       []manifest.NamedResource
+	Ordinary    []manifest.NamedResource
+	Objects     []store.Child
+	Blocked     []string
+	Revision    uint64
+	Namespaces  []string
+	owned       store.ReadSet
+	reads       *store.ReadSet
+	preparation *Preparation
+	local       *Preparation
+	Request     PrepareRequest
+	stale       bool
+	reused      bool
+	sources     []manifest.NamedResource
 }
 
 // PrepareRequest describes the evidence and selection intent for an admission proposal.
 type PrepareRequest struct {
-	Incoming   store.Child
+	Preparation **Preparation
+	// Generation MUST remain immutable until its preparation retires.
+	Generation []store.Child
+	Owner      manifest.NamedResource
 	Reads      *store.ReadSet
 	Invocation bool
 	History    map[manifest.NamedResource]struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
 	}
+}
+
+// Preparation MUST remain with one logical admission owner until its final consumer.
+type Preparation struct {
+	closure   admissionClosure
+	evidence  *store.ReadSet
+	completed *Admission
+}
+
+// Retire MUST follow every active proposal and preserve accepted store borrowers.
+func (p *Preparation) Retire() {
+	if p == nil {
+		return
+	}
+	if p.closure.loader != nil {
+		p.closure.loader.Store.Retire(p.evidence)
+	}
+	*p = Preparation{}
 }
 
 // CommitStage separates construction admission from execution membership.
@@ -50,17 +75,38 @@ const (
 
 // Retire ends proposal payload access, preserving borrowed guards and identity results.
 func (a *Admission) Retire() {
-	if a != nil {
-		a.reads.ReleaseCapture()
-		a.reads.Retire()
-		a.reads = nil
-		a.Objects, a.sources = nil, nil
-		a.Request = PrepareRequest{}
+	if a == nil || a.preparation == nil {
+		return
+	}
+	preparation := a.preparation
+	preparation.closure.loader.Store.Retire(a.reads)
+	local := a.local != nil && a.Request.Preparation == nil
+	if preparation.closure.proposal == a {
+		preparation.closure.objects, preparation.closure.proposal = nil, nil
+	}
+	a.reads, a.preparation, a.sources, a.Objects = nil, nil, nil, nil
+	a.Request = PrepareRequest{}
+	if local {
+		preparation.Retire()
+		a.local = nil
 	}
 }
 
 // Commit publishes captured proposal children after their execution membership.
 func (l *Loader) Commit(ctx context.Context, proposal *Admission, stage CommitStage) (bool, error) {
+	original := proposal
+	if original.local != nil {
+		original.Request.Preparation = &original.local
+		defer func() {
+			original.local.Retire()
+			original.local = nil
+		}()
+	}
+	defer func() {
+		original.Needed, original.Selected, original.Dirty = proposal.Needed, proposal.Selected, proposal.Dirty
+		original.Ordinary, original.Objects, original.Blocked = proposal.Ordinary, proposal.Objects, proposal.Blocked
+		original.Revision, original.Namespaces = proposal.Revision, proposal.Namespaces
+	}()
 	for {
 		if err := ctx.Err(); err != nil {
 			proposal.Retire()
@@ -76,10 +122,7 @@ func (l *Loader) Commit(ctx context.Context, proposal *Admission, stage CommitSt
 		}
 		committed = committed && ctx.Err() == nil && proposal.reads.Valid() && proposal.guardCurrent()
 		if committed {
-			if stage == Construction {
-				l.constructionPurpose.Store(new(proposal.Ordinary))
-			}
-			proposal.Retire()
+			l.acceptAdmission(proposal, stage)
 			return true, nil
 		}
 		request := proposal.Request
@@ -91,8 +134,18 @@ func (l *Loader) Commit(ctx context.Context, proposal *Admission, stage CommitSt
 		if err != nil {
 			return false, err
 		}
-		*proposal = *next
+		proposal = next
 	}
+}
+
+func (l *Loader) acceptAdmission(a *Admission, stage CommitStage) {
+	if stage == Construction {
+		l.constructionPurpose.Store(new(a.Ordinary))
+	} else if a.preparation != nil {
+		a.Revision = l.Options.Filter.Membership(manifest.NamedResource{}).Revision
+		a.preparation.completed = a
+	}
+	a.Retire()
 }
 
 func (a *Admission) guardCurrent() bool {
@@ -117,6 +170,9 @@ func (l *Loader) commitMembership(proposal *Admission, stage CommitStage) bool {
 }
 
 func (a *Admission) admitObjects(ctx context.Context) {
+	if a.reused {
+		return
+	}
 	for i := range a.Objects {
 		if ctx.Err() != nil || !a.reads.Valid() || !a.guardCurrent() {
 			return
@@ -150,14 +206,16 @@ type admissionReader interface {
 type (
 	admissionRole  struct{ needed, selected, dirty, ordinary bool }
 	admissionState struct {
-		ordinal                                   int
-		productions                               []manifest.Production
+		ordinal, incoming                         int
+		productions, incomingProductions          []manifest.Production
 		role, walked                              admissionRole
 		consumer, generation, restoration, claim  int
 		changed, seed, direct, rescan, requested  bool
 		walkedOnce, productionsKnown, listed      bool
 		eligible, declarationChanged, staticOwner bool
 		comparingDeclaration                      bool
+		initialKnown, directKnown                 bool
+		affected, affectedKnown                   bool
 	}
 )
 
@@ -168,14 +226,19 @@ type admissionIdentity struct {
 }
 
 type admissionClosure struct {
+	changes            *change.Set
+	candidates         [2][2][]Occurrence
+	deriving           bool
+	frozen, sideKnown  bool
+	side               manifest.TreeSide
 	comparisons        *admissionSources
 	identities         []admissionIdentity
 	loader             *Loader
 	objects            admissionReader
-	incoming           store.Child
+	generation         []store.Child
+	owner              manifest.NamedResource
 	proposal           *Admission
 	states             map[manifest.NamedResource]admissionState
-	result             Admission
 	counts             [4]int
 	collecting         bool
 	ownerCandidates    []manifest.BaseManifest
@@ -205,10 +268,29 @@ func (l *Loader) Prepare(
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
-	closure := admissionClosure{loader: l, incoming: request.Incoming, history: request.History}
-	proposal := &closure.result
-	proposal.Request = request
-	proposal.reads = &store.ReadSet{}
+	var preparation *Preparation
+	if request.Preparation != nil {
+		preparation = *request.Preparation
+	}
+	if preparation == nil {
+		preparation = &Preparation{closure: admissionClosure{loader: l}}
+		if request.Preparation != nil {
+			*request.Preparation = preparation
+		}
+	}
+	closure := &preparation.closure
+	if closure.loader != l {
+		return nil, manifest.NewError(manifest.ErrInput, nil, "admission preparation belongs to a different loader")
+	}
+	proposal := &Admission{Request: request, preparation: preparation}
+	if request.Preparation == nil {
+		proposal.local = preparation
+	}
+	if preparation.reuse(&request, proposal) {
+		return proposal, nil
+	}
+	preparation.completed = nil
+	proposal.reads = &proposal.owned
 	owner := manifest.NamedResource{}
 	if request.Reads != nil {
 		owner = request.Reads.ID()
@@ -217,43 +299,288 @@ func (l *Loader) Prepare(
 	if request.Reads != nil {
 		proposal.reads.SetWork(request.Reads.Work())
 	}
+	closure.proposal, closure.objects, closure.deriving = proposal, proposal.reads, false
 	if !proposal.guardCurrent() {
 		proposal.stale = true
 		return proposal, nil
 	}
-	closure.proposal, closure.objects = proposal, proposal.reads
-	work := proposal.reads.WorkScope().Admission()
-	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
+	defer closure.releaseComparisons()
+	if err := closure.refreshPrerequisites(ctx, preparation.evidence, &request); err != nil {
+		proposal.Retire()
+		return nil, err
+	}
+	preparation.evidence = proposal.reads
+	closure.resetDemand()
+	closure.generation, closure.owner, closure.history = request.Generation, request.Owner, request.History
+	closure.changes = l.Options.Changes
+	closure.frozen, closure.sideKnown, closure.side = l.frozen, l.sideKnown, l.side
 	proposal.Revision = l.Options.Filter.Membership(manifest.NamedResource{}).Revision
-	closure.captureIncoming()
 	closure.seedConstruction()
-	proposal, err := closure.evaluate(ctx, &request)
-	work.Finish(err)
+	_, err := closure.evaluate(ctx, &request)
+	if err == nil {
+		err = closure.capturePrerequisites(ctx)
+	}
+	if closure.deriving {
+		proposal.reads.WorkScope().Admission().Finish(err)
+	}
 	if err != nil {
-		closure.result.Retire()
+		proposal.Retire()
 		return nil, err
 	}
 	proposal.captureSources()
-	closure = admissionClosure{result: *proposal}
-	return &closure.result, nil
+	return proposal, nil
+}
+
+func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission) bool {
+	previous := p.completed
+	c := &p.closure
+	if previous == nil || request.Generation == nil || request.Invocation || len(request.History) != 0 ||
+		len(request.Generation) != len(c.generation) ||
+		(len(c.generation) != 0 && &request.Generation[0] != &c.generation[0]) || request.Owner != c.owner ||
+		c.frozen != c.loader.frozen || c.sideKnown != c.loader.sideKnown || c.side != c.loader.side ||
+		previous.Revision != c.loader.Options.Filter.Membership(manifest.NamedResource{}).Revision ||
+		!p.evidence.Valid() || !proposal.guardCurrent() {
+		return false
+	}
+	owner := manifest.NamedResource{}
+	if request.Reads != nil {
+		owner = request.Reads.ID()
+		for id := range request.Reads.Required() {
+			if !slices.Contains(previous.Ordinary, id) {
+				return false
+			}
+		}
+	}
+	if owner != p.evidence.ID() {
+		return false
+	}
+	proposal.Needed, proposal.Selected, proposal.Dirty = previous.Needed, previous.Selected, previous.Dirty
+	proposal.Ordinary, proposal.Blocked, proposal.Namespaces = previous.Ordinary, previous.Blocked, previous.Namespaces
+	proposal.Revision, proposal.reads, proposal.reused = previous.Revision, p.evidence, true
+	return true
+}
+
+func (c *admissionClosure) derive() {
+	if !c.deriving && c.proposal != nil {
+		c.deriving = true
+		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
+	}
+}
+
+func (c *admissionClosure) refreshPrerequisites(
+	ctx context.Context,
+	previous *store.ReadSet,
+	request *PrepareRequest,
+) error {
+	c.ownerCandidates, c.ownersKnown = c.ownerCandidates[:0], false
+	if previous == nil {
+		return nil
+	}
+	if err := c.capturePrerequisites(ctx); err != nil {
+		return err
+	}
+	interpretation := c.frozen == c.loader.frozen && c.sideKnown == c.loader.sideKnown && c.side == c.loader.side
+	for id, state := range c.states {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
+		}
+		if !state.initialKnown && !state.productionsKnown {
+			continue
+		}
+		matched := c.matchesPrerequisites(id, &state, previous, request)
+		if !matched || !interpretation {
+			state.initialKnown, state.directKnown, state.productionsKnown = false, false, false
+			state.seed, state.affectedKnown = false, false
+			state.productions = nil
+			if state.ordinal != 0 {
+				identity := &c.identities[state.ordinal-1]
+				identity.stableObject, identity.stableOwner = nil, 0
+			}
+			delete(c.children, id)
+		}
+		c.states[id] = state
+	}
+	return nil
+}
+
+func (c *admissionClosure) matchesPrerequisites(
+	id manifest.NamedResource,
+	state *admissionState,
+	previous *store.ReadSet,
+	request *PrepareRequest,
+) bool {
+	matched := c.matchesDeclarationContent(id, state, previous, request)
+	object := c.objects.GetObject(id)
+
+	for source := range c.sources(id) {
+		c.boundSource(source)
+		before, beforeInputs, beforeDeclarations := c.changes.ForSource(source)
+		current, currentInputs, currentDeclarations := c.loader.Options.Changes.ForSource(source)
+		matched = before == current && beforeInputs == currentInputs && beforeDeclarations == currentDeclarations &&
+			c.proposal.reads.MatchesContent(previous, source) && matched
+	}
+	for ref := range c.references(id, object) {
+		if ref.Selector != nil {
+			c.objects.ListObjects(ref.Group, ref.Kind)
+		}
+		if ref.Name != "" {
+			c.objects.GetObject(ref.NamedResource)
+			matched = c.proposal.reads.MatchesContent(previous, ref.NamedResource) && matched
+		}
+	}
+	return matched
+}
+
+func (c *admissionClosure) matchesDeclarationContent(
+	id manifest.NamedResource,
+	state *admissionState,
+	previous *store.ReadSet,
+	request *PrepareRequest,
+) bool {
+	productions := c.currentProductions(id)
+	c.objects.GetObject(id)
+	matched := c.proposal.reads.MatchesContent(previous, id)
+	record, _ := c.loader.Index.Lookup(id)
+	if child := c.children[id]; child.Obj != nil {
+		indexed := record.Builder != "" && c.loader.registeredRoot(&record) != ""
+		if child.SourceSupport != (manifest.NamedResource{}) || indexed {
+			// Admission changes the target's presence, but the source still owns its derivation.
+			current, document, output := c.objects.GetEmission(id)
+			output.Finish()
+			matched = manifest.Equal(child.Obj, current) && manifest.ValueEqual(child.Doc, document) &&
+				slices.Equal(state.productions, productions)
+		}
+	}
+	if incoming := request.incoming(id); incoming.Obj != nil {
+		if previousChild := c.incoming(id); previousChild.Obj != nil {
+			if request.Owner != c.owner ||
+				!slices.Equal(c.generation[state.incoming-1].Productions, incoming.Productions) {
+				incoming.Productions = c.incomingProductions(&incoming, request.Owner, request.Reads)
+				productions = c.objects.IncomingProductions(incoming, c.loader.Index)
+			}
+			matched = manifest.Equal(previousChild.Obj, incoming.Obj) &&
+				manifest.ValueEqual(previousChild.Doc, incoming.Doc) && slices.Equal(state.productions, productions)
+		} else {
+			current, document, output := c.objects.GetEmission(id)
+			output.Finish()
+			matched = matched && manifest.Equal(current, incoming.Obj) &&
+				manifest.ValueEqual(document, incoming.Doc)
+		}
+	}
+	return matched
+}
+
+func (c *admissionClosure) capturePrerequisites(ctx context.Context) error {
+	for id, state := range c.states {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
+		}
+		if !state.initialKnown && !state.productionsKnown {
+			continue
+		}
+		c.currentProductions(id)
+		object := c.objects.GetObject(id)
+		for source := range c.sources(id) {
+			c.boundSource(source)
+		}
+		for ref := range c.references(id, object) {
+			if ref.Selector != nil {
+				c.objects.ListObjects(ref.Group, ref.Kind)
+			}
+			if ref.Name != "" {
+				c.objects.GetObject(ref.NamedResource)
+			}
+		}
+	}
+	return nil
+}
+
+func (c *admissionClosure) resetDemand() {
+	c.counts = [4]int{}
+	c.collecting, c.appKnown, c.applied = false, false, false
+	c.queue, c.roots = c.queue[:0], c.roots[:0]
+	clear(c.searched)
+	clear(c.historyProductions)
+	clear(c.accepted)
+	clear(c.replace)
+	for id, state := range c.states {
+		state.role, state.walked = admissionRole{}, admissionRole{}
+		state.consumer, state.restoration, state.claim, state.incoming = 0, 0, 0, 0
+		state.incomingProductions = nil
+		state.changed, state.rescan, state.requested, state.walkedOnce, state.listed = false, false, false, false, false
+		c.states[id] = state
+	}
 }
 
 func (c *admissionClosure) captureIncoming() {
-	if c.incoming.Obj == nil {
-		return
+	var guard *store.ReadSet
+	if c.proposal != nil {
+		guard = c.proposal.Request.Reads
 	}
-	if len(c.incoming.Productions) == 0 {
-		c.incoming.Productions = c.proposal.reads.Promotions(c.incoming.Obj.Named(), nil)
+	if len(c.generation) != 0 && c.states == nil {
+		c.states = map[manifest.NamedResource]admissionState{}
 	}
-	guard := c.proposal.Request.Reads
-	if guard == nil {
-		return
-	}
-	for ref := range manifest.References(c.incoming.Obj, manifest.ReferenceRelations) {
-		if ref.Selector != nil {
-			guard.ListObjects(ref.Group, ref.Kind)
+	for i := range c.generation {
+		child := &c.generation[i]
+		if child.Obj == nil {
+			continue
+		}
+		id := child.Obj.Named()
+		state := c.states[id]
+		state.incoming, state.incomingProductions = i+1, c.incomingProductions(child, c.owner, guard)
+		c.states[id] = state
+		if guard == nil {
+			continue
+		}
+		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
+			if ref.Selector != nil {
+				guard.ListObjects(ref.Group, ref.Kind)
+			}
 		}
 	}
+}
+
+func (c *admissionClosure) incomingProductions(
+	child *store.Child,
+	owner manifest.NamedResource,
+	guard *store.ReadSet,
+) []manifest.Production {
+	id := child.Obj.Named()
+	productions := child.Productions
+	if len(productions) == 0 && owner == (manifest.NamedResource{}) {
+		if guard != nil {
+			productions = guard.Promotions(id, nil)
+		} else {
+			productions = c.objects.Productions(id, nil)
+		}
+	}
+	if owner != (manifest.NamedResource{}) && owner != id {
+		productions = append(slices.Clone(productions), manifest.Production{Owner: owner})
+	}
+	return productions
+}
+
+func (c *admissionClosure) incoming(id manifest.NamedResource) store.Child {
+	state := c.states[id]
+	index := state.incoming - 1
+	if index >= 0 && index < len(c.generation) {
+		child := c.generation[index]
+		if child.Obj != nil && child.Obj.Named() == id {
+			child.Productions = state.incomingProductions
+			return child
+		}
+	}
+	return store.Child{}
+}
+
+func (r *PrepareRequest) incoming(id manifest.NamedResource) store.Child {
+	for i := range r.Generation {
+		child := r.Generation[i]
+		if child.Obj != nil && child.Obj.Named() == id {
+			return child
+		}
+	}
+	return store.Child{}
 }
 
 func (c *admissionClosure) seedConstruction() {
@@ -307,10 +634,10 @@ func (c *admissionClosure) selectsChild(id manifest.NamedResource) bool {
 
 func (c *admissionClosure) evaluate(ctx context.Context, request *PrepareRequest) (*Admission, error) {
 	defer c.releaseComparisons()
+	c.captureIncoming()
 	if len(c.history) != 0 {
 		c.readHistory()
 	}
-	var candidates [2][2][]Occurrence
 	var candidatesKnown [2]bool
 	materializers := func(demand materializerDemand, consumer manifest.NamedResource) bool {
 		mode := 0
@@ -318,10 +645,10 @@ func (c *admissionClosure) evaluate(ctx context.Context, request *PrepareRequest
 			mode = 1
 		}
 		if !candidatesKnown[mode] {
-			candidates[mode] = c.materializerCandidates(mode == 1)
+			c.candidates[mode] = c.materializerCandidates(mode == 1)
 			candidatesKnown[mode] = true
 		}
-		return c.materializers(new(demand), consumer, candidates[mode])
+		return c.materializers(new(demand), consumer, c.candidates[mode])
 	}
 	if err := c.seedAdmission(ctx, request, materializers); err != nil {
 		return nil, err
@@ -345,8 +672,8 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 	previous := c.role(id)
 	role.needed, role.selected, role.dirty = true, role.selected || previous.selected, role.dirty || previous.dirty
 	role.ordinary = role.ordinary || previous.ordinary || role.selected
-	if previous == role && (!c.proposal.Request.Invocation || c.incoming.Obj != nil) &&
-		(c.incoming.Obj == nil || c.incoming.Obj.Named() != id) {
+	if previous == role && (!c.proposal.Request.Invocation || len(c.generation) != 0) &&
+		(c.incoming(id).Obj == nil) {
 		record := c.record(id)
 		if !c.loader.roots.get(id).admitted && record.Path == "" && c.loader.candidates[id].Obj == nil ||
 			c.objects.GetObject(id) != nil {
@@ -363,8 +690,8 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 func (c *admissionClosure) assignRole(id manifest.NamedResource, role admissionRole) {
 	record := c.record(id)
 	policy := record.Origin.Policy(id, nil)
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
-		policy = c.incoming.Policy(id)
+	if c.incoming(id).Obj != nil {
+		policy = c.incoming(id).Policy(id)
 	} else if record.Path == "" && record.Builder == "" {
 		_, policy = c.objects.Lookup(id)
 	}
@@ -418,8 +745,12 @@ func (c *admissionClosure) seedAdmission(
 			c.add(id, role)
 		}
 	}
-	if c.incoming.Obj != nil {
-		return c.selectIncoming()
+	for i := range c.generation {
+		if child := &c.generation[i]; child.Obj != nil {
+			if err := c.selectIncoming(child.Obj.Named()); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -434,11 +765,16 @@ func (c *admissionClosure) finishAdmission(
 	if err := c.admitChangedRoots(ctx); err != nil {
 		return nil, err
 	}
-	if c.incoming.Entry != nil && c.loader.Store.GetDeclaration(c.incoming.Obj.Named()) != c.incoming.Obj {
+	for i := range c.generation {
+		child := c.generation[i]
+		if child.Obj == nil || child.Entry == nil || c.loader.Store.GetDeclaration(child.Obj.Named()) == child.Obj {
+			continue
+		}
 		if c.children == nil {
 			c.children = map[manifest.NamedResource]store.Child{}
 		}
-		c.children[c.incoming.Obj.Named()] = c.incoming
+		child.Productions = c.currentProductions(child.Obj.Named())
+		c.children[child.Obj.Named()] = child
 	}
 	if total := c.counts[0] + c.counts[1] + c.counts[2] + c.counts[3]; total != 0 {
 		roles := make([]manifest.NamedResource, total)

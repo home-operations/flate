@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -74,6 +75,7 @@ func TestGeneratedObjects_OCISelector(t *testing.T) {
 func TestGeneratedObjects_EmptyRule(t *testing.T) {
 	t.Parallel()
 	for _, obj := range []BaseManifest{&Kustomization{}, &HelmRelease{HelmReleaseSpec: helmv2.HelmReleaseSpec{Suspend: true, Chart: &helmv2.HelmChartTemplate{Kind: KindOCIRepository, Spec: helmv2.HelmChartTemplateSpec{OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://registry.example/chart"}}}}}, &HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}}} {
+		assertGeneratedTargets(t, obj)
 		objects, err := GeneratedObjects(obj)
 		assert.FatalIf(t, err != nil || objects != nil, "%T generated %v: %v", obj, objects, err)
 	}
@@ -363,6 +365,7 @@ func testGeneratedObjectsChartTemplateCase(t *testing.T, testCaseInput *testGene
 	}
 	before := hr.DeepCopy()
 	projected := hr.WithNamespace("effective").(*HelmRelease)
+	assertGeneratedTargets(t, projected)
 	objects, err := GeneratedObjects(projected)
 	assert.FatalIf(t, err != nil || len(objects) != 1, "objects=%v error=%v", objects, err)
 	release := helmv2.HelmRelease{
@@ -463,4 +466,39 @@ func testEqualChartTemplateOptionalValuesCase(
 		"%s",
 		"nil and empty collection semantics differ",
 	)
+}
+
+func TestGeneratedTargets_InvalidTemplate(t *testing.T) {
+	t.Parallel()
+	for _, template := range []*helmv2.HelmChartTemplate{
+		{Kind: "Bucket"},
+		{Kind: KindHelmChart},
+		{Kind: KindOCIRepository},
+	} {
+		t.Run(template.Kind, func(t *testing.T) {
+			t.Parallel()
+			assertGeneratedTargets(
+				t,
+				&HelmRelease{Name: "app", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: template}},
+			)
+		})
+	}
+}
+
+func assertGeneratedTargets(t *testing.T, object BaseManifest) {
+	t.Helper()
+	objects, objectErr := GeneratedObjects(object)
+	targets, targetErr := GeneratedTargets(object)
+	assert.Equal(t, targetErr == nil, objectErr == nil)
+	assert.Equal(t, errors.Is(targetErr, ErrInput), errors.Is(objectErr, ErrInput))
+	assert.Equal(t, errors.Is(targetErr, ErrFlux), errors.Is(objectErr, ErrFlux))
+	identities := make([]NamedResource, len(objects))
+	for i, child := range objects {
+		identities[i] = child.Named()
+	}
+	projected := make([]NamedResource, len(targets))
+	for i, target := range targets {
+		projected[i] = target.NamedResource
+	}
+	assert.Diff(t, projected, identities)
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -50,9 +52,11 @@ func (c *Controller) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	ex := &execution{Controller: c}
 	ex.run.Init(c.Controller, id)
+	ex.run.Take(previous)
 	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
 	return &ex.run
 }

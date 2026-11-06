@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -369,12 +371,12 @@ func TestRenderTrees_IndependentModel(t *testing.T) {
 				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: first}\n",
 			}
 			o.store.AddObject(owner)
-			first := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone)
+			first := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
 			next := *owner
 			next.ResourcesTemplate = strings.ReplaceAll(owner.ResourcesTemplate, "first", "final")
 			o.store.AddObject(&next)
 			assert.FatalIf(t, first.Valid(), "%v", "first execution retained superseded declaration authority")
-			final := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone)
+			final := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
 			first.Retire()
 			assert.FatalIf(t, !final.Valid(), "%v", "final live execution is invalid")
 			result, err := o.collectResult(nil)

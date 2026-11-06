@@ -13,8 +13,8 @@ import (
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func (c *admissionClosure) object(id manifest.NamedResource) manifest.BaseManifest {
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
-		return c.incoming.Obj
+	if c.incoming(id).Obj != nil {
+		return c.incoming(id).Obj
 	}
 	if child := c.children[id]; child.Obj != nil {
 		return child.Obj
@@ -40,7 +40,7 @@ func (c *admissionClosure) references(
 				return
 			}
 		}
-		if obj != nil && (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) {
+		if obj != nil && (c.incoming(id).Obj == nil) {
 			for ref := range c.historicalReferences(id) {
 				if !yield(ref) {
 					return
@@ -87,6 +87,7 @@ func (c *admissionClosure) productions(id manifest.NamedResource) []manifest.Pro
 	state := c.states[id]
 	productions := state.productions
 	if !state.productionsKnown {
+		c.derive()
 		productions = c.currentProductions(id)
 		c.extendProductions(id, &state, &productions)
 
@@ -113,7 +114,7 @@ func (c *admissionClosure) bootstrapPrerequisite(
 		return false
 	}
 	required := func(owner manifest.BaseManifest) bool { return c.bootstrapInputRequired(owner, id, &record) }
-	if required(c.object(record.Parent)) || c.incoming.Obj != nil && required(c.incoming.Obj) {
+	if required(c.object(record.Parent)) || c.incoming(id).Obj != nil && required(c.incoming(id).Obj) {
 		return true
 	}
 	for _, owner := range c.loader.rootAdmission(record.Path, record.File, id.KindInfo().Structural).owners {
@@ -168,7 +169,7 @@ func (c *admissionClosure) bootstrapProductionCurrent(id manifest.NamedResource,
 	if location.Pinned || location.External || safepath.Escaped(production.File) {
 		return false
 	}
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
+	if c.incoming(id).Obj != nil {
 		return true
 	}
 	owner := production.Materializer(id)
@@ -295,8 +296,8 @@ func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yie
 }
 
 func (c *admissionClosure) currentProductions(id manifest.NamedResource) []manifest.Production {
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
-		return c.objects.IncomingProductions(c.incoming, c.loader.Index)
+	if child := c.incoming(id); child.Obj != nil {
+		return c.objects.IncomingProductions(child, c.loader.Index)
 	}
 	return c.objects.Productions(id, c.loader.Index)
 }
@@ -383,8 +384,7 @@ func (c *admissionClosure) mergeHistoricalProductions(
 		)
 	}
 	for owner, records := range c.accepted {
-		if c.incoming.Obj != nil && c.incoming.Obj.Named() == id &&
-			!c.acceptedDeclaration(id, owner, c.incoming.Obj) {
+		if incoming := c.incoming(id); incoming.Obj != nil && !c.acceptedDeclaration(id, owner, incoming.Obj) {
 			continue
 		}
 		if record, ok := records[id]; ok && len(record.Productions) != 0 {
@@ -541,9 +541,9 @@ func (e *declarationEvidence) allowsOwner(owner manifest.NamedResource) bool {
 func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declarationEvidence {
 	record := c.record(id)
 	evidence := declarationEvidence{owner: c.declarationProductionOwner(id, record.Parent)}
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
-		evidence.child = c.incoming
-		evidence.accepted = c.acceptedDeclaration(id, evidence.owner, c.incoming.Obj)
+	if incoming := c.incoming(id); incoming.Obj != nil {
+		evidence.child = incoming
+		evidence.accepted = c.acceptedDeclaration(id, evidence.owner, incoming.Obj)
 		return evidence
 	}
 	if object := c.objects.GetDeclaration(id); object != nil {
@@ -578,7 +578,7 @@ func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declar
 }
 
 func (c *admissionClosure) acceptedDeclaration(id, owner manifest.NamedResource, object manifest.BaseManifest) bool {
-	if (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) && owner != (manifest.NamedResource{}) && owner != id {
+	if c.incoming(id).Obj == nil && owner != (manifest.NamedResource{}) && owner != id {
 		output, _ := c.objects.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
 		if output != nil && len(output.Failures) == 0 && output.OutputReads.Valid() &&
 			slices.ContainsFunc(output.Children, func(child store.Child) bool {

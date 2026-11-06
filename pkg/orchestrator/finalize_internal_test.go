@@ -273,7 +273,7 @@ func TestFinalize_DispatchPanic(t *testing.T) {
 				tasks,
 				fixtureDispatcher{
 					store: st,
-					dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
+					dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel, schedule.Result) schedule.Result {
 						panic("dispatch panic")
 					},
 				},

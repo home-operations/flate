@@ -6,6 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -83,13 +85,17 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 	reconcile := func(level manifest.DrainLevel) *base.Execution {
 		var run *base.Execution
 		c.Tasks.Go(t.Context(), "release", func(ctx context.Context) {
-			run = c.ReconcileNode(ctx, hr.Named(), level)
+			run = c.ReconcileNode(ctx, hr.Named(), level, schedule.Result{})
 		})
 		c.Tasks.BlockTillDone()
 		return run
 	}
 	st.AddObject(hr)
-	c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: hr}, nil)
+	c.KeepEmitted(
+		t.Context(),
+		manifest.NamedResource{},
+		loader.PrepareRequest{Generation: []store.Child{{Obj: hr}}, Reads: nil},
+	)
 	id := hr.ChartSource()
 	arrivals := 0
 	stop := st.AddListener(store.EventObjectAdded, func(got manifest.NamedResource, value any) {

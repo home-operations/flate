@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -139,7 +141,7 @@ func testRenderSubstitutionProducerOrderingCase(
 	o.tasks.Go(ctx, "producer", func(ctx context.Context) {
 		select {
 		case <-release:
-			d.Dispatch(ctx, producer, manifest.DrainNone)
+			d.Dispatch(ctx, producer, manifest.DrainNone, schedule.Result{})
 		case <-ctx.Done():
 		}
 	})
@@ -149,7 +151,7 @@ func testRenderSubstitutionProducerOrderingCase(
 	}
 	attempt := make(chan *base.Execution, 1)
 	o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
-		result := d.Dispatch(ctx, consumer, manifest.DrainNone)
+		result := d.Dispatch(ctx, consumer, manifest.DrainNone, schedule.Result{})
 		attempt <- result.Assessment.(*base.Execution)
 	})
 	var execution *base.Execution
@@ -169,7 +171,7 @@ func testRenderSubstitutionProducerOrderingCase(
 	o.tasks.Go(
 		ctx,
 		"consumer",
-		func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) },
+		func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone, schedule.Result{}) },
 	)
 	o.tasks.BlockTillDone()
 	output, _ := o.store.Get[*manifest.ConfigMap](
@@ -271,7 +273,7 @@ spec:
 		o.tasks.Go(
 			t.Context(),
 			"parent",
-			func(ctx context.Context) { d.Dispatch(ctx, parent, manifest.DrainNone) },
+			func(ctx context.Context) { d.Dispatch(ctx, parent, manifest.DrainNone, schedule.Result{}) },
 		)
 		o.tasks.BlockTillDone()
 		owners := []manifest.NamedResource{
@@ -294,13 +296,13 @@ spec:
 		}
 		release, done := make(chan struct{}), make(chan struct{})
 		o.tasks.Go(t.Context(), "first", func(ctx context.Context) {
-			d.Dispatch(ctx, order[0], manifest.DrainNone)
+			d.Dispatch(ctx, order[0], manifest.DrainNone, schedule.Result{})
 			close(release)
 		})
 		o.tasks.Go(t.Context(), "second", func(ctx context.Context) {
 			select {
 			case <-release:
-				d.Dispatch(ctx, order[1], manifest.DrainNone)
+				d.Dispatch(ctx, order[1], manifest.DrainNone, schedule.Result{})
 			case <-ctx.Done():
 			}
 			close(done)
@@ -327,7 +329,7 @@ func (i testRenderResourceSetConflictingDataConsumersCaseInputs) finishConflicti
 	o.tasks.Go(
 		t.Context(),
 		"consumer",
-		func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) },
+		func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone, schedule.Result{}) },
 	)
 	o.tasks.BlockTillDone()
 	{

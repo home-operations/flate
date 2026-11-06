@@ -9,27 +9,39 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/pkg/depwait"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Execution owns one reconciliation's captured inputs and retained assessment.
+type preparation interface{ Retire() }
+
+// Execution MUST retain its input capture through every output borrower.
 type Execution struct {
 	*Controller
 
-	Reads       store.ReadSet
-	Unreadable  []manifest.NamedResource
-	Blocked     []manifest.NamedResource
-	Disposition store.AssessmentKind
-	kind        schedule.Kind
-	pending     error
-	resume      func(context.Context, manifest.DrainLevel) error
-	initial     store.StatusInfo
-	unresolved  []manifest.NamedResource
-	recovering  bool
-	generated   []store.Child
-	prepared    bool
+	Preparation           preparation
+	AdmissionPreparation  *loader.Preparation
+	ProbeLeft, ProbeRight *Execution
+	ProbeConsumed         bool
+	probeStored           bool
+	declaration           manifest.BaseManifest
+	generationKnown       bool
+	generationErr         error
+	generationObject      manifest.BaseManifest
+	Reads                 store.ReadSet
+	Unreadable            []manifest.NamedResource
+	Blocked               []manifest.NamedResource
+	Disposition           store.AssessmentKind
+	kind                  schedule.Kind
+	pending               error
+	resume                func(context.Context, manifest.DrainLevel) error
+	initial               store.StatusInfo
+	unresolved            []manifest.NamedResource
+	recovering            bool
+	generated             []store.Child
+	prepared              bool
 }
 
 // Init starts capture in caller-owned storage before declaration or dependency assessment.
@@ -48,6 +60,50 @@ func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
 	e.Controller = c
 	e.Reads.Init(c.Store, id, nil)
 	e.Reads.BeginExecution(nil)
+}
+
+// InitProbe MUST NOT publish runtime admission or status.
+func (e *Execution) InitProbe(c *Controller, object manifest.BaseManifest) {
+	e.Controller = c
+	e.declaration = object
+	e.Reads.Init(c.Store, object.Named(), nil)
+	_, _, output := e.Reads.GetEmission(object.Named())
+	output.Finish()
+	e.probeStored = e.Reads.GetDeclaration(object.Named()) != nil
+	e.Reads.BeginExecution(object)
+}
+
+func (e *Execution) matchesDeclaration(object manifest.BaseManifest) bool {
+	return object != nil && manifest.Equal(e.declaration, object)
+}
+
+// ProbeCurrent MUST preserve the declaration authority captured at initialization.
+func (e *Execution) ProbeCurrent(indexed manifest.BaseManifest) bool {
+	object := e.Store.GetDeclaration(e.Reads.ID())
+	if object == nil && !e.probeStored {
+		object = indexed
+	}
+	return e.matchesDeclaration(object)
+}
+
+// Take MUST precede retirement of the predecessor's preparation owner.
+func (e *Execution) Take(previous schedule.Result) {
+	prior, ok := previous.Assessment.(*Execution)
+	if !ok || prior == nil || prior.Reads.ID() != e.Reads.ID() {
+		return
+	}
+	if e.declaration == nil {
+		e.declaration = e.Reads.GetObject(e.Reads.ID())
+	}
+	e.AdmissionPreparation, prior.AdmissionPreparation = prior.AdmissionPreparation, nil
+	if !prior.matchesDeclaration(e.declaration) {
+		return
+	}
+	e.Preparation, prior.Preparation = prior.Preparation, nil
+	e.generated, prior.generated = prior.generated, nil
+	e.generationKnown, prior.generationKnown = prior.generationKnown, false
+	e.generationErr, prior.generationErr = prior.generationErr, nil
+	e.generationObject, prior.generationObject = prior.generationObject, nil
 }
 
 // Valid reports whether the assessment and its admitted output are current.
@@ -70,6 +126,14 @@ func (e *Execution) Valid() bool {
 // Retire releases superseded assessment cells while retaining borrowed output.
 func (e *Execution) Retire() {
 	e.closeAcquisition()
+	if e.Preparation != nil {
+		e.Preparation.Retire()
+		e.Preparation = nil
+	}
+	e.AdmissionPreparation.Retire()
+	e.AdmissionPreparation = nil
+	e.generated, e.generationObject, e.generationErr, e.declaration = nil, nil, nil, nil
+	e.generationKnown = false
 	e.Store.Retire(&e.Reads)
 }
 
@@ -125,7 +189,11 @@ func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, 
 		admit = admit || e.filterActive() && !e.filter.ShouldReconcile(dep.NamedResource)
 	}
 	if admit {
-		if _, err := e.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &e.Reads); err != nil {
+		if _, err := e.KeepEmitted(
+			ctx,
+			manifest.NamedResource{},
+			loader.PrepareRequest{Generation: nil, Reads: &e.Reads, Preparation: &e.AdmissionPreparation},
+		); err != nil {
 			return err
 		}
 	}
@@ -134,6 +202,7 @@ func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, 
 
 func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) error {
 	w := depwait.Waiter{
+		Preparation:      &e.AdmissionPreparation,
 		Store:            &e.Reads,
 		Parent:           e.Reads.ID(),
 		Existence:        e.existence,
@@ -310,13 +379,17 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 		}
 	}()
 	obj, ok := e.Reads.Get[T](id)
+	e.declaration = obj
 	policy := e.Reads.Policy(id)
 	if ok && e.filterActive() {
 		if _, err := e.KeepEmitted(
 			ctx,
 			manifest.NamedResource{},
-			store.Child{Obj: obj, Origin: policy.Origin},
-			&e.Reads,
+			loader.PrepareRequest{
+				Generation:  []store.Child{{Obj: obj, Origin: policy.Origin}},
+				Reads:       &e.Reads,
+				Preparation: &e.AdmissionPreparation,
+			},
 		); err != nil {
 			e.finish(ctx, err)
 			return
@@ -385,20 +458,30 @@ func (e *Execution) reconcile[T manifest.BaseManifest](
 	return reconcile(ctx, obj, level)
 }
 
-func (e *Execution) prepare(ctx context.Context, obj manifest.BaseManifest) (resultErr error) {
+func (e *Execution) prepare(ctx context.Context, obj manifest.BaseManifest) error {
 	e.prepared = true
-	objects, err := manifest.GeneratedObjects(obj)
-	if err == nil && len(objects) == 0 && !e.Store.HasGeneratedObjects(e.Reads.ID()) {
+	if !e.generationKnown {
+		objects, err := manifest.GeneratedObjects(obj)
+		if ctx.Err() != nil {
+			return ctx.Err() //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
+		}
+		e.generationKnown, e.generationObject, e.generationErr = true, obj, err
+		if err != nil || len(objects) != 0 {
+			work := e.Reads.Work().Scope().Record(manifest.WorkPreparation, "")
+			work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
+			work.Finish(err)
+		}
+		if err == nil {
+			for _, object := range objects {
+				e.generated = append(e.generated, store.Child{Obj: object, Generated: true})
+			}
+		}
+	}
+	if e.generationErr != nil {
+		return e.generationErr
+	}
+	if len(e.generated) == 0 && !e.Store.HasGeneratedObjects(e.Reads.ID()) {
 		return nil
-	}
-	work := e.Reads.Work().Scope().Record(manifest.WorkPreparation, "")
-	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-	defer func() { work.Finish(resultErr) }()
-	if err != nil {
-		return err
-	}
-	for _, object := range objects {
-		e.generated = append(e.generated, store.Child{Obj: object, Generated: true})
 	}
 	_, _, inventory := e.Reads.GetEmission(e.Reads.ID())
 	defer inventory.Finish()
@@ -571,7 +654,7 @@ func (e *Execution) Progressed() bool { return e.Disposition == store.Assessment
 
 // Close retires all provenance borrowed by the completed invocation.
 func (e *Execution) Close() {
-	e.closeAcquisition()
+	e.Retire()
 	e.Reads.Close()
 }
 
@@ -642,6 +725,7 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 	gateErr := e.classify(ctx, level)
 
 	w := depwait.Waiter{
+		Preparation:      &e.AdmissionPreparation,
 		Store:            &e.Reads,
 		Parent:           e.Reads.ID(),
 		Existence:        e.existence,
@@ -719,12 +803,20 @@ func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) 
 		proof.SetWork(e.Reads.Work())
 		defer proof.Retire()
 		proof.RequireData(id)
-		if _, err := e.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &proof); err != nil {
+		if _, err := e.KeepEmitted(
+			ctx,
+			manifest.NamedResource{},
+			loader.PrepareRequest{Generation: nil, Reads: &proof, Preparation: &e.AdmissionPreparation},
+		); err != nil {
 			return err
 		}
 	}
 	if e.existence != nil {
-		_, err := e.existence.Promote(ctx, &e.Reads, id)
+		_, err := e.existence.Promote(
+			ctx,
+			loader.PrepareRequest{Reads: &e.Reads, Preparation: &e.AdmissionPreparation},
+			id,
+		)
 		return err
 	}
 	return nil

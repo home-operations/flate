@@ -357,7 +357,7 @@ func testExecutionPreflightWithdrawsPublishedOutputCase(
 		Tasks: tasks,
 		Store: st,
 		ID:    id,
-		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, _ schedule.Result) *base.Execution {
 			attempts.Add(1)
 			execution := controllertest.NewExecution(c, id)
 			latest = execution

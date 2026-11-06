@@ -211,7 +211,7 @@ func (c *admissionClosure) productionOwner(
 	}
 	unmaterialized := owner == (manifest.NamedResource{}) && !evidence.independent &&
 		p.Declaration == (manifest.NamedResource{}) && p.Authored != (manifest.NamedResource{})
-	if unmaterialized && (c.incoming.Obj == nil || c.incoming.Obj.Named() != id) &&
+	if unmaterialized && (c.incoming(id).Obj == nil) &&
 		c.objects.GetDeclaration(id) == nil {
 		owner = p.Owner
 	}
@@ -229,7 +229,7 @@ func (c *admissionClosure) productionMaterialized(
 	if owned || declared {
 		return true
 	}
-	if !evidence.independent || c.incoming.Obj == nil || c.incoming.Obj.Named() != id {
+	if !evidence.independent || c.incoming(id).Obj == nil {
 		return false
 	}
 	needed := c.loader.Options.Filter.Membership(id).Needed
@@ -271,7 +271,7 @@ func (c *admissionClosure) walkObject(
 		applicationSource, _, pathBearing = occurrence.SourcePath()
 	}
 	materialized := c.selectProductions(id, &record, role, &evidence)
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id {
+	if c.incoming(id).Obj != nil {
 		c.selectIncomingProducers(id, role, &evidence)
 	}
 
@@ -327,21 +327,16 @@ func (c *admissionClosure) walkReferences(
 	obj manifest.BaseManifest,
 	materializers func(materializerDemand, manifest.NamedResource) bool,
 ) error {
-	generated, _ := manifest.GeneratedObjects(obj)
-	var generatedTargets []manifest.ProducerTarget
+	generatedTargets, _ := manifest.GeneratedTargets(obj)
 	if obj == nil {
 		if occurrence, ok := c.loader.catalogOccurrence(id); ok {
 			generatedTargets = occurrence.facts.targets[len(occurrence.facts.authoredTargets):]
 		}
 	}
 	for ref := range c.references(id, obj) {
-		if slices.ContainsFunc(
-			generated,
-			func(child manifest.BaseManifest) bool { return child.Named() == ref.NamedResource },
-		) ||
-			slices.ContainsFunc(generatedTargets, func(target manifest.ProducerTarget) bool {
-				return manifest.Resolve(target.NamedResource, "", id.Namespace) == ref.NamedResource
-			}) {
+		if slices.ContainsFunc(generatedTargets, func(target manifest.ProducerTarget) bool {
+			return manifest.Resolve(target.NamedResource, "", id.Namespace) == ref.NamedResource
+		}) {
 			continue
 		}
 		inputRecord, _ := c.loader.Index.Lookup(ref.NamedResource)
@@ -491,7 +486,7 @@ func (c *admissionClosure) hydrateDeclaration(
 	obj manifest.BaseManifest,
 	evidence *declarationEvidence,
 ) (manifest.BaseManifest, error) {
-	if c.incoming.Obj != nil && c.incoming.Obj.Named() == id || c.children[id].Obj != nil {
+	if c.incoming(id).Obj != nil || c.children[id].Obj != nil {
 		return obj, nil
 	}
 	if current, policy := c.objects.Lookup(id); current != nil &&

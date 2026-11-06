@@ -76,6 +76,7 @@ func TestParseHelmRelease_ChartTemplateAdmission(t *testing.T) {
 			if tc.field == "" {
 				assert.NoError(t, err)
 				assert.FatalIf(t, obj == nil, "%s", "valid declaration was not admitted")
+				assertGeneratedTargets(t, obj)
 				return
 			}
 			assert.FatalIf(

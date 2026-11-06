@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
@@ -446,12 +448,17 @@ func testBuildChangeFilterReclaimsProbesCase(
 			reads := &store.ReadSet{}
 			reads.Init(current.store, owner, nil)
 			defer reads.Retire()
-			records, narrow := current.controllers.PreviousRender(ctx, declaration, reads)
+			preparedHistory449 := current.controllers.PreviousRender(ctx, declaration, schedule.Result{})
+			if preparedHistory449.Assessment != nil {
+				defer preparedHistory449.Assessment.Close()
+			}
+			records, narrow := preparedHistory449.Records, preparedHistory449.Complete
 			assert.Equal(t, records == nil, true)
 			assert.Equal(t, narrow, false)
 			assert.NoError(t, ctx.Err())
 		}
 		current.store.DeleteObject(owner)
+		current.sweepProbes(false)
 		return done
 	}()
 	for id := range current.store.Sweep() {

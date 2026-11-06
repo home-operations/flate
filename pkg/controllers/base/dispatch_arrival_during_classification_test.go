@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/loader"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -121,7 +123,12 @@ type declarationPromotion func(manifest.NamedResource) bool
 
 func (declarationPromotion) IsFileIndexed(manifest.NamedResource) bool { return false }
 
-func (p declarationPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+//nolint:gocritic // The admission contract requires an independent request snapshot.
+func (p declarationPromotion) Promote(
+	_ context.Context,
+	_ loader.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
 	return p(id), nil
 }
 

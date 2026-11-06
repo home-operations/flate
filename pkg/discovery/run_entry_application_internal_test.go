@@ -304,7 +304,7 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	leaf := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
 	proposal, err := l.Prepare(
 		t.Context(),
-		loader.PrepareRequest{Incoming: store.Child{Obj: leaf, Entry: &manifest.EntryApplication{}}},
+		loader.PrepareRequest{Generation: []store.Child{{Obj: leaf, Entry: &manifest.EntryApplication{}}}},
 	)
 	assert.NoError(t, err)
 	advanced, err := session.Advance(t.Context(), proposal)
@@ -316,7 +316,7 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	reads.Init(st, manifest.NamedResource{}, nil)
 	defer reads.Retire()
 	reads.RequireData(leaf.Named())
-	proposal, err = l.Prepare(t.Context(), loader.PrepareRequest{Incoming: store.Child{Obj: leaf}, Reads: &reads})
+	proposal, err = l.Prepare(t.Context(), loader.PrepareRequest{Generation: []store.Child{{Obj: leaf}}, Reads: &reads})
 	assert.NoError(t, err)
 	committed, err := l.Commit(t.Context(), proposal, loader.Execution)
 	assert.NoError(t, err)

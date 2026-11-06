@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -54,7 +56,7 @@ func TestReconcile_TaskFailures(t *testing.T) {
 			d := Dispatch{
 				Tasks: tasks,
 				ID:    testutil.HelmReleaseID("media", "sonarr"),
-				ReconcileNode: func(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution {
+				ReconcileNode: func(context.Context, manifest.NamedResource, manifest.DrainLevel, schedule.Result) *base.Execution {
 					if tc.panics {
 						panic("reconcile failure")
 					}
@@ -102,7 +104,7 @@ func TestDispatchToFixpoint_PanicWithReadyStatus(t *testing.T) {
 		Tasks: tasks,
 		Store: st,
 		ID:    id,
-		ReconcileNode: func(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution {
+		ReconcileNode: func(context.Context, manifest.NamedResource, manifest.DrainLevel, schedule.Result) *base.Execution {
 			panic("reconcile failure")
 		},
 	}
@@ -126,8 +128,10 @@ func TestDispatchToFixpoint_SettlesRetainedAssessment(t *testing.T) {
 	dependency := manifest.DependencyRef{NamedResource: testutil.HelmReleaseID("apps", "absent")}
 	dispatches := 0
 	info := DispatchToFixpoint(t.Context(), t, Dispatch{
-		Tasks: tasks, Store: st, ID: obj.Named(),
-		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+		Tasks: tasks,
+		Store: st,
+		ID:    obj.Named(),
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, _ schedule.Result) *base.Execution {
 			dispatches++
 			execution := NewExecution(base.New(st, tasks), id)
 			execution.Dispatch(

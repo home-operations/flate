@@ -230,9 +230,10 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 			<-release
 			return failure
 		}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "base warning"}}}
+		headFailure := errors.New("head discovery failed")
 		headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
 			close(headEntered)
-			return errors.New("head discovery failed")
+			return headFailure
 		}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
 		var baseRef, head Rendered
 		done := make(chan error, 1)
@@ -272,7 +273,8 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 			"discovery cause lost or duplicated: %v",
 			err,
 		)
-		for _, side := range []Rendered{baseRef, head} {
+		for i, side := range []Rendered{baseRef, head} {
+			assert.Equal(t, errors.Is(side.Err, []error{failure, headFailure}[i]), true)
 			assert.FatalIf(t, side.Orchestrator != nil || side.Result == nil ||
 				len(
 					side.Result.Manifests,

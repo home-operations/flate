@@ -108,13 +108,19 @@ func (d *Session) loadAt(
 	ctx context.Context,
 	dir string,
 	total *int,
-	input sourceLoad,
+	input *sourceLoad,
 ) (int, error) {
 	n, err := d.loader.Load(ctx, dir, input.owner, input.work)
 	if d.loader.IgnoreFile == "" && errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
 	}
 	if err != nil {
+		if errors.Is(err, fs.ErrPermission) && input.artifact != nil && input.artifact.FS != nil {
+			name, _ := filepath.Rel(input.artifact.LocalPath, dir)
+			if _, statErr := fs.Stat(input.artifact.FS, filepath.ToSlash(name)); errors.Is(statErr, fs.ErrPermission) {
+				return 0, nil
+			}
+		}
 		return 0, err
 	}
 	*total += n
@@ -127,25 +133,15 @@ func (d *Session) loadSourcePath(
 	expansion *sourceExpansion,
 	total *int,
 ) (int, error) {
-	input := expansion.source
 	owner := expansion.ks.Named()
 	if !d.constructionStarted {
 		owner = manifest.NamedResource{}
 	}
-	n, err := d.loadAt(ctx, dir, total, sourceLoad{
-		owner: owner,
-		work:  d.cfg.Work.Source(expansion.ks.SourceID()).Record(manifest.WorkPreparation, dir),
+	return d.loadAt(ctx, dir, total, &sourceLoad{
+		owner:    owner,
+		work:     d.cfg.Work.Source(expansion.ks.SourceID()).Record(manifest.WorkPreparation, dir),
+		artifact: expansion.source,
 	})
-	if err != nil {
-		if errors.Is(err, fs.ErrPermission) && input != nil && input.FS != nil {
-			name, _ := filepath.Rel(input.LocalPath, dir)
-			if _, statErr := fs.Stat(input.FS, filepath.ToSlash(name)); errors.Is(statErr, fs.ErrPermission) {
-				return 0, nil
-			}
-		}
-		return 0, err
-	}
-	return n, nil
 }
 
 // Begin binds sources and collects declarations without evaluating standalone packages.
@@ -369,6 +365,7 @@ func (d *Session) Freeze(ctx context.Context) (*Result, error) {
 }
 
 type sourceLoad struct {
-	owner manifest.NamedResource
-	work  *manifest.WorkRecord
+	owner    manifest.NamedResource
+	work     *manifest.WorkRecord
+	artifact *store.SourceArtifact
 }

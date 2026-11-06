@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: cluster-marker, namespace: apps}
+data: {marker: "${CLUSTER_MARKER}"}

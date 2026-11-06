@@ -51,6 +51,24 @@ without selecting an unrelated consumer. Each case runs with
 two workers and compares two equal CLI runs. Consumed-input successor scheduling
 remains deferred to X2 and is not asserted by these fixtures.
 
+## Structural cluster partitioning
+
+`cluster-partition/` retains three plain cluster packages from `joryirving/home-ops` at `7548eb35aed27a000d9c8bfc4a6f8a73b14661cd`.
+Each package declares the same `flux-system/cluster-apps` Kustomization with its own application path and substitution.
+Each FluxInstance declares a local sync application for its cluster directory.
+The matching GitRepository and origin use `https://example.invalid/cluster.git` without a network request.
+The workload ConfigMaps live outside the entry directories and retain distinct substituted markers.
+An unrelated `.taskfiles/bootstrap/Taskfile.yaml` remains at the repository root without a root Kustomization.
+
+`cluster-partition/root` compares the complete table, three cluster coordinates, application paths, workload output, and stderr.
+`cluster-partition/explicit` selects each cluster with `-p` and requires only its own workload marker.
+`cluster-partition/singleton` removes both sibling clusters and retains the existing singleton presentation.
+`cluster-partition/renamed` moves the entries to `platform/{red,green,blue}` and changes their sync paths together.
+The renamed output follows sorted structural coordinates and retains the original application paths.
+Every case runs through `cli.Run` with two workers and compares two complete replays with fresh caches.
+The expected JSON comes from the declared ConfigMaps and Flux ownership labels.
+The expected tables come from the declared cluster coordinates and application paths.
+
 ## Independent render model
 
 `pkg/orchestrator/trees_model{,_render}_test.go` constructs bounded before/after

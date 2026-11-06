@@ -222,7 +222,7 @@ func (l *Loader) BuiltChildren(root string, owner manifest.NamedResource, reads 
 		}
 		record, ok := l.Index.Lookup(id)
 		if !ok || record.Declaration != child.Obj || record.Builder != builder || record.BuilderOwner != owner ||
-			!l.roots[id].independent &&
+			!l.roots.get(id).independent &&
 				!slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
 					return production.Owner == owner && production.Source == input.Source &&
 						production.File == record.File && production.Path == "" &&
@@ -494,7 +494,7 @@ func (l *Loader) setBuiltProduction(
 	builder := record.Builder
 	input := *inputValue
 	record.Refs = discoveryReferences(nil, obj)
-	if l.roots[id].independent {
+	if l.roots.get(id).independent {
 		record.Parent = manifest.NamedResource{}
 		record.Productions = slices.DeleteFunc(record.Productions, func(production manifest.Production) bool {
 			return production.Owner != (manifest.NamedResource{}) && production.Owner != id
@@ -529,7 +529,7 @@ func (l *Loader) publishBuiltRecords(
 		if id == input.Owner {
 			continue
 		}
-		independent := l.roots[id].independent
+		independent := l.roots.get(id).independent
 		if existing := l.Store.GetObject(
 			id,
 		); !independent && existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&

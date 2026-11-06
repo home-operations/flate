@@ -90,6 +90,7 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 }
 
 type entrySourceGroup struct {
+	scoped   bool
 	refs     []manifest.NamedResource
 	evidence store.Child
 	required bool
@@ -265,6 +266,12 @@ func (d *Session) entrySourceObject(
 	id manifest.NamedResource,
 	group *entrySourceGroup,
 ) manifest.BaseManifest {
+	if group.scoped {
+		if group.evidence.Obj != nil {
+			d.cfg.Store.AddObject(group.evidence.Obj, group.evidence.Doc)
+		}
+		return group.evidence.Obj
+	}
 	restricted := d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0
 	obj := d.cfg.Store.GetObject(id)
 	if previous, seen := d.resolvedSources[id]; restricted && seen && previous.synthetic && obj == previous.object &&

@@ -204,9 +204,11 @@ func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task
 		cache:  cfg.Cache,
 		tasks:  ts,
 	}
-	if o.cfg.work == nil && (cfg.RecordWork || slog.Default().Enabled(ctx, slog.LevelDebug)) {
+	recordWork := o.cfg.work != nil || cfg.RecordWork || slog.Default().Enabled(ctx, slog.LevelDebug)
+	if recordWork && (o.cfg.work == nil || o.cfg.work.Key.Tree != tree.ID) {
+		parent := o.cfg.work.Scope()
 		o.cfg.work = new(manifest.WorkRecorder)
-		o.cfg.work.Init(&manifest.WorkKey{Tree: tree.ID, Source: manifest.BootstrapSourceID}, manifest.WorkScope{})
+		o.cfg.work.Init(&manifest.WorkKey{Tree: tree.ID, Source: manifest.BootstrapSourceID}, parent)
 	}
 	st.SetWorkTree(tree.ID, o.cfg.work.Scope())
 	o.loader = loader.New(st)
@@ -327,7 +329,8 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		Work:         o.cfg.work.Scope(),
 		Declarations: o.cfg.Supply,
 		Selection:    o.cfg.Selection, Loader: o.loader,
-		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
+		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input, Entry: o.cfg.entry,
+
 		Store: o.store,
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipResourceKinds(),
@@ -368,13 +371,6 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 }
 
 func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Config) error {
-	planning := *config
-	planning.Loader, planning.Projections = nil, o.cfg.projections
-	entries, failure := discovery.Plan(ctx, planning)
-	if failure != nil {
-		return failure
-	}
-	config.Entry, config.Input = &entries[0], entries[0].Input
 	var err error
 	o.session, err = discovery.Begin(ctx, *config)
 	if err != nil {

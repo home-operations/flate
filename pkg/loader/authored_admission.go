@@ -11,11 +11,11 @@ import (
 func (l *Loader) applyAdmittedObjects(
 	next map[manifest.NamedResource]manifest.DiscoveryRecord,
 	objects map[manifest.NamedResource]store.Child,
-	allowed map[manifest.NamedResource]rootEvidence,
+	allowed *rootInventory,
 ) bool {
 	changed := false
 	for _, id := range slices.SortedFunc(maps.Keys(l.admitted), manifest.NamedResource.Compare) {
-		if _, survives := next[id]; !survives || !allowed[id].admitted {
+		if _, survives := next[id]; !survives || !allowed.get(id).admitted {
 			if l.Store.GetObject(id) == l.admitted[id] && l.Store.GetArtifact(id, store.ArtifactContent) == nil {
 				l.Store.DeleteObject(id)
 				changed = true
@@ -29,10 +29,10 @@ func (l *Loader) applyAdmittedObjects(
 	for _, id := range slices.SortedFunc(maps.Keys(objects), manifest.NamedResource.Compare) {
 		child := objects[id]
 		obj := child.Obj
-		if !allowed[id].admitted || !manifest.KindOf(obj).Discovery || l.documents.compact && next[id].Path != "" {
+		if !allowed.get(id).admitted || !manifest.KindOf(obj).Discovery || l.documents.compact && next[id].Path != "" {
 			continue
 		}
-		if next[id].Builder != "" && !allowed[id].independent {
+		if next[id].Builder != "" && !allowed.get(id).independent {
 			continue
 		}
 		changed = l.publishAdmittedObject(&child) || changed
@@ -60,30 +60,31 @@ func (l *Loader) publishAdmittedObject(child *store.Child) bool {
 func (l *Loader) allowAuthoredObjects(
 	next map[manifest.NamedResource]manifest.DiscoveryRecord,
 	objects map[manifest.NamedResource]store.Child,
-	allowed map[manifest.NamedResource]rootEvidence,
+	allowed *rootInventory,
 	scopes map[string]rootAdmission,
 ) {
 	for id := range objects {
 		child := objects[id]
 		if !manifest.AdmitsRoot(child.Obj) {
-			allowed[id] = rootEvidence{}
+			allowed.set(id, &rootEvidence{})
 			continue
 		}
 		r := next[id]
 		if r.Path == "" && r.Authored == (manifest.NamedResource{}) {
-			evidence := allowed[id]
+			evidence := allowed.get(id)
 			evidence.admitted = r.Parent == (manifest.NamedResource{})
-			allowed[id] = evidence
+			allowed.set(id, &evidence)
 			continue
 		}
-		allowed[id] = scopes[r.Path].evidence(l, id, &r)
+		evidence := scopes[r.Path].evidence(l, id, &r)
+		allowed.set(id, &evidence)
 	}
 }
 
 func (l *Loader) allowAuthoredRecords(
 	next map[manifest.NamedResource]manifest.DiscoveryRecord,
 	objects map[manifest.NamedResource]store.Child,
-	allowed map[manifest.NamedResource]rootEvidence,
+	allowed *rootInventory,
 	scopes map[string]rootAdmission,
 ) {
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
@@ -92,14 +93,15 @@ func (l *Loader) allowAuthoredRecords(
 			continue
 		}
 		if obj := l.catalogObject(id, &record); obj == nil || !manifest.AdmitsRoot(obj) {
-			allowed[id] = rootEvidence{}
+			allowed.set(id, &rootEvidence{})
 			continue
 		}
 		scope, known := scopes[record.Path]
 		if !known {
 			scope = l.rootAdmission(record.Path, record.File, id.KindInfo().Structural)
 		}
-		allowed[id] = scope.evidence(l, id, &record)
+		evidence := scope.evidence(l, id, &record)
+		allowed.set(id, &evidence)
 	}
 }
 

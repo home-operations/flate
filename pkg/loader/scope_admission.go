@@ -44,25 +44,37 @@ func (l *Loader) visitKustomizationScope(repoRoot string, ks *manifest.Kustomiza
 	if v.source.Name == "" || v.source.Kind == "" {
 		v.source = manifest.BootstrapSourceID
 	}
-	if root != repoRoot {
-		prefix, err := filepath.Rel(repoRoot, root)
-		if err != nil {
-			return
-		}
-		v.prefix = filepath.ToSlash(prefix)
-		if !pinned {
-			v.localBase = scope.origin
-		}
+	if !new(l.documents).scopeCoordinates(&v, repoRoot, pinned) {
+		return
 	}
 	l.visitScope(new(v), false)
+}
+
+func (r *documentReader) scopeCoordinates(visit *graphVisit, repoRoot string, pinned bool) bool {
+	if visit.root == repoRoot {
+		return true
+	}
+	prefix, err := filepath.Rel(repoRoot, visit.root)
+	if err != nil {
+		return false
+	}
+	visit.prefix = filepath.ToSlash(prefix)
+	if !pinned {
+		visit.localBase = r.localBase(visit.root, repoRoot)
+	}
+	return true
 }
 
 func (l *Loader) visitRootScopes(repoRoot string, kss []store.Child) {
 	l.scopes.roots = l.packageRoots(repoRoot, kss)
 	if l.entry == entryKustomize {
 		entry := l.fileCoordinate(l.entryPath)
-		if !slices.Contains(l.scopes.roots, entry) {
-			v := graphVisit{root: repoRoot, dir: entry, role: kustomizeinput.Resource}
+		projected := filepath.Join(repoRoot, filepath.FromSlash(entry))
+		if new(l.documents).localPath(l.entryPath) == new(l.documents).localPath(projected) &&
+			!slices.Contains(l.scopes.roots, entry) {
+			v := graphVisit{
+				root: repoRoot, dir: entry, source: manifest.BootstrapSourceID, role: kustomizeinput.Resource,
+			}
 			l.visitScope(new(v), true)
 		}
 	}

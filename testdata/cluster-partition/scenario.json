@@ -1,0 +1,711 @@
+{
+  "source": {
+    "repository": "joryirving/home-ops",
+    "revision": "7548eb35aed27a000d9c8bfc4a6f8a73b14661cd",
+    "paths": [
+      "kubernetes/clusters/main",
+      "kubernetes/clusters/test",
+      "kubernetes/clusters/utility",
+      "kubernetes/apps/main/flux-system/flux-operator.yaml",
+      "kubernetes/apps/utility/flux-system/flux-operator.yaml"
+    ],
+    "reductions": "Retain the plain cluster packages, colliding cluster-apps identity, repository-relative app paths, and FluxInstance sync applications. Replace remote bootstrap and workload payloads with matching local source aliases and ConfigMaps. Each workload uses its cluster substitution. Retain an unrelated root Taskfile without a root Kustomization. The renamed case changes entry paths and sync paths together."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "renamed",
+      "directory": "overlays/renamed"
+    }
+  ],
+  "cases": [
+    {
+      "name": "root",
+      "description": "Root get lists three cluster labels and app paths; named build retains each substituted workload marker.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "cluster-apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-get.stdout",
+              "stderr": "expect/root.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/root-build.stdout",
+              "stderr": "expect/root.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "explicit",
+      "description": "Each explicit path retains singleton presentation and only its own source, application path, and substituted workload.",
+      "setup": [
+        {
+          "commit": "base"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "main-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "cluster-apps",
+              "-p",
+              "@@repo@@/kubernetes/clusters/main",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/main-get.stdout",
+              "stderr": "expect/main.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "main-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-apps",
+              "-p",
+              "@@repo@@/kubernetes/clusters/main",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/main-build.stdout",
+              "stderr": "expect/main.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "cluster-apps",
+              "-p",
+              "@@repo@@/kubernetes/clusters/test",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/test-get.stdout",
+              "stderr": "expect/test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-apps",
+              "-p",
+              "@@repo@@/kubernetes/clusters/test",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/test-build.stdout",
+              "stderr": "expect/test.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "utility-get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "cluster-apps",
+              "-p",
+              "@@repo@@/kubernetes/clusters/utility",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/utility-get.stdout",
+              "stderr": "expect/utility.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "utility-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-apps",
+              "-p",
+              "@@repo@@/kubernetes/clusters/utility",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/utility-build.stdout",
+              "stderr": "expect/utility.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "singleton",
+      "description": "One cluster at repository root retains the existing singleton table and workload bytes.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "delete": "repo/kubernetes/clusters/test"
+        },
+        {
+          "delete": "repo/kubernetes/apps/test"
+        },
+        {
+          "delete": "repo/kubernetes/clusters/utility"
+        },
+        {
+          "delete": "repo/kubernetes/apps/utility"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "cluster-apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/main-get.stdout",
+              "stderr": "expect/main.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/main-build.stdout",
+              "stderr": "expect/main.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "renamed",
+      "description": "Renamed entry directories retain three structural clusters, sorted coordinates, source isolation, and application paths.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/clusters/main",
+            "to": "repo/platform/red"
+          }
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/clusters/test",
+            "to": "repo/platform/green"
+          }
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/clusters/utility",
+            "to": "repo/platform/blue"
+          }
+        },
+        {
+          "overlay": "renamed"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "get",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "cluster-apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/renamed-get.stdout",
+              "stderr": "expect/renamed.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster-apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "-o",
+              "json"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/renamed-build.stdout",
+              "stderr": "expect/renamed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/main-build.stdout",
+      "cases": [
+        "explicit",
+        "singleton"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/main-get.stdout",
+      "cases": [
+        "explicit",
+        "singleton"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/main.stderr",
+      "cases": [
+        "explicit",
+        "singleton"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/renamed-build.stdout",
+      "cases": [
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/renamed-get.stdout",
+      "cases": [
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/renamed.stderr",
+      "cases": [
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/root-build.stdout",
+      "cases": [
+        "root"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/root-get.stdout",
+      "cases": [
+        "root"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/root.stderr",
+      "cases": [
+        "root"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/test-build.stdout",
+      "cases": [
+        "explicit"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/test-get.stdout",
+      "cases": [
+        "explicit"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/test.stderr",
+      "cases": [
+        "explicit"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "expect/utility-build.stdout",
+      "cases": [
+        "explicit"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/utility-get.stdout",
+      "cases": [
+        "explicit"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "expect/utility.stderr",
+      "cases": [
+        "explicit"
+      ],
+      "purpose": "The invocation emits no bytes to this stream."
+    },
+    {
+      "path": "overlays/renamed/repo/platform/blue/instance.yaml",
+      "cases": [
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "overlays/renamed/repo/platform/green/instance.yaml",
+      "cases": [
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "overlays/renamed/repo/platform/red/instance.yaml",
+      "cases": [
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/.taskfiles/bootstrap/Taskfile.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/apps/main/configmap.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/apps/main/kustomization.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/apps/test/configmap.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/apps/test/kustomization.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/apps/utility/configmap.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/apps/utility/kustomization.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/main/apps.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/main/instance.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/main/source.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/test/apps.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/test/instance.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/test/source.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/utility/apps.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/utility/instance.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    },
+    {
+      "path": "repo/kubernetes/clusters/utility/source.yaml",
+      "cases": [
+        "root",
+        "explicit",
+        "singleton",
+        "renamed"
+      ],
+      "purpose": "Cluster entry declaration, local workload, or independently derived complete CLI result."
+    }
+  ]
+}

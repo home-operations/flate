@@ -17,28 +17,13 @@ func (c *admissionClosure) walk(
 	if len(c.queue) == 0 {
 		return nil
 	}
-	var owners []manifest.BaseManifest
-	ownersKnown := false
-	owned := func() []manifest.BaseManifest {
-		if !ownersKnown {
-			for _, owner := range c.objects.ListObjects("", "") {
-				if slices.ContainsFunc(c.productions(owner.Named()), func(p manifest.Production) bool {
-					return p.Owner != (manifest.NamedResource{}) && p.Owner != owner.Named()
-				}) {
-					owners = append(owners, owner)
-				}
-			}
-			ownersKnown = true
-		}
-		return owners
-	}
 	//nolint:intrange // add MUST extend the worklist during traversal.
 	for cursor := 0; cursor < len(c.queue); cursor++ {
 		if err := ctx.Err(); err != nil {
 			return err //nolint:wrapcheck // Admission cancellation preserves the original context error identity.
 		}
 		id := c.queue[cursor]
-		if err := c.walkObject(ctx, id, owned, materializers); err != nil {
+		if err := c.walkObject(ctx, id, materializers); err != nil {
 			return err
 		}
 	}
@@ -259,7 +244,6 @@ func (c *admissionClosure) productionMaterialized(
 func (c *admissionClosure) walkObject(
 	ctx context.Context,
 	id manifest.NamedResource,
-	owned func() []manifest.BaseManifest,
 	materializers func(materializerDemand, manifest.NamedResource) bool,
 ) error {
 	role := c.role(id)
@@ -272,12 +256,13 @@ func (c *admissionClosure) walkObject(
 	obj := c.object(id)
 	record := c.record(id)
 
-	independent := c.independent(id, owned)
+	root := c.rootEvidence(id)
 	evidence := c.declarationEvidence(id)
-	evidence.independent = independent
+	evidence.independent = root.independent || c.bootstrapPrerequisite(id)
 	evidence.qualification = !role.ordinary
 	bootstrap := evidence.independent && c.loader.roots[id].independent
-	if !bootstrap && (!evidence.independent || !record.Parent.ReportHidden()) && evidence.allowsOwner(record.Parent) {
+	needsParent := !evidence.independent || !record.Parent.ReportHidden()
+	if !bootstrap && needsParent && evidence.allowsOwner(record.Parent) {
 		c.add(record.Parent, admissionRole{needed: true, ordinary: true, dirty: c.states[record.Parent].changed})
 	}
 	pathBearing := false
@@ -399,10 +384,7 @@ func (c *admissionClosure) prepareReferenceInput(
 		indexed := c.loader.IsFileIndexed(ref.NamedResource)
 		object := c.object(ref.NamedResource)
 		if !c.role(ref.NamedResource).needed && (indexed || object != nil) &&
-			!c.bootstrapPrerequisite(
-				ref.NamedResource,
-				func() []manifest.BaseManifest { return c.objects.ListObjects("", "") },
-			) {
+			!c.bootstrapPrerequisite(ref.NamedResource) {
 			return false
 		}
 		if !indexed && object == nil {
@@ -513,7 +495,7 @@ func (c *admissionClosure) hydrateDeclaration(
 		return obj, nil
 	}
 	if current, policy := c.objects.Lookup(id); current != nil &&
-		(policy.Root || policy.Origin == manifest.SuppliedDeclaration && !c.loader.AdmitsRoot(c.loader.CatalogObject(id), c.record(id).Path)) {
+		(policy.Root || policy.Origin == manifest.SuppliedDeclaration && !c.rootEvidence(id).admitted) {
 		return obj, nil
 	}
 	if !evidence.independent && c.role(id).selected && c.loader.entry == entryKustomize {

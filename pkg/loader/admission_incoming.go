@@ -119,8 +119,7 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 			c.objects.GetDeclaration(target) != nil {
 			continue
 		}
-		if record.Parent == (manifest.NamedResource{}) &&
-			c.loader.AdmitsRoot(c.loader.CatalogObject(target), record.Path) {
+		if c.rootEvidence(target).admitted {
 			continue
 		}
 		role.needed = true

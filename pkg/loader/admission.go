@@ -139,6 +139,12 @@ type admissionReader interface {
 	IncomingProductions(store.Child, *manifest.DiscoveryIndex) []manifest.Production
 	GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission)
 	ListObjects(string, string) []manifest.BaseManifest
+	ListProductionCandidates(
+		string,
+		string,
+		*manifest.DiscoveryIndex,
+		map[manifest.NamedResource]bool,
+	) []manifest.BaseManifest
 }
 
 type (
@@ -172,6 +178,8 @@ type admissionClosure struct {
 	result             Admission
 	counts             [4]int
 	collecting         bool
+	ownerCandidates    []manifest.BaseManifest
+	ownersKnown        bool
 	appKnown           bool
 	applied            bool
 	children           map[manifest.NamedResource]store.Child

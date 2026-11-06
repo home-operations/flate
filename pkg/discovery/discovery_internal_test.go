@@ -471,7 +471,7 @@ func testLoadAtIgnoreFileAndMissingDirectoryCase(
 		)
 	}
 	total := 0
-	_, err := d.loadAt(t.Context(), target, &total, sourceLoad{})
+	_, err := d.loadAt(t.Context(), target, &total, &sourceLoad{})
 	if (*testCaseInput.scenario) == "missing-ignore" {
 		assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "missing explicit ignore error = %v", err)
 	} else {

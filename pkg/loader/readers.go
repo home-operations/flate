@@ -270,13 +270,11 @@ func (rf *readerFinalizer) admitRecord(id manifest.NamedResource, r *manifest.Di
 	}
 	kind := id.KindInfo()
 	if kind.Discovery {
-		if _, known := rf.loader.roots[id]; known {
+		if _, known := rf.loader.roots.lookup(id); known {
 			return
 		}
-		if rf.loader.roots == nil {
-			rf.loader.roots = map[manifest.NamedResource]rootEvidence{}
-		}
-		rf.loader.roots[id] = rf.loader.rootAdmission(r.Path, r.File, kind.Structural).evidence(rf.loader, id, r)
+		evidence := rf.loader.rootAdmission(r.Path, r.File, kind.Structural).evidence(rf.loader, id, r)
+		rf.loader.roots.set(id, &evidence)
 		return
 	}
 	doc := rf.loader.documents.cache[r.Path]
@@ -293,11 +291,11 @@ func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifes
 		return
 	}
 	kind := id.KindInfo()
-	if parents := rf.emittedFiles[r.File]; kind.Structural && !rf.loader.roots[id].independent &&
+	if parents := rf.emittedFiles[r.File]; kind.Structural && !rf.loader.roots.get(id).independent &&
 		r.Parent == (manifest.NamedResource{}) && len(parents) == 1 && parents[0] != id {
 		r.Parent = parents[0]
 	}
-	if rf.loader.roots[id].independent {
+	if rf.loader.roots.get(id).independent {
 		input := rf.loader.documents.artifacts[new(rf.loader.documents).mountedRoot(r.Path)]
 		for i := range r.Productions {
 			p := &r.Productions[i]
@@ -367,7 +365,7 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 
 func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
 	kind := id.KindInfo()
-	if rf.loader.documents.compact && kind.Parent && !rf.loader.roots[id].independent &&
+	if rf.loader.documents.compact && kind.Parent && !rf.loader.roots.get(id).independent &&
 		r.Parent == (manifest.NamedResource{}) &&
 		!rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), r.Path) {
 		var owner manifest.NamedResource

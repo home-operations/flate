@@ -205,7 +205,7 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 					occurrence, ok := l.occurrence(id)
 					assert.Equal(t, ok, true)
 					input := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-					child, err := l.exactObject(t.Context(), &occurrence, input)
+					child, err := l.OccurrenceObject(t.Context(), &occurrence, input)
 					assert.NoError(t, err)
 					child.Doc["spec"].(map[string]any)["interval"] = "2h"
 					proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: child})

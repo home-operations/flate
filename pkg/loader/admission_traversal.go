@@ -43,7 +43,7 @@ func (c *admissionClosure) completeHydrate(
 	scope *completeHydrateState,
 ) (manifest.BaseManifest, error) {
 	if child := c.loader.candidates[(*scope.id)]; child.Obj != nil && scope.record.Path == "" &&
-		!c.loader.roots[*scope.id].independent {
+		!c.loader.roots.get(*scope.id).independent {
 		if c.children == nil {
 			c.children = map[manifest.NamedResource]store.Child{}
 		}
@@ -66,7 +66,7 @@ func (c *admissionClosure) completeHydrate(
 	if input == nil {
 		return (*scope.obj), nil
 	}
-	child, err := c.loader.exactObject(ctx, new(occurrence), input)
+	child, err := c.loader.OccurrenceObject(ctx, new(occurrence), input)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func (c *admissionClosure) walkObject(
 	evidence := c.declarationEvidence(id)
 	evidence.independent = root.independent || c.bootstrapPrerequisite(id)
 	evidence.qualification = !role.ordinary
-	bootstrap := evidence.independent && c.loader.roots[id].independent
+	bootstrap := evidence.independent && c.loader.roots.get(id).independent
 	needsParent := !evidence.independent || !record.Parent.ReportHidden()
 	if !bootstrap && needsParent && evidence.allowsOwner(record.Parent) {
 		c.add(record.Parent, admissionRole{needed: true, ordinary: true, dirty: c.states[record.Parent].changed})
@@ -441,7 +441,7 @@ func (c *admissionClosure) selectProductions(
 ) bool {
 	materialized := record.Parent != (manifest.NamedResource{}) && record.Parent != id ||
 		record.BuilderOwner != (manifest.NamedResource{}) && record.BuilderOwner != id
-	bootstrap := evidence.independent && c.loader.roots[id].independent
+	bootstrap := evidence.independent && c.loader.roots.get(id).independent
 	productions := c.productions(id)
 	for i := range productions {
 		production := &productions[i]
@@ -530,7 +530,8 @@ func (c *admissionClosure) hydrateDeclaration(
 func (c *admissionClosure) hydrateBuilt(id manifest.NamedResource, child *store.Child) bool {
 	role := c.role(id)
 	preparation := role.needed && role.ordinary && !role.selected && id.KindInfo().Structural
-	if !c.loader.roots[id].independent && !c.states[id].requested && !preparation && (role.ordinary || !role.needed) {
+	if !c.loader.roots.get(id).independent && !c.states[id].requested && !preparation &&
+		(role.ordinary || !role.needed) {
 		return false
 	}
 	if c.children == nil {

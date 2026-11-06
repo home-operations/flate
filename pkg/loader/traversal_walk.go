@@ -72,9 +72,11 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 
 func (w *traversal) seenScopeVisit(visit *graphVisit) bool {
 	if slices.Contains(w.visitBuf[:w.visitCount], visit.graphContext) {
+		w.scopeSkipped++
 		return true
 	}
 	if _, seen := w.visited[visit.graphContext]; seen {
+		w.scopeSkipped++
 		return true
 	}
 	if w.visitCount < len(w.visitBuf) {

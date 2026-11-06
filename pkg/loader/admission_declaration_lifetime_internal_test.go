@@ -221,7 +221,7 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 		Namespace: "apps",
 		Name:      "owner",
 	}
-	l.roots[child] = rootEvidence{admitted: testCaseInput.independent}
+	l.roots.set(child, &rootEvidence{admitted: testCaseInput.independent})
 	if testCaseInput.knownOwner {
 		record := l.Index.Records[child]
 		record.Parent = manifest.NamedResource{

@@ -120,6 +120,21 @@ func newTestOrchestratorTail(tailCaseInput *newTestOrchestratorTailInputs) (*Orc
 				}
 			}
 		})
+	if o.cfg.Selection.Changed || o.cfg.ExternalChanges != nil || len(o.cfg.Selection.Roots) != 0 {
+		planned, err := prepareTreeEntries(
+			(*tailCaseInput.tb).Context(),
+			[]Tree{o.cfg.Tree},
+			tailCaseInput.cfg,
+			&o.inputs,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if len(planned) != 1 {
+			return nil, manifest.NewError(manifest.ErrInput, nil, "test orchestrator requires one entry")
+		}
+		o.cfg.Tree = planned[0]
+	}
 	return o, nil
 }
 

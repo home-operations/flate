@@ -236,7 +236,11 @@ func TestCommit_OrdinaryNativeRoots(t *testing.T) {
 	assert.NoError(t, err)
 	for _, name := range []string{"a", "b"} {
 		id := testutil.KustomizationID("apps", name)
-		assert.Equal(t, l.roots[id].independent && l.roots[id].occurrence.Declaration != (OccurrenceID{}), false)
+		assert.Equal(
+			t,
+			l.roots.get(id).independent && l.roots.get(id).occurrence.Declaration != (OccurrenceID{}),
+			false,
+		)
 		at := slices.IndexFunc(proposal.Objects, func(child store.Child) bool { return child.Obj.Named() == id })
 		assert.FatalIf(t, at < 0, "ordinary native root omitted %s", id)
 		assert.Equal(t, proposal.Objects[at].SourceSupport, manifest.BootstrapSourceID)

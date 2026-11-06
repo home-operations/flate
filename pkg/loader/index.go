@@ -102,6 +102,7 @@ func (l *Loader) Retire() {
 		l.documents = documentReader{}
 		l.facts, l.scopes, l.Options.ParsedInputs = nil, nil, nil
 		l.candidates, l.admitted, l.locations = nil, nil, nil
+		l.roots = rootInventory{}
 		l.bindings.Store(nil)
 		l.projections.Clear()
 		return
@@ -198,7 +199,7 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 			rel, _ := filepath.Rel(repoRoot, origin)
 			r.File = filepath.ToSlash(rel)
 		}
-		if l.roots[id].independent {
+		if l.roots.get(id).independent {
 			r.Parent = manifest.NamedResource{}
 		} else if kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
 			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {

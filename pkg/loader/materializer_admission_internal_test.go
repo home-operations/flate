@@ -548,7 +548,7 @@ func testApplicationInventoryCase(t *testing.T, tc *applicationInventoryCase) {
 			Path:     filepath.Join(root, "entry", "application.yaml"),
 			File:     "entry/application.yaml",
 		}
-		l.roots = map[manifest.NamedResource]rootEvidence{application.Named(): {admitted: true}}
+		l.roots.set(application.Named(), &rootEvidence{admitted: true})
 		current := application.Clone()
 		if tc.name == "retired_static" {
 			current.Spec = manifest.DeepCopyMap(application.Spec)

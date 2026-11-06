@@ -24,8 +24,9 @@ type parsedSource struct {
 	input     any
 	documents map[string]parsedDocument
 	binding   *store.ArtifactInput
-	walks     map[physicalContext][]graphVisit
+	walks     map[physicalContext]physicalWalk
 	loads     map[loadContext]loadFacts
+	hydrated  map[OccurrenceID]store.Child
 }
 
 type parsedDocument struct {
@@ -38,6 +39,11 @@ type parsedDocument struct {
 	searched  bool
 	plugins   *[]pluginInputs
 	decodeErr error
+}
+
+type physicalWalk struct {
+	visits   []graphVisit
+	imported bool
 }
 
 type physicalContext struct {
@@ -53,6 +59,7 @@ type (
 		err                error
 		coverage           manifest.DocumentRole
 		complete, observed bool
+		imported           bool
 		files              []fileAdmission
 		directories        map[string]loadDirectory
 	}
@@ -91,17 +98,23 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 	}
 	sourceBinding := binding
 	source := parsedSource{
-		input:   identity,
-		binding: &sourceBinding,
-		walks:   map[physicalContext][]graphVisit{},
-		loads:   map[loadContext]loadFacts{},
+		input:    identity,
+		binding:  &sourceBinding,
+		walks:    map[physicalContext]physicalWalk{},
+		loads:    map[loadContext]loadFacts{},
+		hydrated: map[OccurrenceID]store.Child{},
 	}
-	if prepared := l.documents.parsed; prepared != nil && prepared.compact {
+	if prepared := l.documents.parsed; prepared != nil && prepared.compact == l.documents.compact {
 		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
 			source.walks, source.loads = maps.Clone(prior.walks), maps.Clone(prior.loads)
+			source.hydrated = maps.Clone(prior.hydrated)
 			for key, load := range source.loads {
-				load.observed, load.err = false, nil
+				load.observed, load.err, load.imported = false, nil, true
 				source.loads[key] = load
+			}
+			for key, walk := range source.walks {
+				walk.imported = true
+				source.walks[key] = walk
 			}
 		}
 	}
@@ -115,19 +128,21 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 		sources: map[string]parsedSource{},
 		compact: l.documents.compact,
 	}
-	for root, artifact := range l.documents.artifacts {
-		source := parsedSource{input: parsedInputIdentity(artifact)}
-		if inputs.compact {
-			source = l.sourceFacts(root)
-			source.walks, source.loads = maps.Clone(source.walks), maps.Clone(source.loads)
+	for root := range l.documents.artifacts {
+		source := l.sourceFacts(root)
+		source.walks, source.loads = maps.Clone(source.walks), maps.Clone(source.loads)
+		if !l.documents.compact && root == l.documents.bootstrap {
+			maps.DeleteFunc(source.walks, func(_ physicalContext, walk physicalWalk) bool { return walk.imported })
+			maps.DeleteFunc(source.loads, func(_ loadContext, load loadFacts) bool { return load.imported })
 		}
+		source.hydrated = maps.Clone(source.hydrated)
 		source.documents = map[string]parsedDocument{}
 		inputs.sources[root] = source
 	}
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for file, doc := range l.documents.cache {
 		if doc.body == nil && doc.objects == nil &&
-			(!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
+			(!doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
 			continue
 		}
 		if source, ok := inputs.sources[new(l.documents).mountedRoot(file)]; ok {
@@ -180,9 +195,7 @@ func (r documentReader) restore(file string) {
 			cached.objects = cloneInputObjects(doc.objects)
 			cached.coverage, cached.possible = doc.coverage, doc.possible
 		}
-		if r.compact {
-			cached.pathState, cached.searched, cached.plugins, cached.decodeErr = doc.state, doc.searched, doc.plugins, doc.decodeErr
-		}
+		cached.pathState, cached.searched, cached.plugins, cached.decodeErr = doc.state, doc.searched, doc.plugins, doc.decodeErr
 		r.cache[file] = cached
 	}
 }

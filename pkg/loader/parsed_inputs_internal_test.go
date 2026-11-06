@@ -55,7 +55,10 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 		_, err := planner.Load(t.Context(), filepath.Join(root, side), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
-	assert.Equal(t, planner.facts, (*ParsedInputs)(nil))
+	assert.Equal(t, len(planner.facts.sources[root].loads), 2)
+	for _, load := range planner.facts.sources[root].loads {
+		assert.Equal(t, load.complete, true)
+	}
 	assert.NoError(t, planner.FinalizeIndex(t.Context(), root, false))
 	assert.Equal(t, len(planner.Index.Visibility), 0)
 	inputs := planner.ParsedInputs()
@@ -97,6 +100,109 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 		)
 	},
 	)
+}
+
+func TestParsedInputs_PhysicalReplayLifetime(t *testing.T) {
+	t.Parallel()
+	for _, compact := range []bool{false, true} {
+		t.Run(strconv.FormatBool(compact), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			var directories atomic.Int64
+			input := &store.SourceArtifact{
+				LocalPath: root,
+				FS: parsedReadFS{directories: &directories, FS: fstest.MapFS{
+					"resource.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n")},
+				}},
+			}
+			load := func(parsed *ParsedInputs) *Loader {
+				st := store.New()
+				st.SetArtifact(manifest.BootstrapSourceID, input)
+				l := New(st)
+				l.SourceRoot, l.Options.Selection.Changed, l.Options.ParsedInputs = root, compact, parsed
+				_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+				assert.NoError(t, err)
+				occurrences, err := l.Occurrences(t.Context(), root, "")
+				assert.NoError(t, err)
+				assert.Equal(t, len(occurrences), 1)
+				assert.Equal(t, occurrences[0].Identity.Name, "payload")
+				return l
+			}
+			planner := load(nil)
+			assert.Equal(t, directories.Load(), int64(2))
+			native := load(planner.ParsedInputs())
+			assert.Equal(t, directories.Load(), int64(2))
+			load(native.ParsedInputs())
+			want := int64(4)
+			if compact {
+				want = 2
+			}
+			assert.Equal(t, directories.Load(), want)
+		})
+	}
+}
+
+func TestOccurrences_NestedContextReplay(t *testing.T) {
+	t.Parallel()
+	for _, namespace := range []string{"", "outer"} {
+		t.Run(namespace, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			var recorder manifest.WorkRecorder
+			st.SetWorkTree(manifest.TreeID{}, recorder.Scope())
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+				"kustomization.yaml":       {Data: []byte("namespace: '" + namespace + "'\nresources: [child]\n")},
+				"child/kustomization.yaml": {Data: []byte("namespace: inner\nresources: [resource.yaml]\n")},
+				"child/resource.yaml": {
+					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n"),
+				},
+			}})
+			l := New(st)
+			l.SourceRoot = root
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			_, err = l.Occurrences(t.Context(), root, "")
+			assert.NoError(t, err)
+			work := recorder.Scope().Traversal(manifest.BootstrapSourceID)
+			before := work.Counts
+			occurrences, err := l.Occurrences(t.Context(), filepath.Join(root, "child"), "")
+			assert.NoError(t, err)
+			assert.Equal(t, len(occurrences), 1)
+			assert.Equal(t, occurrences[0].Identity.Namespace, "inner")
+			wantFiles, wantEdges := uint64(0), uint64(0)
+			if namespace != "" {
+				wantFiles, wantEdges = 2, 1
+			}
+			assert.Equal(t, work.Counts.FileEntries-before.FileEntries, wantFiles)
+			assert.Equal(t, work.Counts.ReaderEdges-before.ReaderEdges, wantEdges)
+		})
+	}
+}
+
+func TestOccurrences_SharedSubtreeCompleteness(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"kustomization.yaml":        {Data: []byte("resources: [left, right]\n")},
+		"left/kustomization.yaml":   {Data: []byte("resources: [../shared]\n")},
+		"right/kustomization.yaml":  {Data: []byte("resources: [../shared]\n")},
+		"shared/kustomization.yaml": {Data: []byte("resources: [resource.yaml]\n")},
+		"shared/resource.yaml":      {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\n")},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	_, err = l.Occurrences(t.Context(), root, "")
+	assert.NoError(t, err)
+	for _, side := range []string{"left", "right"} {
+		occurrences, queryErr := l.Occurrences(t.Context(), filepath.Join(root, side), "")
+		assert.NoError(t, queryErr)
+		assert.Equal(t, len(occurrences), 1)
+		assert.Equal(t, occurrences[0].Identity.Name, "payload")
+	}
 }
 
 func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
@@ -324,7 +430,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 		assert.NoError(t, err)
 		occurrences, errInner := l.Occurrences(t.Context(), filepath.Join(root, side), "")
 		assert.NoError(t, errInner)
-		child, errInner := l.exactObject(t.Context(), new(occurrences[0]), nil)
+		child, errInner := l.OccurrenceObject(t.Context(), new(occurrences[0]), nil)
 		assert.NoError(t, errInner)
 		assert.Equal(t, len(child.Warnings), 1)
 		assert.Equal(t, child.Warnings[0].Resource, occurrences[0].Identity)

@@ -248,7 +248,11 @@ func TestEntryRoots_NativeOperand(t *testing.T) {
 				Namespace: "apps",
 				Name:      "one",
 			}
-			assert.Equal(t, l.roots[id].independent && l.roots[id].occurrence.Declaration != (OccurrenceID{}), !native)
+			assert.Equal(
+				t,
+				l.roots.get(id).independent && l.roots.get(id).occurrence.Declaration != (OccurrenceID{}),
+				!native,
+			)
 			assert.Equal(t, l.AdmitsRoot(l.CatalogObject(id), l.Index.Records[id].Path), true)
 		})
 	}

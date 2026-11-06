@@ -348,7 +348,7 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 	if previous == role && (!c.proposal.Request.Invocation || c.incoming.Obj != nil) &&
 		(c.incoming.Obj == nil || c.incoming.Obj.Named() != id) {
 		record := c.record(id)
-		if !c.loader.roots[id].admitted && record.Path == "" && c.loader.candidates[id].Obj == nil ||
+		if !c.loader.roots.get(id).admitted && record.Path == "" && c.loader.candidates[id].Obj == nil ||
 			c.objects.GetObject(id) != nil {
 			return
 		}

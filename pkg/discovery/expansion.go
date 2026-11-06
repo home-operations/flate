@@ -37,7 +37,7 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 		ctx,
 		d.cfg.Path,
 		total,
-		sourceLoad{work: d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)},
+		&sourceLoad{work: d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)},
 	); err != nil {
 		return err
 	}

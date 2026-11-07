@@ -3,13 +3,68 @@ package selection
 import (
 	"iter"
 	"path/filepath"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
+// Frozen discovery MUST keep the shared catalog witnesses immutable through the session.
+type admissionCatalog struct {
+	entries       map[manifest.NamedResource]admissionCatalogEntry
+	materializers []manifest.NamedResource
+}
+
+type admissionCatalogEntry struct {
+	occurrence OccurrenceFacts
+	object     manifest.BaseManifest
+	known      bool
+}
+
+func (s *Session) catalogSnapshot() *admissionCatalog {
+	if snapshot := s.catalog.Load(); snapshot != nil {
+		return snapshot
+	}
+	snapshot := &admissionCatalog{
+		entries: make(map[manifest.NamedResource]admissionCatalogEntry, len(s.facts.SelectionIndex().Records)),
+	}
+	for id := range s.facts.SelectionIndex().Records {
+		occurrence, known := s.facts.Occurrence(id)
+		object := occurrence.Object
+		if object == nil {
+			object = occurrence.Catalog
+		}
+		if object == nil {
+			object = occurrence.Record.Declaration
+		}
+		if object != nil {
+			object = manifest.CatalogObject(object, id)
+		}
+		snapshot.entries[id] = admissionCatalogEntry{occurrence: occurrence, object: object, known: known}
+		if occurrence.CatalogKnown &&
+			(occurrence.Policy != nil || len(occurrence.Targets) != 0 || occurrence.NeedsCandidates) ||
+			occurrence.Candidate.Obj != nil && occurrence.Record.Builder != "" {
+			snapshot.materializers = append(snapshot.materializers, id)
+		}
+	}
+	slices.SortFunc(snapshot.materializers, manifest.NamedResource.Compare)
+	if s.catalog.CompareAndSwap(nil, snapshot) {
+		return snapshot
+	}
+	return s.catalog.Load()
+}
+
+func (c *admissionClosure) occurrenceFacts(id manifest.NamedResource) (OccurrenceFacts, bool) {
+	if c.catalog != nil {
+		if entry, known := c.catalog.entries[id]; known {
+			return entry.occurrence, entry.known
+		}
+	}
+	return c.facts.Occurrence(id)
+}
+
 func (c *admissionClosure) catalogOccurrence(id manifest.NamedResource) (OccurrenceFacts, bool) {
-	facts, known := c.facts.Occurrence(id)
+	facts, known := c.occurrenceFacts(id)
 	return facts, known && facts.CatalogKnown
 }
 
@@ -20,7 +75,7 @@ func (c *admissionClosure) occurrence(id manifest.NamedResource) (OccurrenceFact
 
 //nolint:ireturn // Immutable catalog witnesses MUST retain their concrete manifest type.
 func (c *admissionClosure) catalogWitness(id manifest.NamedResource) manifest.BaseManifest {
-	facts, _ := c.facts.Occurrence(id)
+	facts, _ := c.occurrenceFacts(id)
 	object := facts.Object
 	if object == nil {
 		object = facts.Catalog
@@ -36,6 +91,11 @@ func (c *admissionClosure) catalogWitness(id manifest.NamedResource) manifest.Ba
 
 //nolint:ireturn // Catalog identity projection MUST retain each concrete manifest type.
 func (c *admissionClosure) catalogObject(id manifest.NamedResource) manifest.BaseManifest {
+	if c.catalog != nil {
+		if entry, known := c.catalog.entries[id]; known {
+			return entry.object
+		}
+	}
 	object := c.catalogWitness(id)
 	if object == nil {
 		return nil
@@ -44,7 +104,7 @@ func (c *admissionClosure) catalogObject(id manifest.NamedResource) manifest.Bas
 }
 
 func (c *admissionClosure) candidate(id manifest.NamedResource) store.Child {
-	facts, _ := c.facts.Occurrence(id)
+	facts, _ := c.occurrenceFacts(id)
 	return facts.Candidate
 }
 
@@ -57,22 +117,23 @@ func (c *admissionClosure) preparedObject(id manifest.NamedResource) store.Child
 	if child.Obj == record.Declaration {
 		return child
 	}
-	facts := c.facts.RootEvidence(id, c.proposal.reads)
+	facts := c.capturedRoot(id)
 	if facts.BuiltChild.Obj == record.Declaration {
 		return facts.BuiltChild
 	}
 	return store.Child{}
 }
 
-func (c *admissionClosure) registeredRoot(record *manifest.DiscoveryRecord) string {
-	for id := range c.facts.SelectionIndex().Records {
-		candidate := c.facts.SelectionIndex().Records[id]
-		if candidate.BuilderOwner == record.BuilderOwner && candidate.Builder == record.Builder &&
-			candidate.Declaration == record.Declaration {
-			return c.facts.RootEvidence(id, c.proposal.reads).PreparedRoot
-		}
+func (c *admissionClosure) capturedRoot(id manifest.NamedResource) RootEvidence {
+	if facts, known := c.capturedRoots[id]; known {
+		return facts
 	}
-	return ""
+	facts := c.facts.RootEvidence(id, c.proposal.reads)
+	if c.capturedRoots == nil {
+		c.capturedRoots = make(map[manifest.NamedResource]RootEvidence)
+	}
+	c.capturedRoots[id] = facts
+	return facts
 }
 
 func (c *admissionClosure) isFileIndexed(id manifest.NamedResource) bool {
@@ -101,11 +162,11 @@ func (c *admissionClosure) fileCoordinate(file string) string {
 func (c *admissionClosure) declarationLocated(id manifest.NamedResource, objects admissionReader) bool {
 	record, _ := c.facts.SelectionIndex().Lookup(id)
 	return record.Path != "" || record.Builder != "" || objects.GetDeclaration(id) != nil ||
-		Root(c.facts.RootEvidence(record.Parent, c.proposal.reads)).InitialIndependent
+		Root(c.capturedRoot(record.Parent)).InitialIndependent
 }
 
 func (c *admissionClosure) occurrenceMount(id manifest.NamedResource, root string) *store.SourceArtifact {
-	facts, _ := c.facts.Occurrence(id)
+	facts, _ := c.occurrenceFacts(id)
 	if facts.Declaration.Source == root {
 		return facts.Mounted
 	}

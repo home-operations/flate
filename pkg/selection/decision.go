@@ -13,6 +13,7 @@ const (
 	selected
 	dirty
 	ordinary
+	promoted
 )
 
 const decisionBuckets = 64
@@ -133,8 +134,11 @@ func (d *Decision) includeRole(
 	if d.execution {
 		committed = d.roles(id)
 	}
-	if committed&needed != 0 && committed&ordinary == 0 && roles&ordinary != 0 && execution {
-		roles |= dirty
+	if committed&needed != 0 && committed&ordinary == 0 && roles&ordinary != 0 && execution && roles&dirty == 0 {
+		roles |= dirty | promoted
+	}
+	if role == dirty {
+		roles &^= promoted
 	}
 	if previous == roles {
 		return false, false

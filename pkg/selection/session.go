@@ -20,6 +20,7 @@ type Session struct {
 	mu       sync.Mutex
 	decision atomic.Pointer[Decision]
 	entry    atomic.Pointer[EntryRoute]
+	catalog  atomic.Pointer[admissionCatalog]
 }
 
 // New returns nil for unrestricted full execution.
@@ -121,13 +122,15 @@ type PrepareRequest struct {
 
 // Preparation MUST remain with one logical admission owner until its final consumer.
 type Preparation struct {
-	closure   admissionClosure
-	evidence  *store.ReadSet
-	completed *Admission
-	changes   *change.Set
-	entry     *EntryRoute
-	acquired  map[acquisitionKey]Acquisition
-	matched   map[*store.ReadSet]bool
+	closure    admissionClosure
+	evidence   *store.ReadSet
+	completed  *Admission
+	changes    *change.Set
+	entry      *EntryRoute
+	decision   *Decision
+	invocation bool
+	acquired   map[acquisitionKey]Acquisition
+	matched    map[*store.ReadSet]bool
 
 	producerOwner *producerObligation
 }
@@ -313,7 +316,7 @@ func (s *Session) Commit(ctx context.Context, proposal *Admission, stage CommitS
 				s.store.SetIncluded(id, true, next.OrdinaryDemand(id))
 			}
 			if proposal.admitObjects(ctx, s) {
-				proposal.accept(stage, next.version())
+				proposal.accept(stage, next)
 				return proposal, true, nil
 			}
 		}
@@ -360,12 +363,14 @@ func (s *Session) retry(ctx context.Context, proposal *Admission) (*Admission, e
 	return next, nil
 }
 
-func (a *Admission) accept(stage CommitStage, revision uint64) {
-	a.Revision = revision
+func (a *Admission) accept(stage CommitStage, decision *Decision) {
+	a.Revision = decision.version()
 	if stage == Execution {
 		a.preparation.completed = a
 		a.preparation.changes = a.Request.Changes
 		a.preparation.entry = a.entry
+		a.preparation.decision = decision
+		a.preparation.invocation = a.Request.Invocation
 	}
 	a.Retire()
 }

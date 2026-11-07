@@ -3,6 +3,7 @@ package selection
 import (
 	"iter"
 	"log/slog"
+	"maps"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -58,7 +59,7 @@ func (c *admissionClosure) materializers(
 	if demand.application != "" && c.proposal.entrySupported() {
 		return false
 	}
-	if c.materializerOwnerPending(consumer, &demand, entry) {
+	if c.materializerPending(consumer, &demand, entry) {
 		return true
 	}
 	target := demand.target
@@ -187,7 +188,11 @@ func (c *admissionClosure) collectIndexedMaterializers(
 	project func(manifest.BaseManifest) OccurrenceFacts,
 ) {
 	c.retainIndexedMaterializers(candidates)
-	for id := range c.facts.SelectionIndex().Records {
+	identities := maps.Keys(c.facts.SelectionIndex().Records)
+	if c.catalog != nil {
+		identities = slices.Values(c.catalog.materializers)
+	}
+	for id := range identities {
 		occurrence, located := c.catalogOccurrence(id)
 		if !located {
 			continue
@@ -211,7 +216,11 @@ func (c *admissionClosure) collectPreparedMaterializers(
 	candidates *[2][]OccurrenceFacts,
 	project func(manifest.BaseManifest) OccurrenceFacts,
 ) {
-	for id := range c.facts.SelectionIndex().Records {
+	identities := maps.Keys(c.facts.SelectionIndex().Records)
+	if c.catalog != nil {
+		identities = slices.Values(c.catalog.materializers)
+	}
+	for id := range identities {
 		child := c.candidate(id)
 		if _, located := c.catalogOccurrence(
 			id,
@@ -378,12 +387,16 @@ func (c *admissionClosure) materializerTargetsMatch(
 	return match
 }
 
-func (c *admissionClosure) materializerOwnerPending(
+func (c *admissionClosure) materializerPending(
 	consumer manifest.NamedResource,
 	demandValue *materializerDemand,
 	entry manifest.NamedResource,
 ) bool {
 	demand := *demandValue
+	if demand.application != "" && c.pendingEntrySources() {
+		c.searched[demand] = true
+		return true
+	}
 	for owner := range c.materializerOwners(consumer, &demand, entry) {
 		if owner == (manifest.NamedResource{}) || owner == consumer ||
 			demand.application == "" && !c.role(owner).needed {

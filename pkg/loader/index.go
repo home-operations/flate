@@ -232,6 +232,7 @@ func (l *Loader) Close() {
 	l.projections.Clear()
 	l.catalog, l.scopeRoots = nil, nil
 	l.locations, l.candidates, l.roots = nil, nil, rootInventory{}
+	l.builtRoots = nil
 }
 
 func (l *Loader) publishFrozenRecords() {

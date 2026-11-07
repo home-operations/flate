@@ -69,6 +69,7 @@ type Loader struct {
 	nativeEntry           *manifest.Kustomization
 	entryPath             string
 	candidates            map[manifest.NamedResource]store.Child
+	builtRoots            map[manifest.NamedResource]builtRoot
 	admitted              map[manifest.NamedResource]manifest.BaseManifest
 	roots                 rootInventory
 	scopeRoots            []selection.NativeRootFacts

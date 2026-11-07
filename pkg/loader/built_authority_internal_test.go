@@ -63,6 +63,7 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			record, ok := l.Index.Lookup(id)
 			assert.FatalIf(t, !ok || record.Declaration != children[0].Obj, "effective declaration = %+v", record)
 			assert.Equal(t, record.Authored, id)
+			assert.Equal(t, l.registeredRoot(id, &record), packageRoot)
 			if tc.compact {
 				assert.Equal(t, l.candidates[id].Obj, raw)
 			}
@@ -137,6 +138,8 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			)
 			l.Admit(root)
 			got, complete := l.BuiltChildren(packageRoot, owner.Named(), binding)
+			assert.Equal(t, l.registeredRoot(id, &record), "")
+			assert.Equal(t, len(l.builtRoots), 0)
 			assert.FatalIf(t, !complete || len(got) != 0, "replacement = %+v, complete = %v", got, complete)
 			_, ok = l.Index.Lookup(id)
 			assert.FatalIf(

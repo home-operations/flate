@@ -37,8 +37,8 @@ func builtObjectsForTest(t *testing.T, data string) []store.Child {
 	return objects
 }
 
+//nolint:paralleltest // Kustomize builds write process-global OpenAPI data.
 func TestRegisterBuilt_TransformedEvidence(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	for file, data := range map[string]string{
 		"entry/kustomization.yaml": `resources: [bundle.yaml, selected.yaml]
@@ -402,8 +402,8 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	assert.Equal(t, len(l.Index.Readers), 0)
 }
 
+//nolint:paralleltest // Kustomize builds write process-global OpenAPI data.
 func TestRegisterBuilt_DeletedInvalidResource(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	for file, data := range map[string]string{
 		"kustomization.yaml": `resources: [selected.yaml, retained.yaml]

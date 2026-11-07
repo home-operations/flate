@@ -33,7 +33,7 @@ type rootEvidence struct {
 }
 
 func (a rootAdmission) evidence(l *Loader, id manifest.NamedResource, record *manifest.DiscoveryRecord) rootEvidence {
-	if record.Builder != "" && l.registeredRoot(record) != "" {
+	if record.Builder != "" && l.registeredRoot(id, record) != "" {
 		if previous, known := l.roots.lookup(id); known {
 			return previous
 		}

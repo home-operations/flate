@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -98,7 +99,8 @@ func assertPackageAdmissionForTest(t *testing.T, contents map[string]string, wan
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 	l := New(st)
-	l.SourceRoot, l.Options.Selection.Changed = root, compact
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: compact})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	for range 2 {
@@ -110,9 +112,17 @@ func assertPackageAdmissionForTest(t *testing.T, contents map[string]string, wan
 			for i := range p.Occurrences {
 				occurrence := &p.Occurrences[i]
 				coordinate := rootCoordinate{
-					declaration: occurrence.Declaration, identity: occurrence.Identity, context: p.Path,
+					declaration: physicalOccurrence(
+						occurrence,
+					).Declaration,
+					identity: occurrence.Identity,
+					context:  p.Path,
 				}
-				assert.Equal(t, l.roots.occurrences[coordinate].occurrence.Declaration, occurrence.Declaration)
+				assert.Equal(
+					t,
+					l.roots.occurrences[coordinate].occurrence.Declaration,
+					physicalOccurrence(occurrence).Declaration,
+				)
 			}
 		}
 		assert.Diff(t, got, want)
@@ -182,7 +192,8 @@ func TestPackages_AdmissionRetiresWorkingTreeEvidence(t *testing.T) {
 			}
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 			l := New(st)
-			l.SourceRoot, l.Options.Selection.Changed = root, tc.compact
+			l.SourceRoot = root
+			configureSelection(t, l, selection.Request{Changed: tc.compact})
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			packages, err := l.Packages(t.Context())
@@ -226,7 +237,8 @@ func TestOccurrenceObject_SourceDeclarations(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			l := New(st)
-			l.SourceRoot, l.Options.Selection.Changed = root, compact
+			l.SourceRoot = root
+			configureSelection(t, l, selection.Request{Changed: compact})
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assertSourceDeclarationsForTest(t, l, input, compact)
@@ -276,9 +288,13 @@ func assertSourceDeclarationsForTest(t *testing.T, l *Loader, input *store.Sourc
 		)
 		for _, index := range []int{1, 0} {
 			occurrence := &occurrences[index]
-			coordinate := OccurrenceID{Source: input.LocalPath, File: dir + "/source.yaml", Document: index + 1}
+			coordinate := selection.OccurrenceID{
+				Source:   input.LocalPath,
+				File:     dir + "/source.yaml",
+				Document: index + 1,
+			}
 			if compact {
-				coordinate.Document, coordinate.item = 1, index
+				coordinate.Document, coordinate.Item = 1, index
 			}
 			assert.Equal(t, occurrence.Declaration, coordinate)
 			child, err := l.OccurrenceObject(t.Context(), occurrence, input)
@@ -296,7 +312,7 @@ func assertSourceDeclarationsForTest(t *testing.T, l *Loader, input *store.Sourc
 			}
 			assert.Equal(t, git.Reference.Commit, commit)
 			if compact {
-				assert.Equal(t, occurrence.object, manifest.BaseManifest(nil))
+				assert.Equal(t, occurrence.Object, manifest.BaseManifest(nil))
 			}
 		}
 	}
@@ -321,7 +337,8 @@ func TestOccurrenceObject_SourceReplacement(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, first)
 			l := New(st)
-			l.SourceRoot, l.Options.Selection.Changed = root, compact
+			l.SourceRoot = root
+			configureSelection(t, l, selection.Request{Changed: compact})
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			packages, err := l.Packages(t.Context())
@@ -336,7 +353,8 @@ func TestOccurrenceObject_SourceReplacement(t *testing.T) {
 			assert.Equal(t, child.Doc["metadata"].(map[string]any)["name"], any("cluster"))
 			prepared := l.ParsedInputs()
 			other := New(st)
-			other.SourceRoot, other.Options.Selection.Changed, other.Options.ParsedInputs = root, compact, prepared
+			other.SourceRoot, other.Options.ParsedInputs = root, prepared
+			configureSelection(t, other, selection.Request{Changed: compact})
 			_, err = other.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			child, err = other.OccurrenceObject(t.Context(), &occurrence, first)
@@ -347,7 +365,7 @@ func TestOccurrenceObject_SourceReplacement(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, len(l.roots.identities), 0)
 			for _, evidence := range l.roots.occurrences {
-				assert.Equal(t, evidence.independent, false)
+				assert.Equal(t, selection.Root(evidence.facts).Independent, false)
 			}
 			child, err = l.OccurrenceObject(t.Context(), &occurrence, second)
 			assert.NoError(t, err)
@@ -383,6 +401,6 @@ func TestEntryRoots_DeclarationCoordinates(t *testing.T) {
 	roots := l.EntryRoots(nil, nil)
 	assert.FatalIf(t, len(roots) != 2, "entry roots=%+v", roots)
 	assert.Equal(t, roots[0].Identity, roots[1].Identity)
-	assert.Equal(t, roots[0].Declaration, OccurrenceID{Source: root, File: "one/producer.yaml"})
-	assert.Equal(t, roots[1].Declaration, OccurrenceID{Source: root, File: "two/producer.yaml"})
+	assert.Equal(t, roots[0].Declaration, selection.OccurrenceID{Source: root, File: "one/producer.yaml"})
+	assert.Equal(t, roots[1].Declaration, selection.OccurrenceID{Source: root, File: "two/producer.yaml"})
 }

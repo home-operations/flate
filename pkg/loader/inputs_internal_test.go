@@ -10,6 +10,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
@@ -616,7 +618,9 @@ func testLoaderInputRolesAndAdmissionCase(t *testing.T, testCaseInput *struct {
 	admitted := map[manifest.NamedResource]bool{}
 	//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 	for id, record := range l.Index.Files() {
-		admitted[id] = l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)
+		admitted[id] = selection.Root(
+			rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path),
+		).Admitted
 	}
 	assert.Equal(t, l.terminalInput(filepath.Join(root, testCaseInput.terminal)), true)
 	{
@@ -625,7 +629,11 @@ func testLoaderInputRolesAndAdmissionCase(t *testing.T, testCaseInput *struct {
 	}
 	for id, before := range admitted {
 		record, _ := l.Index.Lookup(id)
-		assert.Equal(t, l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path), before)
+		assert.Equal(
+			t,
+			selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)).Admitted,
+			before,
+		)
 	}
 	assert.Equal(t, l.terminalInput(filepath.Join(root, testCaseInput.terminal)), true)
 	assert.FatalIf(

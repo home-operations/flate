@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -11,7 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 func TestFilter_DeclarationInputs(t *testing.T) {
@@ -22,13 +23,27 @@ func TestFilter_DeclarationInputs(t *testing.T) {
 		input:    {File: "settings.yaml", Inputs: []string{"patch.yaml"}},
 		consumer: {File: "consumer.yaml", Refs: []manifest.NamedResource{input}},
 	}}
+	objects := filtertest.MapLister{
+		input: &manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace},
+		consumer: &manifest.Kustomization{
+			Name: consumer.Name, Namespace: consumer.Namespace,
+			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+				{Kind: input.Kind, Name: input.Name},
+			}},
+		},
+	}
 	filter := newAdmission(
 		t,
-		admissionConfig{changes: change.NewSet([]string{"patch.yaml"}), index: index, inventory: nil, root: "/repo"},
+		admissionConfig{
+			changes:   change.NewSet([]string{"patch.yaml"}),
+			index:     index,
+			inventory: objects,
+			root:      "/repo",
+		},
 	)
 	assert.Diff(t, filter.KeepNames(), []string{input.String(), consumer.String()})
-	assert.Equal(t, filter.keep[input], primary)
-	assert.Equal(t, filter.keep[consumer], primary)
+	assert.Equal(t, filter.role(input), primary)
+	assert.Equal(t, filter.role(consumer), primary)
 }
 
 func TestFilter_SelectorProviderScope(t *testing.T) {
@@ -77,112 +92,14 @@ func TestFilter_SelectorProviderScope(t *testing.T) {
 							inventory: objects,
 						},
 					)
-					selected.loader.locations = map[manifest.NamedResource]Occurrence{
+					selected.loader.locations = map[manifest.NamedResource]authoredOccurrence{
 						provider.Named(): compactOccurrence(provider, projectedProducerForTest(provider)),
 					}
-					selected.prepare(new(store.Child{}), nil, false)
-					assert.Equal(t, selected.ShouldReconcile(provider.Named()), true)
-					assert.Equal(t, selected.ShouldReconcile(set.Named()), true)
+					selected.prepare(selection.PrepareRequest{Invocation: true}, false)
+					assert.Equal(t, selected.Reconcile(provider.Named()), true)
+					assert.Equal(t, selected.Reconcile(set.Named()), true)
 				})
 			}
 		})
 	}
-}
-
-func TestSelection_SelectorCandidates(t *testing.T) {
-	t.Parallel()
-	provider := &manifest.ResourceSetInputProvider{
-		Name:      "images",
-		Namespace: "apps",
-		Labels:    map[string]string{"role": "images"},
-	}
-	other := *provider
-	other.Labels = map[string]string{"role": "other"}
-	bare := *provider
-	bare.Namespace = ""
-	set := &manifest.ResourceSet{
-		Name:       "matrix",
-		Namespace:  "apps",
-		InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: provider.Labels}}},
-	}
-	for _, tc := range []struct {
-		name        string
-		declaration manifest.BaseManifest
-		current     manifest.BaseManifest
-		incoming    manifest.BaseManifest
-		want        bool
-	}{
-		{"unpublished", provider, nil, nil, true},
-		{"effective_namespace", &bare, nil, nil, true},
-		{"current_overrides_declaration", provider, &other, nil, false},
-		{"incoming_overrides_current", &other, &other, provider, true},
-		{"incoming_removes_match", provider, provider, &other, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			testSelectionSelectorCandidatesCase(
-				t,
-				&testSelectionSelectorCandidatesCaseInputs{provider: &provider, set: &set, tc: &tc},
-			)
-		},
-		)
-	}
-}
-
-type testSelectionSelectorCandidatesCaseInputs struct {
-	provider **manifest.ResourceSetInputProvider
-	set      **manifest.ResourceSet
-	tc       *struct {
-		name        string
-		declaration manifest.BaseManifest
-		current     manifest.BaseManifest
-		incoming    manifest.BaseManifest
-		want        bool
-	}
-}
-
-func testSelectionSelectorCandidatesCase(t *testing.T, testCaseInput *testSelectionSelectorCandidatesCaseInputs) {
-	t.Helper()
-
-	objects := filtertest.MapLister{(*testCaseInput.set).Named(): (*testCaseInput.set)}
-	if testCaseInput.tc.current != nil {
-		objects[(*testCaseInput.provider).Named()] = testCaseInput.tc.current
-	}
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		(*testCaseInput.set).Named(): {
-			File:        "set.yaml",
-			Declaration: (*testCaseInput.set),
-		},
-		(*testCaseInput.provider).Named(): {File: "provider.yaml", Declaration: testCaseInput.tc.declaration},
-	}}
-	st := store.New()
-	st.AddObjects(objects.Objects())
-	l := New(st)
-	l.Index = index
-	occurrence := compactOccurrence(
-		testCaseInput.tc.declaration,
-		projectedProducerForTest(testCaseInput.tc.declaration),
-	)
-	occurrence.Identity = (*testCaseInput.provider).Named()
-	l.locations = map[manifest.NamedResource]Occurrence{(*testCaseInput.provider).Named(): occurrence}
-	record := l.Index.Records[(*testCaseInput.provider).Named()]
-	record.Declaration = nil
-	l.Index.Records[(*testCaseInput.provider).Named()] = record
-	selected := admissionClosure{loader: l, objects: st, generation: []store.Child{{Obj: testCaseInput.tc.incoming}}}
-	selected.captureIncoming()
-	var got []manifest.NamedResource
-	for ref := range manifest.References((*testCaseInput.set), manifest.ReferenceRelations) {
-		if ref.Use == "inputsFrom" {
-			matches, err := selected.matchingInputs(new(ref), true)
-			assert.NoError(t, err)
-			got = append(got, matches...)
-		}
-	}
-	var want []manifest.NamedResource
-	if testCaseInput.tc.want {
-		want = []manifest.NamedResource{(*testCaseInput.provider).Named()}
-	}
-	assert.Diff(t, got, want)
-	assert.Equal(t, st.GetObject((*testCaseInput.provider).Named()), testCaseInput.tc.current)
-	assert.Equal(t, objects.GetObject((*testCaseInput.provider).Named()), testCaseInput.tc.current)
 }

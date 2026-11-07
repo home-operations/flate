@@ -21,12 +21,12 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/selection"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 )
@@ -453,7 +453,7 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 		assert.Diff(t, location.URLs, []string{url})
 		assert.NoError(t, os.Remove(filepath.Join(location.RepositoryRoot, ".git", "config")))
 	}
-	runs, err := orchestrator.RenderTrees(t.Context(), inputTrees(&c), cfg)
+	runs, err := renderTreesForTest(t.Context(), t, inputTrees(&c), cfg)
 	base, head := runs[0], runs[1]
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("gitops-system", "apps")
@@ -521,7 +521,7 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	resource.Resource.Name = "other"
 	message.Message = "different"
 	want := []manifest.Warning{base, detail, count, category, resource, message}
-	side := &selection.Selection{
+	side := &selection.Result{
 		Warnings:  []manifest.Warning{base, detail, count, category, resource, message},
 		Unrelated: []manifest.Warning{base},
 		External:  []manifest.Warning{detail},
@@ -542,7 +542,7 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 			},
 			&selectedInvocation{
 				groups: []selectedGroup{
-					{cluster: ".", sides: []*selection.Selection{side, {Warnings: []manifest.Warning{base}}}},
+					{cluster: ".", sides: []*selection.Result{side, {Warnings: []manifest.Warning{base}}}},
 				},
 			},
 			&selectedPayload{},

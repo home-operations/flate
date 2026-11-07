@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
@@ -279,7 +279,7 @@ func testDAGKeepBeforeLateDataPublicationCase(
 		},
 	}}
 	st.SetDiscoveryIndex(index)
-	filterLoader := admissiontest.New(
+	filterLoader, session := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"parent.yaml"}),
@@ -288,10 +288,9 @@ func testDAGKeepBeforeLateDataPublicationCase(
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
+	admissiontest.Commit(t, session, nil)
 	c := base.New(st, tasks)
-	c.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
+	c.Configure(base.Options{Session: session, Loader: filterLoader, Index: index})
 	c.StartLifecycle()
 	childDocs := []map[string]any{
 		{
@@ -320,7 +319,7 @@ func testDAGKeepBeforeLateDataPublicationCase(
 	arrivals := make(chan bool, 2)
 	unsubArrival := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if payload != nil && (id == child || id == data) {
-			arrivals <- filter.ShouldReconcile(id)
+			arrivals <- session.Snapshot().Reconcile(id)
 		}
 	}, false)
 	defer unsubArrival()
@@ -388,9 +387,9 @@ func testDAGKeepBeforeLateDataPublicationCase(
 	go func() { done <- s.Run(t.Context()) }()
 	assert.Diff(t, <-blocked, []manifest.NamedResource{data})
 	assert.Equal(t, st.GetObject(data), nil)
-	assert.Equal(t, filter.ShouldReconcile(child), true)
-	assert.Equal(t, filter.ShouldReconcile(provider.Named()), true)
-	assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+	assert.Equal(t, session.Snapshot().Reconcile(child), true)
+	assert.Equal(t, session.Snapshot().Reconcile(provider.Named()), true)
+	assert.Equal(t, session.Snapshot().Reconcile(sibling.Named()), false)
 	close(release)
 	assert.NoError(t, <-done)
 	tasks.BlockTillDone()
@@ -548,6 +547,7 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 	)
 	t.Cleanup(unsubArrivals)
 	res, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 || o.tasks.Failures() != 0,
 
 		"scheduler failed to drain: error=%v failures=%v blocked=%v",
@@ -667,11 +667,11 @@ func publishSuspendedChild(t *testing.T, o *Orchestrator, gate manifest.NamedRes
 	emittedValues := children
 	for emittedIndex := range emittedValues {
 		emitted := emittedValues[emittedIndex]
-		if o.filter != nil {
+		if o.selection != nil {
 			if _, innerLocalErr := o.ksc.KeepEmitted(
 				t.Context(),
 				gate,
-				loader.PrepareRequest{Generation: []store.Child{emitted}, Reads: nil},
+				selection.PrepareRequest{Generation: []store.Child{emitted}, Reads: nil},
 			); innerLocalErr != nil {
 				t.Error(innerLocalErr)
 				return
@@ -744,7 +744,7 @@ func (in testDAGSuspensionAfterRefreshCaseInputs) assertArrival(
 	t.Helper()
 	owners := testutil.Owners(o.store.Productions(child, nil))
 	assert.ErrorIf(t, !slices.Contains(owners, gate) || (*in.changedOnly) &&
-		!o.filter.ShouldReconcile(
+		!o.selection.Snapshot().Reconcile(
 			child,
 		), "child arrived before evidence/selection: %v", owners)
 }

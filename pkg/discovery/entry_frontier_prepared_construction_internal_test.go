@@ -11,6 +11,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -205,10 +207,22 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 	if f.dependencies {
 		incoming := children[applier]
 		incoming.Entry = &application
-		proposal, err := d.loader.Prepare(
-			t.Context(),
-			loader.PrepareRequest{Invocation: true, Generation: []store.Child{incoming}, Reads: &reads},
+		assert.Equal(t, d.loader.Options.Session == nil, true)
+		narrowed, err := selection.New(
+			f.cfg.Store,
+			d.loader,
+			selection.Request{
+				Roots: []manifest.NamedResource{
+					{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps"},
+				},
+			},
 		)
+		assert.NoError(t, err)
+		d.loader.Options.Session = narrowed
+		proposal, err := prepareSelection(t.Context(), t, d.loader,
+			selection.PrepareRequest{Invocation: true, Generation: []store.Child{incoming}, Reads: &reads},
+		)
+		d.loader.Options.Session = nil
 		assert.NoError(t, err)
 		defer proposal.Retire()
 		assert.Equal(t, slices.Contains(proposal.Needed, testutil.KustomizationID("apps", "prod-config")), true)

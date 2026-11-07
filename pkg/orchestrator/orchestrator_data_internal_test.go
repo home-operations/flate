@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -96,32 +98,6 @@ func TestOrchestrator_ParentOfAllocations(t *testing.T) {
 	assert.FatalIf(t, allocs != 0 || !ok || parent != owner, "parent=%v/%t allocations=%v", parent, ok, allocs)
 }
 
-//nolint:paralleltest // The test calls a helper that changes process-global state.
-func TestOrchestrator_ChildrenByParent(t *testing.T) {
-	o, err := newTestOrchestrator(t, Tree{Path: t.TempDir()}, Config{CacheDir: t.TempDir()})
-
-	assert.FatalIf(t, err != nil, "%v", err)
-
-	id := func(name string) manifest.NamedResource {
-		return testutil.KustomizationID("apps", name)
-	}
-	parent, other, first, second := id("parent"), id("other"), id("a"), id("b")
-	setParentsForTest(o, map[manifest.NamedResource]manifest.NamedResource{first: parent, second: parent})
-	publishFixture(t, o.store, parent, []manifest.NamedResource{second})
-	publishFixture(t, o.store, other, []manifest.NamedResource{first})
-	got := o.childrenByParent()
-
-	assert.FatalIf(t, !slices.Equal(got[parent], []manifest.NamedResource{first, second}) ||
-		!slices.Equal(got[other], []manifest.NamedResource{first}), "ownership snapshot = %v", got)
-
-	got[parent][0] = other
-	delete(got, other)
-	fresh := o.childrenByParent()
-
-	assert.FatalIf(t, !slices.Equal(fresh[parent], []manifest.NamedResource{first, second}) ||
-		!slices.Equal(fresh[other], []manifest.NamedResource{first}), "caller mutated ownership: %v", fresh)
-}
-
 func acceptInputsForTest(t *testing.T, st *store.Store, id manifest.NamedResource, required []manifest.NamedResource) {
 	t.Helper()
 	reads := new(store.ReadSet)
@@ -156,7 +132,7 @@ func TestSelection_CompletedReadClosure(t *testing.T) {
 		"apps",
 		"sibling",
 	)
-	run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo)})
+	run := selectedRun(t, &Result{Failed: make(map[manifest.NamedResource]store.StatusInfo)})
 	run.store.AddObject(selected)
 	publishFixture(t, run.store, owner, []manifest.NamedResource{input})
 	for _, id := range []manifest.NamedResource{selected.Named(), owner, optional, sibling} {
@@ -174,12 +150,13 @@ func TestSelection_CompletedReadClosure(t *testing.T) {
 		},
 	)
 	acceptInputsForTest(t, run.store, selected.Named(), []manifest.NamedResource{input})
-	results, err, remainder := Select(
+	projectedResults0, projectionErrors0 := Select(
 		[]Rendered{run},
-		&FailuresError{Message: "raw failures"},
+		&selection.FailuresError{Message: "raw failures"},
 		[]manifest.NamedResource{selected.Named()},
 		nil,
 	)
+	results, err, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.Equal(t, err != nil, true)
 	assert.NoError(t, remainder)
 	assert.Equal(t, len(results[0].Failed), 2)
@@ -264,7 +241,7 @@ func TestSelection_WithdrawsStaleRequiredFootprint(t *testing.T) {
 func TestSelection_AcceptedWarningWithdrawal(t *testing.T) {
 	t.Parallel()
 	obj := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	run.store.AddObject(obj)
 	first := new(store.ReadSet)
 	first.Init(run.store, obj.Named(), nil)
@@ -274,7 +251,8 @@ func TestSelection_AcceptedWarningWithdrawal(t *testing.T) {
 	)
 	first.Accept(store.AssessmentReconciled)
 	run.Result.Warnings = run.store.Warnings()
-	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
+	projectedResults1, projectionErrors1 := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
+	selected, err, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 	assert.NoError(t, err)
 	assert.Equal(t, len(selected[0].Warnings), 1)
 	acceptInputsForTest(t, run.store, obj.Named(), nil)
@@ -282,7 +260,8 @@ func TestSelection_AcceptedWarningWithdrawal(t *testing.T) {
 	for range run.store.Sweep() {
 	}
 	run.Result.Warnings = run.store.Warnings()
-	selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
+	projectedResults2, projectionErrors2 := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
+	selected, err, _ = projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 	assert.NoError(t, err)
 	assert.Equal(t, len(selected[0].Warnings), 0)
 }
@@ -679,8 +658,7 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTail(
 ) {
 	t.Helper()
 	for side, root := range tailCaseInput.dirs {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}},
 			Config{RecordWork: true, Concurrency: 2},
 		)
@@ -708,8 +686,7 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(
 	t.Helper()
 	for run, state := range []string{"cold", "edited-replay"} {
 		cfg := treeConfig{RecordWork: true, Cache: (*cache), Concurrency: 2}
-		renderedTrees1, err := RenderTrees(
-			t.Context(),
+		renderedTrees1, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					Path:            (*tailCaseInput).dirs[0],
@@ -762,7 +739,7 @@ func testRenderTreesChangedOnlyAndDiffGeneratedInputsCaseTailSegment(
 			slices.SortFunc(got, manifest.NamedResource.Compare)
 			slices.SortFunc(want, manifest.NamedResource.Compare)
 			assert.Diff(t, got, want)
-			assert.Equal(t, rendered.filter.ShouldReconcile(sibling), false)
+			assert.Equal(t, rendered.selection.Snapshot().Reconcile(sibling), false)
 			if (*(*(*tailCaseInput).testCaseInput)) == "unrelated" {
 				continue
 			}

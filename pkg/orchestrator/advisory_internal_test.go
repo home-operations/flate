@@ -137,6 +137,7 @@ func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 			o.src.Fetchers[manifest.KindGitRepository] = fetcher
 			assert.NoError(t, o.bootstrap(t.Context()))
 			result, err := o.collectResult(o.run(t.Context()))
+			t.Cleanup(result.Close)
 			assert.NoError(t, err)
 			assert.Equal(t, len(result.Failed), 0)
 			assert.Equal(t, fetcher.calls.Load(), int64(1))
@@ -198,6 +199,7 @@ func testRenderTreesClusterAdvisoriesWarmAcquisitionTail(
 					)
 				}
 				result, err := o.collectResult(nil)
+				t.Cleanup(result.Close)
 				assert.NoError(t, err)
 				assert.Diff(t, outputByParent(result.Manifests), before)
 				(*tailCaseInput.runs)[i].Result = result
@@ -255,8 +257,7 @@ func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {
 	t.Parallel()
 	failure := errors.New("discovery failed before evidence")
 	input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error { return failure }}}
-	runs, err := RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: input}},
 		Config{Concurrency: 2},
 	)
@@ -300,8 +301,8 @@ func TestSelect_ClusterAdvisories(t *testing.T) {
 		t.Run(strconv.Itoa(failedSide), func(t *testing.T) {
 			t.Parallel()
 			runs := []Rendered{
-				selectedRun(&Result{Warnings: []manifest.Warning{ordinary, outside}}),
-				selectedRun(&Result{ClusterWarnings: warnings}),
+				selectedRun(t, &Result{Warnings: []manifest.Warning{ordinary, outside}}),
+				selectedRun(t, &Result{ClusterWarnings: warnings}),
 			}
 			failure := errors.New("original failure")
 			var runErr error
@@ -310,12 +311,13 @@ func TestSelect_ClusterAdvisories(t *testing.T) {
 				runs[failedSide].Err = failure
 				runErr = failure
 			}
-			selected, err, diagnostic := Select(
+			projectedResults0, projectionErrors0 := Select(
 				runs,
 				runErr,
 				[]manifest.NamedResource{testutil.KustomizationID("apps", "named")},
 				nil,
 			)
+			selected, err, diagnostic := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.FatalIf(t, failedSide >= 0 && (!errors.Is(err, failure) || !errors.Is(diagnostic, failure)) ||
 				failedSide < 0 && err != nil, "selection changed fatal error: %v, %v", err, diagnostic)
 			assert.Diff(t, selected[0].Warnings, []manifest.Warning{ordinary})

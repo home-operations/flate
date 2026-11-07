@@ -101,7 +101,7 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 	// substituteFrom dep of cluster-apps; and cluster-vars is the
 	// producer of that ConfigMap.
 	for _, id := range []manifest.NamedResource{clusterApps, ntfy, hr, renderedSettings, clusterVars} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
 		}
 	}
@@ -109,7 +109,7 @@ func TestFilter_SubstituteFromConfigMapKeepsProducerKustomization(t *testing.T) 
 	// to a sentinel child must reject (producer is NOT primary).
 	sentinel := testutil.KustomizationID("unrelated", "sentinel")
 	f.AddEmitted(clusterVars, new(store.Child{Obj: refObj(sentinel)}), f.objs)
-	if f.ShouldReconcile(sentinel) {
+	if f.Reconcile(sentinel) {
 		t.Errorf(
 			"producer cluster-vars must be ancestor-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v",
 			f.KeepNames(),
@@ -153,15 +153,18 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 				producer: "kubernetes/apps/settings/ks.yaml",
 				cmID:     "kubernetes/apps/settings/cm.yaml",
 			}, root: "", objects: filtertest.MapLister{producer: producerObj, cmID: cmObj}}).index(),
-			inventory: filtertest.MapLister{producer: producerObj, cmID: cmObj},
-			root:      "",
+			inventory: filtertest.MapLister{
+				parent:   &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace},
+				producer: producerObj, cmID: cmObj,
+			},
+			root: "",
 		},
 	)
 
-	if !f.ShouldReconcile(parent) {
+	if !f.Reconcile(parent) {
 		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
 	}
-	if f.ShouldReconcile(producer) {
+	if f.Reconcile(producer) {
 		t.Fatalf("precondition: producer must NOT be in keep before AddEmitted runs; keep=%v", f.KeepNames())
 	}
 
@@ -170,7 +173,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	data := cmID
 	data.Namespace = child.Namespace
 	for _, id := range []manifest.NamedResource{child, data, producer} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
 		}
 		assert.ErrorIf(t, !slices.Contains(added, id), "AddEmitted must return %s; added=%v", id, added)
@@ -179,7 +182,7 @@ func TestFilter_AddEmittedKeepsSubstituteFromProducerDependencyOnly(t *testing.T
 	// sentinel child must reject because producer is not primary.
 	sentinel := testutil.KustomizationID("unrelated", "sentinel")
 	f.AddEmitted(producer, new(store.Child{Obj: refObj(sentinel)}), f.objs)
-	if f.ShouldReconcile(sentinel) {
+	if f.Reconcile(sentinel) {
 		t.Errorf(
 			"producer must be dependency-only (NOT primary) — AddEmitted leaked sentinel into keep; keep=%v",
 			f.KeepNames(),
@@ -216,8 +219,11 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 				producer: "kubernetes/apps/settings/ks.yaml",
 				dataID:   "kubernetes/apps/settings/secret.yaml",
 			}, root: "", objects: filtertest.MapLister{producer: producerObj, dataID: dataObj}}).index(),
-			inventory: filtertest.MapLister{producer: producerObj, dataID: dataObj},
-			root:      "",
+			inventory: filtertest.MapLister{
+				parent:   &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace},
+				producer: producerObj, dataID: dataObj,
+			},
+			root: "",
 		},
 	)
 
@@ -226,7 +232,7 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 	data := dataID
 	data.Namespace = child.Namespace
 	for _, id := range []manifest.NamedResource{child, data, producer} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
 		}
 		assert.ErrorIf(t, !slices.Contains(added, id), "AddEmitted must return %s; added=%v", id, added)
@@ -237,7 +243,7 @@ func TestFilter_AddEmittedReturnsSubstituteFromProducer(t *testing.T) {
 		new(store.Child{Obj: refObj(sentinel)}),
 		f.objs,
 	); len(added) != 0 ||
-		f.ShouldReconcile(sentinel) {
+		f.Reconcile(sentinel) {
 		t.Errorf("dependency-only producer must reject unrelated child; added=%v, keep=%v", added, f.KeepNames())
 	}
 }
@@ -286,13 +292,13 @@ func TestFilter_ChainedSubstituteFromProducers(t *testing.T) {
 		},
 	)
 
-	if !f.ShouldReconcile(a) {
+	if !f.Reconcile(a) {
 		t.Fatalf("consumer A must be in keep (file change); keep=%v", f.KeepNames())
 	}
-	if !f.ShouldReconcile(b) {
+	if !f.Reconcile(b) {
 		t.Errorf("producer B (renders cm-a) must be in keep; keep=%v", f.KeepNames())
 	}
-	if !f.ShouldReconcile(c) {
+	if !f.Reconcile(c) {
 		t.Errorf("chained producer C (renders cm-b consumed by B) must be in keep; keep=%v", f.KeepNames())
 	}
 }
@@ -328,7 +334,7 @@ func TestFilter_SelfProducerSkippedInResolve(t *testing.T) {
 		},
 	)
 
-	if !f.ShouldReconcile(self) {
+	if !f.Reconcile(self) {
 		t.Errorf("self KS must be in keep; keep=%v", f.KeepNames())
 	}
 	// Sanity: no infinite loop happened (we made it here). Also
@@ -482,7 +488,7 @@ func testFilterSubstitutionGeneratorProducersCase(
 		},
 	)
 	for _, id := range []manifest.NamedResource{data, producer.Named()} {
-		if got := f.ShouldReconcile(id); got == testCaseInput.emptyName {
+		if got := f.Reconcile(id); got == testCaseInput.emptyName {
 			t.Errorf("%s retained = %t, empty reference name = %t", id, got, testCaseInput.emptyName)
 		}
 	}
@@ -492,7 +498,7 @@ func testFilterSubstitutionGeneratorProducersCase(
 		new(store.Child{Obj: refObj(sentinel)}),
 		f.objs,
 	); len(added) != 0 ||
-		f.ShouldReconcile(sentinel) {
+		f.Reconcile(sentinel) {
 		t.Errorf(
 			"dependency-only producer must reject unrelated child; added=%v, keep=%v",
 			added,
@@ -580,11 +586,11 @@ func testFilterSubstitutionGeneratorProducersQualifiedDeclarations(t *testing.T)
 			t,
 			admissionConfig{changes: changes, index: indexes[i], inventory: st, root: roots[i]},
 		)
-		assert.Equal(t, filter.ShouldReconcile(consumer.Named()), true)
-		assert.Equal(t, filter.ShouldReconcile(producer.Named()), true)
+		assert.Equal(t, filter.Reconcile(consumer.Named()), true)
+		assert.Equal(t, filter.Reconcile(producer.Named()), true)
 		assert.Equal(
 			t,
-			filter.ShouldReconcile(
+			filter.Reconcile(
 				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
 			),
 			true,

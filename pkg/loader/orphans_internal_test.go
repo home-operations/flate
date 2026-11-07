@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -347,29 +349,14 @@ func testPromoteOrphansIndexedEvidenceCase(t *testing.T, testCaseInput testPromo
 	if testCaseInput.tc.order == nil {
 		l.PromoteOrphans(t.Context())
 	} else {
+		var reads store.ReadSet
+		reads.Init(st, manifest.NamedResource{}, nil)
+		defer reads.Retire()
+		query := rootQuery{loader: l, objects: &reads}
 		for _, id := range testCaseInput.tc.order {
 			record, _ := l.Index.Lookup(id)
-			admit := func(obj manifest.BaseManifest) (bool, error) {
-				return l.AdmitsRoot(obj, record.Path), nil
-			}
-
-			{
-				promoted, err := Promote(
-					t.Context(),
-					st,
-					id,
-					PromoteOptions{
-						Record: manifest.Production{
-							Authored: record.Authored,
-							Path:     record.Path,
-							File:     record.File,
-						},
-						Admit: admit,
-					},
-				)
-				assert.FatalIf(t, err != nil ||
-					!promoted, "promotion failed for %s", id)
-			}
+			promoted, err := query.promote(t.Context(), id, &record, &reads)
+			assert.FatalIf(t, err != nil || !promoted, "promotion failed for %s", id)
 		}
 		l.PromoteOrphans(t.Context())
 	}
@@ -493,6 +480,7 @@ func testPromoteOrphansNamespaceAdmissionCase(
 	assert.NoError(t, err)
 	document := manifest.DeepCopyMap(child.Doc)
 	object := child.Obj.(*manifest.Kustomization).Clone()
+
 	l.PromoteOrphans(t.Context())
 
 	assert.ErrorIf(
@@ -541,7 +529,7 @@ func assertOrphanOccurrencesDistinct(t *testing.T, l *Loader, root string, share
 
 	assert.FatalIf(t, err != nil, "%v", err)
 
-	var sharedDeclarations []OccurrenceID
+	var sharedDeclarations []selection.OccurrenceID
 	{
 		oValues := occurrences
 		for oIndex := range oValues {

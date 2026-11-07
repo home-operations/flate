@@ -235,7 +235,7 @@ func testRenderEntryDeclarationQualifiesOpaqueApplierCaseTail(
 					"incomplete_inputs" ||
 				!o.cache.CanPersistRenders() {
 				tailCaseInput.assertEntryApplicationRendered(t, fetcher, renders, run)
-				assert.Equal(t, o.filter.ShouldReconcile(id), true)
+				assert.Equal(t, o.selection.Snapshot().Reconcile(id), true)
 			} else {
 				tailCaseInput.assertEntryApplicationReused(t, fetcher, renders, admitted[id])
 			}
@@ -411,12 +411,13 @@ func TestRenderTrees_ChangedLiteralEntryQualifiesOpaqueApplier(t *testing.T) {
 			trees := changedLiteralEntryTrees(t, depth)
 			delta := func(runs []Rendered) []byte {
 				t.Helper()
-				selected, selectedErr, err := Select(
+				projectedResults0, projectionErrors0 := Select(
 					runs,
 					nil,
 					[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 					nil,
 				)
+				selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 				assert.NoError(t, err)
 				body, warnings, suppressed, err := diff.Compare(
 					diff.Snapshot{
@@ -441,7 +442,12 @@ func TestRenderTrees_ChangedLiteralEntryQualifiesOpaqueApplier(t *testing.T) {
 			}
 			full := make([]Rendered, 2)
 			for side, tree := range trees {
-				runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+				runs, err := renderTreesForTest(
+					t.Context(),
+					t,
+					[]Tree{tree},
+					Config{Concurrency: 2, CacheDir: t.TempDir()},
+				)
 				assert.NoError(t, err)
 				full[side] = runs[0]
 			}
@@ -460,7 +466,7 @@ func TestRenderTrees_ChangedLiteralEntryQualifiesOpaqueApplier(t *testing.T) {
 			}
 			cfg := Config{Concurrency: 2, CacheDir: t.TempDir()}
 			for range 2 {
-				runs, err := RenderTrees(t.Context(), trees, cfg)
+				runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 				assert.NoError(t, err)
 				assert.Equal(t, string(delta(runs)), string(want))
 			}

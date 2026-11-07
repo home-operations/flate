@@ -118,12 +118,13 @@ func fluxInstanceSyncTrees(t *testing.T) []Tree {
 
 func clusterDiffForTest(t *testing.T, pair []Rendered) []byte {
 	t.Helper()
-	selected, err, _ := Select(
+	projectedResults0, projectionErrors0 := Select(
 		pair,
 		errors.Join(pair[0].Err, pair[1].Err),
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.NoError(t, err)
 	body, warnings, suppressed, err := diff.Compare(
 		diff.Snapshot{
@@ -147,7 +148,7 @@ func TestRenderTrees_ClusterSourceQualifiedChanges(t *testing.T) {
 	t.Parallel()
 	trees := clusterSourceQualifiedTrees(t)
 	slices.Reverse(trees)
-	runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+	runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 	assert.NoError(t, err)
 	assert.Equal(t, len(runs), 4)
 	owner := testutil.KustomizationID("apps", "owner")
@@ -207,7 +208,7 @@ func TestRenderTrees_ClusterSourceQualifiedChanges(t *testing.T) {
 		full := make([]Rendered, 2)
 		for side := range full {
 			tree := trees[slices.IndexFunc(trees, func(tree Tree) bool { return tree.ID == pair[side].ID })]
-			isolated, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+			isolated, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 			assert.NoError(t, err)
 			assert.Equal(t, len(isolated), 1)
 			full[side] = isolated[0]
@@ -262,7 +263,7 @@ func TestRenderTrees_ClusterUnavailableAndEmpty(t *testing.T) {
 		t.Run(fmt.Sprintf("failed_side_%d", failedSide), func(t *testing.T) {
 			t.Parallel()
 			trees := clusterUnavailableTrees(t, failedSide)
-			runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+			runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 			if !errors.Is(err, manifest.ErrFlux) || len(runs) != 6 {
 				t.Fatalf("lost failed cluster: runs=%+v error=%v", runs, err)
 			}
@@ -285,14 +286,14 @@ func TestRenderTrees_FluxInstanceSyncOnlyChange(t *testing.T) {
 	}
 	full := make([]Rendered, 2)
 	for side, tree := range trees {
-		isolated, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+		isolated, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(isolated), 1)
 		full[side] = isolated[0]
 	}
 	var first []byte
 	for repeat := range 2 {
-		runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 2)
 		var templates manifest.WorkCounts
@@ -397,12 +398,13 @@ func sharedClusterTrees(t *testing.T) []Tree {
 func assertClusterUnavailablePair(t *testing.T, pair []Rendered, failedSide manifest.TreeSide) {
 	t.Helper()
 	owner := testutil.KustomizationID("apps", "owner")
-	selected, selectErr, _ := Select(
+	projectedResults1, projectionErrors1 := Select(
 		pair,
 		errors.Join(pair[0].Err, pair[1].Err),
 		[]manifest.NamedResource{owner},
 		nil,
 	)
+	selected, selectErr, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 	for side, run := range pair {
 		assert.Equal(t, run.Absent, false)
 		if run.Orchestrator == nil || run.Result == nil {
@@ -524,14 +526,14 @@ func TestRenderTrees_ThreeClusterSharedInput(t *testing.T) {
 	trees := sharedClusterTrees(t)
 	full := make(map[manifest.TreeID]*Result)
 	for _, tree := range trees {
-		isolated, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+		isolated, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(isolated), 1)
 		full[tree.ID] = isolated[0].Result
 	}
 	var first []byte
 	for repeat := range 2 {
-		runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 6)
 		raw := map[string]manifest.WorkCounts{}

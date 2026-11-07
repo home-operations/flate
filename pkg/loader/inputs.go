@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/kustomize/api/types"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -26,7 +27,7 @@ type parsedSource struct {
 	binding   *store.ArtifactInput
 	walks     map[physicalContext]physicalWalk
 	loads     map[loadContext]loadFacts
-	hydrated  map[OccurrenceID]store.Child
+	hydrated  map[occurrenceID]store.Child
 }
 
 type parsedDocument struct {
@@ -78,7 +79,7 @@ const (
 type fileAdmission struct {
 	file       string
 	kind       admissionKind
-	coordinate OccurrenceID
+	coordinate occurrenceID
 	warning    manifest.Warning
 }
 
@@ -102,7 +103,7 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 		binding:  &sourceBinding,
 		walks:    map[physicalContext]physicalWalk{},
 		loads:    map[loadContext]loadFacts{},
-		hydrated: map[OccurrenceID]store.Child{},
+		hydrated: map[occurrenceID]store.Child{},
 	}
 	if prepared := l.documents.parsed; prepared != nil && prepared.compact == l.documents.compact {
 		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
@@ -264,7 +265,7 @@ func (l *Loader) loadInputVisibility(root string, domain loadContext, loadValue 
 		for fileIndex := range fileValues {
 			file := fileValues[fileIndex]
 			if file.kind == admissionWarning || l.terminalInput(file.file) ||
-				l.documents.cache[file.file].eligible == fileInactive {
+				l.documents.cache[file.file].eligible == selection.RootInactive {
 				continue
 			}
 			l.appendInputVisibility(&observation, root, new(file))

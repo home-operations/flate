@@ -5,19 +5,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"log/slog"
 	"maps"
 	"path/filepath"
 	"slices"
 	"sync"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -204,12 +204,17 @@ func (r *renderInvocation) discoverTrees(ctx context.Context) {
 			continue
 		}
 		r.wg.Go(func() {
-			o := newOrchestrator(ctx, new(*r.cfg), new(tree), r.budget.Fork())
+			o, failure := newOrchestrator(ctx, new(*r.cfg), new(tree), r.budget.Fork())
+			if failure != nil {
+				r.results[i].Result = &Result{Warnings: tree.Input.Warnings}
+				r.results[i].Err = &treeError{id: tree.ID, err: failure, attributed: len(r.results) > 1}
+				return
+			}
 			r.stores[i] = o.store
 			r.results[i].Orchestrator = o
 			if failure := o.discover(ctx); failure != nil {
 				result := o.failureResult()
-				if o.filter.Enabled() && o.session == nil {
+				if (o.selection != nil) && o.session == nil {
 					result.Warnings = tree.Input.Warnings
 				}
 				r.results[i].Result = result
@@ -227,7 +232,11 @@ func (r *renderInvocation) stopFailedDiscovery() error {
 			continue
 		}
 		o := result.Orchestrator
-		if o.filter.Enabled() && o.session == nil {
+		if o == nil {
+			err = errors.Join(err, result.Err)
+			continue
+		}
+		if (o.selection != nil) && o.session == nil {
 			err = errors.Join(err, result.Err)
 		}
 		o.stop()
@@ -373,20 +382,12 @@ func (r *renderInvocation) prepareSession(ctx context.Context, i int) {
 	failure := o.lookupHistory(ctx)
 	if failure == nil {
 		o.configureControllers()
-		if o.history == nil {
-			o.history = map[manifest.NamedResource]struct {
-				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-				Complete bool
-			}{}
-		}
-		failure = o.prepareNeededHistory(ctx,
-			slices.SortedFunc(maps.Keys(o.loader.Options.HistoryOwners), manifest.NamedResource.Compare), o.history)
 	}
-	var proposal *loader.Admission
+	var proposal *selection.Admission
 	if failure == nil {
-		proposal, failure = o.loader.Prepare(
+		proposal, failure = o.prepareAdmission(
 			ctx,
-			loader.PrepareRequest{Invocation: true, History: o.history, Preparation: &o.admissionPreparation},
+			selection.PrepareRequest{Invocation: true, History: o.history, Preparation: &o.admissionPreparation},
 		)
 	}
 	advanced := false
@@ -422,7 +423,7 @@ func (r *renderInvocation) completeDiscovery(ctx context.Context) {
 func (r *renderInvocation) qualifyDeclarations(ctx context.Context) error {
 	for i := range r.results {
 		o := r.results[i].Orchestrator
-		if o == nil || !o.filter.Enabled() {
+		if o == nil || o.selection == nil {
 			continue
 		}
 		other, j, found := r.opposite(i)
@@ -557,12 +558,12 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 func (r *renderInvocation) installAdmission(ctx context.Context) {
 	for i := range r.results {
 		o := r.results[i].Orchestrator
-		if o == nil || !o.filter.Enabled() {
+		if o == nil || o.selection == nil {
 			continue
 		}
 		r.wg.Go(func() {
 			o.completeBootstrap()
-			failure := o.buildChangeFilter(ctx)
+			failure := o.prepareInvocation(ctx)
 			if failure == nil {
 				failure = o.installAdmission(ctx)
 			}
@@ -591,9 +592,9 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 		}
 		r.wg.Go(func() {
 			defer o.stop()
-			if !o.filter.Enabled() {
+			if o.selection == nil {
 				o.completeBootstrap()
-				if failure := o.buildChangeFilter(ctx); failure != nil {
+				if failure := o.prepareInvocation(ctx); failure != nil {
 					r.results[i].Orchestrator = nil
 					r.results[i].Result = o.failureResult()
 					r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}
@@ -641,27 +642,7 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg *Config, inputs *source
 		)
 	}
 	trees = expanded
-	byID := make(map[manifest.TreeID]Tree, len(trees))
-	sides := make(map[manifest.TreeSide]bool)
-	for _, tree := range trees {
-		byID[tree.ID] = tree
-		sides[tree.ID.Side] = true
-	}
-	if len(sides) == comparisonSides {
-		for _, tree := range trees {
-			other := tree.ID
-			other.Side = manifest.TreeHead - other.Side
-			if _, present := byID[other]; !present {
-				byID[other] = Tree{ID: other}
-				tree.BaseInput, tree.ExternalChanges = nil, nil
-				byID[tree.ID] = tree
-			}
-		}
-	}
-	trees = trees[:0]
-	for _, tree := range byID {
-		trees = append(trees, tree)
-	}
+	trees = pairTreeSides(trees)
 	slices.SortFunc(trees, func(a, b Tree) int { return a.ID.Compare(b.ID) })
 	return trees, nil
 }
@@ -672,12 +653,12 @@ func prepareTreeEntries(ctx context.Context, trees []Tree, cfg *Config, inputs *
 	var wg sync.WaitGroup
 	for i, tree := range trees {
 		wg.Go(func() {
-			selection := cfg.Selection
-			selection.Changed = selection.Changed || tree.ExternalChanges != nil
+			request := cfg.Selection
+			request.Changed = request.Changed || tree.ExternalChanges != nil
 			var err error
 			entries[i], err = discovery.Plan(ctx, discovery.Config{
 				Work: tree.work.Scope(), Projections: cfg.projections,
-				Declarations: cfg.Supply, Selection: selection,
+				Declarations: cfg.Supply, Selection: request,
 				Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, Input: tree.Input,
 				RemoteInputs: inputs, RemoteRetry: cfg.SourceRetry,
 				StrictSubstitutions: cfg.StrictSubstitutions, SkipKinds: cfg.HelmOptions.SkipResourceKinds(),
@@ -814,28 +795,3 @@ func (e *treeError) Error() string {
 }
 
 func (e *treeError) Unwrap() error { return e.err }
-
-func projectEntryReaders(index *manifest.DiscoveryIndex, from, to manifest.NamedResource) *manifest.DiscoveryIndex {
-	if index == nil || from == to || from == (manifest.NamedResource{}) ||
-		to == (manifest.NamedResource{}) {
-		return index
-	}
-	projected := *index
-	projected.Readers = maps.Clone(index.Readers)
-	for file, readers := range index.Readers {
-		if !slices.ContainsFunc(
-			readers,
-			func(reader manifest.FileReader) bool { return reader.Reader == from },
-		) {
-			continue
-		}
-		readers = slices.Clone(readers)
-		for i := range readers {
-			if readers[i].Reader == from {
-				readers[i].Reader = to
-			}
-		}
-		projected.Readers[file] = readers
-	}
-	return &projected
-}

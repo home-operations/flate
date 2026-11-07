@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -143,7 +143,7 @@ func keepFixtureChildren(
 		}
 	}
 	if _, err := c.KeepEmitted(ctx, id,
-		loader.PrepareRequest{Generation: next.Children, Reads: next.Reads},
+		selection.PrepareRequest{Generation: next.Children, Reads: next.Reads},
 	); err != nil {
 		return cloned, err
 	}

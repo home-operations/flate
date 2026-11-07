@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
 	"testing/fstest"
+
+	"github.com/home-operations/flate/pkg/selection"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
@@ -70,6 +73,40 @@ func TestFinalizeIndex_InputInventory(t *testing.T) {
 	}
 }
 
+func TestFinalizeIndex_DirectoryReaderAuthority(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
+	testutil.WriteFile(t, root, "forecast/kustomization.yaml", "resources: []\n")
+	st := store.New()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."}
+	factory := &manifest.Kustomization{Name: "factory", Namespace: "apps"}
+	forecast := &manifest.Kustomization{Name: "forecast", Namespace: "apps", Path: "./forecast"}
+	st.AddObject(owner)
+	l := New(st)
+	l.Index.Records[forecast.Named()] = manifest.DiscoveryRecord{
+		File: "factory.yaml", Parent: factory.Named(), Productions: []manifest.Production{{Owner: factory.Named()}},
+	}
+	st.SetDiscoveryIndex(l.Index)
+	st.AddObjects([]manifest.BaseManifest{factory, forecast})
+	assert.Equal(t, st.GetDeclaration(owner.Named()) == owner, true)
+	assert.Equal(t, st.GetObject(forecast.Named()) == forecast, true)
+	assert.Equal(t, st.GetDeclaration(forecast.Named()) == nil, true)
+	admitForTest(st, root)
+	l.SourceRoot = root
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	assert.Diff(
+		t, l.Index.Readers["."],
+		[]manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}},
+	)
+	assert.Equal(t, len(l.Index.Readers["forecast"]), 0)
+	assert.Equal(t, st.GetDeclaration(forecast.Named()) == nil, true)
+	st.DeleteObject(owner.Named())
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	assert.Equal(t, len(l.Index.Readers["."]), 0)
+	assert.Equal(t, len(l.Index.Readers["forecast"]), 0)
+}
+
 func TestFinalizeIndex_InputCoordinatesAndAdmission(t *testing.T) {
 	t.Parallel()
 	for _, filename := range manifest.KustomizeBuilderFilenames {
@@ -115,11 +152,15 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 			) != 1, "%s", "terminal role suppressed a separately declared resource")
 	}
 	file := filepath.Join(root, "inputs", "dual.yaml")
-	admitted := l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file)
+	admitted := selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, file)).Admitted
 	assert.Equal(t, admitted, true)
 	assert.Equal(t, l.terminalInput(file), false)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	assert.Equal(t, l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file), admitted)
+	assert.Equal(
+		t,
+		selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, file)).Admitted,
+		admitted,
+	)
 	assert.Equal(t, l.terminalInput(file), false)
 }
 
@@ -163,8 +204,10 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 		"missing": {{Reader: parent.Named(), Source: manifest.BootstrapSourceID}},
 	}
 	before := map[manifest.NamedResource]bool{
-		peer:    l.AdmitsRoot(l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile),
-		missing: l.AdmitsRoot(l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile),
+		peer: selection.Root(rootAtForTest(l, l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile)).Admitted,
+		missing: selection.Root(
+			rootAtForTest(l, l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile),
+		).Admitted,
 	}
 	assert.Equal(t, before[peer], true)
 	assert.Equal(t, before[missing], false)
@@ -208,7 +251,7 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 			for reader := range l.Index.ReadersOfFile("missing/release.yaml") {
 				readers = append(readers, reader)
 			}
-			results <- queryResult{admitted: map[manifest.NamedResource]bool{peer: l.AdmitsRoot(l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile), missing: l.AdmitsRoot(l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile)}, owners: owners, ancestors: ancestors, readers: readers}
+			results <- queryResult{admitted: map[manifest.NamedResource]bool{peer: selection.Root(rootAtForTest(l, l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile)).Admitted, missing: selection.Root(rootAtForTest(l, l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile)).Admitted}, owners: owners, ancestors: ancestors, readers: readers}
 		})
 	}
 	for range 2 {
@@ -283,12 +326,21 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			if mode == "alias" {
 				wantSource, wantFile = root, "subtree/shared/resource.yaml"
 			}
-			assert.Equal(t, occurrences[0].Declaration, OccurrenceID{Source: wantSource, File: wantFile, Document: 0})
-			assert.Equal(t, occurrences[0].object.Named().Namespace, "")
-			assert.Equal(t, occurrences[0].object.Named().Name, "mounted")
+			assert.Equal(
+				t,
+				occurrences[0].Declaration,
+				selection.OccurrenceID{Source: wantSource, File: wantFile, Document: 0},
+			)
+			assert.Equal(t, occurrences[0].Object.Named().Namespace, "")
+			assert.Equal(t, occurrences[0].Object.Named().Name, "mounted")
 			repeated, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
 			assert.NoError(t, err)
-			assert.Equal(t, slices.Equal(repeated, occurrences), true)
+			assert.Equal(
+				t,
+				//nolint:govet // Snapshot equality must include immutable unexported facts.
+				reflect.DeepEqual(repeated, occurrences),
+				true,
+			)
 			assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 1)
 			repeated[0].Declaration.File = "caller-owned"
 			assert.Equal(t, occurrences[0].Declaration.File, wantFile)
@@ -346,25 +398,39 @@ func testFinalizeIndexInputCoordinatesAndAdmissionCase(
 	l.SourceRoot = root
 	admitForTest(s, root)
 	l.Admit(root)
-	admitted := l.AdmitsRoot(
-		l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
-		filepath.Join(root, "apps", "patch.yaml"),
-	)
+	admitted := selection.Root(
+		rootAtForTest(
+			l,
+			l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
+			filepath.Join(root, "apps", "patch.yaml"),
+		),
+	).Admitted
 	assert.Equal(t, admitted, false)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	idx := l.Index
 	assert.Equal(
 		t,
-		l.AdmitsRoot(
-			l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
-			filepath.Join(root, "apps", "patch.yaml"),
-		),
+		selection.Root(
+			rootAtForTest(
+				l,
+				l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
+				filepath.Join(root, "apps", "patch.yaml"),
+			),
+		).Admitted,
 		admitted,
 	)
-	assert.FatalIf(t, l.AdmitsRoot(
-		l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
-		filepath.Join(root, "apps", "patch.yaml"),
-	), "%s", "file-role input counted as a listed structural resource")
+	assert.FatalIf(
+		t,
+		selection.Root(
+			rootAtForTest(
+				l,
+				l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj,
+				filepath.Join(root, "apps", "patch.yaml"),
+			),
+		).Admitted,
+		"%s",
+		"file-role input counted as a listed structural resource",
+	)
 	for _, file := range []string{"apps/" + (*testCaseInput), "inputs/absolute.yaml", "inputs/escaped.yaml", "inputs/missing", "apps/patch.yaml"} {
 		assert.Diff(
 			t,

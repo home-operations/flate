@@ -11,6 +11,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -413,10 +415,12 @@ spec:
 
 	record, ok := l.Index.Lookup(id)
 	if !ok ||
-		l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path) != (testCaseInput.role == "") {
+		selection.Root(
+			rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path),
+		).Admitted != (testCaseInput.role == "") {
 		t.Fatalf(
 			"indexed root admission = %t, record = %+v",
-			l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path),
+			selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)).Admitted,
 			record,
 		)
 	}

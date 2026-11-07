@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/internal/testutil"
@@ -51,11 +53,12 @@ func completedScopeFixture(tb testing.TB, count int, failures, cycle bool) orche
 	res.Failed = o.Store().FailedResources()
 	var runErr error
 	if len(res.Failed) != 0 {
-		runErr = &orchestrator.FailuresError{Message: "raw resource failures"}
+		runErr = &selection.FailuresError{Message: "raw resource failures"}
 	}
 	run := orchestrator.Rendered{Orchestrator: o, Result: res, Err: runErr}
 	roots := []manifest.NamedResource{{Group: "kustomize.toolkit.fluxcd.io", Kind: manifest.KindKustomization}}
-	selected, _, _ := orchestrator.Select([]orchestrator.Rendered{run}, runErr, roots, nil)
+	projectedResults0, projectionErrors0 := orchestrator.Select([]orchestrator.Rendered{run}, runErr, roots, nil)
+	selected, _, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	documents := 0
 	for _, batch := range selected[0].Manifests {
 		documents += len(batch.Documents)
@@ -116,7 +119,7 @@ func keepSetFixture(tb testing.TB, count, sides int) []orchestrator.Rendered {
 			side = manifest.TreeBase
 		}
 		id := manifest.TreeID{Cluster: ".", Side: side}
-		rendered, err := orchestrator.RenderTrees(tb.Context(), []orchestrator.Tree{{
+		rendered, err := renderTreesForTest(tb.Context(), tb, []orchestrator.Tree{{
 			ID: id, RepoRoot: root, Path: root, ExternalChanges: change.NewSet(paths),
 		}}, orchestrator.Config{Concurrency: 2})
 		assert.NoError(tb, err)
@@ -131,8 +134,9 @@ func keepSetFixture(tb testing.TB, count, sides int) []orchestrator.Rendered {
 		if runs[i].Store().GetObject(sentinel) == nil {
 			tb.Fatal("missing local off-scope sentinel")
 		}
-		explicit, err, remainder := orchestrator.Select([]orchestrator.Rendered{runs[i]}, nil,
+		projectedResults1, projectionErrors1 := orchestrator.Select([]orchestrator.Rendered{runs[i]}, nil,
 			[]manifest.NamedResource{testutil.KustomizationID(sentinel.Namespace, "")}, nil)
+		explicit, err, remainder := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 		assert.NoError(tb, err)
 		assert.NoError(tb, remainder)
 		if len(explicit[0].Objects) != 1 {
@@ -144,12 +148,13 @@ func keepSetFixture(tb testing.TB, count, sides int) []orchestrator.Rendered {
 	if sides == 2 && runs[0].Store() == runs[1].Store() {
 		tb.Fatal("comparison sides share a store")
 	}
-	selected, err, remainder := orchestrator.Select(
+	projectedResults2, projectionErrors2 := orchestrator.Select(
 		runs,
 		nil,
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	selected, err, remainder := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 	assert.NoError(tb, err)
 	assert.NoError(tb, remainder)
 	assert.Equal(tb, len(selected), sides)
@@ -184,7 +189,8 @@ func BenchmarkIncludeNamespace_KeepSet(b *testing.B) {
 				roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
 				b.ReportAllocs()
 				for b.Loop() {
-					_, _, _ = orchestrator.Select(runs, nil, roots, nil)
+					projectedResults3, projectionErrors3 := orchestrator.Select(runs, nil, roots, nil)
+					_, _, _ = projectedResults3, projectionErrors3.Selected, projectionErrors3.Remaining
 				}
 			})
 		}
@@ -232,7 +238,8 @@ func benchmarkSelectCompletedScopeCase(b *testing.B, count *int, failures *bool,
 	opts := diff.Options{Format: diff.FormatJSON}
 	b.ReportAllocs()
 	for b.Loop() {
-		selected, selectedErr, _ := orchestrator.Select(runs, current.Err, roots, nil)
+		projectedResults4, projectionErrors4 := orchestrator.Select(runs, current.Err, roots, nil)
+		selected, selectedErr, _ := projectedResults4, projectionErrors4.Selected, projectionErrors4.Remaining
 		switch *capturedInputs.command {
 		case "test":
 			_ = failureModel(selected[0])

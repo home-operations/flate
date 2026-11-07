@@ -42,6 +42,11 @@
 //		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: baseDir},
 //		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: headDir},
 //	}, cfg)
+//	defer func() {
+//		for _, run := range runs {
+//			run.Result.Close()
+//		}
+//	}()
 //	for start := 0; start < len(runs); {
 //		end := start + 1
 //		for end < len(runs) && runs[end].ID.Cluster == runs[start].ID.Cluster {
@@ -49,13 +54,13 @@
 //		}
 //		pair := runs[start:end]
 //		start = end
-//		selected, selectedErr, _ := orchestrator.Select(
+//		selected, projection := orchestrator.Select(
 //			pair, errors.Join(pair[0].Err, pair[1].Err),
 //			[]manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}}, nil)
 //		out, warnings, suppressed, err := diff.Compare(
 //			diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys},
 //			diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys},
-//			selectedErr,
+//			projection.Selected,
 //			diff.Options{
 //				StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,
 //				Normalize: redact, // optional extra per-manifest scrub

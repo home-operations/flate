@@ -32,7 +32,7 @@ func (l *Loader) projectTemplates() {
 
 func (l *Loader) templateProductions(
 	owner manifest.NamedResource,
-	occurrence *Occurrence,
+	occurrence *authoredOccurrence,
 	parent *manifest.DiscoveryRecord,
 ) []manifest.Production {
 	var productions []manifest.Production

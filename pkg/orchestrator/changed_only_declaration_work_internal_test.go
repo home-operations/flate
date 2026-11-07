@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -113,14 +114,13 @@ spec:
 					ExternalChanges: change.NewSet(changed),
 				}
 			}
-			runs, err := RenderTrees(
-				t.Context(),
+			runs, err := renderTreesForTest(t.Context(), t,
 				trees,
 				Config{
 					CacheDir:    t.TempDir(),
 					Concurrency: 2,
 					RecordWork:  true,
-					Selection:   manifest.Selection{Changed: true},
+					Selection:   selection.Request{Changed: true},
 				},
 			)
 			assert.NoError(t, err)
@@ -139,7 +139,7 @@ spec:
 			for side, run := range runs {
 				oracle := trees[side]
 				oracle.BaseInput, oracle.ExternalChanges = nil, nil
-				full, err := RenderTrees(t.Context(), []Tree{oracle}, Config{Concurrency: 2})
+				full, err := renderTreesForTest(t.Context(), t, []Tree{oracle}, Config{Concurrency: 2})
 				assert.NoError(t, err)
 				actual, err := json.Marshal(run.Result.Manifests)
 				assert.NoError(t, err)
@@ -174,10 +174,10 @@ func TestRenderTrees_ChangedOnlyAnonymousPreparation(t *testing.T) {
 			ExternalChanges: change.NewSet([]string{"app/release.yaml"}),
 		}
 	}
-	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true, Selection: manifest.Selection{Changed: true}}
+	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true, Selection: selection.Request{Changed: true}}
 	var first [2]string
 	for _, regime := range []string{"cold", "warm"} {
-		runs, err := RenderTrees(t.Context(), trees, cfg)
+		runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 2)
 		for side, run := range runs {

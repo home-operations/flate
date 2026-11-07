@@ -51,8 +51,7 @@ func TestRenderTrees_ConcurrencyWork(t *testing.T) {
 			fmt.Sprintf("concurrency_%d", workers),
 			func(t *testing.T) {
 				t.Parallel()
-				runs, err := RenderTrees(
-					t.Context(),
+				runs, err := renderTreesForTest(t.Context(), t,
 					[]Tree{
 						{
 							ID: manifest.TreeID{

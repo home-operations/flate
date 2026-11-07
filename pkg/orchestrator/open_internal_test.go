@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -30,15 +32,7 @@ func (f *countedProducerFS) Open(name string) (fs.File, error) {
 	return f.FS.Open(name)
 }
 
-// TestOrchestrator_ChangedOnlyKeepsResourcesEscapeOwner reproduces #833
-// end-to-end: a Flux Kustomization's overlay pulls a base in from OUTSIDE
-// its own spec.path via a `resources:` escape, and the only edit is to a
-// plain resource under that base. The prefix-claim index alone attributes
-// the file to no owner; the SelfProduceIndex file attribution must reach
-// the change filter through buildChangeFilter so the owning KS is kept.
-// Exercises the real wiring (SelfProduceIndex.OwnersOfFile is nil-safe, so
-// a nil selfProduce would silently disable the fallback and the unit tests
-// with a fake FileOwnerLookup would still pass).
+// Escaped resource ownership MUST reach selection through the real discovery wiring.
 //
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestOrchestrator_ChangedOnlyKeepsResourcesEscapeOwner(t *testing.T) {
@@ -93,13 +87,17 @@ data:
 		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 
-	f := o.filter
+	f := o.selection
 
-	assert.FatalIf(t, f == nil, "%v", "expected non-nil change filter when PathOrig differs from Path")
+	assert.FatalIf(t, f == nil, "%v", "expected non-nil selection session when PathOrig differs from Path")
 
 	apps := testutil.KustomizationID("flux-system", "apps")
-	assert.FatalIf(t, !f.ShouldReconcile(apps),
-		"KS reading the changed file via a resources: escape must be kept; keep=%v", f.KeepNames())
+	assert.FatalIf(
+		t,
+		!f.Snapshot().Reconcile(apps),
+		"KS reading the changed file via a resources: escape must be kept; keep=%v",
+		selectionNamesForTest(f, o.store, o.index),
+	)
 }
 
 func TestRenderTrees_IndependentInvocations(t *testing.T) {
@@ -124,9 +122,7 @@ metadata:
   name: hello
 data: {k: v}
 `)
-	// Baseline with different content forces changed-only mode, which
-	// makes buildChangeFilter actually construct a filter we can pin
-	// across the two Bootstrap calls.
+	// The baseline MUST differ to retain a restricted Session across both Bootstrap calls.
 	testutil.WriteFile(
 		t,
 		origDir,
@@ -143,15 +139,15 @@ data: {k: v}
 		Path:      dir,
 		BaseInput: testDirectoryInput(t, origDir),
 	}
-	first, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2})
+	first, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	second, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2})
+	second, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{Concurrency: 2})
 	assert.NoError(t, err)
 
 	assert.FatalIf(t, len(first) != 1 || len(second) != 1, "invocation results: %v %v", first, second)
 
 	for _, run := range []Rendered{first[0], second[0]} {
-		assert.FatalIf(t, run.filter == nil, "%v", "changed-only filter missing")
+		assert.FatalIf(t, run.selection == nil, "%v", "changed-only selection session missing")
 
 		assert.FatalIf(
 			t,
@@ -170,7 +166,11 @@ data: {k: v}
 		len(first[0].Store().ListObjects("", manifest.KindConfigMap)),
 		len(second[0].Store().ListObjects("", manifest.KindConfigMap)),
 	)
-	assert.Diff(t, first[0].filter.KeepNames(), second[0].filter.KeepNames())
+	assert.Diff(
+		t,
+		selectionNamesForTest(first[0].selection, first[0].store, first[0].index),
+		selectionNamesForTest(second[0].selection, second[0].store, second[0].index),
+	)
 	assert.Diff(t, canonicalBatches(first[0].Result), canonicalBatches(second[0].Result))
 }
 
@@ -322,13 +322,13 @@ func TestRenderTrees_ChartDigestTrackingFailureRetry(t *testing.T) {
 		FS:        os.DirFS(filepath.Join(root, "absent")),
 	}
 	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2}
-	_, err := RenderTrees(t.Context(), []Tree{tree}, cfg)
+	_, err := renderTreesForTest(t.Context(), t, []Tree{tree}, cfg)
 
 	assert.FatalIf(t, err == nil, "%v", "expected unavailable baseline failure")
 
 	writeDigestTrackingRelease(t, root, "apps/hr.yaml", "false")
 	tree.BaseInput = nil
-	runs, err := RenderTrees(t.Context(), []Tree{tree}, cfg)
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, cfg)
 	assert.NoError(t, err)
 
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "retry lost render: %v", runs)
@@ -363,8 +363,7 @@ func TestRenderTrees_ChartDigestTrackingIndependent(t *testing.T) {
 	for _, disabled := range []bool{false, true} {
 		var previous []byte
 		for range 2 {
-			renderedTrees1, err := RenderTrees(
-				t.Context(),
+			renderedTrees1, err := renderTreesForTest(t.Context(), t,
 				[]Tree{
 					{
 						Path:      filepath.Join(baseRoot, "flux"),
@@ -439,8 +438,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				)
 			}
 			configuredRoot := t.TempDir()
-			renderedTrees2, err := RenderTrees(
-				t.Context(),
+			renderedTrees2, err := renderTreesForTest(t.Context(), t,
 				[]Tree{
 					{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 					{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -481,8 +479,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 			)
 
 			assert.NoError(t, os.Remove(filepath.Join(baseDir, "app", "cm.yaml")))
-			renderedTrees3, err := RenderTrees(
-				t.Context(),
+			renderedTrees3, err := renderTreesForTest(t.Context(), t,
 				[]Tree{
 					{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 					{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -492,7 +489,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 			base, head = renderedTrees3[0], renderedTrees3[1]
 
 			{
-				_, ok := errors.AsType[*FailuresError](
+				_, ok := errors.AsType[*selection.FailuresError](
 					err,
 				)
 				assert.FatalIf(
@@ -573,7 +570,7 @@ spec:
 			t.Cleanup(func() { o.stop() })
 			assert.NoError(t, o.bootstrap(t.Context()))
 			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, disabled)
-			res, err := o.render(t.Context())
+			res, err := o.render(t.Context(), t)
 			assert.NoError(t, err)
 			assertDigestTrackingOutput(t, Rendered{Orchestrator: o, Result: res}, disabled, "stable")
 			hr, ok := o.store.Get[*manifest.HelmRelease](testutil.HelmReleaseID("flux-system", "flux-instance"))

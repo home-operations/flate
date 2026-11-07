@@ -79,7 +79,7 @@ data:
 	assert.FatalIf(t, err != nil, "%v", err)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	res, err := o.render(ctx)
+	res, err := o.render(ctx, t)
 	assert.FatalIf(t, err != nil, "Render must converge: %v", err)
 	assert.FatalIf(t, ctx.Err() != nil || len(res.Failed) != 0,
 		"Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
@@ -262,7 +262,7 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	// blocking wait would hit this deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 20_000_000_000) // 20s ceiling
 	defer cancel()
-	res, _ := o.render(ctx)
+	res, _ := o.render(ctx, t)
 	assert.FatalIf(t, res == nil, "%v", "Render returned nil result")
 	leafInfo, ok := res.Failed[testutil.KustomizationID("flux-system", "leaf")]
 	assert.FatalIf(
@@ -346,8 +346,7 @@ spec:
 	defer cancel()
 	var previous []byte
 	for range 2 {
-		renderedSingleton1, err := RenderTrees(
-			ctx,
+		renderedSingleton1, err := renderTreesForTest(ctx, t,
 			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{CacheDir: t.TempDir(), Concurrency: 2},
 		)
@@ -422,15 +421,15 @@ func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 					Origin:      manifest.SuppliedDeclaration,
 				}
 			}
-			o.loader = admissiontest.New(t,
+			o.loader, o.selection = admissiontest.New(t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"consumer.yaml"}),
 					Index:     index,
 					Inventory: o.store,
 					Root:      root,
 				})
-			admissiontest.Commit(t, o.loader, nil)
-			o.filter = o.loader.Options.Filter
+			admissiontest.Commit(t, o.selection, nil)
+
 			o.configureControllers()
 			_, err = o.seedNodes()
 			assert.NoError(t, err)

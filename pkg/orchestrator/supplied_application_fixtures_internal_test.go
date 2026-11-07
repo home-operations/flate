@@ -69,7 +69,7 @@ func testSuppliedApplication(t *testing.T, kind string, restricted, covering boo
 	if restricted {
 		tree.ExternalChanges = change.NewSet([]string{"entry/literal.yaml"})
 	}
-	runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2, Supply: inputs})
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{Concurrency: 2, Supply: inputs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func assertSuppliedApplication(t *testing.T, runs []Rendered, supplied manifest.
 	} else if o.entryBinding.Producer != (manifest.NamedResource{}) {
 		t.Fatal("noncovering evidence qualified entry")
 	}
-	selections, selectedErr, remainder := Select(runs,
+	projectedResults0, projectionErrors0 := Select(runs,
 		nil,
 		[]manifest.NamedResource{{
 			Group: manifest.FluxKustomizeDomain,
@@ -109,6 +109,7 @@ func assertSuppliedApplication(t *testing.T, runs []Rendered, supplied manifest.
 			Name:  "supplied",
 		}},
 		nil)
+	selections, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	if selectedErr == nil && remainder != nil {
 		t.Fatal(remainder)
 	}

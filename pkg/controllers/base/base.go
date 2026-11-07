@@ -7,10 +7,10 @@ import (
 	"slices"
 	"sync/atomic"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
@@ -22,9 +22,9 @@ type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
 
-	started atomic.Bool
-	filter  *change.Filter
-	loader  *loader.Loader
+	started   atomic.Bool
+	selection *selection.Session
+	loader    *loader.Loader
 	// SkipKinds is the immutable visible-output exclusion list.
 	SkipKinds []string
 
@@ -62,8 +62,8 @@ type Options struct {
 	SkipKinds []string
 	// DependencySubstitutions is the frozen discovered lookup used before child publication.
 	DependencySubstitutions values.DependencySubstitutions
-	// Filter narrows reconciliation to changed resources in changed-only mode.
-	Filter *change.Filter
+	// Session owns restricted reconciliation membership.
+	Session *selection.Session
 	// Index contains immutable source-qualified discovery evidence.
 	Index *manifest.DiscoveryIndex
 	// Existence is the file-existence lookup depwait uses to lazy-promote
@@ -84,7 +84,7 @@ type Options struct {
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.DependencySubstitutions = opts.DependencySubstitutions
-	c.filter = opts.Filter
+	c.selection = opts.Session
 	c.loader = opts.Loader
 	c.SkipKinds = opts.SkipKinds
 	c.existence = opts.Existence
@@ -96,55 +96,101 @@ func (c *Controller) Configure(opts Options) {
 
 // KeepEmitted MUST admit every child in the immutable generation before publication.
 //
-//nolint:gocritic // Admission retains the immutable generation and required inputs.
+//nolint:funlen,gocritic,gocognit // One capture MUST cover the immutable generation across acquisition and publication.
 func (c *Controller) KeepEmitted(
 	ctx context.Context,
 	parent manifest.NamedResource,
-	request loader.PrepareRequest,
+	request selection.PrepareRequest,
 ) (bool, error) {
-	reads := request.Reads
-	f := c.filter
-	if !f.Enabled() {
+	if c.selection == nil {
 		return true, nil
 	}
-	if err := ctx.Err(); err != nil {
-		return false, fmt.Errorf("context: %w", err)
-	}
 	if c.loader == nil {
-		return false, manifest.NewError(
-			manifest.ErrInput,
-			nil,
-			"restricted controller requires its invocation loader",
-		)
+		return false, manifest.NewError(manifest.ErrInput, nil, "restricted controller requires its invocation loader")
 	}
+	reads := request.Reads
 	if reads == nil {
 		reads = &store.ReadSet{}
 		reads.Init(c.Store, parent, nil)
 		defer reads.Retire()
 	}
-	request.Reads, request.Owner = reads, parent
-	admission := emittedAdmission{controller: c, reads: reads, request: request}
-	defer func() { admission.proof.Retire() }()
+	request.Owner = parent
+	var local *selection.Preparation
+	if request.Preparation == nil {
+		request.Preparation = &local
+		defer func() { local.Retire() }()
+	}
 	for {
-		prepareResult1, prepareResult1Err := admission.prepare(ctx)
-		ready, retry, err := prepareResult1.committed, prepareResult1.retry, prepareResult1Err
-		if retry {
-			continue
+		if err := ctx.Err(); err != nil {
+			return false, fmt.Errorf("context: %w", err)
 		}
-		if err != nil || !ready {
+		if !reads.Valid() {
+			return false, nil
+		}
+		proof := c.admissionProof(reads)
+		request.Reads = proof
+		proposal, err := c.selection.Prepare(ctx, request)
+		if err != nil {
+			proof.Retire()
 			return false, err
 		}
-		break
-	}
-	selected := len(request.Generation) == 0
-	for i := range request.Generation {
-		if child := &request.Generation[i]; child.Obj != nil {
-			keep := f.ShouldReconcile(child.Obj.Named())
-			c.Store.SetIncluded(child.Obj.Named(), keep, f.OrdinaryDemand(child.Obj.Named()))
-			selected = selected || keep
+		var committed bool
+		for {
+			var acquired []selection.Acquisition
+			for demand := range proposal.Demands() {
+				result := selection.Acquisition{Demand: demand, Reads: demand.Reads}
+				if demand.History && demand.Root != "" {
+					result.Root, result.Available, err = c.loader.ResolveRoot(
+						ctx,
+						demand.Reads,
+						demand.Source,
+						demand.Root,
+					)
+				} else if demand.Occurrence.Identity != (manifest.NamedResource{}) {
+					result.Child, err = c.loader.OccurrenceObject(ctx, &demand.Occurrence, demand.Artifact)
+					result.Available = result.Child.Obj != nil
+				}
+				if err != nil {
+					proposal.Retire()
+					c.Store.Retire(proof)
+					return false, err
+				}
+				acquired = append(acquired, result)
+			}
+			if len(acquired) != 0 {
+				request = proposal.Request
+				request.Acquired = acquired
+				previous := proposal
+				proposal, err = c.selection.Prepare(ctx, request)
+				previous.Retire()
+				if err != nil {
+					c.Store.Retire(proof)
+					return false, err
+				}
+				continue
+			}
+			proposal, committed, err = c.selection.Commit(ctx, proposal, selection.Execution)
+			if err != nil || committed || proposal == nil {
+				break
+			}
 		}
+		c.Store.Retire(proof)
+		if err != nil {
+			return false, err
+		}
+		if !committed {
+			continue
+		}
+		decision := c.selection.Snapshot()
+		selected := len(request.Generation) == 0
+		for _, child := range request.Generation {
+			if child.Obj != nil {
+				c.selection.Include(child.Obj.Named())
+				selected = selected || decision.Reconcile(child.Obj.Named())
+			}
+		}
+		return selected, nil
 	}
-	return selected, nil
 }
 
 func (c *Controller) admissionProof(reads *store.ReadSet) *store.ReadSet {
@@ -187,49 +233,4 @@ func (c *Controller) preGate(obj manifest.BaseManifest) bool {
 		return true
 	}
 	return false
-}
-
-// filterActive reports whether a non-nil, enabled change filter is configured.
-func (c *Controller) filterActive() bool {
-	return c.filter != nil && c.filter.Enabled()
-}
-
-type emittedAdmission struct {
-	controller *Controller
-	reads      *store.ReadSet
-	proof      *store.ReadSet
-	request    loader.PrepareRequest
-}
-
-type admissionState struct {
-	committed bool
-	retry     bool
-}
-
-func (a *emittedAdmission) prepare(ctx context.Context) (admissionState, error) {
-	a.proof.Retire()
-	a.proof = a.controller.admissionProof(a.reads)
-	a.request.Reads = a.proof
-	proposal, err := a.controller.loader.Prepare(ctx, a.request)
-	if err != nil {
-		return admissionState{committed: false, retry: false}, err
-	}
-	defer proposal.Retire()
-	if !a.reads.Valid() {
-		return admissionState{committed: false, retry: false}, nil
-	}
-	if !a.proof.Valid() {
-		return admissionState{committed: false, retry: true}, nil
-	}
-	if contextErr := ctx.Err(); contextErr != nil {
-		return admissionState{committed: false, retry: false}, fmt.Errorf("context: %w", contextErr)
-	}
-	committed, err := a.controller.loader.Commit(ctx, proposal, loader.Execution)
-	if err != nil {
-		return admissionState{}, err
-	}
-	if !committed {
-		return admissionState{retry: a.reads.Valid()}, nil
-	}
-	return admissionState{committed: true, retry: false}, nil
 }

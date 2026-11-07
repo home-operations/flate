@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -66,7 +68,7 @@ func (e *Execution) admitChildren(
 		}
 	}
 	if _, err := e.KeepEmitted(ctx, id,
-		loader.PrepareRequest{Generation: next.Children, Reads: next.Reads, Preparation: &e.AdmissionPreparation},
+		selection.PrepareRequest{Generation: next.Children, Reads: next.Reads, Preparation: &e.AdmissionPreparation},
 	); err != nil {
 		return nil, false, err
 	}

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
@@ -58,9 +60,9 @@ func TestPartitionEntries_Constraints(t *testing.T) {
 					id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: fmt.Sprintf("edge-%d", i)}
 					roots[node].Occurrences = append(
 						roots[node].Occurrences,
-						loader.Occurrence{
+						selection.OccurrenceFacts{
 							Identity: id,
-							Declaration: loader.OccurrenceID{
+							Declaration: selection.OccurrenceID{
 								Source:   "view",
 								File:     roots[node].Path + "/value.yaml",
 								Document: i,
@@ -110,15 +112,15 @@ func TestPartitionEntries_SharedOccurrence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			shared := loader.Occurrence{
+			shared := selection.OccurrenceFacts{
 				Identity:    manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "shared"},
-				Declaration: loader.OccurrenceID{Source: "view", File: "shared.yaml"},
+				Declaration: selection.OccurrenceID{Source: "view", File: "shared.yaml"},
 			}
 			other := shared
 			other.Declaration.Source, other.Declaration.Document = tc.source, tc.document
 			roots := []entryRoot{
-				{Path: "a", Occurrences: []loader.Occurrence{shared}},
-				{Path: "b", Occurrences: []loader.Occurrence{other}},
+				{Path: "a", Occurrences: []selection.OccurrenceFacts{shared}},
+				{Path: "b", Occurrences: []selection.OccurrenceFacts{other}},
 			}
 			root := t.TempDir()
 			entries, err := partitionEntries(roots, &store.SourceArtifact{LocalPath: root}, root)
@@ -141,7 +143,7 @@ func TestPartitionEntries_ListItems(t *testing.T) {
 	}})
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Selection.Changed = true
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	occurrences, err := l.Occurrences(t.Context(), root, "")

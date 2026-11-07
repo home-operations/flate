@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
@@ -15,7 +17,7 @@ import (
 type entryRoot struct {
 	Path        string
 	Scans       []string
-	Occurrences []loader.Occurrence
+	Occurrences []selection.OccurrenceFacts
 	Anchors     []string
 	pinned      []manifest.KSClaim
 	views       map[string]*store.SourceArtifact
@@ -27,7 +29,7 @@ type occurrenceProjection struct {
 }
 
 type sourceCoordinate struct {
-	declaration loader.OccurrenceID
+	declaration selection.OccurrenceID
 	identity    manifest.NamedResource
 	root        string
 }
@@ -35,9 +37,9 @@ type sourceCoordinate struct {
 type entryPlanner struct {
 	session     *Session
 	inputs      map[string]*store.SourceArtifact
-	objects     map[loader.Occurrence]store.Child
+	objects     map[occurrenceKey]store.Child
 	resolved    map[sourceCoordinate]entryResolution
-	projections map[occurrenceProjection][]loader.Occurrence
+	projections map[occurrenceProjection][]selection.OccurrenceFacts
 }
 
 func (d *Session) partitionRoots(ctx context.Context) ([]entryRoot, error) {
@@ -48,9 +50,9 @@ func (d *Session) partitionRoots(ctx context.Context) ([]entryRoot, error) {
 	planner := entryPlanner{
 		session:     d,
 		inputs:      map[string]*store.SourceArtifact{d.cfg.Input.LocalPath: d.cfg.Input},
-		objects:     map[loader.Occurrence]store.Child{},
+		objects:     map[occurrenceKey]store.Child{},
 		resolved:    map[sourceCoordinate]entryResolution{},
-		projections: map[occurrenceProjection][]loader.Occurrence{},
+		projections: map[occurrenceProjection][]selection.OccurrenceFacts{},
 	}
 
 	var roots []entryRoot
@@ -125,26 +127,26 @@ func pinnedRootOwners(roots []entryRoot, claimed func(entryRoot, []manifest.KSCl
 }
 
 type partitionVisit struct {
-	occurrence loader.Occurrence
-	scope      []loader.Occurrence
+	occurrence selection.OccurrenceFacts
+	scope      []selection.OccurrenceFacts
 	root       string
 }
 
-func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []loader.Occurrence) error {
+func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []selection.OccurrenceFacts) error {
 	queue := make([]partitionVisit, 0, len(seeds))
-	coordinates := map[loader.OccurrenceID]bool{}
+	coordinates := map[selection.OccurrenceID]bool{}
 	for i := range seeds {
 		queue = append(queue, partitionVisit{occurrence: seeds[i], scope: seeds, root: root.Path})
 		coordinates[seeds[i].Declaration] = true
 	}
-	seen := map[loader.Occurrence]bool{}
+	seen := map[occurrenceKey]bool{}
 	for len(queue) != 0 {
 		visit := queue[0]
 		queue = queue[1:]
-		if seen[visit.occurrence] {
+		if seen[occurrenceIdentity(&visit.occurrence)] {
 			continue
 		}
-		seen[visit.occurrence] = true
+		seen[occurrenceIdentity(&visit.occurrence)] = true
 		root.Occurrences = append(root.Occurrences, visit.occurrence)
 		if _, _, hasPath := visit.occurrence.SourcePath(); !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
 			continue
@@ -179,7 +181,7 @@ func (p *entryPlanner) follow(
 	seed bool,
 ) ([]partitionVisit, error) {
 	occurrence := &visit.occurrence
-	object := p.objects[*occurrence].Obj
+	object := p.objects[occurrenceIdentity(occurrence)].Obj
 	application, valid := manifest.ApplicationFor(object)
 	if !valid {
 		return nil, nil
@@ -207,7 +209,7 @@ func (p *entryPlanner) follow(
 	if err != nil {
 		return nil, err
 	}
-	pinned := p.session.pinnedWorkingTreeClaims(p.session.cfg.Input.LocalPath, []loader.Occurrence{*occurrence})
+	pinned := p.session.pinnedWorkingTreeClaims(p.session.cfg.Input.LocalPath, []selection.OccurrenceFacts{*occurrence})
 	root.pinned = append(root.pinned, pinned.claims...)
 	key := occurrenceProjection{path: absolute}
 	if producer, ok := object.(interface {
@@ -224,7 +226,7 @@ func (p *entryPlanner) follow(
 		p.projections[key] = children
 	}
 	local := input == p.session.cfg.Input || input.InputAlias && input.LocalRoot == p.session.cfg.Input.LocalPath
-	if local && seed && slices.ContainsFunc(children, func(o loader.Occurrence) bool {
+	if local && seed && slices.ContainsFunc(children, func(o selection.OccurrenceFacts) bool {
 		return o.Declaration == occurrence.Declaration
 	}) && !slices.Contains(root.Anchors, target) {
 		root.Anchors = append(root.Anchors, target)
@@ -237,13 +239,13 @@ func (p *entryPlanner) follow(
 	return next, nil
 }
 
-func (p *entryPlanner) object(ctx context.Context, occurrence *loader.Occurrence) (store.Child, error) {
-	if child, ok := p.objects[*occurrence]; ok {
+func (p *entryPlanner) object(ctx context.Context, occurrence *selection.OccurrenceFacts) (store.Child, error) {
+	if child, ok := p.objects[occurrenceIdentity(occurrence)]; ok {
 		return child, nil
 	}
 	child, err := p.session.loader.OccurrenceObject(ctx, occurrence, p.inputs[occurrence.Declaration.Source])
 	if err == nil {
-		p.objects[*occurrence] = child
+		p.objects[occurrenceIdentity(occurrence)] = child
 	}
 	return child, err
 }
@@ -254,8 +256,8 @@ func (p *entryPlanner) source(
 	visit *partitionVisit,
 	id manifest.NamedResource,
 ) (entryResolution, error) {
-	application, _ := manifest.ApplicationFor(p.objects[visit.occurrence].Obj)
-	var selected *loader.Occurrence
+	application, _ := manifest.ApplicationFor(p.objects[occurrenceIdentity(&visit.occurrence)].Obj)
+	var selected *selection.OccurrenceFacts
 	for i := range visit.scope {
 		candidate := &visit.scope[i]
 		if candidate.Identity == id {
@@ -302,4 +304,22 @@ func (p *entryPlanner) source(
 		root.views[binding.viewKey] = binding.artifact
 	}
 	return binding, nil
+}
+
+type occurrenceKey struct {
+	declaration   selection.OccurrenceID
+	identity      manifest.NamedResource
+	object        manifest.BaseManifest
+	witness       any
+	requiresBuild bool
+}
+
+func occurrenceIdentity(occurrence *selection.OccurrenceFacts) occurrenceKey {
+	return occurrenceKey{
+		occurrence.Declaration,
+		occurrence.Identity,
+		occurrence.Object,
+		occurrence.Witness,
+		occurrence.RequiresBuild,
+	}
 }

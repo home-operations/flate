@@ -53,8 +53,7 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 	writeCollectionEntry(t, root, "omega", "second")
 	var first []*Result
 	for run := range 2 {
-		grouped, err := RenderTrees(
-			t.Context(),
+		grouped, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					ID: manifest.TreeID{
@@ -88,8 +87,7 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 		assert.Equal(t, len(grouped), 2)
 		for i, entry := range []string{"alpha", "omega"} {
 			assert.Equal(t, grouped[i].ID, manifest.TreeID{Cluster: manifest.ClusterID(entry), Side: manifest.TreeHead})
-			explicit, err := RenderTrees(
-				t.Context(),
+			explicit, err := renderTreesForTest(t.Context(), t,
 				[]Tree{
 					{
 						ID: manifest.TreeID{
@@ -169,6 +167,7 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 					results,
 					first,
 					cmpopts.IgnoreUnexported(
+						Result{},
 						manifest.Kustomization{},
 						manifest.OCIRepository{},
 						manifest.HelmChartSource{},
@@ -209,7 +208,7 @@ func TestRenderTrees_IndependentBootstrapFailure(t *testing.T) {
 			t.Parallel()
 			tree := Tree{ID: manifest.TreeID{Cluster: "failed", Side: manifest.TreeHead}, RepoRoot: t.TempDir()}
 			tree.Path = filepath.Join(tree.RepoRoot, "missing")
-			runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+			runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 			assert.FatalIf(
 				t,
 				err == nil || len(runs) != 1 || runs[0].Result == nil || runs[0].Orchestrator != nil || runs[0].Absent,
@@ -241,7 +240,7 @@ func TestRenderTrees_IndependentBootstrapFailure(t *testing.T) {
 	testutil.WriteFile(t, failed, "kustomization.yaml", "resources: [missing.yaml]\n")
 	testutil.WriteFile(t, healthy, "kustomization.yaml", "resources: [object.yaml]\n")
 	testutil.WriteFile(t, healthy, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: healthy}\n")
-	runs, err := RenderTrees(t.Context(), []Tree{
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{
 		{ID: manifest.TreeID{Cluster: "failed", Side: manifest.TreeHead}, RepoRoot: failed},
 		{ID: manifest.TreeID{Cluster: "healthy", Side: manifest.TreeHead}, RepoRoot: healthy},
 	}, Config{RecordWork: true, Concurrency: 2})
@@ -256,8 +255,7 @@ func TestRenderTrees_DuplicateBeforeLaunch(t *testing.T) {
 
 	var updates atomic.Int32
 	tree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: t.TempDir()}
-	results, err := RenderTrees(
-		t.Context(),
+	results, err := renderTreesForTest(t.Context(), t,
 		[]Tree{tree, tree},
 		Config{
 			Concurrency:    2,
@@ -336,7 +334,7 @@ func testRenderTreesClusterUnionOrder(t *testing.T, tc *struct {
 	if order == "current_first" {
 		slices.Reverse(inputs)
 	}
-	runs, err := RenderTrees(t.Context(), inputs, Config{RecordWork: true, Concurrency: 2})
+	runs, err := renderTreesForTest(t.Context(), t, inputs, Config{RecordWork: true, Concurrency: 2})
 	assert.NoError(t, err)
 	roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
 	for i := 0; i < len(runs); i += 2 {
@@ -349,7 +347,8 @@ func testRenderTreesClusterUnionOrder(t *testing.T, tc *struct {
 			assert.Equal(t, pair[side].Absent, absent)
 			assert.FatalIf(t, absent && pair[side].Orchestrator != nil, "%v", "absent side constructed a tree")
 			if absent {
-				assert.Diff(t, pair[side].Result, &Result{})
+				delta := cmp.Diff(pair[side].Result, &Result{}, cmp.AllowUnexported(Result{}))
+				assert.ErrorIf(t, delta != "", "%s", delta)
 				assert.NoError(t, pair[side].Err)
 				continue
 			}
@@ -387,7 +386,8 @@ func testRenderTreesClusterUnionOrder(t *testing.T, tc *struct {
 				assert.Equal(t, record.Key.Tree, pair[side].ID)
 			}
 		}
-		selected, err, _ := Select(pair, errors.Join(pair[0].Err, pair[1].Err), roots, nil)
+		projectedResults0, projectionErrors0 := Select(pair, errors.Join(pair[0].Err, pair[1].Err), roots, nil)
+		selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
 		changes, _, _, err := diff.Compare(
 

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/internal/testutil"
@@ -315,13 +317,10 @@ func testFinalizeIndexResourceMembershipCase(
 	assert.NoError(t, err)
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	if got := l.AdmitsRoot(
-		l.IndexedObject(
-			testutil.KustomizationID("apps", "stray"),
-			l.Index.Records[testutil.KustomizationID("apps", "stray")],
-		).Obj,
-		filepath.Join(root, "app", "ks.yaml"),
-	); got != testCaseInput.want {
+	if got := selection.Root(rootAtForTest(l, l.IndexedObject(
+		testutil.KustomizationID("apps", "stray"),
+		l.Index.Records[testutil.KustomizationID("apps", "stray")],
+	).Obj, filepath.Join(root, "app", "ks.yaml"))).Admitted; got != testCaseInput.want {
 		t.Fatalf("admission=%t want %t", got, testCaseInput.want)
 	}
 	var owners []manifest.NamedResource

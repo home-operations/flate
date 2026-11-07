@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/values"
@@ -175,7 +175,11 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 func (*gatePromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
 
 //nolint:gocritic // The admission contract requires an independent request snapshot.
-func (p *gatePromotion) Promote(_ context.Context, _ loader.PrepareRequest, id manifest.NamedResource) (bool, error) {
+func (p *gatePromotion) Promote(
+	_ context.Context,
+	_ selection.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
 	return p.promote(id), nil
 }
 
@@ -314,7 +318,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
 			}
-			filterLoader := admissiontest.New(
+			filterLoader, _ := admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"parent.yaml"}),
@@ -323,13 +327,13 @@ func TestEmit_LatePreflight(t *testing.T) {
 					Root:      "",
 				},
 			)
-			admissiontest.Commit(t, filterLoader, nil)
-			filter := filterLoader.Options.Filter
+			admissiontest.Commit(t, filterLoader.Options.Session, nil)
+			filter := filterLoader.Options.Session
 			var reject atomic.Bool
 			c := New(s, task.NewBounded(2))
 			c.Configure(
 				Options{
-					Filter:           filter,
+					Session:          filter,
 					Index:            index,
 					PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() },
 					Loader:           filterLoader,
@@ -358,7 +362,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 				t,
 				s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named(), store.ArtifactContent) != nil ||
 					s.GetArtifact(parent.Named(), store.ArtifactContent) != nil ||
-					filter.ShouldReconcile(
+					filter.Snapshot().Reconcile(
 						child.Named(),
 					),
 				"%v",

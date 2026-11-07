@@ -544,6 +544,9 @@ func newRunner(t *testing.T) (*orchestrator.Orchestrator, *store.Store) {
 		[]orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir()}},
 		orchestrator.Config{Concurrency: 2},
 	)
+	for _, run := range runs {
+		t.Cleanup(run.Result.Close)
+	}
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed store")
 	o := runs[0].Orchestrator
@@ -565,7 +568,14 @@ func runSelected(t *testing.T, o *orchestrator.Orchestrator, roots ...manifest.N
 		}
 	}
 	raw := &orchestrator.Result{Failed: failed, Blocked: blocked}
-	selected, _, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: raw}}, nil, roots, nil)
+	t.Cleanup(raw.Close)
+	projectedResults0, projectionErrors0 := orchestrator.Select(
+		[]orchestrator.Rendered{{Orchestrator: o, Result: raw}},
+		nil,
+		roots,
+		nil,
+	)
+	selected, _, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.FatalIf(t, len(selected) != 1, "Select returned %d results, want 1", len(selected))
 	return Run(selected[0])
 }

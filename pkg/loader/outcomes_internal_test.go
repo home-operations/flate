@@ -1,10 +1,12 @@
 package loader
 
+import "github.com/home-operations/flate/pkg/selection"
+
 func retainedErrorsForTest(l *Loader) map[string]error {
 	errors := map[string]error{}
 	for file := range l.documents.cache {
 		doc := l.documents.cache[file]
-		if doc.selected || doc.eligible == fileInactive {
+		if doc.selected || doc.eligible == selection.RootInactive {
 			continue
 		}
 		for i := range doc.objects {

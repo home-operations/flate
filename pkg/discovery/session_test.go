@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -20,7 +22,7 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	input := fstest.MapFS{
-		"one/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+		"one/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\nnamePrefix: built-\n")},
 		"two/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
 		"one/cm.yaml": {
 			Data: []byte(
@@ -43,7 +45,7 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 			Store:     st,
 			Loader:    l,
 			Trees:     testTrees(t),
-			Selection: manifest.Selection{Changed: true},
+			Selection: selection.Request{Changed: true},
 		},
 	)
 	assert.NoError(t, err)
@@ -52,7 +54,19 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 			t.Fatalf("unexpected construction payload: %s", object.Named())
 		}
 	}
-	advanced, err := session.Advance(t.Context(), &loader.Admission{Blocked: []string{"one"}})
+	one := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSet,
+		Namespace: "apps",
+		Name:      "built-one",
+	}
+	var required store.ReadSet
+	required.Init(st, manifest.NamedResource{}, nil)
+	defer required.Retire()
+	required.RequireData(one)
+	proposal, err := l.Options.Session.Prepare(t.Context(), selection.PrepareRequest{Reads: &required})
+	assert.NoError(t, err)
+	advanced, err := session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, true)
 	assert.FatalIf(t, st.GetObject(
@@ -63,16 +77,16 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 			Name:      "two",
 		},
 	) != nil, "%v", "unrelated package was hydrated")
-	one := manifest.NamedResource{
-		Group:     manifest.FluxOperatorDomain,
-		Kind:      manifest.KindResourceSet,
-		Namespace: "apps",
-		Name:      "one",
-	}
+
 	built := l.PromotionDocuments(one)
 	assert.Equal(t, len(built), 1)
 	st.AddObject(built[0].Obj, built[0].Doc)
-	proposal, err := l.Prepare(t.Context(), loader.PrepareRequest{Generation: []store.Child{built[0]}})
+	proposal, err = prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Generation: []store.Child{built[0]}, Reads: &required},
+	)
 	assert.NoError(t, err)
 	advanced, err = session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)
@@ -118,7 +132,7 @@ func TestRun_RestrictedUsesSession(t *testing.T) {
 	result, err := discovery.Run(t.Context(), discovery.Config{
 		Input: &store.SourceArtifact{LocalPath: root, FS: input},
 		Path:  root, Store: st, Loader: l, Trees: testTrees(t),
-		Selection: manifest.Selection{Roots: []manifest.NamedResource{one}},
+		Selection: selection.Request{Roots: []manifest.NamedResource{one}},
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, result.Index, l.Index)
@@ -126,8 +140,8 @@ func TestRun_RestrictedUsesSession(t *testing.T) {
 	assert.Equal(t, len(l.PromotionDocuments(two)), 0)
 	assert.Equal(t, st.GetObject(one) != nil, true)
 	assert.Equal(t, st.GetObject(two), nil)
-	assert.Equal(t, l.Options.Filter.ShouldReconcile(one), true)
-	assert.Equal(t, l.Options.Filter.ShouldReconcile(two), false)
+	assert.Equal(t, l.Options.Session.Snapshot().Reconcile(one), true)
+	assert.Equal(t, l.Options.Session.Snapshot().Reconcile(two), false)
 }
 
 func testSessionUnchangedEntryConstruction(t *testing.T) {
@@ -156,7 +170,7 @@ spec: {path: ./workload}
 			}
 			st := store.New()
 			l := loader.New(st)
-			l.Options.Filter = change.NewFilter()
+			configureSelection(t, l, selection.Request{Changed: true})
 			source := &store.SourceArtifact{LocalPath: root, FS: input}
 			st.SetArtifact(manifest.BootstrapSourceID, source)
 			peer := store.New()
@@ -181,15 +195,14 @@ spec: {path: ./workload}
 					Store:     st,
 					Loader:    l,
 					Trees:     testTrees(t),
-					Selection: manifest.Selection{Changed: true},
+					Selection: selection.Request{Changed: true},
 				},
 			)
 			assert.NoError(t, err)
 			requests := 0
 			for {
-				proposal, prepareErr := l.Prepare(
-					t.Context(),
-					loader.PrepareRequest{Generation: nil, Reads: nil, History: nil, Invocation: true},
+				proposal, prepareErr := prepareSelection(t.Context(), t, l,
+					selection.PrepareRequest{Generation: nil, Reads: nil, History: nil, Invocation: true},
 				)
 				assert.NoError(t, prepareErr)
 				for _, path := range proposal.Blocked {

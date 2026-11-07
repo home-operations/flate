@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -24,8 +25,8 @@ func TestAdmission_RetiresReplacedConstructionIdentity(t *testing.T) {
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection = manifest.Selection{Changed: true}
-			l.Options.Filter = change.NewFilter()
+			configureSelection(t, l, selection.Request{Changed: true})
+
 			l.Options.Changes = change.NewSet([]string{"hr.yaml"})
 			unqualified := manifest.NamedResource{
 				Group: manifest.HelmReleaseDomain,
@@ -37,9 +38,14 @@ func TestAdmission_RetiresReplacedConstructionIdentity(t *testing.T) {
 			l.Index.Records[unqualified] = manifest.DiscoveryRecord{
 				Authored: unqualified, Path: filepath.Join(root, "hr.yaml"), File: "hr.yaml",
 			}
-			var preparation *Preparation
+			var preparation *selection.Preparation
 			defer func() { preparation.Retire() }()
-			before, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
+			before, err := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true, Preparation: &preparation},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, before.Needed, []manifest.NamedResource{unqualified})
 			assert.Diff(t, before.Selected, []manifest.NamedResource{unqualified})
@@ -48,7 +54,7 @@ func TestAdmission_RetiresReplacedConstructionIdentity(t *testing.T) {
 			l.Index.Records[qualified] = manifest.DiscoveryRecord{
 				Authored: unqualified, Path: filepath.Join(root, "hr.yaml"), File: "hr.yaml",
 			}
-			request := PrepareRequest{Invocation: true, Preparation: &preparation}
+			request := selection.PrepareRequest{Invocation: true, Preparation: &preparation}
 			want := []manifest.NamedResource{qualified}
 			if tc.incoming {
 				request.Generation = []store.Child{{
@@ -60,7 +66,7 @@ func TestAdmission_RetiresReplacedConstructionIdentity(t *testing.T) {
 				}}
 				want = []manifest.NamedResource{unqualified, qualified}
 			}
-			after, err := l.Prepare(t.Context(), request)
+			after, err := prepareSelection(t.Context(), t, l, request)
 			assert.NoError(t, err)
 			defer after.Retire()
 			assert.Diff(t, after.Needed, want)

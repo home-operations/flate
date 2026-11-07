@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
@@ -40,19 +42,24 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	cfg.Store.SetWorkTree(cfg.Work.Identity().Tree, cfg.Work)
 	d := newDiscoverer(&cfg)
 	l := d.loader
-	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+	var err error
+	l.Options.Session, err = selection.New(cfg.Store, l, cfg.Selection)
+	if err != nil {
 		return nil, err
+	}
+	if _, resolveErr := d.resolveEntrySources(ctx, false); resolveErr != nil {
+		return nil, resolveErr
 	}
 	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Entry admission provides a source artifact.
 	l.SourceRoot = input.LocalPath
 	l.IgnoreFile = cfg.KRMIgnoreFile
-	if _, err := l.Load(
+	if _, loadErr := l.Load(
 		ctx,
 		d.cfg.Path,
 		manifest.NamedResource{},
 		cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path),
-	); err != nil {
-		return nil, err
+	); loadErr != nil {
+		return nil, loadErr
 	}
 	l.IgnoreFile = ""
 	l.PreferExisting = true
@@ -180,7 +187,7 @@ func groupScans(roots []entryRoot, group []int, groups [][]int) []string {
 
 func separationEdges(roots []entryRoot) ([][]string, bool) {
 	type witness struct {
-		occurrence *loader.Occurrence
+		occurrence *selection.OccurrenceFacts
 		root       int
 	}
 	edges := make([][]string, len(roots))

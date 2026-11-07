@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil"
@@ -40,7 +42,7 @@ func testAdmitGraphProjectionEffectiveNamesIncludeNamespaceTransformation(t *tes
 		for i := range occurrences {
 			o := occurrences[i]
 			ids = append(ids, o.Identity)
-			assert.FatalIf(t, o.object.Named() != o.Authored, "%s", "projection mutated an authored object")
+			assert.FatalIf(t, o.Object.Named() != o.Authored, "%s", "projection mutated an authored object")
 		}
 		assert.Diff(
 			t,
@@ -214,7 +216,9 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 		)
 		assert.FatalIf(
 			t,
-			!l.AdmitsRoot(l.IndexedObject(projected, l.Index.Records[projected]).Obj, file),
+			!selection.Root(
+				rootAtForTest(l, l.IndexedObject(projected, l.Index.Records[projected]).Obj, file),
+			).Admitted,
 			"%s",
 			"projected bootstrap sibling is not admitted",
 		)
@@ -292,10 +296,13 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 			sibling,
 		)
 		assert.FatalIf(t, !ok || l.Store.GetObject(sibling) != nil ||
-			l.AdmitsRoot(
-				l.IndexedObject(sibling, l.Index.Records[sibling]).Obj,
-				filepath.Join(root, "app", "sibling.yaml"),
-			), "%s", "inactive declaration lost evidence or became runnable")
+			selection.Root(
+				rootAtForTest(
+					l,
+					l.IndexedObject(sibling, l.Index.Records[sibling]).Obj,
+					filepath.Join(root, "app", "sibling.yaml"),
+				),
+			).Admitted, "%s", "inactive declaration lost evidence or became runnable")
 	}
 }
 
@@ -308,7 +315,7 @@ func TestRecordNamespaces_IndexedOwner(t *testing.T) {
 			l.ensureScopes()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "system", TargetNamespace: "apps"}
 			occurrence := compactOccurrence(owner, projectedProducerForTest(owner))
-			l.locations = map[manifest.NamedResource]Occurrence{owner.Named(): occurrence}
+			l.locations = map[manifest.NamedResource]authoredOccurrence{owner.Named(): occurrence}
 			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{
 				Authored: owner.Named(),
 				Path:     "/input/flux/owner.yaml",

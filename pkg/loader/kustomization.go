@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -30,10 +31,13 @@ type document struct {
 	lookup        map[manifest.NamedResource]store.Child
 	pathInputs    map[manifest.NamedResource]manifest.Data
 	plugins       *[]pluginInputs
+	rootOwners    []selection.RootOwnerFacts
+	rootPeers     [][]manifest.NamedResource
 	selected      bool
-	eligible      fileEligibility
+	eligible      selection.RootEligibility
 	rootKnown     bool
 	rootAdmitted  bool
+	rootNative    bool
 	terminal      bool
 	loaded        bool
 	scanExcluded  bool
@@ -53,7 +57,7 @@ type parsedObject struct {
 
 	outcome  manifest.DocOccurrence
 	item     int
-	fact     *Occurrence
+	fact     *authoredOccurrence
 	version  string
 	declared string
 }
@@ -80,7 +84,7 @@ type documentReader struct {
 	parsed     *ParsedInputs
 	compact    bool
 	intent     manifest.DocumentRole
-	coordinate *OccurrenceID
+	coordinate *occurrenceID
 	regular    bool
 	changed    []string
 	bootstrap  string

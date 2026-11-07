@@ -65,8 +65,7 @@ spec:
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tunnel\ndata:\n  target: \"${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com\"\n",
 	)
 
-	renderedSingleton4, err := RenderTrees(
-		t.Context(),
+	renderedSingleton4, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{},
 	)
@@ -156,7 +155,7 @@ data:
   known_hosts: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
 sops: {version: 3.9.0}
 `, identity))
-	rendered, err := RenderTrees(t.Context(),
+	rendered, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 2, CacheDir: t.TempDir(), AllowMissingKinds: []string{manifest.KindSecret}},
 	)

@@ -1,12 +1,10 @@
 package loader
 
 import (
-	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -18,8 +16,8 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestAddEmitted_CrossSourceOptionalInputEvidence(t *testing.T) {
@@ -112,8 +110,8 @@ func TestAddEmitted_IncomingEvidence(t *testing.T) {
 				}
 			}
 			f.AddEmitted(testutil.KustomizationID("apps", "dependency"), new(child), f.objs)
-			assert.Equal(t, f.ShouldReconcile(incoming.Named()), mode != "unrelated")
-			assert.Equal(t, f.ShouldReconcile(stale.SourceID()), mode == "contribution")
+			assert.Equal(t, f.Reconcile(incoming.Named()), mode != "unrelated")
+			assert.Equal(t, f.Reconcile(stale.SourceID()), mode == "contribution")
 			assert.Equal(t, st.GetObject(incoming.Named()), manifest.BaseManifest(stale))
 		})
 	}
@@ -147,173 +145,7 @@ func TestIntegration_ResourceEscapeSelection(t *testing.T) {
 			root:      root,
 		},
 	)
-	assert.Equal(t, f.ShouldReconcile(owner.Named()), true)
-}
-
-type pausedIncoming struct {
-	*store.Store
-
-	id            manifest.NamedResource
-	read, release chan struct{}
-	once          sync.Once
-}
-
-type countedProductions struct {
-	*store.Store
-
-	id     manifest.NamedResource
-	reads  int
-	stored int
-}
-
-func (c *countedProductions) Productions(
-	id manifest.NamedResource,
-	index *manifest.DiscoveryIndex,
-) []manifest.Production {
-	if id == c.id {
-		c.stored++
-	}
-	return c.Store.Productions(id, index)
-}
-
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
-func (c *countedProductions) IncomingProductions(
-	child store.Child,
-	index *manifest.DiscoveryIndex,
-) []manifest.Production {
-	if child.Obj.Named() == c.id {
-		c.reads++
-	}
-	return c.Store.IncomingProductions(child, index)
-}
-
-func TestFilter_SharedInputRelationLookupBounded(t *testing.T) {
-	t.Parallel()
-	fixture := seedKSStore(100)
-	st, files := fixture.store, fixture.files
-	index := new(filterFixture{files: files, root: "/repo", objects: st}).index()
-	counted := &countedProductions{Store: st, id: manifest.BootstrapSourceID}
-	f := newAdmission(
-		t,
-		admissionConfig{
-			changes:   change.NewSet([]string{"apps/app-7/ks.yaml"}),
-			index:     index,
-			inventory: counted,
-			root:      "/repo",
-		},
-	)
-	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app-7")), true)
-	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app-8")), false)
-	assert.Equal(t, counted.stored, 1)
-}
-
-func TestAddEmitted_PrimaryAdmissionReadsRelationOnce(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{"primary_parent", "primary_child", "primary_input"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			parent := testutil.KustomizationID("apps", "parent")
-			child := &manifest.Kustomization{
-				Name:      "child",
-				Namespace: "apps",
-				Path:      "unrelated",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{
-					Kind: manifest.KindGitRepository,
-					Name: "incoming",
-				},
-			}
-			st := &countedProductions{Store: store.New(), id: child.Named()}
-			f := newAdmission(
-				t,
-				admissionConfig{
-					changes: change.NewSet([]string{"parent.yaml"}),
-					index: &manifest.DiscoveryIndex{
-						Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
-					},
-					inventory: st,
-					root:      "/repo",
-				},
-			)
-			switch mode {
-			case "primary_child":
-				f.keep[child.Named()] = primary
-				parent = testutil.KustomizationID("apps", "dependency")
-			case "primary_input":
-				f.keep[child.SourceID()] = primary
-				parent = testutil.KustomizationID("apps", "dependency")
-			}
-			f.AddEmitted(parent, new(store.Child{Obj: child}), st)
-			assert.Equal(t, f.ShouldReconcile(child.Named()), true)
-			assert.Equal(t, f.ShouldReconcile(child.SourceID()), true)
-			assert.Equal(t, st.reads, 1)
-		})
-	}
-}
-
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
-func (p *pausedIncoming) IncomingProductions(child store.Child, index *manifest.DiscoveryIndex) []manifest.Production {
-	if child.Obj.Named() == p.id {
-		p.once.Do(func() { close(p.read) })
-		<-p.release
-	}
-	return p.Store.IncomingProductions(child, index)
-}
-
-func TestAddEmitted_PromotionDuringEvaluation(t *testing.T) {
-	t.Parallel()
-	st := store.New()
-	target := &manifest.ConfigMap{Name: "target", Namespace: "apps"}
-	primary := &manifest.Kustomization{
-		Name:      "primary",
-		Namespace: "apps",
-		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{
-				{Kind: manifest.KindConfigMap, Name: "settings"},
-				{Kind: manifest.KindConfigMap, Name: target.Name},
-			},
-		},
-	}
-	dependency := testutil.KustomizationID("apps", "dependency")
-	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
-	child := &manifest.Kustomization{
-		Name:      "late",
-		Namespace: "apps",
-		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: target.Name}},
-		},
-	}
-	st.AddObject(primary)
-	objects := &pausedIncoming{Store: st, id: child.Named(), read: make(chan struct{}), release: make(chan struct{})}
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		primary.Named(): {File: "primary.yaml"}, settings: {Productions: []manifest.Production{{Owner: dependency}}},
-	}}
-	f := newAdmission(
-		t,
-		admissionConfig{
-			changes:   change.NewSet([]string{"primary.yaml"}),
-			index:     index,
-			inventory: objects,
-			root:      "/repo",
-		},
-	)
-	assert.Equal(t, f.ShouldReconcile(dependency), true)
-	assert.Equal(t, f.keep[target.Named()], kept)
-	slots := task.NewBounded(2)
-	slots.Go(
-		t.Context(),
-		"admit",
-		func(context.Context) { f.AddEmitted(dependency, new(store.Child{Obj: child}), f.objs) },
-	)
-	slots.Go(t.Context(), "promote", func(context.Context) {
-		<-objects.read
-		f.AddEmitted(primary.Named(), new(store.Child{Obj: target}), f.objs)
-		close(objects.release)
-	})
-	slots.BlockTillDone()
-	assert.Equal(t, slots.Failures(), 0)
-	assert.Equal(t, f.ShouldReconcile(child.Named()), true)
-	assert.Equal(t, f.keep[target.Named()], f.keep[primary.Named()])
-	assert.Equal(t, f.ShouldReconcile(target.Named()), true)
+	assert.Equal(t, f.Reconcile(owner.Named()), true)
 }
 
 func TestFilter_ProductionReadersSourceCoordinates(t *testing.T) {
@@ -420,25 +252,26 @@ func testAddEmittedCrossSourceOptionalInputEvidenceCase(
 	assert.Equal(t, st.GetObject(child.Obj.Named()) == nil, true)
 	_, indexed := index.Lookup(child.Obj.Named())
 	assert.Equal(t, indexed, false)
-	assert.Equal(t, filter.ShouldReconcile(child.Obj.Named()), false)
-	assert.Equal(t, filter.ShouldReconcile(emitter.Named()), false)
+	assert.Equal(t, filter.Reconcile(child.Obj.Named()), false)
+	assert.Equal(t, filter.Reconcile(emitter.Named()), false)
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "optional", Namespace: "apps"}
-	assert.Equal(t, filter.ShouldReconcile(input), false)
+	assert.Equal(t, filter.Reconcile(input), false)
 	assert.Equal(t, changes.Len(), 0)
 	assert.Equal(t, len(inputMap(changes)), 0)
-	setup := admissionClosure{loader: filter.loader, objects: st, generation: []store.Child{child}}
-	assert.Equal(t, setup.affected(child.Obj.Named(), child.Obj), false)
-	setup.captureIncoming()
+	direct, _, _ := changes.ForSource(manifest.BootstrapSourceID)
+	assert.Equal(t, direct.Len() != 0, false)
 	productions := st.IncomingProductions(child, index)
 	for i := range productions {
 		production := productions[i]
-		assert.Equal(t, setup.fileChanged(production.Source, production.File), false)
+		delta, _, _ := changes.ForSource(production.Source)
+		assert.Equal(t, delta.Contains(production.File), false)
 	}
 	var reads store.ReadSet
 	reads.Init(st, child.Obj.Named(), nil)
 	defer reads.Close()
 	filter.AddEmitted(emitter.Named(), new(child), &reads)
-	assert.Equal(t, filter.ShouldReconcile(child.Obj.Named()), (*testCaseInput) != "nonmatch")
+	filter.loader.SourceFacts(source.Named(), &reads)
+	assert.Equal(t, filter.Reconcile(child.Obj.Named()), (*testCaseInput) != "nonmatch")
 	assert.Equal(t, st.GetObject(child.Obj.Named()) == nil, true)
 	assert.Equal(t, reads.Valid(), true)
 	if (*testCaseInput) == "valid" || (*testCaseInput) == "nonmatch" {
@@ -459,7 +292,7 @@ func testAddEmittedCrossSourceOptionalInputEvidenceCase(
 	current.Init(st, child.Obj.Named(), nil)
 	defer current.Close()
 	fresh.AddEmitted(emitter.Named(), new(child), &current)
-	assert.Equal(t, fresh.ShouldReconcile(child.Obj.Named()), false)
+	assert.Equal(t, fresh.Reconcile(child.Obj.Named()), false)
 	assert.Equal(t, current.Valid(), true)
 }
 
@@ -527,6 +360,11 @@ func testFilterProducedTargetsWithoutObjectsCase(
 		t,
 		admissionConfig{changes: change.NewSet(changes), index: index, inventory: inventory, root: "/repo"},
 	)
+	if testCaseInput.edge == "file_index_only" {
+		f.pending.Retire()
+		f.prepare(selection.PrepareRequest{Invocation: true, Generation: []store.Child{{Obj: obj}}}, false)
+		assert.Equal(t, f.loader.Store.GetDeclaration(target), nil)
+	}
 	want := []string{producer.String(), target.String(), consumer.String()}
 	if testCaseInput.edge == "file_present" {
 		want = []string{target.String(), consumer.String()}
@@ -543,7 +381,7 @@ func testFilterProducedTargetsWithoutObjectsCase(
 	)
 	if testCaseInput.edge == "file" || testCaseInput.edge == "file_provisional" ||
 		testCaseInput.edge == "file_index_only" {
-		assert.Diff(t, f.keep, map[manifest.NamedResource]role{consumer: primary, target: kept, producer: kept})
+		assert.Diff(t, f.roles(), map[manifest.NamedResource]role{consumer: primary, target: kept, producer: kept})
 	}
 }
 
@@ -625,7 +463,7 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 	f.AddEmitted(testutil.KustomizationID("apps", "dependency"), new(store.Child{Obj: child}), f.objs)
 	assert.Equal(
 		t,
-		f.ShouldReconcile(child.Named()), (*testCaseInput) ==
+		f.Reconcile(child.Named()), (*testCaseInput) ==
 			"bootstrap" || (*testCaseInput) == "alias" || (*testCaseInput) == "parent_segments" || (*testCaseInput) == "paired_pinned" || (*testCaseInput) == "paired_alias" || (*testCaseInput) ==
 			"changed_component",
 	)
@@ -633,7 +471,7 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 	sibling.Name, sibling.Path = "unrelated", "elsewhere"
 	sibling.Components = nil
 	f.AddEmitted(testutil.KustomizationID("apps", "dependency"), new(store.Child{Obj: &sibling}), f.objs)
-	assert.Equal(t, f.ShouldReconcile(sibling.Named()), false)
+	assert.Equal(t, f.Reconcile(sibling.Named()), false)
 }
 
 func testFilterProductionReadersSourceCoordinatesCase(
@@ -730,14 +568,14 @@ func testFilterProductionReadersSourceCoordinatesCase(
 			root:      root,
 		},
 	)
-	assert.Equal(t, filter.ShouldReconcile(target), true)
-	assert.Equal(t, filter.ShouldReconcile(owner), true)
+	assert.Equal(t, filter.Reconcile(target), true)
+	assert.Equal(t, filter.Reconcile(owner), true)
 	assert.Equal(
 		t,
-		filter.ShouldReconcile(reader), (*testCaseInput) ==
+		filter.Reconcile(reader), (*testCaseInput) ==
 			"alias" || (*testCaseInput) == "pinned_reader" || (*testCaseInput) == "index_only_pinned" || (*testCaseInput) ==
 			"index_only_external",
 	)
-	assert.Equal(t, filter.ShouldReconcile(unrelated), false)
-	assert.Equal(t, filter.ShouldReconcile(foreign.Named()), false)
+	assert.Equal(t, filter.Reconcile(unrelated), false)
+	assert.Equal(t, filter.Reconcile(foreign.Named()), false)
 }

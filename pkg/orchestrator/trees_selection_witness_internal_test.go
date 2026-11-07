@@ -33,11 +33,11 @@ func (tc *selectionWitnessCase) run(
 				cfg := Config{RecordWork: true, Concurrency: 2}
 				if regime == "hot" {
 					cfg.CacheDir = t.TempDir()
-					_, err := RenderTrees(t.Context(), []Tree{witnessTree(root, manifest.TreeHead)}, cfg)
+					_, err := renderTreesForTest(t.Context(), t, []Tree{witnessTree(root, manifest.TreeHead)}, cfg)
 					assert.NoError(t, err)
 				}
 				cfg.Selection.Roots = tc.roots
-				runs, err := RenderTrees(t.Context(), []Tree{witnessTree(root, manifest.TreeHead)}, cfg)
+				runs, err := renderTreesForTest(t.Context(), t, []Tree{witnessTree(root, manifest.TreeHead)}, cfg)
 				assert.NoError(t, err)
 				result := runs[0].Result
 				assert.Diff(t, visibleWitnessOutput(result), witnessOutput(full, tc.owners))
@@ -122,8 +122,7 @@ func (tc *selectionWitnessCase) fixture(t *testing.T, root string, full []Render
 		files["flux/vars.yaml"] = strings.ReplaceAll(files["flux/vars.yaml"], "VALUE: old", "VALUE: selected")
 		root = writeWitness(t, files)
 		var err error
-		full, err = RenderTrees(
-			t.Context(),
+		full, err = renderTreesForTest(t.Context(), t,
 			[]Tree{witnessTree(root, manifest.TreeHead)},
 			Config{RecordWork: true, Concurrency: 2},
 		)
@@ -251,8 +250,7 @@ func TestRenderTrees_SelectionWorkWitnesses(t *testing.T) {
 	preparations := coldSelectionPreparations()
 	maps.Copy(preparations, hotSelectionPreparations())
 	root := writeWitness(t, workWitnessFiles())
-	full, err := RenderTrees(
-		t.Context(),
+	full, err := renderTreesForTest(t.Context(), t,
 		[]Tree{witnessTree(root, manifest.TreeHead)},
 		Config{RecordWork: true, Concurrency: 2},
 	)

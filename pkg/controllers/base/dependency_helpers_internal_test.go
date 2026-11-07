@@ -5,7 +5,7 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -17,7 +17,7 @@ import (
 type indexedOrderingDeps map[manifest.NamedResource]bool
 
 func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { return i[id] }
-func (indexedOrderingDeps) Promote(context.Context, loader.PrepareRequest, manifest.NamedResource) (bool, error) {
+func (indexedOrderingDeps) Promote(context.Context, selection.PrepareRequest, manifest.NamedResource) (bool, error) {
 	return false, nil
 }
 

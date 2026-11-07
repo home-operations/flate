@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -74,6 +76,7 @@ func TestRender_RootSecretOverridesDeclaredOutput(t *testing.T) {
 	)
 
 	result, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	assert.Equal(t, substitutionValue(t, result, testutil.KustomizationID("apps", "consumer")), "repository")
 	after, ok := o.store.GetObject(secret).(*manifest.Secret)
@@ -218,8 +221,7 @@ spec:
 				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n",
 			)
 
-			renderedSingleton1, err := RenderTrees(
-				t.Context(),
+			renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 				[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 				Config{
 					CacheDir: t.TempDir(), Concurrency: 2,
@@ -229,7 +231,7 @@ spec:
 			assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 			res := renderedSingleton1[0].Result
 			{
-				_, ok := errors.AsType[*FailuresError](err)
+				_, ok := errors.AsType[*selection.FailuresError](err)
 				assert.ErrorIf(t, !ok, "expected reconcile failure, got %v", err)
 			}
 			assert.FatalIf(t, res == nil, "%v", "missing render result")

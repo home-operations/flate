@@ -75,8 +75,7 @@ func TestRenderTrees_JoinsPreparationBeforeDispatch(t *testing.T) {
 		}
 		done := make(chan error, 1)
 		go func() {
-			_, err := RenderTrees(
-				t.Context(),
+			_, err := renderTreesForTest(t.Context(), t,
 				[]Tree{
 					{
 						RepoRoot:        roots[0],

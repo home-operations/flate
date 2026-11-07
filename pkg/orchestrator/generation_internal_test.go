@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -55,15 +57,21 @@ func TestStatusListener_RepresentativeProvenance(t *testing.T) {
 		owner.Named(),
 		&manifest.DependencyFailedError{Parent: owner.Named(), Failed: []manifest.NamedResource{oci.Named()}},
 	)
-	run := selectedRun(
+	run := selectedRun(t,
 		&Result{
 			Failed:  o.store.FailedResources(),
 			Blocked: map[manifest.NamedResource][]manifest.NamedResource{owner.Named(): {oci.Named()}},
 		},
 	)
 	run.store = o.store
-	run.Err = &FailuresError{Message: "source failed"}
-	selected, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{owner.Named()}, nil)
+	run.Err = &selection.FailuresError{Message: "source failed"}
+	projectedResults0, projectionErrors0 := Select(
+		[]Rendered{run},
+		run.Err,
+		[]manifest.NamedResource{owner.Named()},
+		nil,
+	)
+	selected, _, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	{
 		_, visible := selected[0].Statuses[oci.Named()]
 		assert.FatalIf(t, visible ||

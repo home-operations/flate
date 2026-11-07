@@ -11,11 +11,12 @@ import (
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 type scopeTraversal struct {
 	visits     []graphVisit
-	reached    fileEligibility
+	reached    selection.RootEligibility
 	controlled bool
 }
 

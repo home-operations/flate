@@ -49,6 +49,7 @@ func testSuppliedApplierReadiness(t *testing.T) {
 		t.Fatal("supplied applier entered event-driven producer graph")
 	}
 	result, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(result.Close)
 	if err == nil {
 		t.Fatal("supplied declaration manufactured readiness")
 	}

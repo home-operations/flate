@@ -240,7 +240,7 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 		done := make(chan error, 1)
 		go func() {
 			var err error
-			runs, runErr := RenderTrees(t.Context(), []Tree{
+			runs, runErr := renderTreesForTest(t.Context(), t, []Tree{
 				{
 					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
 					Input:           baseInput,
@@ -388,6 +388,7 @@ func testRenderDeclarationOnlyExcludesUnrelatedWorkCase(
 	assert.Equal(t, admitted[ids[0]].Load(), int64(1))
 	assert.Equal(t, admitted[ids[1]].Load(), int64(1))
 	result, err := o.collectResult(runErr)
+	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	var interval any
 	for _, batch := range result.Manifests {
@@ -455,7 +456,7 @@ func testRenderTreesEntryQualificationTransitionsCase(
 	}
 	var previous []byte
 	for range 2 {
-		runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 2)
 		for side, run := range runs {
@@ -463,7 +464,13 @@ func testRenderTreesEntryQualificationTransitionsCase(
 			assert.Equal(t, run.entryBinding != (discovery.Binding{}), qualified)
 			assert.Diff(t, configMapNames(run.Result), map[string]bool{"a": true, "b": true})
 		}
-		selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+		projectedResults0, projectionErrors0 := Select(
+			runs,
+			nil,
+			[]manifest.NamedResource{testutil.KustomizationID("", "")},
+			nil,
+		)
+		selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
 		assert.Equal(t, len(selected), 2)
 		for side, selection := range selected {
@@ -602,8 +609,7 @@ func testRenderTreesCancellationCaseBubble(
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, innerLocalErr := RenderTrees(
-			ctx,
+		_, innerLocalErr := renderTreesForTest(ctx, t,
 			[]Tree{
 				{
 					RepoRoot:        inputs[0].LocalPath,

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -16,7 +18,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func selectedRun(res *Result) Rendered {
+func selectedRun(tb testing.TB, res *Result) Rendered {
+	tb.Helper()
+	if res != nil {
+		tb.Cleanup(res.Close)
+	}
 	return Rendered{Orchestrator: &Orchestrator{store: store.New(), index: indexForTest(nil)}, Result: res}
 }
 
@@ -67,14 +73,15 @@ func TestSelect_RenderWarningScope(t *testing.T) {
 			t.Parallel()
 			runs := make([]Rendered, tc.sides)
 			for i := range runs {
-				runs[i] = selectedRun(&Result{Warnings: slices.Clone(warnings)})
+				runs[i] = selectedRun(t, &Result{Warnings: slices.Clone(warnings)})
 			}
-			selected, err, remainder := Select(
+			projectedResults0, projectionErrors0 := Select(
 				runs,
 				nil,
 				[]manifest.NamedResource{testutil.HelmReleaseID("apps", "app")},
 				nil,
 			)
+			selected, err, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.NoError(t, err)
 			assert.NoError(t, remainder)
 			assert.Equal(t, len(selected), tc.sides)
@@ -85,41 +92,12 @@ func TestSelect_RenderWarningScope(t *testing.T) {
 	}
 }
 
-func TestMatchesLabels_Matches(t *testing.T) {
-	t.Parallel()
-	ks := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		Labels: map[string]string{"env": "prod"},
-	}
-	cases := []struct {
-		name   string
-		obj    manifest.BaseManifest
-		labels map[string]string
-		want   bool
-	}{
-		{name: "empty matches all", obj: ks, want: true},
-		{name: "empty map matches all", obj: ks, labels: map[string]string{}, want: true},
-		{name: "label match", obj: ks, labels: map[string]string{"env": "prod"}, want: true},
-		{name: "label mismatch", obj: ks, labels: map[string]string{"env": "dev"}},
-		{name: "nil"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			{
-				got := matchesLabels(tc.obj, tc.labels)
-				assert.ErrorIf(t, got != tc.want, "got %v want %v", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	t.Parallel()
 	hr := &manifest.HelmRelease{Name: "same", Namespace: "apps"}
 	ks := &manifest.Kustomization{Name: "same", Namespace: "apps"}
 	ks.Labels = map[string]string{"env": ""}
-	run := selectedRun(
+	run := selectedRun(t,
 		&Result{Manifests: []manifest.DocumentBatch{{Parent: ks, Documents: []map[string]any{{"kind": "ConfigMap"}}}}},
 	)
 	run.store.AddObject(hr)
@@ -131,7 +109,8 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	)
 	raw := outputByParent(run.Result.Manifests)
 	roots := []manifest.NamedResource{testutil.HelmReleaseID("", "same"), testutil.KustomizationID("", "same")}
-	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
+	projectedResults1, projectionErrors1 := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
+	selected, err, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 	assert.FatalIf(t, err != nil, "%v", err)
 	res := selected[0]
 	assert.Diff(t, res.Counts, map[string]int{manifest.KindHelmRelease: 1, manifest.KindKustomization: 1})
@@ -143,7 +122,8 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 		run.Result,
 	)
 	assert.Diff(t, outputByParent(run.Result.Manifests), raw)
-	selected, err, _ = Select([]Rendered{run}, nil, roots, nil)
+	projectedResults2, projectionErrors2 := Select([]Rendered{run}, nil, roots, nil)
+	selected, err, _ = projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 	assert.FatalIf(
 		t,
 		err != nil || len(selected[0].Objects) != 2 || selected[0].Objects[0] != hr || selected[0].Objects[1] != ks,
@@ -154,7 +134,8 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	for i := range roots {
 		roots[i].Name = "missing"
 	}
-	selected, err, _ = Select([]Rendered{run}, nil, roots, nil)
+	projectedResults3, projectionErrors3 := Select([]Rendered{run}, nil, roots, nil)
+	selected, err, _ = projectedResults3, projectionErrors3.Selected, projectionErrors3.Remaining
 	assert.FatalIf(
 		t,
 		err != nil || len(selected[0].Objects) != 0 || len(selected[0].Counts) != 0,
@@ -177,7 +158,7 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 		"other",
 	)
 	other.Namespace = "other"
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	for _, id := range []manifest.NamedResource{a, sibling, other} {
 		run.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	}
@@ -185,13 +166,18 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 	run.index = indexForTest(
 		map[manifest.NamedResource]string{a: "a.yaml", sibling: "sibling.yaml", other: "other.yaml"},
 	)
-	run.loader = admissiontest.New(
+	run.loader, run.selection = admissiontest.New(
 		t,
 		admissiontest.Config{Changes: set, Index: run.index, Inventory: run.store, Root: ""},
 	)
-	admissiontest.Commit(t, run.loader, nil)
-	run.filter = run.loader.Options.Filter
-	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+	admissiontest.Commit(t, run.selection, nil)
+	projectedResults4, projectionErrors4 := Select(
+		[]Rendered{run},
+		nil,
+		[]manifest.NamedResource{testutil.KustomizationID("", "")},
+		nil,
+	)
+	selected, err, _ := projectedResults4, projectionErrors4.Selected, projectionErrors4.Remaining
 	assert.FatalIf(
 		t,
 		err != nil || selected[0].Counts[manifest.KindKustomization] != 2,
@@ -295,7 +281,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 		"flux-system",
 		"b",
 	)
-	run := selectedRun(
+	run := selectedRun(t,
 		&Result{
 			Failed: make(map[manifest.NamedResource]store.StatusInfo),
 			Blocked: map[manifest.NamedResource][]manifest.NamedResource{
@@ -317,14 +303,15 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	for id, deps := range run.Result.Blocked {
 		acceptInputsForTest(t, run.store, id, deps)
 	}
-	run.Err = &FailuresError{Message: "raw summary"}
+	run.Err = &selection.FailuresError{Message: "raw summary"}
 	panicErr := errors.New("unattributed panic")
-	results, err, _ := Select(
+	projectedResults5, projectionErrors5 := Select(
 		[]Rendered{run},
 		errors.Join(run.Err, context.Canceled, panicErr),
 		[]manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}},
 		nil,
 	)
+	results, err, _ := projectedResults5, projectionErrors5.Selected, projectionErrors5.Remaining
 	if len(results[0].Failed) != 2 || len(results[0].Unrelated) != 3 || !errors.Is(err, context.Canceled) ||
 		!errors.Is(err, panicErr) {
 		t.Fatalf("shared/cyclic projection lost: %+v %v", results[0], err)
@@ -336,12 +323,13 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 				"dependency cycle",
 			), "fatal/advisory policies conflated: %+v", warning)
 	}
-	got, _, _ := Select(
+	projectedResults6, projectionErrors6 := Select(
 		[]Rendered{run},
 		run.Err,
 		[]manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}},
 		nil,
 	)
+	got, _, _ := projectedResults6, projectionErrors6.Selected, projectionErrors6.Remaining
 	assert.Diff(t, got[0].Unrelated, results[0].Unrelated)
 	missing := testutil.KustomizationID("flux-system", "missing")
 	run.Result.Blocked = map[manifest.NamedResource][]manifest.NamedResource{selected: {missing}, other: {missing}}
@@ -352,12 +340,13 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	for id, deps := range run.Result.Blocked {
 		acceptInputsForTest(t, run.store, id, deps)
 	}
-	results, _, _ = Select(
+	projectedResults7, projectionErrors7 := Select(
 		[]Rendered{run},
 		run.Err,
 		[]manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}},
 		nil,
 	)
+	results, _, _ = projectedResults7, projectionErrors7.Selected, projectionErrors7.Remaining
 	assert.Diff(t, results[0].Causes, map[manifest.NamedResource][]manifest.NamedResource{missing: {selected}})
 	assert.Diff(
 		t,
@@ -384,12 +373,13 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 		},
 		Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {c, b, c}, b: {a}, c: {a}},
 	}
-	results, err, _ = Select(
+	projectedResults8, projectionErrors8 := Select(
 		[]Rendered{run},
 		run.Err,
 		[]manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}},
 		nil,
 	)
+	results, err, _ = projectedResults8, projectionErrors8.Selected, projectionErrors8.Remaining
 	assert.Equal(t, err, nil)
 	assert.Diff(t, results[0].Unrelated[0].Detail, []string{"blocked by " + b.String(), "blocked by " + c.String()})
 }
@@ -421,7 +411,7 @@ func testSelectIncompleteInputCoverageScopeCase(
 		Category: manifest.WarnIncompleteInputCoverage,
 		Message:  "incomplete",
 	}
-	run := selectedRun(
+	run := selectedRun(t,
 		&Result{
 			Warnings: []manifest.Warning{warning, {Resource: affected, Category: manifest.WarnStaleValues}},
 		},
@@ -442,7 +432,7 @@ func testSelectIncompleteInputCoverageScopeCase(
 			Result:       run.Result,
 		}
 		if active {
-			runs[i].loader = admissiontest.New(
+			runs[i].loader, runs[i].selection = admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet(paths),
@@ -451,15 +441,15 @@ func testSelectIncompleteInputCoverageScopeCase(
 					Root:      "",
 				},
 			)
-			admissiontest.Commit(t, runs[i].loader, nil)
-			runs[i].filter = runs[i].loader.Options.Filter
+			admissiontest.Commit(t, runs[i].selection, nil)
 		}
 	}
 	root := testutil.KustomizationID(testCaseInput.tc.namespace, testCaseInput.tc.requested)
 	if testCaseInput.tc.helm {
 		root = testutil.HelmReleaseID(testCaseInput.tc.namespace, testCaseInput.tc.requested)
 	}
-	results, err, _ := Select(runs, nil, []manifest.NamedResource{root}, nil)
+	projectedResults9, projectionErrors9 := Select(runs, nil, []manifest.NamedResource{root}, nil)
+	results, err, _ := projectedResults9, projectionErrors9.Selected, projectionErrors9.Remaining
 	assert.FatalIf(t, err != nil, "%v", err)
 	assert.Diff(
 		t,
@@ -547,7 +537,7 @@ func testSelectMissingAndCyclesCase(t *testing.T, testCaseInput testSelectMissin
 		(*testCaseInput.b):        {(*testCaseInput.a)},
 		(*testCaseInput.consumer): {(*testCaseInput.a)},
 	}
-	run := selectedRun(&Result{Blocked: blocked, Failed: make(map[manifest.NamedResource]store.StatusInfo)})
+	run := selectedRun(t, &Result{Blocked: blocked, Failed: make(map[manifest.NamedResource]store.StatusInfo)})
 	for _, resource := range []manifest.NamedResource{(*testCaseInput.selected), (*testCaseInput.a), (*testCaseInput.b), (*testCaseInput.consumer)} {
 		run.store.AddObject(&manifest.Kustomization{Name: resource.Name, Namespace: resource.Namespace})
 		run.store.UpdateFailure(
@@ -568,17 +558,18 @@ func testSelectMissingAndCyclesCase(t *testing.T, testCaseInput testSelectMissin
 			(*testCaseInput.consumer): (*testCaseInput.selected),
 		},
 	)
-	run.Err = &FailuresError{Message: "raw failure summary"}
+	run.Err = &selection.FailuresError{Message: "raw failure summary"}
 	root := testutil.KustomizationID("", "")
 	if *testCaseInput.named {
 		root.Name = testCaseInput.selected.Name
 	}
-	results, err, _ := Select(
+	projectedResults10, projectionErrors10 := Select(
 		[]Rendered{run, run},
 		errors.Join(run.Err, run.Err),
 		[]manifest.NamedResource{root},
 		nil,
 	)
+	results, err, _ := projectedResults10, projectionErrors10.Selected, projectionErrors10.Remaining
 	res := results[0]
 	assert.Diff(
 		t,
@@ -590,9 +581,10 @@ func testSelectMissingAndCyclesCase(t *testing.T, testCaseInput testSelectMissin
 		},
 	)
 	assert.Diff(t, res.Blocked, blocked)
+	_, failureProjection := Select([]Rendered{run}, run.Err, []manifest.NamedResource{root}, nil)
 	assert.Equal(
 		t,
-		selectedFailures(res).Error(),
+		failureProjection.Selected.Error(),
 		"reconcile completed with 3 failure(s):\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/a: dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/apps/b\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/b: dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/apps/a\n  Kustomization.kustomize.toolkit.fluxcd.io/apps/missing: not found\n  (+2 blocked by failed/missing dependencies)",
 	)
 	assert.FatalIf(
@@ -652,7 +644,7 @@ func testSelectFatalScopeAndRunErrorIdentitiesCaseCase(
 		}
 		wantRaw = "reconcile completed with 2 failure(s):\n  " + testCaseInput.testCaseInput.hidden.String() + ": default failed\n  " + testCaseInput.testCaseInput.visible.String() + ": media failed"
 	}
-	run := selectedRun(&Result{Failed: failed})
+	run := selectedRun(t, &Result{Failed: failed})
 	raw := run.aggregateFailures(failed)
 	run.Err = raw
 	if testCaseInput.tc.wrapped {
@@ -662,7 +654,7 @@ func testSelectFatalScopeAndRunErrorIdentitiesCaseCase(
 		run.Err = errors.Join(run.Err, testCaseInput.tc.extra)
 	}
 	for _, aggregate := range []error{raw, run.Err} {
-		concrete, ok := errors.AsType[*FailuresError](aggregate)
+		concrete, ok := errors.AsType[*selection.FailuresError](aggregate)
 		assert.FatalIf(
 			t,
 			!ok || !errors.Is(concrete, raw) || !errors.Is(aggregate, manifest.ErrFlux),
@@ -682,12 +674,13 @@ func testSelectFatalScopeAndRunErrorIdentitiesCaseCase(
 	if (*testCaseInput.testCaseInput.sides) == 2 {
 		runs, runErr = []Rendered{run, run}, errors.Join(run.Err, run.Err)
 	}
-	selected, err, remainder := Select(
+	projectedResults11, projectionErrors11 := Select(
 		runs,
 		runErr,
 		[]manifest.NamedResource{testutil.KustomizationID("media", "")},
 		nil,
 	)
+	selected, err, remainder := projectedResults11, projectionErrors11.Selected, projectionErrors11.Remaining
 	assert.FatalIf(
 		t,
 		(err != nil) != (testCaseInput.tc.visible || testCaseInput.tc.extra != nil) ||
@@ -733,7 +726,7 @@ func testSelectFatalScopeAndRunErrorIdentitiesCaseCase(
 		err,
 		remainder,
 	)
-	concrete, ok := errors.AsType[*FailuresError](err)
+	concrete, ok := errors.AsType[*selection.FailuresError](err)
 	assert.FatalIf(t, ok != testCaseInput.tc.visible, "selected aggregate identity changed: %v", err)
 	if testCaseInput.tc.visible {
 		assert.Equal(
@@ -743,7 +736,7 @@ func testSelectFatalScopeAndRunErrorIdentitiesCaseCase(
 		)
 	}
 	{
-		_, ok := errors.AsType[*FailuresError](remainder)
+		_, ok := errors.AsType[*selection.FailuresError](remainder)
 		assert.FatalIf(t, ok, "aggregate entered incidental error: %v", remainder)
 	}
 	assert.FatalIf(

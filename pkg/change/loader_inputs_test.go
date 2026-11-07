@@ -96,7 +96,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 					file,
 				)
 
-				filter := admissiontest.Filter(
+				filter := admissiontest.Decision(
 					t,
 					admissiontest.Config{
 						Changes:   change.NewSet([]string{file}),
@@ -106,7 +106,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 					},
 				)
 
-				assert.ErrorIf(t, !filter.ShouldReconcile(owner.Named()), "changed %s did not select owner", file)
+				assert.ErrorIf(t, !filter.Reconcile(owner.Named()), "changed %s did not select owner", file)
 			}
 
 			{
@@ -120,8 +120,8 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 
 			assert.FatalIf(
 				t,
-				admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/unrelated"}), Index: l.Index, Inventory: s, Root: ""}).
-					ShouldReconcile(owner.Named()),
+				admissiontest.Decision(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/unrelated"}), Index: l.Index, Inventory: s, Root: ""}).
+					Reconcile(owner.Named()),
 				"%v",
 				"unrelated input selected owner",
 			)
@@ -180,8 +180,8 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 
 	assert.ErrorIf(
 		t,
-		!admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/patch"}), Index: l.Index, Inventory: s, Root: ""}).
-			ShouldReconcile(owner.Named()),
+		!admissiontest.Decision(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/patch"}), Index: l.Index, Inventory: s, Root: ""}).
+			Reconcile(owner.Named()),
 		"%v",
 		"changed terminal patch did not select owner",
 	)
@@ -294,12 +294,12 @@ func testFinalizeIndexInputSourceViewsCase(t *testing.T, testCaseInput *string,
 	if (*testCaseInput) == "alias" {
 		file = "subtree/inputs/patch"
 	}
-	filter := admissiontest.Filter(
+	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{Changes: change.NewSet([]string{file}), Index: l.Index, Inventory: s, Root: ""},
 	)
-	assert.Equal(t, filter.ShouldReconcile(owner.Named()), (*testCaseInput) != "pinned")
-	assert.Equal(t, filter.ShouldReconcile(source.Named()), (*testCaseInput) != "pinned")
+	assert.Equal(t, filter.Reconcile(owner.Named()), (*testCaseInput) != "pinned")
+	assert.Equal(t, filter.Reconcile(source.Named()), (*testCaseInput) != "pinned")
 	if (*testCaseInput) == "pinned" {
 		assert.Diff(t, l.Index.Readers[file], []manifest.FileReader(nil))
 	}
@@ -446,7 +446,7 @@ spec:
 	assert.Equal(t, len(l.Index.Records), 1)
 	record, _ = l.Index.Lookup(id)
 	assert.Equal(t, len(record.Productions), 1)
-	filter := admissiontest.Filter(
+	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"config/prod.yaml"}),
@@ -455,7 +455,7 @@ spec:
 			Root:      "",
 		},
 	)
-	assert.Equal(t, filter.ShouldReconcile(id), (*testCaseInput) == "working")
+	assert.Equal(t, filter.Reconcile(id), (*testCaseInput) == "working")
 	snapshot := snapshotIndexForFilter(l.Index)
 
 	{
@@ -643,7 +643,7 @@ func testFinalizeIndexOwnersOfFileResourcesEscapeCase(
 			assert.ErrorIf(t, !slices.Equal(got, want), "Readers[%s] = %v, want %v", file, got, want)
 		}
 	}
-	filter := admissiontest.Filter(
+	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"apps/base/postgres/cluster.yaml"}),
@@ -659,7 +659,7 @@ func testFinalizeIndexOwnersOfFileResourcesEscapeCase(
 
 			assert.ErrorIf(
 				t,
-				!filter.ShouldReconcile(id.Reader),
+				!filter.Reconcile(id.Reader),
 				"changed shared base did not select %s",
 				id.Reader,
 			)

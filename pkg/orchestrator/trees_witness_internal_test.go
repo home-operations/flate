@@ -8,6 +8,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -154,8 +156,7 @@ func testRemovedRequiredInputWork(t *testing.T, name string) {
 	roots := [2]string{writeWitness(t, before), writeWitness(t, after)}
 	var full [2]*Result
 	for side, root := range roots {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{witnessTree(root, manifest.TreeHead)},
 			Config{RecordWork: true, Concurrency: 2},
 		)
@@ -164,13 +165,12 @@ func testRemovedRequiredInputWork(t *testing.T, name string) {
 	}
 	var previous []byte
 	for repeat := range 2 {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{witnessTree(roots[0], manifest.TreeBase), witnessTree(roots[1], manifest.TreeHead)},
 			Config{
 				RecordWork:  true,
 				Concurrency: 2,
-				Selection:   manifest.Selection{Roots: []manifest.NamedResource{owner}},
+				Selection:   selection.Request{Roots: []manifest.NamedResource{owner}},
 			},
 		)
 		assert.Equal(t, errors.Is(err, manifest.ErrFlux), name == "component")
@@ -327,8 +327,7 @@ func TestRenderTrees_SelectedFailureWork(t *testing.T) {
 	files["apps/b/kustomization.yaml"] = "resources: [missing.yaml]\n"
 	root := writeWitness(t, files)
 	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
-	full, err := RenderTrees(
-		t.Context(),
+	full, err := renderTreesForTest(t.Context(), t,
 		[]Tree{witnessTree(root, manifest.TreeHead)},
 		Config{RecordWork: true, Concurrency: 2},
 	)
@@ -345,13 +344,12 @@ func TestRenderTrees_SelectedFailureWork(t *testing.T) {
 			tc.name,
 			func(t *testing.T) {
 				t.Parallel()
-				runs, err := RenderTrees(
-					t.Context(),
+				runs, err := renderTreesForTest(t.Context(), t,
 					[]Tree{witnessTree(root, manifest.TreeHead)},
 					Config{
 						RecordWork:  true,
 						Concurrency: 2,
-						Selection:   manifest.Selection{Roots: []manifest.NamedResource{tc.id}},
+						Selection:   selection.Request{Roots: []manifest.NamedResource{tc.id}},
 					},
 				)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), tc.fail)

@@ -325,7 +325,7 @@ data: {key: fixed}
 	case "preflight failure":
 		opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
 	case "filter skip":
-		opts.Loader = admissiontest.New(
+		opts.Loader, opts.Session = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet(nil),
@@ -334,8 +334,8 @@ data: {key: fixed}
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, opts.Loader, nil)
-		opts.Filter = opts.Loader.Options.Filter
+		admissiontest.Commit(t, opts.Session, nil)
+
 	case "vanished":
 		s.DeleteObject(rs.Named())
 		s.RecordEmitted(rs.Named(), before, nil)

@@ -132,7 +132,7 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 					Config{Cache: owner, Concurrency: 2},
 				)
 				assert.NoError(t, err)
-				result, renderErr := render.render(t.Context())
+				result, renderErr := render.render(t.Context(), t)
 				assert.NoError(t, renderErr)
 				count := 0
 				for _, batch := range memoryWorkloadBatches(t, result, render, declarations) {
@@ -223,9 +223,9 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 						},
 					)
 					assert.NoError(t, err)
-					result, renderErr := o.render(t.Context())
+					result, renderErr := o.render(t.Context(), t)
 					o.stop()
-					selected, selectedErr, _ := Select(
+					projectedResults0, projectionErrors0 := Select(
 						[]Rendered{
 							{
 								Orchestrator: o,
@@ -244,6 +244,7 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 						},
 						nil,
 					)
+					selected, selectedErr, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 					assert.NoError(t, selectedErr)
 					assert.FatalIf(
 						t,
@@ -331,8 +332,7 @@ func TestRender_MemoryContained(t *testing.T) {
 		)
 	}
 	run := func(payloadSize int, templates uint64) {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := RenderTrees(t.Context(),
 			[]Tree{
 				witnessTree(
 					root,
@@ -346,6 +346,11 @@ func TestRender_MemoryContained(t *testing.T) {
 			},
 		)
 		assert.NoError(t, err)
+		defer func() {
+			for _, run := range runs {
+				run.Result.Close()
+			}
+		}()
 		memoryPayloadsResult := memoryPayloads(t, runs[0].Result)
 		size, payloads := memoryPayloadsResult.size, memoryPayloadsResult.payloads
 		assert.Equal(t, size, payloadSize)
@@ -439,7 +444,7 @@ func testRenderMemorySparseGitCase(t *testing.T, testCaseInput *struct {
 		)
 		assert.NoError(t, err)
 		assert.Diff(t, inputs.Changes.Paths(), wantPaths)
-		runs, err := RenderTrees(t.Context(), []Tree{
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{
 			{
 				RepoRoot:        inputs.BaseInput.LocalPath,
 				Path:            inputs.BaseScanPath,
@@ -467,8 +472,8 @@ func testRenderMemorySparseGitCase(t *testing.T, testCaseInput *struct {
 				"flux-system",
 				"sibling",
 			)
-			assert.Equal(t, side.filter.ShouldReconcile(app), true)
-			assert.Equal(t, side.filter.ShouldReconcile(sibling), false)
+			assert.Equal(t, side.selection.Snapshot().Reconcile(app), true)
+			assert.Equal(t, side.selection.Snapshot().Reconcile(sibling), false)
 			status, ok := side.store.GetStatus(app)
 			assert.Equal(t, ok, true)
 			assert.Equal(t, status.Status, store.StatusReady)

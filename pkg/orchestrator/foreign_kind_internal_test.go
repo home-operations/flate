@@ -48,8 +48,7 @@ spec:
     namespace: seaweedfs
 `)
 
-	renderedSingleton1, err := RenderTrees(
-		context.Background(),
+	renderedSingleton1, err := renderTreesForTest(context.Background(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{},
 	)
@@ -136,7 +135,7 @@ spec:
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		_, err := o.render(context.Background())
+		_, err := o.render(context.Background(), t)
 		assert.FatalIf(t, err == nil, "%v", "expected the unreachable Flux Bucket's fetch to fail")
 	}
 	id := manifest.NamedResource{

@@ -170,22 +170,22 @@ spec:
 		)
 		ownership := result.Index.OwnersOfFile("entry/source.yaml")
 		owners, ancestors := ownership.Owners, ownership.Ancestors
-		assert.Diff(t, result.Binding, discovery.Binding{})
+		assert.Equal(t, result.Binding, discovery.Binding{})
 		assert.Diff(t, owners, []manifest.NamedResource(nil))
 		assert.Diff(t, ancestors, []manifest.NamedResource(nil))
-		filter := admissiontest.Filter(
+		filter := admissiontest.Decision(
 			t,
 			admissiontest.Config{Changes: changes, Index: result.Index, Inventory: st, Root: ""},
 		)
 		for _, id := range []manifest.NamedResource{input, generator, consumer} {
 			assert.ErrorIf(
 				t,
-				!filter.ShouldReconcile(id),
+				!filter.Reconcile(id),
 				"side %d: changed producer input did not select %s",
 				side,
 				id,
 			)
 		}
-		assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("apps", "unrelated")), false)
+		assert.Equal(t, filter.Reconcile(testutil.KustomizationID("apps", "unrelated")), false)
 	}
 }

@@ -170,7 +170,7 @@ spec:
 		go func() {
 			defer close(done)
 			changes := change.NewSet([]string{"flux/set.yaml", "flux/parent.yaml"})
-			rendered, renderErr = RenderTrees(t.Context(), []Tree{
+			rendered, renderErr = renderTreesForTest(t.Context(), t, []Tree{
 				{
 					ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
 					Path:     filepath.Join(roots[0], "flux"),

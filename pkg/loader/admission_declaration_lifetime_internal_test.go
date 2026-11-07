@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -29,8 +30,8 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection = manifest.Selection{Changed: true}
+
+	configureSelection(t, l, selection.Request{Changed: true})
 	l.Options.Changes = change.NewSet([]string{"consumer.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -40,11 +41,16 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 		Namespace: "apps",
 		Name:      "readonly",
 	}
-	var preparation *Preparation
+	var preparation *selection.Preparation
 	defer func() { preparation.Retire() }()
 	for _, freeze := range []bool{false, true} {
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, freeze))
-		proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
+		proposal, err := prepareSelection(
+			t.Context(),
+			t,
+			l,
+			selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true, Preparation: &preparation},
+		)
 		assert.NoError(t, err)
 		present := slices.ContainsFunc(
 			proposal.Objects,
@@ -57,7 +63,6 @@ func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 		proposal.Retire()
 	}
 	preparation.Retire()
-	assert.Equal(t, preparation.evidence == nil && preparation.closure.loader == nil, true)
 }
 
 func TestAdmission_PreparedDeclarationUsesFullDocument(t *testing.T) {
@@ -127,8 +132,8 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 	assert.NoError(t, err)
 	l := New(stores[0])
 	l.SourceRoot = inputs[0].LocalPath
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Changes, l.Options.Filter = changes, change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
+	l.Options.Changes = changes
 	l.frozen, l.sideKnown, l.side = true, true, manifest.TreeBase
 	l.bindings.Store(
 		&map[manifest.NamedResource]admissionSource{manifest.BootstrapSourceID: {initial: inputs[0]}},
@@ -140,16 +145,9 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 		Inputs:      []string{"declaration.yaml"},
 		Productions: []manifest.Production{{Owner: owner.Named(), Source: manifest.BootstrapSourceID}},
 	}
-	_, retry := l.Options.Filter.AddEmitted(
-		change.MembershipUpdate{
-			Needed:   []manifest.NamedResource{id},
-			Selected: []manifest.NamedResource{id},
-			Dirty:    nil,
-			Ordinary: []manifest.NamedResource{id},
-		},
-		0,
-	)
-	assert.Equal(t, retry, false)
+	_, committed, err := requireSelection(t, l, []manifest.NamedResource{id}, false)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
 	child := prepared[0][id]
 	child.Obj = child.Obj.(*manifest.Kustomization).Clone()
 	child.Doc = manifest.DeepCopyMap(child.Doc)
@@ -168,7 +166,12 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 	if testCaseInput.absent {
 		child.Doc = nil
 	}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{child}})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{child}},
+	)
 	assert.NoError(t, err)
 	assert.Equal(
 		t,
@@ -205,12 +208,12 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	changed := "workload/kustomization.yaml"
 	if testCaseInput.rawEdit {
 		changed = "child.yaml"
 	}
-	l.Options.Changes, l.Options.Filter = change.NewSet([]string{changed}), change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{changed})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -226,7 +229,15 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 		Namespace: "apps",
 		Name:      "owner",
 	}
-	l.roots.set(child, &rootEvidence{admitted: testCaseInput.independent})
+	l.roots.set(
+		child,
+		&rootEvidence{
+			facts: selection.RootEvidence{
+				Identity: child,
+				Scope:    selection.RootScopeFacts{NamespaceEligible: true, Candidate: testCaseInput.independent},
+			},
+		},
+	)
 	if testCaseInput.knownOwner {
 		record := l.Index.Records[child]
 		record.Parent = manifest.NamedResource{
@@ -243,7 +254,12 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 			Named()
 		l.Index.Records[child] = record
 	}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), testCaseInput.want)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
@@ -258,7 +274,12 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 		st.AddObject(&manifest.ResourceSet{Name: producer.Name, Namespace: producer.Namespace})
 		st.RecordEmitted(producer, &store.Emission{Complete: true}, nil)
 		st.UpdateStatus(producer, store.StatusInfo{Status: store.StatusReady})
-		proposal, err = l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+		proposal, err = prepareSelection(
+			t.Context(),
+			t,
+			l,
+			selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+		)
 		assert.NoError(t, err)
 		assert.Equal(
 			t,

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -28,7 +28,12 @@ func testRenderChangedLiteralEntryDrainsSettledCandidates(t *testing.T) {
 			}
 			full := make([]Rendered, len(trees))
 			for side, tree := range trees {
-				runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+				runs, err := renderTreesForTest(
+					t.Context(),
+					t,
+					[]Tree{tree},
+					Config{Concurrency: 2, CacheDir: t.TempDir()},
+				)
 				assert.NoError(t, err)
 				full[side] = runs[0]
 			}
@@ -95,7 +100,7 @@ func renderSettledEntryCandidates(t *testing.T, tree *Tree, first string) Render
 	_, err = o.ksc.KeepEmitted(
 		t.Context(),
 		manifest.NamedResource{},
-		loader.PrepareRequest{Generation: nil, Reads: &reads},
+		selection.PrepareRequest{Generation: nil, Reads: &reads},
 	)
 	reads.Retire()
 	assert.NoError(t, err)
@@ -107,6 +112,7 @@ func renderSettledEntryCandidates(t *testing.T, tree *Tree, first string) Render
 		ready:               make(chan struct{}),
 	}
 	result, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	assert.Diff(t, published, []string{first, second})
 	status, ok := o.store.GetStatus(testutil.HelmReleaseID("apps", "generator"))

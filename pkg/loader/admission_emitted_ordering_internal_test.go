@@ -7,8 +7,8 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -83,8 +83,8 @@ func testAdmissionOrderingEmittedPathProofCase(
 		Namespace: "apps",
 		Name:      "consumer",
 	}
-	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer}})
+
 	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -126,7 +126,12 @@ func testAdmissionOrderingEmittedPathProofCase(
 		st.RecordEmitted(parent.Named(), &empty, nil)
 		st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 	}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, parent.Named()), testCaseInput.want)
 	assert.Equal(t, slices.Contains(proposal.Selected, parent.Named()), false)
@@ -150,9 +155,9 @@ func testAdmissionOrderingEmittedTemplateProofCase(
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
+
 	consumer := (&manifest.Kustomization{Name: "consumer", Namespace: "apps"}).Named()
-	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer}})
 	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -191,7 +196,12 @@ func testAdmissionOrderingEmittedTemplateProofCase(
 		output.Finish()
 		st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
 	}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), (*testCaseInput) == "known_target")
 	assert.Equal(t, slices.Contains(proposal.Selected, producer.Named()), false)

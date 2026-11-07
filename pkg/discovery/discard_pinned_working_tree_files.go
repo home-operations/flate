@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -52,7 +54,7 @@ type pinnedClaims struct {
 // scratch MUST be caller-owned; package-owned occurrence slices are immutable.
 func (d *Session) pinnedWorkingTreeClaims(
 	repoRoot string,
-	scratch []loader.Occurrence,
+	scratch []selection.OccurrenceFacts,
 ) pinnedClaims {
 	pinned := scratch[:0]
 	sources := map[manifest.NamedResource]struct{}{}
@@ -152,6 +154,13 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 		return nil, errors.New("discovery: Store is required")
 	}
 	d := newDiscoverer(&cfg)
+	if d.loader.Options.Session == nil {
+		var err error
+		d.loader.Options.Session, err = selection.New(cfg.Store, d.loader, cfg.Selection)
+		if err != nil {
+			return nil, err
+		}
+	}
 	complete := false
 	defer func() {
 		if !complete {
@@ -168,12 +177,16 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
 		return nil, err
 	}
+	admission := d.admission()
+	if d.cfg.Selection.Changed && d.cfg.Trees != nil && !d.hasEntryBuilder() {
+		d.entryReceipt(ctx, admission, admission.input)
+	}
 	complete = true
 	return d, nil
 }
 
 // Advance prepares source-qualified declarations and packages required by admission.
-func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (bool, error) {
+func (d *Session) Advance(ctx context.Context, admission *selection.Admission) (bool, error) {
 	defer admission.Retire()
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("context: %w", err)
@@ -182,27 +195,73 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 		return false, nil
 	}
 	d.constructionStarted = true
+	previousReceipt := d.entryReceiptRequest
+	d.entryReceiptRequest = admission.EntryReceipt
 	d.request = admission.Request
 	d.request.Generation = nil
 	// Admission can retire provisional relations, so construction MUST capture their owners first.
-	owners := d.neededMaterializers(admission.Needed)
+	demands := slices.Collect(admission.Demands())
 	admitRequiredObjectsResult2, admitRequiredObjectsResult2Err := d.admitRequiredObjects(ctx, admission)
 	changed, refresh, err := admitRequiredObjectsResult2.changed, admitRequiredObjectsResult2.refresh, admitRequiredObjectsResult2Err
 	if err != nil {
 		return false, err
 	}
+	if d.refreshEntryReceipt(ctx, previousReceipt) {
+		changed, refresh = true, true
+	}
 	root := d.cfg.Input.LocalPath
-	d.entryState.changed = false
-	pending, err := d.pendingProducers(ctx, admission, root, owners)
+	prepared, err := d.prepareDemandedProducers(ctx, demands, root)
 	if err != nil {
 		return false, err
 	}
-	if d.entryState.changed {
-		changed, refresh = true, true
+	changed, refresh = changed || prepared, refresh || prepared
+	previous := admission
+	for d.request.Preparation != nil {
+		frontier, err := d.loader.Options.Session.RefreshProducers(ctx, previous, d.request)
+		if previous != admission {
+			previous.Retire()
+		}
+		if err != nil {
+			return false, err
+		}
+		prepared, err = d.prepareDemandedProducers(ctx, slices.Collect(frontier.Demands()), root)
+		if err != nil {
+			frontier.Retire()
+			return false, err
+		}
+		if !prepared {
+			frontier.Retire()
+			break
+		}
+		changed, refresh, previous = true, true, frontier
 	}
+	if !refresh {
+		return changed, nil
+	}
+	if err := d.refreshDeclarations(ctx, root); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (d *Session) prepareDemandedProducers(ctx context.Context, demands []selection.Demand, root string) (bool, error) {
+	d.entryState.changed = false
+	pending, err := d.pendingProducers(ctx, demands, root)
+	if err != nil {
+		return false, err
+	}
+	changed := d.entryState.changed
 	for _, id := range slices.SortedFunc(maps.Keys(pending), manifest.NamedResource.Compare) {
-		ks := pending[id]
-		prepared, err := d.preparePendingProducer(ctx, ks)
+		demand := pending[id]
+		ks, _ := demand.Witness.(*manifest.Kustomization)
+		if demand.Root == "" && !demand.Reads.Valid() {
+			continue
+		}
+		var guard *store.ReadSet
+		if demand.Root == "" {
+			guard = demand.Reads
+		}
+		prepared, err := d.preparePendingProducer(ctx, ks, guard)
 		if err != nil {
 			if ctx.Err() != nil {
 				return false, ctx.Err() //nolint:wrapcheck // Preserve cancellation identity after producer preparation.
@@ -213,17 +272,21 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 			slog.Debug("discovery: declaration preparation deferred", "err", err)
 			return false, nil
 		}
-		if prepared {
-			changed, refresh = true, true
-		}
+		changed = changed || prepared
 	}
-	if !changed || !refresh {
-		return changed, nil
+	return changed, nil
+}
+
+func (d *Session) refreshEntryReceipt(ctx context.Context, previous *manifest.EntryApplication) bool {
+	if d.entryReceiptRequest == nil || d.entryReceiptRequest == previous || d.cfg.Trees == nil {
+		return false
 	}
-	if err := d.refreshDeclarations(ctx, root); err != nil {
-		return false, err
+	current := d.admission()
+	if current.qualification == nil {
+		return false
 	}
-	return true, nil
+	d.entryReceipt(ctx, current, d.cfg.Input)
+	return true
 }
 
 type requiredAdmission struct {
@@ -231,7 +294,7 @@ type requiredAdmission struct {
 	refresh bool
 }
 
-func (d *Session) admitRequiredObjects(ctx context.Context, proposal *loader.Admission) (requiredAdmission, error) {
+func (d *Session) admitRequiredObjects(ctx context.Context, proposal *selection.Admission) (requiredAdmission, error) {
 	changed, refresh := false, false
 	for i := range proposal.Objects {
 		child := &proposal.Objects[i]
@@ -252,86 +315,89 @@ func (d *Session) admitRequiredObjects(ctx context.Context, proposal *loader.Adm
 			refresh = refresh || hasPath || source
 		}
 	}
-	committed, err := d.loader.Commit(ctx, proposal, loader.Construction)
+	_, committed, err := d.loader.Options.Session.Commit(ctx, proposal, selection.Construction)
 	if err != nil || !committed {
 		return requiredAdmission{}, err
 	}
 	return requiredAdmission{changed: changed, refresh: refresh}, nil
 }
 
-func (d *Session) neededMaterializers(needed []manifest.NamedResource) map[manifest.NamedResource]bool {
-	owners := map[manifest.NamedResource]bool{}
-	for _, id := range needed {
-		if !id.KindInfo().Runnable {
-			continue
-		}
-		{
-			productionValues := d.cfg.Store.Productions(id, d.loader.Index)
-			for productionIndex := range productionValues {
-				production := productionValues[productionIndex]
-
-				if owner := production.Materializer(id); owner != id {
-					owners[owner] = true
-				}
-			}
-		}
-	}
-	return owners
-}
-
 func (d *Session) pendingProducers(
 	ctx context.Context,
-	admission *loader.Admission,
+	demands []selection.Demand,
 	root string,
-	owners map[manifest.NamedResource]bool,
-) (map[manifest.NamedResource]*manifest.Kustomization, error) {
-	pending := map[manifest.NamedResource]*manifest.Kustomization{}
-	for _, packageRoot := range d.loader.StandaloneRoots(root) {
-		if !slices.Contains(admission.Blocked, packageRoot) {
+) (map[manifest.NamedResource]selection.Demand, error) {
+	pending := map[manifest.NamedResource]selection.Demand{}
+	for i := range demands {
+		demand := &demands[i]
+		if demand.History || demand.Occurrence.Identity != (manifest.NamedResource{}) {
 			continue
 		}
-		ks := manifest.NewEntryKustomization(manifest.BootstrapSourceID, packageRoot, manifest.NamedResource{})
-		if filepath.Join(root, packageRoot) == d.cfg.Path {
-			d.entryDemand = true
-			var err error
-			ks, err = d.bindEntry(ctx, root)
-			if err != nil {
-				return nil, err
-			}
-			if ks == nil {
-				continue
-			}
+		ks, err := d.pendingProducer(ctx, demand, root)
+		if err != nil {
+			return nil, err
 		}
-		pending[ks.Named()] = ks
-	}
-	d.loader.Admit(root)
-	kustomizations := d.loader.Kustomizations()
-	for i := range kustomizations {
-		child := &kustomizations[i]
-		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
-		if !owners[ks.Named()] || ks.IsFragment() {
-			continue
-		}
-		record, _ := d.loader.Index.Lookup(ks.Named())
-		if d.cfg.Store.GetDeclaration(ks.Named()) != nil || record.Builder != "" {
-			pending[ks.Named()] = ks
+		d.request.Acquired = append(
+			d.request.Acquired,
+			selection.Acquisition{Demand: *demand, Reads: demand.Reads, Available: ks != nil},
+		)
+		if ks != nil && !ks.IsFragment() {
+			current := *demand
+			current.Witness = ks
+			pending[ks.Named()] = current
 		}
 	}
 	return pending, nil
 }
 
-func (d *Session) preparePendingProducer(ctx context.Context, ks *manifest.Kustomization) (bool, error) {
-	input, _, err := kustomize.SourceInput(d.cfg.Store, ks)
-	if err != nil || d.cfg.Trees == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+func (d *Session) pendingProducer(
+	ctx context.Context,
+	demand *selection.Demand,
+	root string,
+) (*manifest.Kustomization, error) {
+	if demand.Root == "" {
+		ks, _ := demand.Witness.(*manifest.Kustomization)
+		if ks != nil {
+			ks, _ = manifest.CatalogObject(ks, demand.Identity).(*manifest.Kustomization)
+		}
+		return ks, nil
+	}
+	if filepath.Join(root, demand.Root) == d.cfg.Path {
+		d.entryDemand = true
+		return d.bindEntry(ctx, root)
+	}
+	return manifest.NewEntryKustomization(demand.Source, demand.Root, manifest.NamedResource{}), nil
+}
+
+func (d *Session) preparePendingProducer(
+	ctx context.Context,
+	ks *manifest.Kustomization,
+	guard *store.ReadSet,
+) (bool, error) {
+	var objects interface {
+		GetObject(manifest.NamedResource) manifest.BaseManifest
+		GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
+	} = d.cfg.Store
+	if guard != nil {
+		objects = guard
+	}
+	input, _, err := kustomize.SourceInput(objects, ks)
+	if err != nil || !guard.Valid() || d.cfg.Trees == nil ||
+		ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}
 	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered &&
 		previous.matches(ks, input, d.substitutions, nil) {
 		return false, nil
 	}
-	if err := d.prepareProducer(ctx, ks, input, nil); err != nil {
+	prepared, err := d.prepareDocuments(ctx, ks, input, nil)
+	if err != nil {
 		return false, err
 	}
+	if !guard.Valid() {
+		return false, nil
+	}
+	d.registerProducer(prepared)
 	return true, nil
 }
 
@@ -366,7 +432,9 @@ func (d *Session) Freeze(ctx context.Context) (*Result, error) {
 	if result.Admission.qualification != nil {
 		result.Admission.qualification.session = nil
 	}
-	d.request = loader.PrepareRequest{}
+	d.preparation.Retire()
+	d.preparation = nil
+	d.request = selection.PrepareRequest{}
 	d.result = result
 	return result, nil
 }

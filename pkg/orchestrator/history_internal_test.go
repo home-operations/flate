@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/schedule"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -24,7 +26,6 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -144,8 +145,8 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	t.Cleanup(func() { fresh.stop() })
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.NoError(t, fresh.bootstrap(t.Context()))
-	assert.Equal(t, fresh.filter.ShouldReconcile(child), true)
-	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(child), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
 	assert.Equal(
@@ -171,9 +172,9 @@ func TestCompleteBootstrap_Cancellation(t *testing.T) {
 	cancel()
 	o.completeBootstrap()
 	o.cfg.ExternalChanges = change.NewSet([]string{"flux/emitter.yaml"})
-	err = o.buildChangeFilter(ctx)
+	err = o.prepareInvocation(ctx)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, len(o.filter.KeepNames()) == 0, true)
+	assert.Equal(t, len(selectionNamesForTest(o.selection, o.store, o.index)) == 0, true)
 	for range o.store.Sweep() {
 		t.Fatal("canceled preparation left probe registrations")
 	}
@@ -290,6 +291,7 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 		)
 	}
 	result, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(result.Close)
 	if (*testCaseInput) == "cycle" {
 		assert.FatalIf(t, err == nil, "%v", "authored cycle rendered successfully")
 
@@ -557,10 +559,10 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		}
 	}
 	paths := []string{"leaf/value.yaml", "entry/child.yaml", "unrelated/value.yaml"}
-	selection := func(records map[manifest.NamedResource]manifest.DiscoveryRecord) [][]bool {
+	selectRecords := func(records map[manifest.NamedResource]manifest.DiscoveryRecord) [][]bool {
 		selected := make([][]bool, len(paths))
 		for i, path := range paths {
-			fixture := admissiontest.New(
+			admissionLoader, session := admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{path}),
@@ -569,23 +571,24 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 					Root:      root,
 				},
 			)
-			proposal, failure := fixture.Prepare(
+			proposal, failure := admissiontest.Prepare(
 				t.Context(),
-				loader.PrepareRequest{Generation: nil, Reads: nil, History: map[manifest.NamedResource]struct {
+				t,
+				admissionLoader,
+				selection.PrepareRequest{Generation: nil, Reads: nil, History: map[manifest.NamedResource]struct {
 					Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 					Complete bool
 				}{owner: {Records: maps.All(records), Complete: true}}, Invocation: true},
 			)
 			assert.NoError(t, failure)
-			admissiontest.Commit(t, fixture, proposal)
-			filter := fixture.Options.Filter
+			admissiontest.Execute(t, admissionLoader, proposal)
 			for _, id := range append(slices.SortedFunc(maps.Keys(before), manifest.NamedResource.Compare), owner, testutil.KustomizationID("apps", "ready")) {
-				selected[i] = append(selected[i], filter.ShouldReconcile(id))
+				selected[i] = append(selected[i], session.Snapshot().Reconcile(id))
 			}
 		}
 		return selected
 	}
-	selected := selection(before)
+	selected := selectRecords(before)
 	var execution *base.Execution
 	o.tasks.Go(t.Context(), "entry history", func(ctx context.Context) {
 		execution = o.controllers.ReconcileNode(ctx, owner, manifest.DrainNone, schedule.Result{})
@@ -605,7 +608,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission).Complete, true)
 	after := readHistory()
 	assert.Diff(t, after, before)
-	assert.Diff(t, selection(after), selected)
+	assert.Diff(t, selectRecords(after), selected)
 }
 
 type testBootstrapEntryReceiptDependencySubstitutionsCaseCaseInputs struct {
@@ -802,10 +805,10 @@ data: {VALUE: rendered}
 	fresh, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
 	t.Cleanup(fresh.stop)
-	result, err := fresh.render(t.Context())
+	result, err := fresh.render(t.Context(), t)
 	assert.NoError(t, err)
 	assert.Equal(t, fresh.entryBinding.Producer, testutil.KustomizationID("apps", "applier"))
-	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), true)
 	assert.Diff(t, configMapNames(result), map[string]bool{"target": true, "result": true})
 	consumer := outputByParent(result.Manifests)[testutil.KustomizationID("apps", "consumer")]
 	assert.Equal(t, len(consumer), 1)

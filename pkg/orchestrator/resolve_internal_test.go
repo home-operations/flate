@@ -578,7 +578,7 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 			reader: {File: "reader.yaml", Refs: []manifest.NamedResource{target}},
 		}, Claims: map[string][]manifest.NamedResource{"reader/": {reader}}}
 		o.store.SetDiscoveryIndex(o.index)
-		o.loader = admissiontest.New(
+		o.loader, o.selection = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   cfg.ExternalChanges,
@@ -587,8 +587,8 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, o.loader, nil)
-		o.filter = o.loader.Options.Filter
+		admissiontest.Commit(t, o.selection, nil)
+
 		location, locateErr := gitrepo.Locate(t.Context(), root, "")
 		assert.NoError(t, locateErr)
 		input, admitErr := gittree.AdmitDirectory(t.Context(), location)
@@ -611,7 +611,7 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 			facts.Productions,
 			func(p manifest.Production) bool { return p.Owner == supplier },
 		) ||
-			!o.filter.ShouldReconcile(supplier), "ResourceSet supplier unreachable: %+v", facts)
+			!o.selection.Snapshot().Reconcile(supplier), "ResourceSet supplier unreachable: %+v", facts)
 
 		o.configureControllers()
 		d := dagDispatcher{o}

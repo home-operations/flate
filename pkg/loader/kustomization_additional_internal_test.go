@@ -7,6 +7,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil"
@@ -179,11 +181,13 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			l.Admit(root)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			id := testutil.KustomizationID("apps", "owner")
-			assert.FatalIf(t, l.AdmitsRoot(
-				l.IndexedObject(id, l.Index.Records[id]).Obj,
-				filepath.Join(root, "app", "owner.yaml"),
-			) != included ||
-				(l.Store.GetObject(id) != nil) != included, "replacement membership retained another view: included=%t", included)
+			assert.FatalIf(
+				t,
+				selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "app", "owner.yaml"))).Admitted != included ||
+					(l.Store.GetObject(id) != nil) != included,
+				"replacement membership retained another view: included=%t",
+				included,
+			)
 		}
 	})
 

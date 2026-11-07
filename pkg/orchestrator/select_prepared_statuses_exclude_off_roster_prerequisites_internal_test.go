@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -34,7 +36,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		Namespace: "flux-system",
 		Name:      "victim",
 	}
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	run.store.AddObject(&manifest.Kustomization{Name: victim.Name, Namespace: victim.Namespace})
 	run.store.AddObject(&manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace})
 	run.store.AddObject(&manifest.ResourceSet{Name: extra.Name, Namespace: extra.Namespace})
@@ -46,13 +48,14 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	)
 	run.Result.Failed = run.store.FailedResources()
 	run.Result.Blocked = map[manifest.NamedResource][]manifest.NamedResource{victim: {chart}}
-	run.Err = &FailuresError{Message: "raw failures"}
-	results, _, _ := Select(
+	run.Err = &selection.FailuresError{Message: "raw failures"}
+	projectedResults0, projectionErrors0 := Select(
 		[]Rendered{run},
 		run.Err,
 		[]manifest.NamedResource{{Group: victim.Group, Kind: victim.Kind, Name: victim.Name}},
 		nil,
 	)
+	results, _, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	res := results[0]
 	assert.Diff(
 		t,
@@ -181,7 +184,10 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: tc.blocked})
+			run := selectedRun(
+				t,
+				&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo), Blocked: tc.blocked},
+			)
 			run.Result.Failed[root] = store.StatusInfo{Status: store.StatusFailed, Message: "root boom"}
 			for id := range tc.blocked {
 				run.Result.Failed[id] = store.StatusInfo{
@@ -189,13 +195,14 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 					Message: "nested dependencies failed",
 				}
 			}
-			run.Err = &FailuresError{Message: "raw failures"}
-			selected, err, _ := Select(
+			run.Err = &selection.FailuresError{Message: "raw failures"}
+			projectedResults1, projectionErrors1 := Select(
 				[]Rendered{run},
 				run.Err,
 				[]manifest.NamedResource{testutil.KustomizationID("", "")},
 				nil,
 			)
+			selected, err, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 			assert.Diff(t, selected[0].Causes, tc.want)
 			assert.FatalIf(t, err == nil || strings.Contains(err.Error(), "nested dependencies failed") ||
 				!strings.Contains(
@@ -203,7 +210,7 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 					fmt.Sprintf("(+%d blocked", len(tc.blocked)),
 				), "cascade error did not count distinct victims: %v", err)
 			{
-				_, ok := errors.AsType[*FailuresError](err)
+				_, ok := errors.AsType[*selection.FailuresError](err)
 				assert.FatalIf(t, !ok, "aggregate lost failure type: %T", err)
 			}
 		})
@@ -212,7 +219,7 @@ func TestSelect_CascadesAndSharedVictims(t *testing.T) {
 
 func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 	t.Parallel()
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	valid := []manifest.NamedResource{testutil.KustomizationID("", "")}
 	for _, roots := range [][]manifest.NamedResource{
 		nil,
@@ -222,29 +229,32 @@ func TestSelect_InvalidQueryAndInitialization(t *testing.T) {
 		{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "different"}},
 	} {
 		{
-			_, err, _ := Select(
+			projectedResults2, projectionErrors2 := Select(
 				[]Rendered{run},
 				nil,
 				roots,
 				nil,
 			)
+			_, err, _ := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 			assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) ||
 				!errors.Is(err, manifest.ErrFlux), "invalid query lacks domain identity: %+v %v", roots, err)
 		}
 	}
 	initErr := errors.New("initialization failed")
 	{
-		selected, err, _ := Select(
+		projectedResults3, projectionErrors3 := Select(
 			[]Rendered{{Err: initErr}},
 			initErr,
 			valid,
 			nil,
 		)
+		selected, err, _ := projectedResults3, projectionErrors3.Selected, projectionErrors3.Remaining
 		assert.FatalIf(t, len(selected) != 1 ||
 			!errors.Is(err, initErr), "initialization error changed: %+v %v", selected, err)
 	}
 	{
-		_, err, _ := Select([]Rendered{{}}, nil, valid, nil)
+		projectedResults4, projectionErrors4 := Select([]Rendered{{}}, nil, valid, nil)
+		_, err, _ := projectedResults4, projectionErrors4.Selected, projectionErrors4.Remaining
 		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "incomplete run accepted: %v", err)
 	}
 }
@@ -261,8 +271,8 @@ func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
 		"flux-system",
 		"unrelated",
 	)
-	orig := selectedRun(&Result{})
-	current := selectedRun(
+	orig := selectedRun(t, &Result{})
+	current := selectedRun(t,
 		&Result{
 			Failed: map[manifest.NamedResource]store.StatusInfo{
 				unrelated: {Status: store.StatusFailed, Message: "unrelated failed"},
@@ -283,32 +293,35 @@ func TestSelect_AncestryCyclesAndOwnEvidence(t *testing.T) {
 		parent,
 		store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "ancestor failed"},
 	)
-	results, _, _ := Select(
+	projectedResults5, projectionErrors5 := Select(
 		[]Rendered{orig, current},
-		&FailuresError{Message: "raw failures"},
+		&selection.FailuresError{Message: "raw failures"},
 		[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}},
 		nil,
 	)
+	results, _, _ := projectedResults5, projectionErrors5.Selected, projectionErrors5.Remaining
 	assert.Equal(t, results[1].Unavailable[child].String(), "own skip")
 	assert.Equal(t, len(results[0].Unavailable), 0)
 	current.store.UpdateStatus(
 		child,
 		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
 	)
-	results, _, _ = Select(
+	projectedResults6, projectionErrors6 := Select(
 		[]Rendered{orig, current},
-		&FailuresError{Message: "raw failures"},
+		&selection.FailuresError{Message: "raw failures"},
 		[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}},
 		nil,
 	)
+	results, _, _ = projectedResults6, projectionErrors6.Selected, projectionErrors6.Remaining
 	assert.Equal(t, results[1].Unavailable[child].String(), "ancestor failed")
 	current.store.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	results, _, _ = Select(
+	projectedResults7, projectionErrors7 := Select(
 		[]Rendered{orig, current},
-		&FailuresError{Message: "raw failures"},
+		&selection.FailuresError{Message: "raw failures"},
 		[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Name: child.Name}},
 		nil,
 	)
+	results, _, _ = projectedResults7, projectionErrors7.Selected, projectionErrors7.Remaining
 	assert.Equal(t, len(results[1].Unavailable), 0)
 }
 
@@ -388,7 +401,7 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 		"flux-system",
 		"new-root",
 	)
-	orig, current := selectedRun(&Result{}), selectedRun(&Result{})
+	orig, current := selectedRun(t, &Result{}), selectedRun(t, &Result{})
 	for _, id := range []manifest.NamedResource{present, absent} {
 		orig.store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	}
@@ -398,12 +411,13 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 	publishFixture(t, orig.store, middle, []manifest.NamedResource{present, absent})
 	publishFixture(t, current.store, newRoot, []manifest.NamedResource{middle})
 	publishFixture(t, current.store, middle, []manifest.NamedResource{present})
-	selected, err, _ := Select(
+	projectedResults8, projectionErrors8 := Select(
 		[]Rendered{orig, current},
 		nil,
 		[]manifest.NamedResource{{Group: present.Group, Kind: present.Kind}},
 		nil,
 	)
+	selected, err, _ := projectedResults8, projectionErrors8.Selected, projectionErrors8.Remaining
 	assert.FatalIf(t, err != nil, "%v", err)
 	{
 		_, ok := selected[1].Unavailable[present]
@@ -474,12 +488,13 @@ func testSelectPreparedStatusesExcludeOffRosterPrerequisitesCase(
 ) {
 	t.Helper()
 
-	results, _, _ := Select(
+	projectedResults9, projectionErrors9 := Select(
 		[]Rendered{(*testCaseInput.run)},
 		testCaseInput.run.Err,
 		[]manifest.NamedResource{testCaseInput.tc.root},
 		nil,
 	)
+	results, _, _ := projectedResults9, projectionErrors9.Selected, projectionErrors9.Remaining
 	res := results[0]
 	assert.FatalIf(
 		t,
@@ -512,7 +527,7 @@ func testSelectPreparedStatusesExcludeOffRosterPrerequisitesCase(
 func testSelectPreparedStatusesExcludeOffRosterPrerequisitesExtraFailureQueryFilters(t *testing.T) {
 	t.Helper()
 
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	obj := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
 	run.store.AddObject(obj)
 	run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
@@ -529,7 +544,8 @@ func testSelectPreparedStatusesExcludeOffRosterPrerequisitesExtraFailureQueryFil
 		)
 	}
 	run.Result.Failed = run.store.FailedResources()
-	selected, _, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
+	projectedResults10, projectionErrors10 := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
+	selected, _, _ := projectedResults10, projectionErrors10.Selected, projectionErrors10.Remaining
 	assert.Diff(
 		t,
 		slices.SortedFunc(maps.Keys(selected[0].Statuses), manifest.NamedResource.Compare),
@@ -561,7 +577,7 @@ func testSelectNamespaceSnapshotsCase(t *testing.T, testCaseInput testSelectName
 
 	runs := make([]Rendered, (*testCaseInput.count))
 	for i := range runs {
-		run := selectedRun(&Result{Warnings: []manifest.Warning{{Message: "global"}}})
+		run := selectedRun(t, &Result{Warnings: []manifest.Warning{{Message: "global"}}})
 		files := make(map[manifest.NamedResource]string)
 		for _, namespace := range []string{"", "default", "media", "networking"} {
 			name := namespace
@@ -578,7 +594,7 @@ func testSelectNamespaceSnapshotsCase(t *testing.T, testCaseInput testSelectName
 	for invocation := range 2 {
 		for i, run := range runs {
 			if !testCaseInput.tc.disabled {
-				run.loader = admissiontest.New(
+				run.loader, run.selection = admissiontest.New(
 					t,
 					admissiontest.Config{
 						Changes:   change.NewSet(testCaseInput.tc.changes[(i+invocation)%2]),
@@ -587,17 +603,17 @@ func testSelectNamespaceSnapshotsCase(t *testing.T, testCaseInput testSelectName
 						Root:      "",
 					},
 				)
-				admissiontest.Commit(t, run.loader, nil)
-				run.filter = run.loader.Options.Filter
+				admissiontest.Commit(t, run.selection, nil)
 			}
 			runs[i] = run
 		}
-		selected, err, remainder := Select(
+		projectedResults11, projectionErrors11 := Select(
 			runs,
 			nil,
 			[]manifest.NamedResource{testutil.KustomizationID(testCaseInput.tc.namespace, "")},
 			nil,
 		)
+		selected, err, remainder := projectedResults11, projectionErrors11.Selected, projectionErrors11.Remaining
 		assert.NoError(t, err)
 		assert.NoError(t, remainder)
 		assert.Equal(t, len(selected), (*testCaseInput.count))
@@ -623,7 +639,7 @@ func testSelectAcceptedPrerequisitesCase(t *testing.T, testCaseInput *struct {
 ) {
 	t.Helper()
 
-	run := selectedRun(&Result{Failed: make(map[manifest.NamedResource]store.StatusInfo)})
+	run := selectedRun(t, &Result{Failed: make(map[manifest.NamedResource]store.StatusInfo)})
 	run.store.AddObject(testCaseInput.object)
 	for _, id := range testCaseInput.deps {
 		run.Result.Failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: "dependency failed"}
@@ -639,12 +655,13 @@ func testSelectAcceptedPrerequisitesCase(t *testing.T, testCaseInput *struct {
 	reads.Retire()
 	for range run.store.Sweep() {
 	}
-	selected, err, _ := Select(
+	projectedResults12, projectionErrors12 := Select(
 		[]Rendered{run},
-		&FailuresError{Message: "raw failures"},
+		&selection.FailuresError{Message: "raw failures"},
 		[]manifest.NamedResource{testCaseInput.object.Named()},
 		nil,
 	)
+	selected, err, _ := projectedResults12, projectionErrors12.Selected, projectionErrors12.Remaining
 	if err == nil || len(selected[0].Failed) != len(testCaseInput.deps) || len(selected[0].Unrelated) != 0 {
 		t.Fatalf("accepted prerequisites omitted: %+v %v", selected[0], err)
 	}

@@ -138,13 +138,11 @@ data: {env: `+env+`}
 	envOf := func(t *testing.T, l *Loader) string {
 		t.Helper()
 		{
-			promoted, err := Promote(
-				t.Context(),
+			promoted, err := promoteForTest(t.Context(), t,
 				l.Store,
 				appID,
 				PromoteOptions{
 					Record: productionForTest(new(l.Index.Records[appID])),
-					Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 				},
 			)
 			assert.FatalIf(t, err != nil ||
@@ -229,13 +227,11 @@ data: {env: `+env+`}
 			assert.FatalIf(t, err != nil, "Load: %v", err)
 		}
 		{
-			promoted, err := Promote(
-				t.Context(),
+			promoted, err := promoteForTest(t.Context(), t,
 				s,
 				appID,
 				PromoteOptions{
 					Record: productionForTest(new(l.Index.Records[appID])),
-					Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 				},
 			)
 			assert.FatalIf(t, err != nil ||

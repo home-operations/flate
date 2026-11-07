@@ -43,6 +43,9 @@ func TestRenderTrees_BootstrapWarnings(t *testing.T) {
 		},
 		orchestrator.Config{Concurrency: 2},
 	)
+	for _, run := range runs {
+		t.Cleanup(run.Result.Close)
+	}
 	base, head := runs[0], runs[1]
 	assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "preparation error: %v", err)
 	for _, side := range []orchestrator.Rendered{base, head} {

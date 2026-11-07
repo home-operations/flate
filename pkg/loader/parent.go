@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -43,7 +44,7 @@ func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
 	l.refreshClaims(repoRoot, l.kustomizations())
 	claims, borrowed := l.claimView(repoRoot, func(input scopeInput) bool {
 		r, _ := l.Index.Lookup(input.owner.Named())
-		return l.documents.cache[r.Path].eligible != fileInactive
+		return l.documents.cache[r.Path].eligible != selection.RootInactive
 	})
 	if borrowed {
 		return slices.Clone(claims)

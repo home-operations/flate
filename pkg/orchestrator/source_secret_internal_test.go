@@ -181,7 +181,7 @@ spec:
 			o.src.Fetchers[manifest.KindOCIRepository] = &secretChartFetcher{chart: chart}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			res, err := o.render(ctx)
+			res, err := o.render(ctx, t)
 			assert.FatalIf(t, err != nil, "Render: %v", err)
 			for _, id := range []manifest.NamedResource{
 				{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
@@ -245,7 +245,7 @@ spec:
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	_, err = o.render(ctx)
+	_, err = o.render(ctx, t)
 	// The registry returns 404. Reaching its handler proves the OCI fetcher
 	// read the rendered CA Secret and passed TLS verification.
 	assert.FatalIf(t, requests.Load() == 0, "OCI fetch never reached the TLS server: %v", err)

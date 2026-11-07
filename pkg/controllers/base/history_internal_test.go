@@ -5,18 +5,20 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
 
+//nolint:gocognit // Both publication orders MUST share the same complete history assertions.
 func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"mutable", "pinned"} {
@@ -31,7 +33,7 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 				Path:      "apps/red",
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name},
 			}
-			var selections [2][]string
+			var selections [2][]manifest.NamedResource
 			for side := range 2 {
 				st := store.New()
 				st.AddObject(source)
@@ -43,7 +45,7 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 					art.LocalPath, art.LocalRoot, art.Key, art.Content = "/selected", root, "commit", "generation"
 				}
 				st.SetArtifact(source.Named(), art)
-				l := admissiontest.New(
+				l, _ := admissiontest.New(
 					t,
 					admissiontest.Config{
 						Changes: change.NewSet([]string{"apps/red/file"}),
@@ -54,12 +56,12 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 						Root:      root,
 					},
 				)
-				filter := l.Options.Filter
+				filter := l.Options.Session
 				production := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID}
 				if side == 0 {
-					proposal, err := l.Prepare(
-						t.Context(),
-						loader.PrepareRequest{
+					proposal, err := admissiontest.Prepare(
+						t.Context(), t, l,
+						selection.PrepareRequest{
 							Generation: nil,
 							Reads:      nil,
 							History: map[manifest.NamedResource]struct {
@@ -79,14 +81,22 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 						},
 					)
 					assert.NoError(t, err)
-					admissiontest.Commit(t, l, proposal)
+					historyController := New(st, nil)
+					historyController.Configure(Options{Session: l.Options.Session, Loader: l})
+					_, commitErr := historyController.KeepEmitted(
+						t.Context(),
+						manifest.NamedResource{},
+						proposal.Request,
+					)
+					proposal.Retire()
+					assert.NoError(t, commitErr)
 				} else {
 					controller := New(st, task.NewBounded(2))
-					controller.Configure(Options{Filter: filter, Loader: l})
+					controller.Configure(Options{Session: filter, Loader: l})
 					kept1, admissionErr1 := controller.KeepEmitted(
 						t.Context(),
 						owner,
-						loader.PrepareRequest{
+						selection.PrepareRequest{
 							Generation: []store.Child{{Obj: child, Productions: []manifest.Production{production}}},
 							Reads:      nil,
 						},
@@ -94,10 +104,14 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 					assert.FatalIf(t, admissionErr1 != nil, "%v", admissionErr1)
 					assert.Equal(t, kept1, mode == "mutable")
 				}
-				assert.Equal(t, filter.ShouldReconcile(child.Named()), mode == "mutable")
-				assert.Equal(t, filter.ShouldReconcile(owner), mode == "mutable")
+				assert.Equal(t, filter.Snapshot().Reconcile(child.Named()), mode == "mutable")
+				assert.Equal(t, filter.Snapshot().Reconcile(owner), mode == "mutable")
 				assert.Equal(t, st.GetObject(child.Named()) == nil, true)
-				selections[side] = filter.KeepNames()
+				for _, id := range []manifest.NamedResource{child.Named(), owner, source.Named(), manifest.BootstrapSourceID} {
+					if filter.Snapshot().Reconcile(id) {
+						selections[side] = append(selections[side], id)
+					}
+				}
 			}
 			assert.Diff(t, selections[0], selections[1])
 		})
@@ -124,14 +138,14 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: newSource.Named().Kind, Name: newSource.Name},
 	}
 	owner := testutil.KustomizationID("apps", "emitter")
-	l := admissiontest.New(
+	l, _ := admissiontest.New(
 		t,
 		admissiontest.Config{Changes: change.NewSet([]string{"apps/red/file"}), Index: nil, Inventory: st, Root: root},
 	)
-	filter := l.Options.Filter
-	proposal, err := l.Prepare(
-		t.Context(),
-		loader.PrepareRequest{Generation: nil, Reads: nil, History: map[manifest.NamedResource]struct {
+	filter := l.Options.Session
+	proposal, err := admissiontest.Prepare(
+		t.Context(), t, l,
+		selection.PrepareRequest{Generation: nil, Reads: nil, History: map[manifest.NamedResource]struct {
 			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 			Complete bool
 		}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
@@ -145,17 +159,21 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 		}}}, Invocation: true},
 	)
 	assert.NoError(t, err)
-	admissiontest.Commit(t, l, proposal)
+	historyController := New(st, nil)
+	historyController.Configure(Options{Session: l.Options.Session, Loader: l})
+	_, commitErr := historyController.KeepEmitted(t.Context(), manifest.NamedResource{}, proposal.Request)
+	proposal.Retire()
+	assert.NoError(t, commitErr)
 	controller := New(st, task.NewBounded(2))
-	controller.Configure(Options{Filter: filter, Loader: l})
+	controller.Configure(Options{Session: filter, Loader: l})
 	kept2, admissionErr2 := controller.KeepEmitted(
 		t.Context(),
 		owner,
-		loader.PrepareRequest{Generation: []store.Child{{Obj: child}}, Reads: nil},
+		selection.PrepareRequest{Generation: []store.Child{{Obj: child}}, Reads: nil},
 	)
 	assert.FatalIf(t, admissionErr2 != nil, "%v", admissionErr2)
 	assert.Equal(t, kept2, true)
-	assert.Equal(t, filter.ShouldReconcile(newSource.Named()), true)
-	assert.Equal(t, filter.ShouldReconcile(oldSource.Named()), false)
+	assert.Equal(t, filter.Snapshot().Reconcile(newSource.Named()), true)
+	assert.Equal(t, filter.Snapshot().Reconcile(oldSource.Named()), false)
 	assert.Equal(t, st.GetObject(child.Named()) == nil, true)
 }

@@ -16,12 +16,12 @@ import (
 
 	"github.com/home-operations/flate/pkg/schedule"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -58,7 +58,7 @@ type Controller struct {
 type FetchOptions struct {
 	// Loader borrows the invocation's declaration admission boundary.
 	Loader              *loader.Loader
-	Filter              *change.Filter
+	Session             *selection.Session
 	AllowMissingSecrets bool
 	// Admission resolves runtime sources against immutable discovery policy.
 	Admission *discovery.Admission
@@ -83,7 +83,7 @@ func New(s *store.Store, t *task.Service) *Controller {
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle.
 func (c *Controller) Configure(opts FetchOptions, retry cache.RetryConfig) {
-	common := base.Options{Filter: opts.Filter, Loader: opts.Loader}
+	common := base.Options{Session: opts.Session, Loader: opts.Loader}
 	if opts.Loader != nil {
 		common.Index = opts.Loader.Index
 	}

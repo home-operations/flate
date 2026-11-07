@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -61,7 +62,7 @@ spec: {url: https://example.invalid/raw}
 	st.AddObject(parent)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection.Changed = true
+	configureSelection(t, l, selection.Request{Changed: true})
 	packageRoot := filepath.Join(root, "parent")
 	_, err := l.Load(t.Context(), packageRoot, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -116,7 +117,7 @@ func TestRootAdmission_ReaderOwnership(t *testing.T) {
 			l.Index.Readers = map[string][]manifest.FileReader{"child.yaml": {tc.reader}}
 			record := manifest.DiscoveryRecord{Path: "child.yaml", File: "child.yaml", Authored: id}
 			scope := l.rootAdmission(record.Path, record.File, true)
-			assert.Equal(t, scope.admits(l, id, &record), tc.admitted)
+			assert.Equal(t, selection.Root(scope.evidence(l, id, &record).facts).Admitted, tc.admitted)
 		})
 	}
 }

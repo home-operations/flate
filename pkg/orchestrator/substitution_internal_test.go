@@ -229,8 +229,7 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := RenderTrees(
-				t.Context(),
+			_, err := renderTreesForTest(t.Context(), t,
 				[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir()}},
 				Config{
 					Supply: []store.Declaration{
@@ -261,7 +260,7 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 				cfg.Cache = owner
 			}
 			cfg.ID = manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
-			_, err := RenderTrees(t.Context(), []Tree{cfg.Tree}, cfg.Config)
+			_, err := renderTreesForTest(t.Context(), t, []Tree{cfg.Tree}, cfg.Config)
 			assert.FatalIf(
 				t,
 				!errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "private-fixture-value"),
@@ -305,7 +304,7 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	second := newSubstitutionOrchestrator(t, cfg)
 	source.Obj.(*manifest.ConfigMap).Data["VALUE"] = "caller-change"
 	for _, o := range []*Orchestrator{first, second} {
-		res, err := o.render(t.Context())
+		res, err := o.render(t.Context(), t)
 		assert.FatalIf(t, err != nil, "%s", err)
 
 		id := testutil.KustomizationID("apps", "consumer")
@@ -416,6 +415,7 @@ func TestRender_SubstitutionLateConsumer(t *testing.T) {
 	}
 	o.store.AddObject(rs)
 	res, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil, "%v", err)
 	{
 		got := substitutionValue(t, res, child)
@@ -530,7 +530,7 @@ func testBootstrapSubstitutionCollisionsCase(
 	)
 	if (*testCaseInput) == "known Kustomization producer" {
 		producer := testutil.KustomizationID("apps", "producer")
-		assert.FatalIf(t, !o.filter.ShouldReconcile(producer) ||
+		assert.FatalIf(t, !o.selection.Snapshot().Reconcile(producer) ||
 			!slices.Contains(
 				testutil.Owners(o.store.Productions(input.Obj.Named(), o.index)),
 				producer,
@@ -541,6 +541,7 @@ func testBootstrapSubstitutionCollisionsCase(
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	res, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil, "%v", err)
 	id := testutil.KustomizationID("apps", "consumer")
 	{
@@ -644,6 +645,7 @@ func testRenderSubstitutionLateProducerCase(t *testing.T, testCaseInput testRend
 	}, false)
 	t.Cleanup(unsub)
 	res, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil, "%v", err)
 	consumer := testutil.KustomizationID("apps", "consumer")
 	{

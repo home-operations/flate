@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/internal/testutil"
@@ -49,7 +51,7 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 		if mode != "cold" {
 			prime, primeErr := newTestOrchestrator(t, tree, selected)
 			assert.NoError(t, primeErr)
-			_, primeErr = prime.render(t.Context())
+			_, primeErr = prime.render(t.Context(), t)
 			assert.NoError(t, primeErr)
 			if !cache.CanPersistRenders() {
 				t.Skip("explicit warm selection witness requires a clean VCS-stamped build")
@@ -58,7 +60,7 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 		editExplicitEntry(t, head, mode)
 		inputs, err := baseline.AutoResolve(t.Context(), tree.Path, "HEAD", cache)
 		assert.NoError(t, err)
-		selected.Selection = manifest.Selection{Changed: mode != "invalidated"}
+		selected.Selection = selection.Request{Changed: mode != "invalidated"}
 		var admissions [2]atomic.Int64
 		generator := testutil.HelmReleaseID("apps", "generator")
 		selected.StatusListener = func(id manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
@@ -90,7 +92,7 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 		if mode == "invalidated" {
 			trees = trees[1:]
 		}
-		results, err := RenderTrees(t.Context(), trees, selected)
+		results, err := renderTreesForTest(t.Context(), t, trees, selected)
 		slog.SetDefault(previous)
 		assert.NoError(t, err)
 		wantTemplates := 0

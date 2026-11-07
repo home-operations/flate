@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/claimpath"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -48,7 +49,9 @@ func (l *Loader) admit(repoRoot string) {
 			l.visitKustomizationScope(repoRoot, ks, i)
 		}
 		l.visitRootScopes(repoRoot, kss)
-		l.resolveEligibility()
+		for dir := range selection.ReduceStatic(staticScope{loader: l}) {
+			l.documents.read(dir)
+		}
 		if !l.projectAuthored(repoRoot) {
 			l.scopes.complete = true
 			return
@@ -214,7 +217,7 @@ func (l *Loader) projectAuthoredOccurrence(
 		return false
 	}
 	structured := withAuthoredStructure(input.fact, authored.Obj)
-	publish := func(projected Occurrence, production manifest.Production) {
+	publish := func(projected authoredOccurrence, production manifest.Production) {
 		if state.records[projected.Identity].Builder != "" {
 			return
 		}
@@ -243,9 +246,9 @@ func (l *Loader) projectAuthoredOccurrence(
 
 func (l *Loader) projectAuthoredVisits(
 	record *manifest.DiscoveryRecord,
-	structured *Occurrence,
+	structured *authoredOccurrence,
 	version string,
-	publish func(Occurrence, manifest.Production),
+	publish func(authoredOccurrence, manifest.Production),
 ) bool {
 	projected := false
 	for i := range l.scopes.contributions {

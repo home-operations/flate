@@ -124,8 +124,7 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 	(*statementInput.baseRoot) = statementInput.cfg.BaseInput.LocalPath
 	var previous [2]map[manifest.NamedResource][]map[string]any
 	for run := range 2 {
-		renderedTrees2, err := RenderTrees(
-			t.Context(),
+		renderedTrees2, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					Path:            (*statementInput.baseRoot),
@@ -176,7 +175,7 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 				directCfg.Path, directCfg.SelfURLs = directCfg.Input.LocalPath, []string{admittedViewsURL}
 				direct, err := newTestOrchestrator(t, directCfg.Tree, directCfg.Config)
 				assert.NoError(t, err)
-				result, err := direct.render(t.Context())
+				result, err := direct.render(t.Context(), t)
 				assert.NoError(t, err)
 				assert.Diff(t, outputByParent(result.Manifests), outputByParent(rendered.Result.Manifests))
 			}
@@ -308,6 +307,7 @@ func unavailableSourceAdmittedViews(t *testing.T, statementInput *testRenderTree
 	o.Store().
 		UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "fixture unavailable payload"})
 	result, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(result.Close)
 	assert.FatalIf(
 		t,
 		err == nil || result == nil || result.Failed[(*statementInput.changed)].Status != store.StatusFailed,

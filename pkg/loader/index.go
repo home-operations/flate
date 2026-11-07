@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -15,7 +16,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 	if err := ctx.Err(); err != nil {
 		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
-	l.documents.compact = l.Options.Selection.Changed || len(l.Options.Selection.Roots) != 0
+	l.documents.compact = l.Options.Session != nil
 	if l.documents.compact && l.frozen {
 		return nil
 	}
@@ -41,6 +42,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		return err
 	}
 	l.completeIndexInputs(repoRoot)
+	if err := l.captureNativeRoots(repoRoot); err != nil {
+		return err
+	}
 
 	if l.documents.compact {
 		l.derived, l.indexDerived = l.construction, true
@@ -50,10 +54,14 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		l.freezeConstruction()
 		return nil
 	}
+	if freeze {
+		l.seedSourceAuthority()
+	}
 	l.Store.SetDiscoveryIndex(l.Index)
 	if freeze {
 		l.frozen = true
 	}
+	l.scopeRoots = l.scopes.rootFacts
 	l.scopes = nil
 	return nil
 }
@@ -77,22 +85,29 @@ func (l *Loader) freezeConstruction() {
 }
 
 func (l *Loader) seedSourceAuthority() {
-	if !l.frozen {
-		comparison := admissionClosure{loader: l}
-		for source := range l.Options.Changes.Sources() {
-			evidence := comparison.sourceEvidence(source)
-			if previous := l.bindings.Load(); previous != nil {
-				if cached, known := (*previous)[source]; known {
-					*evidence = cached
-				}
-			}
-			if !evidence.initialKnown {
-				evidence.initial, _ = l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-				evidence.initialKnown = true
-			}
-			comparison.comparisons.changed = true
+	if l.frozen {
+		return
+	}
+	l.side, l.sideKnown = l.comparisonSide()
+	seed := func(source manifest.NamedResource) {
+		l.SourceFacts(source, nil)
+		previous := l.bindings.Load()
+		if previous == nil {
+			return
 		}
-		comparison.releaseComparisons()
+		evidence := (*previous)[source]
+		if !evidence.initialKnown {
+			evidence.initial, _ = l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			evidence.initialKnown = true
+			l.publishSource(source, &evidence)
+		}
+	}
+	seed(manifest.BootstrapSourceID)
+	for source := range l.Index.CompleteSources {
+		seed(source)
+	}
+	for source := range l.Options.Changes.Sources() {
+		seed(source)
 	}
 }
 
@@ -104,18 +119,19 @@ func (l *Loader) Retire() {
 		if doc.builtInput == nil {
 			continue
 		}
-		if !l.Options.Filter.Enabled() {
+		if l.Options.Session == nil {
 			l.Store.Retire(doc.builtInput.Support)
 			doc.built, doc.builtInput = nil, nil
 			l.documents.cache[root] = doc
 		}
 	}
 	l.InputContent = nil
-	l.Options.HistoryOwners = nil
-	if !l.Options.Filter.Enabled() {
+	if l.Options.Session == nil {
 		l.inputReaders, l.inputObjects = nil, nil
 		l.templateProjections = nil
-		l.producerFacts.Store(nil)
+		for i := range l.producerFacts {
+			l.producerFacts[i].Store(nil)
+		}
 		l.documents = documentReader{}
 		l.facts, l.scopes, l.Options.ParsedInputs = nil, nil, nil
 		l.candidates, l.admitted, l.locations = nil, nil, nil
@@ -123,17 +139,6 @@ func (l *Loader) Retire() {
 		l.bindings.Store(nil)
 		l.projections.Clear()
 		return
-	}
-	for file, readers := range l.Index.Readers {
-		readers = slices.DeleteFunc(
-			readers,
-			func(reader manifest.FileReader) bool { return !l.Options.Filter.ShouldReconcile(reader.Reader) },
-		)
-		if len(readers) == 0 {
-			delete(l.Index.Readers, file)
-		} else {
-			l.Index.Readers[file] = readers
-		}
 	}
 }
 
@@ -155,7 +160,11 @@ func (l *Loader) SweepPreparations() {
 }
 
 func (l *Loader) sweepProducerFacts() {
-	if facts := l.producerFacts.Load(); facts != nil {
+	for i := range l.producerFacts {
+		facts := l.producerFacts[i].Load()
+		if facts == nil {
+			continue
+		}
 		for object := range *facts {
 			id := object.Named()
 			if l.Store.GetDeclaration(id) == object {
@@ -194,23 +203,35 @@ func (l *Loader) Close() {
 	if l == nil {
 		return
 	}
+	files := l.documents.cache
 	l.Retire()
-	for root := range l.documents.cache {
-		doc := l.documents.cache[root]
+	for root := range files {
+		doc := files[root]
 		if doc.builtInput != nil {
 			l.Store.Retire(doc.builtInput.Support)
 		}
+		if l.catalog != nil {
+			files[root] = document{
+				eligible: doc.eligible, rootKnown: doc.rootKnown, rootAdmitted: doc.rootAdmitted,
+				rootOwners: doc.rootOwners, rootPeers: doc.rootPeers, rootNative: doc.rootNative,
+				terminal: doc.terminal, loaded: doc.loaded, bootstrap: doc.bootstrap, initial: doc.initial,
+			}
+		}
 	}
 	l.documents = documentReader{}
-	l.InputContent, l.Options.HistoryOwners = nil, nil
+	l.InputContent = nil
 	l.Options.ParsedInputs, l.Options.Changes, l.Options.Projections = nil, nil, nil
-	// Detached selections MUST retain the existing catalog views.
+	l.Options.ConfiguredInput = nil
 	l.facts, l.scopes, l.admitted = nil, nil, nil
 	l.inputReaders, l.inputObjects, l.templateProjections = nil, nil, nil
 	l.bindings.Store(nil)
-	l.producerFacts.Store(nil)
+	for i := range l.producerFacts {
+		l.producerFacts[i].Store(nil)
+	}
 	l.constructionPurpose.Store(nil)
 	l.projections.Clear()
+	l.catalog, l.scopeRoots = nil, nil
+	l.locations, l.candidates, l.roots = nil, nil, rootInventory{}
 }
 
 func (l *Loader) publishFrozenRecords() {
@@ -239,6 +260,7 @@ func (l *Loader) publishFrozenRecords() {
 	}
 	l.frozen = true
 	l.Store.SetDiscoveryIndex(l.Index)
+	l.scopeRoots = l.scopes.rootFacts
 	l.scopes, l.facts, l.Options.ParsedInputs, l.documents.parsed = nil, nil, nil, nil
 }
 
@@ -280,7 +302,7 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 	if l.scopes != nil {
 		claims = slices.DeleteFunc(l.scopes.claims, func(c manifest.KSClaim) bool {
 			r, _ := l.Index.Lookup(c.ID)
-			return l.documents.cache[r.Path].eligible == fileInactive
+			return l.documents.cache[r.Path].eligible == selection.RootInactive
 		})
 		l.scopes.claims = claims
 	}
@@ -292,7 +314,7 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 			rel, _ := filepath.Rel(repoRoot, origin)
 			r.File = filepath.ToSlash(rel)
 		}
-		if l.roots.get(id).independent {
+		if selection.Root(l.roots.get(id).facts).Independent {
 			r.Parent = manifest.NamedResource{}
 		} else if kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
 			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
@@ -318,7 +340,7 @@ func (l *Loader) completeIndexInputs(repoRoot string) {
 	for file, doc := range l.documents.cache {
 		incomplete := doc.decodeErr != nil ||
 			slices.ContainsFunc(doc.objects, func(object parsedObject) bool { return object.outcome.Err != nil })
-		if l.Options.Selection.Changed && incomplete {
+		if incomplete {
 			root := new(l.documents).mountedRoot(file)
 			for source := range l.Index.CompleteSources {
 				input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
@@ -342,7 +364,7 @@ func (l *Loader) indexClaimOwners() map[manifest.NamedResource]map[string]struct
 	for prefix, ids := range l.Index.Claims {
 		ids = slices.DeleteFunc(ids, func(id manifest.NamedResource) bool {
 			r, _ := l.Index.Lookup(id)
-			return l.documents.cache[r.Path].eligible == fileInactive
+			return l.documents.cache[r.Path].eligible == selection.RootInactive
 		})
 		if len(ids) == 0 {
 			delete(l.Index.Claims, prefix)
@@ -363,7 +385,7 @@ func (l *Loader) indexClaimOwners() map[manifest.NamedResource]map[string]struct
 }
 
 func (l *Loader) markCompleteSources() {
-	if !l.Options.Selection.Changed {
+	if l.scopes == nil {
 		return
 	}
 	clear(l.Index.CompleteSources)

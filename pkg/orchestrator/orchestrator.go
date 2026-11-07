@@ -8,7 +8,6 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/artifactgenerator"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
@@ -20,6 +19,7 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -48,7 +48,7 @@ type Config struct {
 	RecordWork bool
 
 	// Selection narrows declarations before rendering; zero selection is universal.
-	Selection manifest.Selection
+	Selection selection.Request
 	// HelmOptions tunes templating and kind filtering through SkipKinds.
 	HelmOptions helm.Options
 
@@ -130,17 +130,18 @@ type Orchestrator struct {
 	hrc                  *helmrelease.Controller
 	rsc                  *resourcesetctrl.Controller
 	agc                  *artifactgenerator.Controller
-	filter               *change.Filter
+	selection            *selection.Session
 	loader               *loader.Loader
 	session              *discovery.Session
-	preparation          *loader.Admission
-	admissionPreparation *loader.Preparation
+	preparation          *selection.Admission
+	admissionPreparation *selection.Preparation
 	discoveryResult      *discovery.Result
 	probes               *base.Execution
 	history              map[manifest.NamedResource]struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
 	}
+	historyOwners           map[manifest.NamedResource][]manifest.SourceEvidence
 	cache                   *sourcecache.Cache
 	inputs                  source.HTTPInputs
 	unsubStatus             store.Unsubscribe
@@ -170,6 +171,9 @@ type Orchestrator struct {
 // Result contains rendered document batches, failures and discovery diagnostics.
 // All borrowed payloads MUST remain immutable.
 type Result struct {
+	emissions []selection.EmissionFacts
+	catalog   *loader.Catalog
+
 	Work manifest.WorkSummary
 
 	Manifests []manifest.DocumentBatch
@@ -194,7 +198,7 @@ type treeConfig struct {
 	Tree
 }
 
-func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task.Service) *Orchestrator {
+func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task.Service) (*Orchestrator, error) {
 	tree := *treeInput
 	st := store.New()
 	for _, child := range cfg.Supply {
@@ -217,10 +221,14 @@ func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task
 	o.loader = loader.New(st)
 	o.loader.Options.AllowMissingKinds = cfg.AllowMissingKinds
 	o.cfg.Selection.Changed = cfg.Selection.Changed || tree.ExternalChanges != nil
-	if o.cfg.Selection.Changed || len(o.cfg.Selection.Roots) != 0 {
-		o.filter = change.NewFilter()
-		o.loader.Options.Selection, o.loader.Options.Changes, o.loader.Options.Filter = o.cfg.Selection, tree.ExternalChanges, o.filter
+	var err error
+	o.selection, err = selection.New(st, o.loader, o.cfg.Selection)
+	if err != nil {
+		o.inputs.Close()
+		o.loader.Close()
+		return nil, err
 	}
+	o.loader.Options.Session, o.loader.Options.Changes = o.selection, tree.ExternalChanges
 	if cfg.StatusListener != nil {
 		o.unsubStatus = st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, value any) {
 			if st.ReportHidden(id) {
@@ -251,7 +259,7 @@ func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task
 		ArtifactGenerator: o.agc,
 	}
 	o.depGraph = newDependencyGraph()
-	return o
+	return o, nil
 }
 
 // Store returns the underlying object store.
@@ -264,37 +272,6 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 		return record.Parent, true
 	}
 	return o.store.RenderedParent(id, o.index)
-}
-
-// Ownership is read only after all tree writers have joined.
-func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.NamedResource {
-	children := map[manifest.NamedResource][]manifest.NamedResource{}
-	for _, obj := range o.store.ListObjects("", "") {
-		{
-			pValues := o.store.Productions(obj.Named(), o.index)
-			for pIndex := range pValues {
-				p := pValues[pIndex]
-
-				if p.Owner != (manifest.NamedResource{}) && p.Owner != obj.Named() &&
-					p.Authored == (manifest.NamedResource{}) &&
-					p.Declaration == (manifest.NamedResource{}) {
-					children[p.Owner] = append(children[p.Owner], obj.Named())
-				}
-			}
-		}
-	}
-	if o.index != nil {
-		for child, record := range o.index.Records { //nolint:gocritic // Map iteration preserves a value snapshot without an extra lookup.
-			if parent := record.Parent; parent != (manifest.NamedResource{}) {
-				children[parent] = append(children[parent], child)
-			}
-		}
-	}
-	for parent, ids := range children {
-		slices.SortFunc(ids, manifest.NamedResource.Compare)
-		children[parent] = slices.Compact(ids)
-	}
-	return children
 }
 
 func (o *Orchestrator) discover(ctx context.Context) error {
@@ -340,7 +317,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	}
 	var res *discovery.Result
 	var err error
-	if o.filter.Enabled() {
+	if o.selection != nil {
 		if o.session == nil {
 			return o.beginDiscovery(ctx, &config)
 		}
@@ -380,6 +357,7 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 	if err != nil {
 		return err
 	}
+	o.admission = o.session.Admission()
 	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Bootstrap admission publishes a source artifact.
 	o.cfg.RepoRoot, o.repoRoot, o.index = o.cfg.Input.LocalPath, o.cfg.Input.LocalPath, o.loader.Index
 	return nil

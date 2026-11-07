@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
 
@@ -126,7 +126,7 @@ func (declarationPromotion) IsFileIndexed(manifest.NamedResource) bool { return 
 //nolint:gocritic // The admission contract requires an independent request snapshot.
 func (p declarationPromotion) Promote(
 	_ context.Context,
-	_ loader.PrepareRequest,
+	_ selection.PrepareRequest,
 	id manifest.NamedResource,
 ) (bool, error) {
 	return p(id), nil

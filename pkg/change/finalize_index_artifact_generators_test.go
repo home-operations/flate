@@ -225,7 +225,7 @@ func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
 			func(p manifest.Production) bool { return p.Declaration == generator },
 		), "static declaration escaped its namespace or source view: %s", unrelated)
 	}
-	filter := admissiontest.Filter(
+	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"entry/consumer.yaml"}),
@@ -234,10 +234,10 @@ func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
 			Root:      "",
 		},
 	)
-	assert.Equal(t, filter.ShouldReconcile(generator), true)
-	assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")), true)
-	assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("other", "other")), false)
-	assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("apps", "foreign")), false)
+	assert.Equal(t, filter.Reconcile(generator), true)
+	assert.Equal(t, filter.Reconcile(testutil.KustomizationID("apps", "consumer")), true)
+	assert.Equal(t, filter.Reconcile(testutil.KustomizationID("other", "other")), false)
+	assert.Equal(t, filter.Reconcile(testutil.KustomizationID("apps", "foreign")), false)
 }
 
 func testFinalizeIndexArtifactGeneratorsCase(
@@ -382,7 +382,7 @@ func testFinalizeIndexArtifactGeneratorsCase(
 		}
 		assert.Diff(t, r.Productions, []manifest.Production{want})
 	}
-	filter := admissiontest.Filter(
+	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{generatorFile}),
@@ -404,7 +404,7 @@ func testFinalizeIndexArtifactGeneratorsCase(
 
 		assert.FatalIf(
 			t,
-			!filter.ShouldReconcile(owner),
+			!filter.Reconcile(owner),
 			"%v",
 			"changed declaration did not select its contributing owner",
 		)
@@ -427,7 +427,7 @@ func testFinalizeIndexArtifactGeneratorsCase(
 
 		assert.FatalIf(
 			t,
-			!filter.ShouldReconcile(testutil.KustomizationID(ns, "consumer")),
+			!filter.Reconcile(testutil.KustomizationID(ns, "consumer")),
 			"%v",
 			"changed generator declaration did not select its source consumer",
 		)

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -54,8 +56,7 @@ func TestRenderTrees_ColdReleaseReach(t *testing.T) {
 	roots := []string{before, after}
 	var scoped [2]*Result
 	for side, root := range roots {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				witnessTree(
 					root,
@@ -67,7 +68,7 @@ func TestRenderTrees_ColdReleaseReach(t *testing.T) {
 			Config{
 				RecordWork:  true,
 				Concurrency: 2,
-				Selection: manifest.Selection{
+				Selection: selection.Request{
 					Roots: []manifest.NamedResource{
 						release,
 					},
@@ -86,7 +87,7 @@ func TestRenderTrees_ColdReleaseReach(t *testing.T) {
 	var first []byte
 	for repeat := range 2 {
 		trees := []Tree{witnessTree(before, manifest.TreeBase), witnessTree(after, manifest.TreeHead)}
-		runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		var decoded uint64
 		for side, run := range runs {

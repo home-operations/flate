@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -135,9 +136,28 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 		t,
 		admissionConfig{changes: change.NewSet([]string{"a.yaml"}), index: index, inventory: st, root: "/repo"},
 	)
+	filter.pending.Retire()
+	fromAObject := &manifest.ConfigMap{Name: fromA.Name, Namespace: fromA.Namespace}
+	fromBObject := &manifest.ConfigMap{Name: fromB.Name, Namespace: fromB.Namespace}
+	prepared := make([]store.Child, 0, 3)
+	prepared = append(
+		prepared,
+		store.Child{
+			Obj:         fromAObject,
+			Productions: []manifest.Production{{Owner: a.Named(), Source: manifest.BootstrapSourceID}},
+		},
+		store.Child{
+			Obj:         fromBObject,
+			Productions: []manifest.Production{{Owner: b.Named(), Source: manifest.BootstrapSourceID}},
+		},
+	)
+	filter.prepare(selection.PrepareRequest{Invocation: true, Generation: prepared}, false)
+	for _, child := range prepared {
+		assert.Equal(t, st.GetDeclaration(child.Obj.Named()), nil)
+	}
 	assert.Diff(
 		t,
-		filter.keep,
+		filter.roles(),
 		map[manifest.NamedResource]role{
 			a.Named():      primary,
 			b.Named():      primary,
@@ -146,7 +166,7 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 			source.Named(): kept,
 		},
 	)
-	assert.Equal(t, filter.ShouldReconcile(peer.Named()), false)
+	assert.Equal(t, filter.Reconcile(peer.Named()), false)
 
 	c := a.Clone()
 	c.Name = "c"
@@ -174,9 +194,18 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 		t,
 		admissionConfig{changes: change.NewSet([]string{"a.yaml"}), index: &next, inventory: st, root: "/repo"},
 	)
+	filter.pending.Retire()
+	prepared = append(prepared, store.Child{
+		Obj:         &manifest.ConfigMap{Name: fromC.Name, Namespace: fromC.Namespace},
+		Productions: []manifest.Production{{Owner: c.Named(), Source: manifest.BootstrapSourceID}},
+	})
+	filter.prepare(selection.PrepareRequest{Invocation: true, Generation: prepared}, false)
+	for _, child := range prepared {
+		assert.Equal(t, st.GetDeclaration(child.Obj.Named()), nil)
+	}
 	assert.Diff(
 		t,
-		filter.keep,
+		filter.roles(),
 		map[manifest.NamedResource]role{
 			a.Named():      primary,
 			b.Named():      primary,
@@ -187,5 +216,5 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 			source.Named(): kept,
 		},
 	)
-	assert.Equal(t, filter.ShouldReconcile(peer.Named()), false)
+	assert.Equal(t, filter.Reconcile(peer.Named()), false)
 }

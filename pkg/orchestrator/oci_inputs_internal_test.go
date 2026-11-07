@@ -59,8 +59,7 @@ spec:
 `)
 	var previous string
 	for run := range 2 {
-		rendered, err := RenderTrees(
-			t.Context(),
+		rendered, err := renderTreesForTest(t.Context(), t,
 			[]Tree{{Path: root, RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{Concurrency: 2, CacheDir: t.TempDir()},
 		)
@@ -168,8 +167,7 @@ func testRenderTreesChangedOnlyAndDiffOCIInputsCaseCase(
 
 	dirs := [2]string{t.TempDir(), t.TempDir()}
 	testRenderTreesChangedOnlyAndDiffOCIInputsCaseCaseSegment(t, &testCaseInput, &dirs)
-	rendered, err := RenderTrees(
-		t.Context(),
+	rendered, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				Path:     dirs[0],
@@ -204,13 +202,13 @@ func testRenderTreesChangedOnlyAndDiffOCIInputsCaseCase(
 		}
 		assert.Equal(
 			t,
-			side.filter.ShouldReconcile(producer), (*testCaseInput.scenario) !=
+			side.selection.Snapshot().Reconcile(producer), (*testCaseInput.scenario) !=
 				"delete" || side.ID.Side == manifest.TreeBase,
 		)
-		assert.Equal(t, side.filter.ShouldReconcile(consumer), true)
-		assert.Equal(t, side.filter.ShouldReconcile(sibling), false)
-		assert.Equal(t, side.filter.ShouldReconcile(provider), true)
-		assert.Equal(t, side.filter.ShouldReconcile(set), true)
+		assert.Equal(t, side.selection.Snapshot().Reconcile(consumer), true)
+		assert.Equal(t, side.selection.Snapshot().Reconcile(sibling), false)
+		assert.Equal(t, side.selection.Snapshot().Reconcile(provider), true)
+		assert.Equal(t, side.selection.Snapshot().Reconcile(set), true)
 		var outputNames []string
 		for _, docs := range outputByParent(side.Result.Manifests) {
 			for _, doc := range docs {

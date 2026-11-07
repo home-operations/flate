@@ -202,7 +202,7 @@ func (r documentReader) censusFile(
 		origin := new(r).localPath(path)
 		root := new(r).mountedRoot(origin)
 		file, _ := filepath.Rel(root, origin)
-		o.Declaration = OccurrenceID{
+		o.Declaration = occurrenceID{
 			Source:   root,
 			File:     filepath.ToSlash(file),
 			Document: child.outcome.Ordinal,

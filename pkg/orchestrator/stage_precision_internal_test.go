@@ -309,7 +309,7 @@ func stagePrecisionRun(t *testing.T, trees []Tree, cacheDir string, run int) sta
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(previous)
-	runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2, CacheDir: cacheDir})
+	runs, err := renderTreesForTest(t.Context(), t, trees, Config{Concurrency: 2, CacheDir: cacheDir})
 	assert.NoError(t, err)
 	assert.Equal(t, len(runs), 2)
 	for _, result := range runs {
@@ -365,7 +365,7 @@ func stagePrecisionFull(t *testing.T, trees []Tree) []byte {
 	t.Helper()
 	full := make([]Rendered, len(trees))
 	for side, tree := range trees {
-		runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
 		assert.NoError(t, err)
 		full[side] = runs[0]
 	}
@@ -374,12 +374,13 @@ func stagePrecisionFull(t *testing.T, trees []Tree) []byte {
 
 func stagePrecisionDiff(t *testing.T, runs []Rendered) []byte {
 	t.Helper()
-	selected, selectedErr, err := Select(
+	projectedResults0, projectionErrors0 := Select(
 		runs,
 		nil,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 		nil,
 	)
+	selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.NoError(t, err)
 	body, warnings, suppressed, err := diff.Compare(
 		diff.Snapshot{

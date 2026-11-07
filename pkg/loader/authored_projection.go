@@ -5,7 +5,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (l *Loader) publishAuthoredLocation(projected *Occurrence) {
+func (l *Loader) publishAuthoredLocation(projected *authoredOccurrence) {
 	if old, known := l.locations[projected.Identity]; known && old.facts == projected.facts {
 		projected.object = old.object
 	}
@@ -43,7 +43,7 @@ func (l *Loader) publishAuthoredObject(
 	}
 }
 
-func withAuthoredStructure(occurrenceValue *Occurrence, authored manifest.BaseManifest) Occurrence {
+func withAuthoredStructure(occurrenceValue *authoredOccurrence, authored manifest.BaseManifest) authoredOccurrence {
 	o := *occurrenceValue
 
 	if structural, ok := authored.(*manifest.Kustomization); ok && structural != o.facts.structural {
@@ -55,7 +55,7 @@ func withAuthoredStructure(occurrenceValue *Occurrence, authored manifest.BaseMa
 	return o
 }
 
-func inAuthoredNamespace(occurrenceValue *Occurrence, namespace string) Occurrence {
+func inAuthoredNamespace(occurrenceValue *authoredOccurrence, namespace string) authoredOccurrence {
 	o := *occurrenceValue
 
 	projected := o
@@ -65,7 +65,7 @@ func inAuthoredNamespace(occurrenceValue *Occurrence, namespace string) Occurren
 	return projected
 }
 
-func authoredReferences(occurrenceValue *Occurrence) []manifest.NamedResource {
+func authoredReferences(occurrenceValue *authoredOccurrence) []manifest.NamedResource {
 	projected := *occurrenceValue
 	refs := []manifest.NamedResource{}
 	for ref := range projected.references() {

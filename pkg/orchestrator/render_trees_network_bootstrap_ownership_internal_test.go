@@ -169,8 +169,7 @@ func testRenderTreesNetworkBootstrapOwnershipCase(
 		"kustomization.yaml",
 		"configMapGenerator:\n- name: generated\n  envs: ["+envs+"]\n",
 	)
-	runs, err := RenderTrees(
-		ctx,
+	runs, err := renderTreesForTest(ctx, t,
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}},
 		cfg,
 	)
@@ -242,8 +241,7 @@ func testRenderTreesNetworkOwnershipCase(t *testing.T, testCaseInput *bool,
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: ["+srv.URL+"/cm.yaml]\n")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	renderedTrees7, err := RenderTrees(
-		ctx,
+	renderedTrees7, err := renderTreesForTest(ctx, t,
 		[]Tree{
 			{
 				RepoRoot:        root,

@@ -184,7 +184,7 @@ func TestFinalize_DebugSummary(t *testing.T) {
 		)
 		o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
 		assert.NoError(t, err)
-		_, err = o.render(t.Context())
+		_, err = o.render(t.Context(), t)
 		assert.NoError(t, err)
 		assert.Equal(t, len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease)), 1)
 		projected := testutil.HelmReleaseID("apps", "child")
@@ -217,8 +217,7 @@ func TestFinalize_DebugSummary(t *testing.T) {
 		defer slog.SetDefault(previous)
 		root := t.TempDir()
 		writeCluster(t, root, "one", "two")
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					ID: manifest.TreeID{

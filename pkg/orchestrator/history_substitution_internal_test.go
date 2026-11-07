@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/schedule"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -148,7 +150,7 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 	}
 	warm, err := newTestOrchestrator(t, tree, substitutionHistoryConfig(cacheDir, first))
 	assert.NoError(t, err)
-	seed, err := warm.render(t.Context())
+	seed, err := warm.render(t.Context(), t)
 	assert.NoError(t, err)
 	declaration := warm.store.GetObject(owner)
 	seedOutput := outputByParent(seed.Manifests)[owner]
@@ -174,11 +176,12 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 	assert.Equal(t, history != nil, testCaseInput.same)
 	reads.Close()
 	if testCaseInput.same {
-		assert.Equal(t, fresh.filter.ShouldReconcile(owner), false)
+		assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), false)
 	}
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	t.Log("changed-only render")
 	head, err := fresh.collectResult(fresh.run(t.Context()))
+	t.Cleanup(head.Close)
 	assert.NoError(t, err)
 	if testCaseInput.same {
 		assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
@@ -191,10 +194,10 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 		selectedTree := tree
 		selectedTree.ExternalChanges = nil
 		selectedCfg := substitutionHistoryConfig(cacheDir, testCaseInput.second)
-		selectedCfg.Selection = manifest.Selection{Roots: []manifest.NamedResource{owner}}
+		selectedCfg.Selection = selection.Request{Roots: []manifest.NamedResource{owner}}
 		selected, localErr := newTestOrchestrator(t, selectedTree, selectedCfg)
 		assert.NoError(t, localErr)
-		selectedResult, localErr := selected.render(t.Context())
+		selectedResult, localErr := selected.render(t.Context(), t)
 		assert.NoError(t, localErr)
 		selectedOutput = outputByParent(selectedResult.Manifests)[owner]
 		assert.Equal(t, len(selectedOutput), 1)
@@ -205,7 +208,7 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 	cfg.CacheDir = t.TempDir()
 	full, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	result, err := full.render(t.Context())
+	result, err := full.render(t.Context(), t)
 	assert.NoError(t, err)
 	assert.Diff(t, outputByParent(head.Manifests)[consumer], outputByParent(result.Manifests)[consumer])
 	assert.Diff(t, head.Failed, result.Failed)
@@ -218,7 +221,7 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 	cfg.CacheDir = t.TempDir()
 	again, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	deterministic, err := again.render(t.Context())
+	deterministic, err := again.render(t.Context(), t)
 	assert.NoError(t, err)
 	assert.Diff(t, outputByParent(result.Manifests), outputByParent(deterministic.Manifests))
 	assert.Diff(t, result.Failed, deterministic.Failed)

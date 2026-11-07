@@ -23,7 +23,7 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	admissionLoader1 := admissiontest.New(
+	admissionLoader1, _ := admissiontest.New(
 		b,
 		admissiontest.Config{
 			Changes: change.NewSet([]string{"target.yaml"}),
@@ -34,8 +34,8 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(b, admissionLoader1, nil)
-	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
+	admissiontest.Commit(b, admissionLoader1.Options.Session, nil)
+	c.Configure(Options{Session: admissionLoader1.Options.Session, Loader: admissionLoader1})
 	b.ReportAllocs()
 	for b.Loop() {
 		c.dependencies(hr, manifest.GateInputs)
@@ -205,7 +205,7 @@ func testControllerCollectHRDepsOrderingFilterCase(
 			{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"},
 		},
 	}
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes: changes,
@@ -219,13 +219,13 @@ func testControllerCollectHRDepsOrderingFilterCase(
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
 	st := store.New()
 	c := gateExecution(New(st, task.NewBounded(2)), manifest.NamedResource{})
 	c.Configure(
 		Options{
-			Filter:    filter,
+			Session:   filter,
 			Existence: indexedOrderingDeps{target.Named(): testCaseInput.indexed},
 			Loader:    filterLoader,
 		},
@@ -237,7 +237,7 @@ func testControllerCollectHRDepsOrderingFilterCase(
 			store.StatusInfo{Status: testCaseInput.status, Reason: "", Message: "fixture"},
 		)
 	}
-	size := len(filter.KeepNames())
+	decision := filter.Snapshot()
 	var want []manifest.DependencyRef
 	if testCaseInput.retain {
 		want = []manifest.DependencyRef{
@@ -247,7 +247,7 @@ func testControllerCollectHRDepsOrderingFilterCase(
 	assert.Diff(t, sortedDependencies(c.dependencies(hr, manifest.GateInputs)), sortedDependencies(want))
 	assert.ErrorIf(
 		t,
-		len(filter.KeepNames()) != size || len(hr.DependsOn) != 1,
+		filter.Snapshot() != decision || len(hr.DependsOn) != 1,
 		"%v",
 		"ordering collection must preserve keep and input edges",
 	)

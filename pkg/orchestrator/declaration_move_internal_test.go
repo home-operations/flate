@@ -71,12 +71,13 @@ func TestRenderTrees_UnchangedDeclarationMove(t *testing.T) {
 	}
 	delta := func(runs []Rendered) []byte {
 		t.Helper()
-		selected, selectedErr, err := Select(
+		projectedResults0, projectionErrors0 := Select(
 			runs,
 			nil,
 			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 			nil,
 		)
+		selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
 
 		body, warnings, suppressed, err := diff.Compare(
@@ -102,8 +103,7 @@ func TestRenderTrees_UnchangedDeclarationMove(t *testing.T) {
 	}
 	full := make([]Rendered, 2)
 	for side, tree := range trees {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{tree},
 			Config{Concurrency: 2, CacheDir: t.TempDir(), RegistryConfig: registryConfig},
 		)
@@ -115,8 +115,7 @@ func TestRenderTrees_UnchangedDeclarationMove(t *testing.T) {
 		var logs bytes.Buffer
 		previous := slog.Default()
 		slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			trees,
 			Config{Concurrency: 2, CacheDir: t.TempDir(), RegistryConfig: registryConfig},
 		)
@@ -244,12 +243,13 @@ func testRenderTreesDeclarationMoveChangesCase(
 	}
 	delta := func(runs []Rendered) []byte {
 		t.Helper()
-		selected, selectedErr, err := Select(
+		projectedResults1, projectionErrors1 := Select(
 			runs,
 			nil,
 			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 			nil,
 		)
+		selected, selectedErr, err := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 		assert.NoError(t, err)
 		body, warnings, suppressed, err := diff.Compare(
 			diff.Snapshot{
@@ -274,8 +274,7 @@ func testRenderTreesDeclarationMoveChangesCase(
 	}
 	full := make([]Rendered, 2)
 	for side, tree := range trees {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{tree},
 			Config{Concurrency: 2, CacheDir: t.TempDir(), RegistryConfig: registryConfig},
 		)
@@ -284,8 +283,7 @@ func testRenderTreesDeclarationMoveChangesCase(
 	}
 	want := delta(full)
 	for range 2 {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			trees,
 			Config{Concurrency: 2, CacheDir: t.TempDir(), RegistryConfig: registryConfig},
 		)

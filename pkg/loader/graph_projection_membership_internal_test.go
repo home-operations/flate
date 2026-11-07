@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -44,10 +45,10 @@ func TestAdmit_GraphProjection(t *testing.T) {
 	for _, tc := range []struct {
 		name, source string
 		namespaces   []string
-		eligibility  fileEligibility
+		eligibility  selection.RootEligibility
 	}{
-		{"local", "", []string{"authored", "projected"}, fileEligible},
-		{"external", "  sourceRef: {kind: GitRepository, name: external}\n", []string{"authored"}, fileInactive},
+		{"local", "", []string{"authored", "projected"}, selection.RootEligible},
+		{"external", "  sourceRef: {kind: GitRepository, name: external}\n", []string{"authored"}, selection.RootInactive},
 	} {
 		t.Run("spec_components/"+tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -229,7 +230,7 @@ spec:
 	}
 	l := New(store.New())
 	l.SourceRoot = root
-	l.Options.Selection.Changed = true
+	configureSelection(t, l, selection.Request{Changed: true})
 	admitForTest(l.Store, root)
 	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -454,7 +455,7 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, record.File, "kube/deploy/app/"+file)
 		assert.Equal(
 			t,
-			l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path),
+			selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)).Admitted,
 			name == "app" && testCaseInput.listed,
 		)
 		assert.Equal(t, l.Store.GetObject(id) != nil, name == "app" && testCaseInput.listed)
@@ -465,7 +466,7 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 	name        string
 	source      string
 	namespaces  []string
-	eligibility fileEligibility
+	eligibility selection.RootEligibility
 },
 ) {
 	t.Helper()

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
@@ -25,7 +25,7 @@ type crdPromotion struct {
 func (e *crdPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
 
 //nolint:gocritic // The admission contract requires an independent request snapshot.
-func (e *crdPromotion) Promote(_ context.Context, _ loader.PrepareRequest, id manifest.NamedResource) (bool, error) {
+func (e *crdPromotion) Promote(_ context.Context, _ selection.PrepareRequest, id manifest.NamedResource) (bool, error) {
 	e.calls = append(e.calls, id)
 	if !e.materialize {
 		return false, nil

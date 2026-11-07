@@ -103,6 +103,7 @@ spec:
 		}, false)
 		defer unsubscribe()
 		result, err := o.collectResult(o.run(t.Context()))
+		t.Cleanup(result.Close)
 		assert.NoError(t, err)
 		assert.Diff(t, published, []string{"./entry", "./elsewhere"})
 		assert.Equal(t, o.entryBinding.Producer, manifest.NamedResource{})

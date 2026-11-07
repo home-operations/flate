@@ -63,6 +63,7 @@ and `slog.SetDefault`. Everything else is `pkg/`. Dependencies flow one way and 
 
 ```
 manifest <- store <- {loader, values, depwait, change, source}
+manifest <- store <- change <- selection <- {loader, depwait, discovery, controllers/base, orchestrator}
          <- {kustomize, helm, discovery} <- controllers/base <- controllers/* <- orchestrator <- internal/cli
 ```
 
@@ -81,7 +82,8 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 | Change detection                                                                                                        | `change`                       |
 | Readiness                                                                                                               | `depwait`                      |
 | Scheduling                                                                                                              | `schedule`                     |
-| Render selection and lifecycle                                                                                          | `orchestrator`                 |
+| Root membership, requested reach, execution membership, demand, output and fatal scope                                  | `selection`                    |
+| Render lifecycle                                                                                                        | `orchestrator`                 |
 | Flags and exit codes                                                                                                    | `internal/cli`                 |
 
 **Vocabulary.**

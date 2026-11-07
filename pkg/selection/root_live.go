@@ -9,16 +9,37 @@ import (
 )
 
 func (c *admissionClosure) rootEvidence(id manifest.NamedResource) RootResult {
-	facts := c.facts.RootEvidence(id, c.proposal.reads)
+	snapshot, known := c.rootResults[id]
+	if !known {
+		facts := c.rootSupport(id)
+		facts.Needed = true
+		snapshot = admissionRoot{
+			result: Root(facts),
+			needsDemand: facts.Captured && !facts.Supplied && !facts.Scope.NativeEntry &&
+				facts.Occurrence.Declaration == (OccurrenceID{}),
+		}
+		if c.rootResults == nil {
+			c.rootResults = make(map[manifest.NamedResource]admissionRoot)
+		}
+		c.rootResults[id] = snapshot
+	}
+	result := snapshot.result
+	if snapshot.needsDemand && !c.role(id).needed {
+		result.Entry = false
+	}
+	return result
+}
+
+func (c *admissionClosure) rootSupport(id manifest.NamedResource) RootEvidence {
+	facts := c.capturedRoot(id)
 	if !facts.Captured {
-		return Root(facts)
+		return facts
 	}
 	facts.Record = c.record(id)
 	facts.Productions = c.productions(id)
 	facts.LiveProductions = c.objects.Productions(id, &currentRootIndex)
 	facts.Declaration = c.objects.GetDeclaration(id)
 	facts.Incoming = c.incoming(id).Obj != nil
-	facts.Needed = c.role(id).needed
 	facts.StaticOwner = c.states[id].staticOwner
 	object, policy := c.objects.Lookup(id)
 	facts.Supplied = !facts.Incoming && object != nil && policy.Origin == manifest.SuppliedDeclaration &&
@@ -26,7 +47,7 @@ func (c *admissionClosure) rootEvidence(id manifest.NamedResource) RootResult {
 		manifest.AdmitsRoot(object)
 	if facts.Supplied {
 		facts.Stale = facts.Stale || !c.proposal.reads.Valid()
-		return Root(facts)
+		return facts
 	}
 	facts.DeclarationSource = c.declarationSource(id)
 	for i, source := range [...]manifest.NamedResource{c.source(id), manifest.BootstrapSourceID} {
@@ -48,10 +69,12 @@ func (c *admissionClosure) rootEvidence(id manifest.NamedResource) RootResult {
 		facts.Scope.LocalApplication = !location.Pinned && !location.External
 		facts.Scope.Claim = c.fileCoordinate(filepath.Join(location.Origin, application.Path)) + "/"
 	}
-	c.captureRootOwners(&facts)
-	facts.CoveringOwners = c.ownerCandidates
+	if Root(facts).NeedsOwnerSupport {
+		c.captureRootOwners(&facts)
+		facts.CoveringOwners = c.ownerCandidates
+	}
 	facts.Stale = facts.Stale || !c.proposal.reads.Valid()
-	return Root(facts)
+	return facts
 }
 
 func (c *admissionClosure) captureRootOwners(facts *RootEvidence) {

@@ -196,7 +196,7 @@ func (l *Loader) retainBuiltDeclarations(state *authoredState) {
 	// Built declarations keep their effective identity until their supplying batch changes.
 	for id := range l.Index.Records {
 		record := l.Index.Records[id]
-		if record.Builder == "" || l.registeredRoot(&record) == "" {
+		if record.Builder == "" || l.registeredRoot(id, &record) == "" {
 			continue
 		}
 		state.records[id] = record

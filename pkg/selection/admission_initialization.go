@@ -191,7 +191,7 @@ func (c *admissionClosure) finishStart(
 		}
 	}
 	if route := c.proposal.entry; route != nil && route.Application != nil &&
-		!c.proposal.entrySupported() && c.context.PlainEntry && c.literalEntryChanged() {
+		!c.proposal.entrySupported() && c.context.PlainEntry && c.literalEntryChanged() && !c.pendingEntrySources() {
 		application := route.Application
 		root := manifest.NewEntryKustomization(application.Source, application.Path, manifest.NamedResource{}).Named()
 		c.acquire(Demand{Identity: root, Source: application.Source, Root: application.Path})
@@ -626,6 +626,7 @@ func (c *admissionClosure) rescanInitialChanges(
 		identity.stableOwner, identity.stableObject = 0, nil
 	}
 	clear(c.historyProductions)
+	clear(c.rootResults)
 	//nolint:intrange // rescan MUST extend the worklist during traversal.
 	for cursor := 0; cursor < len(c.queue); cursor++ {
 		for next := c.states[c.queue[cursor]].consumer; next != 0; next = edges[next-1].next {

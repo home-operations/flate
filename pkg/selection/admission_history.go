@@ -54,7 +54,7 @@ func (s *Session) RefreshHistory(
 		owner = request.Reads.ID()
 	}
 	proposal.reads.Init(s.store, owner, nil)
-	if previous.entryReads != nil && (previous.entry != proposal.entry || !proposal.entrySupported()) {
+	if previous.entry != proposal.entry || previous.entryReads != nil && !proposal.entrySupported() {
 		proposal.Retire()
 		return s.Prepare(ctx, request)
 	}

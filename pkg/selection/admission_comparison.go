@@ -20,7 +20,20 @@ func (c *admissionClosure) boundSource(source manifest.NamedResource) SourceFact
 	if source == (manifest.NamedResource{}) {
 		source = manifest.BootstrapSourceID
 	}
+	if c.sourceReads != c.proposal.reads {
+		clear(c.sourceFacts)
+		c.sourceReads = c.proposal.reads
+	}
+	if facts, known := c.sourceFacts[source]; known {
+		return facts
+	}
 	facts := c.facts.SourceFacts(source, c.proposal.reads)
+	if c.proposal.reads != nil {
+		if c.sourceFacts == nil {
+			c.sourceFacts = make(map[manifest.NamedResource]SourceFacts)
+		}
+		c.sourceFacts[source] = facts
+	}
 	if facts.Derived {
 		c.derive()
 	}

@@ -68,7 +68,7 @@ func (c *admissionClosure) producerWitness(obligation *producerObligation) (stor
 	if c.objects.GetDeclaration(obligation.consumer) != nil {
 		return store.Child{}, false
 	}
-	facts := c.facts.RootEvidence(obligation.consumer, c.proposal.reads)
+	facts := c.capturedRoot(obligation.consumer)
 	if facts.BuiltCurrent && facts.BuiltChild.Obj != nil {
 		return store.Child{}, false
 	}
@@ -78,7 +78,7 @@ func (c *admissionClosure) producerWitness(obligation *producerObligation) (stor
 	}
 	record, _ := c.facts.SelectionIndex().Lookup(owner)
 	if record.Builder != "" {
-		facts := c.facts.RootEvidence(owner, c.proposal.reads)
+		facts := c.capturedRoot(owner)
 		if facts.BuiltCurrent {
 			return facts.BuiltChild, true
 		}

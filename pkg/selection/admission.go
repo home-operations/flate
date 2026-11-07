@@ -32,16 +32,25 @@ type admissionIdentity struct {
 	stableObject manifest.BaseManifest
 }
 
+type admissionRoot struct {
+	result      RootResult
+	needsDemand bool
+}
+
 type admissionClosure struct {
 	changes            *change.Set
 	configuredInput    *store.SourceArtifact
+	sourceFacts        map[manifest.NamedResource]SourceFacts
+	sourceReads        *store.ReadSet
 	candidates         [2][2][]OccurrenceFacts
 	deriving           bool
 	frozen, sideKnown  bool
 	side               manifest.TreeSide
 	identities         []admissionIdentity
 	session            *Session
+	decision           *Decision
 	facts              census
+	catalog            *admissionCatalog
 	context            SourceContext
 	historyOwners      map[manifest.NamedResource][]manifest.SourceEvidence
 	allowMissingKinds  []string
@@ -54,6 +63,8 @@ type admissionClosure struct {
 	collecting         bool
 	ownerCandidates    []RootCoveringOwner
 	ownersKnown        bool
+	capturedRoots      map[manifest.NamedResource]RootEvidence
+	rootResults        map[manifest.NamedResource]admissionRoot
 	children           map[manifest.NamedResource]store.Child
 	queue              []manifest.NamedResource
 	roots              []string
@@ -99,6 +110,9 @@ func (l *Session) Prepare(
 		return nil, manifest.NewError(manifest.ErrInput, nil, "admission preparation belongs to a different loader")
 	}
 	closure.context = currentSource.Context
+	if closure.context.Frozen {
+		closure.catalog = l.catalogSnapshot()
+	}
 	proposal := &Admission{
 		Request: request, preparation: preparation, entry: entry, producerOwner: preparation.producerOwner,
 	}
@@ -119,6 +133,7 @@ func (l *Session) Prepare(
 		proposal.reads.SetWork(request.Reads.Work())
 	}
 	closure.proposal, closure.objects, closure.deriving = proposal, proposal.reads, false
+	closure.decision = l.Snapshot()
 	if !l.guardCurrent(proposal) {
 		proposal.stale = true
 		return proposal, nil
@@ -131,13 +146,13 @@ func (l *Session) Prepare(
 	}
 	defer l.store.Retire(preparation.evidence)
 	preparation.evidence = proposal.reads
-	closure.resetDemand()
+	closure.resetDemand(&request)
 	closure.generation, closure.owner, closure.history = request.Generation, request.Owner, request.History
 	closure.historyOwners, closure.allowMissingKinds = request.HistoryOwners, request.AllowMissingKinds
 	closure.changes = request.Changes
 	closure.configuredInput = currentSource.ConfiguredInput
 	closure.frozen, closure.sideKnown, closure.side = closure.context.Frozen, closure.context.SideKnown, closure.context.Side
-	proposal.Revision = l.Snapshot().version()
+	proposal.Revision = closure.decision.version()
 	_, err := closure.evaluate(ctx, &request)
 	if err == nil {
 		err = closure.capturePrerequisites(ctx)
@@ -161,8 +176,7 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 		proposal.entry != p.entry ||
 		!slices.Equal(request.AllowMissingKinds, c.allowMissingKinds) ||
 		len(request.HistoryOwners) != 0 ||
-		request.Generation == nil ||
-		request.Invocation ||
+		request.Invocation || p.invocation ||
 		len(request.History) != 0 ||
 		len(request.Generation) != len(c.generation) ||
 		(len(c.generation) != 0 && &request.Generation[0] != &c.generation[0]) ||
@@ -170,10 +184,17 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 		c.frozen != c.context.Frozen ||
 		c.sideKnown != c.context.SideKnown ||
 		c.side != c.context.Side ||
-		previous.Revision != c.session.Snapshot().version() ||
 		!p.evidence.Valid() ||
 		!c.session.guardCurrent(proposal) {
 		return false
+	}
+	decision := c.session.Snapshot()
+	if previous.Revision != decision.version() {
+		for id := range c.states {
+			if p.decision.roles(id) != decision.roles(id) {
+				return false
+			}
+		}
 	}
 	owner := manifest.NamedResource{}
 	if request.Reads != nil {
@@ -191,7 +212,7 @@ func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, config
 	proposal.Ordinary, proposal.Blocked, proposal.Namespaces = previous.Ordinary, previous.Blocked, previous.Namespaces
 	proposal.EntryReceipt = previous.EntryReceipt
 	proposal.producers, proposal.producerOwner = previous.producers, previous.producerOwner
-	proposal.Revision, proposal.reads, proposal.reused = previous.Revision, p.evidence, true
+	proposal.Revision, proposal.reads, proposal.reused = decision.version(), p.evidence, true
 	if previous.entryReads != nil {
 		proposal.entryReads = proposal.reads
 	}
@@ -211,13 +232,20 @@ func (c *admissionClosure) refreshPrerequisites(
 	request *PrepareRequest,
 ) error {
 	c.ownerCandidates, c.ownersKnown = c.ownerCandidates[:0], false
+	clear(c.capturedRoots)
 	if previous == nil {
+		return nil
+	}
+	interpretation := c.frozen == c.context.Frozen && c.sideKnown == c.context.SideKnown && c.side == c.context.Side
+	if interpretation && c.context.Frozen && c.changes == request.Changes && request.Owner == c.owner &&
+		len(request.Acquired) == 0 && len(request.Generation) == len(c.generation) &&
+		(len(c.generation) == 0 || &request.Generation[0] == &c.generation[0]) &&
+		previous.Valid() && c.proposal.reads.Matches(previous) {
 		return nil
 	}
 	if err := c.capturePrerequisites(ctx); err != nil {
 		return err
 	}
-	interpretation := c.frozen == c.context.Frozen && c.sideKnown == c.context.SideKnown && c.side == c.context.Side
 	for id, state := range c.states {
 		if err := ctx.Err(); err != nil {
 			return err //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
@@ -280,7 +308,7 @@ func (c *admissionClosure) matchesDeclarationContent(
 	matched := c.proposal.reads.MatchesContent(previous, id)
 	record, _ := c.facts.SelectionIndex().Lookup(id)
 	if child := c.children[id]; child.Obj != nil {
-		indexed := record.Builder != "" && c.registeredRoot(&record) != ""
+		indexed := record.Builder != "" && c.capturedRoot(id).PreparedRoot != ""
 		if child.SourceSupport != (manifest.NamedResource{}) || indexed {
 			// Admission changes the target's presence, but the source still owns its derivation.
 			current, document, output := c.objects.GetEmission(id)
@@ -333,7 +361,24 @@ func (c *admissionClosure) capturePrerequisites(ctx context.Context) error {
 	return nil
 }
 
-func (c *admissionClosure) resetDemand() {
+func (c *admissionClosure) resetDemand(request *PrepareRequest) {
+	if !request.Invocation && len(c.identities) == 0 {
+		for i := range c.generation {
+			child := &c.generation[i]
+			if child.Obj == nil || request.incoming(child.Obj.Named()).Obj != nil {
+				continue
+			}
+			id := child.Obj.Named()
+			delete(c.states, id)
+			delete(c.children, id)
+			for key := range c.proposal.preparation.acquired {
+				if key.identity == id {
+					delete(c.proposal.preparation.acquired, key)
+				}
+			}
+		}
+	}
+	clear(c.rootResults)
 	c.counts = [4]int{}
 	c.collecting = false
 	c.queue, c.roots = c.queue[:0], c.roots[:0]
@@ -482,14 +527,24 @@ func (c *admissionClosure) evaluate(ctx context.Context, request *PrepareRequest
 }
 
 func (c *admissionClosure) role(id manifest.NamedResource) admissionRole {
-	role := c.states[id].role
-	snapshot := c.session.Snapshot()
+	state, known := c.states[id]
+	role := state.role
+	snapshot := c.decision
 	if !snapshot.execution {
 		return role
 	}
-	needed, selected, dirty := snapshot.Reconcile(id), snapshot.Output(id), snapshot.Changed(id)
-	role.needed, role.selected, role.dirty = role.needed || needed, role.selected || selected, role.dirty || dirty
-	role.ordinary = role.ordinary || c.session.Snapshot().OrdinaryDemand(id)
+	if !known {
+		if c.states == nil {
+			c.states = make(map[manifest.NamedResource]admissionState)
+		}
+		c.states[id] = state
+	}
+	roles := snapshot.roles(id)
+	role.needed = role.needed || roles&needed != 0
+	role.selected = role.selected || roles&selected != 0
+	// Promotion requires reconciliation without proving that input content changed.
+	role.dirty = role.dirty || roles&dirty != 0 && roles&promoted == 0
+	role.ordinary = role.ordinary || roles&ordinary != 0
 	return role
 }
 
@@ -500,11 +555,11 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 	previous := c.role(id)
 	role.needed, role.selected, role.dirty = true, role.selected || previous.selected, role.dirty || previous.dirty
 	role.ordinary = role.ordinary || previous.ordinary || role.selected
-	if c.session.Snapshot().execution && previous == role &&
+	if c.decision.execution && previous == role &&
 		(!c.proposal.Request.Invocation || len(c.generation) != 0) &&
 		(c.incoming(id).Obj == nil) {
 		record := c.record(id)
-		if !Root(c.facts.RootEvidence(id, c.proposal.reads)).InitialAdmitted && record.Path == "" &&
+		if !Root(c.capturedRoot(id)).InitialAdmitted && record.Path == "" &&
 			c.candidate(id).Obj == nil ||
 			c.objects.GetObject(id) != nil {
 			return

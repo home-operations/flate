@@ -115,7 +115,7 @@ func (c *admissionClosure) bootstrapPrerequisite(
 	if required(c.object(record.Parent)) || c.incoming(id).Obj != nil && required(c.incoming(id).Obj) {
 		return true
 	}
-	owners := c.facts.RootEvidence(id, c.proposal.reads).Scope.Owners
+	owners := c.capturedRoot(id).Scope.Owners
 	for i := range owners {
 		owner := &owners[i]
 		if required(c.objects.GetDeclaration(owner.Identity)) {
@@ -566,7 +566,7 @@ func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declar
 		}
 		return evidence
 	}
-	facts := c.facts.RootEvidence(id, c.proposal.reads)
+	facts := c.capturedRoot(id)
 	if !facts.BuiltCurrent || facts.BuiltChild.Obj == nil {
 		return evidence
 	}
@@ -580,7 +580,8 @@ func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declar
 }
 
 func (c *admissionClosure) acceptedDeclaration(id, owner manifest.NamedResource, object manifest.BaseManifest) bool {
-	if c.incoming(id).Obj == nil && owner != (manifest.NamedResource{}) && owner != id {
+	// A producer MUST not authorize its pending generation with its own previous output.
+	if owner != (manifest.NamedResource{}) && owner != id && (c.incoming(id).Obj == nil || owner != c.owner) {
 		output, _ := c.objects.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
 		if output != nil && len(output.Failures) == 0 && output.OutputReads.Valid() &&
 			slices.ContainsFunc(output.Children, func(child store.Child) bool {

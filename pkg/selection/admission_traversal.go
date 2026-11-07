@@ -43,7 +43,7 @@ func (c *admissionClosure) completeHydrate(
 	scope *completeHydrateState,
 ) (manifest.BaseManifest, error) {
 	if child := c.candidate(*scope.id); child.Obj != nil && scope.record.Path == "" &&
-		!Root(c.facts.RootEvidence(*scope.id, c.proposal.reads)).InitialIndependent {
+		!Root(c.capturedRoot(*scope.id)).InitialIndependent {
 		if c.children == nil {
 			c.children = map[manifest.NamedResource]store.Child{}
 		}
@@ -233,7 +233,7 @@ func (c *admissionClosure) productionMaterialized(
 	if !evidence.independent || c.incoming(id).Obj == nil {
 		return false
 	}
-	needed := c.session.Snapshot().Reconcile(id)
+	needed := c.decision.Reconcile(id)
 	unowned := production.Owner == (manifest.NamedResource{}) && production.Declaration == (manifest.NamedResource{})
 	if !needed || !unowned {
 		return false
@@ -260,7 +260,7 @@ func (c *admissionClosure) walkObject(
 	evidence := c.declarationEvidence(id)
 	evidence.independent = root.Independent || c.bootstrapPrerequisite(id)
 	evidence.qualification = !role.ordinary
-	bootstrap := evidence.independent && Root(c.facts.RootEvidence(id, c.proposal.reads)).InitialIndependent
+	bootstrap := evidence.independent && Root(c.capturedRoot(id)).InitialIndependent
 	parent := record.Parent
 	if !evidence.known() {
 		parent = cmp.Or(root.Owner, parent)
@@ -440,7 +440,7 @@ func (c *admissionClosure) selectProductions(
 ) bool {
 	materialized := record.Parent != (manifest.NamedResource{}) && record.Parent != id ||
 		record.BuilderOwner != (manifest.NamedResource{}) && record.BuilderOwner != id
-	bootstrap := evidence.independent && Root(c.facts.RootEvidence(id, c.proposal.reads)).InitialIndependent
+	bootstrap := evidence.independent && Root(c.capturedRoot(id)).InitialIndependent
 	productions := c.productions(id)
 	for i := range productions {
 		production := &productions[i]
@@ -527,7 +527,7 @@ func (c *admissionClosure) hydrateDeclaration(
 func (c *admissionClosure) hydrateBuilt(id manifest.NamedResource, child *store.Child) bool {
 	role := c.role(id)
 	preparation := role.needed && role.ordinary && !role.selected && id.KindInfo().Structural
-	if !Root(c.facts.RootEvidence(id, c.proposal.reads)).InitialIndependent && !c.states[id].requested &&
+	if !Root(c.capturedRoot(id)).InitialIndependent && !c.states[id].requested &&
 		!preparation &&
 		(role.ordinary || !role.needed) {
 		return false

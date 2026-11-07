@@ -120,7 +120,7 @@ func solverClosure(t *testing.T, st *store.Store, facts *solverFacts) admissionC
 		t.Fatal(err)
 	}
 	return admissionClosure{
-		session: session, facts: facts, objects: st,
+		session: session, decision: session.Snapshot(), facts: facts, objects: st,
 		states: map[manifest.NamedResource]admissionState{}, proposal: new(Admission),
 	}
 }
@@ -198,9 +198,10 @@ func evaluateSolver(t *testing.T, c *admissionClosure, request *PrepareRequest) 
 	reads.Init(c.session.store, manifest.NamedResource{}, nil)
 	t.Cleanup(reads.Retire)
 	for {
+		c.decision = c.session.Snapshot()
 		c.proposal = &Admission{Request: *request, reads: &reads, preparation: preparation}
 		c.proposal.Revision = c.session.Snapshot().version()
-		c.resetDemand()
+		c.resetDemand(request)
 		proposal, err := c.evaluate(t.Context(), request)
 		if err != nil || len(proposal.demands) == 0 {
 			return proposal, err

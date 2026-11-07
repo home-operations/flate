@@ -299,20 +299,22 @@ func (l *Loader) PromotionDocuments(id manifest.NamedResource) []store.Child {
 		}
 		return nil
 	}
-	return l.documents.cache[l.registeredRoot(&r)].built
+	return l.documents.cache[l.registeredRoot(id, &r)].built
 }
 
-func (l *Loader) registeredRoot(record *manifest.DiscoveryRecord) string {
-	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-	for root, doc := range l.documents.cache {
-		if doc.builtInput != nil && doc.builtInput.Support != nil && doc.builtInput.Support.Valid() &&
-			doc.builtInput.Owner == record.BuilderOwner &&
-			(l.fileCoordinate(root) == record.Builder || l.fileCoordinate(doc.file) == record.Builder) &&
-			slices.ContainsFunc(doc.built, func(child store.Child) bool { return child.Obj == record.Declaration }) {
-			return root
-		}
+func (l *Loader) registeredRoot(id manifest.NamedResource, record *manifest.DiscoveryRecord) string {
+	built := l.builtRoots[id]
+	input := built.input
+	if input == nil || input.Support == nil || !input.Support.Valid() ||
+		input.Owner != record.BuilderOwner || built.object != record.Declaration {
+		return ""
 	}
-	return ""
+	doc := l.documents.cache[input.Root]
+	if doc.builtInput != input ||
+		l.fileCoordinate(input.Root) != record.Builder && l.fileCoordinate(doc.file) != record.Builder {
+		return ""
+	}
+	return input.Root
 }
 
 func (l *Loader) preparedObject(id manifest.NamedResource) store.Child {
@@ -330,6 +332,11 @@ func (l *Loader) preparedObject(id manifest.NamedResource) store.Child {
 		}
 	}
 	return store.Child{}
+}
+
+type builtRoot struct {
+	input  *BuiltInput
+	object manifest.BaseManifest
 }
 
 type builtInputs struct{ inputs, shared []string }
@@ -418,7 +425,8 @@ func (l *Loader) removeReplacedRecords(
 }
 
 func (l *Loader) removeBuiltBatch(input *BuiltInput, authored map[manifest.NamedResource]store.Child) {
-	batch := l.documents.cache[input.Root].built
+	cached := l.documents.cache[input.Root]
+	batch := cached.built
 	for i := range batch {
 		child := &batch[i]
 		id := child.Obj.Named()
@@ -438,6 +446,12 @@ func (l *Loader) removeBuiltBatch(input *BuiltInput, authored map[manifest.Named
 		delete(l.locations, id)
 		delete(l.candidates, id)
 		delete(l.admitted, id)
+	}
+	for i := range batch {
+		id := batch[i].Obj.Named()
+		if l.builtRoots[id].input == cached.builtInput {
+			delete(l.builtRoots, id)
+		}
 	}
 }
 
@@ -511,10 +525,14 @@ func (l *Loader) publishBuiltRecords(
 	records []manifest.DiscoveryRecord,
 	authored map[manifest.NamedResource]store.Child,
 ) {
+	if l.builtRoots == nil {
+		l.builtRoots = make(map[manifest.NamedResource]builtRoot)
+	}
 	for i := range docs {
 		child := docs[i]
 		obj := child.Obj
 		id := obj.Named()
+		l.builtRoots[id] = builtRoot{input: input, object: obj}
 		if id == input.Owner {
 			continue
 		}

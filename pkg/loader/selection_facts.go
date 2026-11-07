@@ -99,7 +99,7 @@ func (l *Loader) Occurrence(id manifest.NamedResource) (selection.OccurrenceFact
 	facts.Mounted = l.documents.artifacts[occurrence.Declaration.Source]
 	facts.Traversed = l.documents.cache[record.Path].traversed
 	if record.Builder != "" {
-		facts.PreparedRoot = l.registeredRoot(&record)
+		facts.PreparedRoot = l.registeredRoot(id, &record)
 	}
 	if record.BuilderOwner.ReportHidden() {
 		facts.NativeOwner = record.BuilderOwner
@@ -184,7 +184,7 @@ func (l *Loader) rootFacts(id manifest.NamedResource) selection.RootEvidence {
 	evidence.Identity, evidence.Record = id, record
 	evidence.PreparedRoot = ""
 	if record.Builder != "" {
-		evidence.PreparedRoot = l.registeredRoot(&record)
+		evidence.PreparedRoot = l.registeredRoot(id, &record)
 	}
 	evidence.Scope.Prepared = evidence.PreparedRoot != ""
 	evidence.Scope.Records = l.Index.Records
@@ -215,7 +215,7 @@ func (l *Loader) rootScopeFacts(
 		NativeEntry:       l.nativeEntry != nil && l.nativeEntry.Named() == id,
 		EntryKustomize:    l.entry == entryKustomize,
 		EntryPlain:        l.entry == entryPlain,
-		Prepared:          record.Builder != "" && l.registeredRoot(record) != "",
+		Prepared:          record.Builder != "" && l.registeredRoot(id, record) != "",
 		Candidate:         l.candidates[id].Obj != nil,
 		Compact:           l.documents.compact,
 		Peers:             scope.peers,

@@ -45,7 +45,7 @@ func testSuppliedSourceReference(t *testing.T, kind, mode string) {
 	} else {
 		o.src.Fetchers[kind] = fetcher
 	}
-	result, err := o.render(t.Context())
+	result, err := o.render(t.Context(), t)
 	assert.NoError(t, err)
 	if mode == "selected reference" {
 		if len(result.Manifests) != 0 || fetcher.calls.Load() != 0 || len(charts.calls) != 0 {

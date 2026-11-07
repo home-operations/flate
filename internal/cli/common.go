@@ -15,12 +15,12 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
@@ -291,7 +291,7 @@ type reportedError struct{ err error }
 func (e reportedError) Error() string { return e.err.Error() }
 func (e reportedError) Unwrap() error { return e.err }
 
-func failureModel(result *selection.Selection) output.Model {
+func failureModel(result *selection.Result) output.Model {
 	var primary []output.Primary
 	var missing []output.Missing
 	blocked := result.BlockedCount()
@@ -341,7 +341,7 @@ type selectedInvocation struct {
 
 type selectedGroup struct {
 	cluster        string
-	sides          []*selection.Selection
+	sides          []*selection.Result
 	absent         [2]bool
 	err, remainder error
 	complete       bool
@@ -441,7 +441,7 @@ func finishSelected(req *selectedRequest, inv *selectedInvocation, payload *sele
 	return nil
 }
 
-func selectedWarnings(side *selection.Selection) []manifest.Warning {
+func selectedWarnings(side *selection.Result) []manifest.Warning {
 	total := len(side.Warnings) + len(side.Unrelated) + len(side.External)
 	if total == 0 {
 		return nil
@@ -505,7 +505,7 @@ func (i *selectedInvocation) failBaseline(c *commonFlags, pair bool, err error) 
 	group := selectedGroup{cluster: "."}
 	for _, input := range []*store.SourceArtifact{c.baseInput, c.input} {
 		if pair || len(group.sides) == 0 {
-			group.sides = append(group.sides, &selection.Selection{})
+			group.sides = append(group.sides, &selection.Result{})
 		}
 		if input != nil {
 			side := group.sides[len(group.sides)-1]
@@ -555,7 +555,9 @@ func (i *selectedInvocation) addGroup(req *selectedRequest, selected []orchestra
 		group.absent[run.ID.Side] = run.Absent
 		group.complete = group.complete && (run.Absent || run.Orchestrator != nil && run.Result != nil)
 	}
-	group.sides, group.err, group.remainder = orchestrator.Select(selected, groupErr, req.roots, req.labels)
+	var projection selection.ProjectionErrors
+	group.sides, projection = orchestrator.Select(selected, groupErr, req.roots, req.labels)
+	group.err, group.remainder = projection.Selected, projection.Remaining
 	i.groups = append(i.groups, group)
 }
 
@@ -587,7 +589,7 @@ func (i *selectedInvocation) preparePayload(
 				return group.complete &&
 					!slices.ContainsFunc(
 						group.sides,
-						func(side *selection.Selection) bool { return side.Counts[root.Kind] != 0 },
+						func(side *selection.Result) bool { return side.Counts[root.Kind] != 0 },
 					)
 			})
 		}
@@ -599,7 +601,7 @@ func (i *selectedInvocation) preparePayload(
 func selectedFailureModel(
 	req *selectedRequest,
 	group *selectedGroup,
-	side *selection.Selection,
+	side *selection.Result,
 	roster *output.TestReport,
 ) output.Model {
 	var model output.Model
@@ -676,7 +678,7 @@ func reportHasFailures(report *output.Report) bool {
 	return false
 }
 
-func appendSideDiagnostics(report *output.Report, i int, side *selection.Selection, snapshot string) {
+func appendSideDiagnostics(report *output.Report, i int, side *selection.Result, snapshot string) {
 	g := &report.Groups[i]
 	if len(side.Subjects) != 0 {
 		if g.Subjects == nil {
@@ -748,6 +750,11 @@ func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedReque
 		cfg.StatusListener, stop = session.observe, session.stop
 	}
 	runs, runErr := orchestrator.RenderTrees(ctx, inputTrees(&req.flags), *cfg)
+	defer func() {
+		for _, run := range runs {
+			run.Result.Close()
+		}
+	}()
 	if stop != nil {
 		stop()
 	}

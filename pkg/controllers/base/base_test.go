@@ -59,12 +59,12 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
 	}
 	c := base.New(s, nil)
-	admissionLoader1 := admissiontest.New(
+	admissionLoader1, _ := admissiontest.New(
 		t,
 		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
 	)
-	admissiontest.Commit(t, admissionLoader1, nil)
-	c.Configure(base.Options{Filter: admissionLoader1.Options.Filter, Index: index, Loader: admissionLoader1})
+	admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
+	c.Configure(base.Options{Session: admissionLoader1.Options.Session, Index: index, Loader: admissionLoader1})
 
 	publish := func(value string) *base.Execution {
 		execution := controllertest.NewExecution(c, parent.Named())

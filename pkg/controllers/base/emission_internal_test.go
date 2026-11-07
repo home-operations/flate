@@ -116,7 +116,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 					sibling.Named(): {File: "sibling.yaml"},
 				},
 			}
-			filterLoader := admissiontest.New(
+			filterLoader, _ := admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"parent.yaml"}),
@@ -125,9 +125,9 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 					Root:      "",
 				},
 			)
-			admissiontest.Commit(t, filterLoader, nil)
-			filter := filterLoader.Options.Filter
-			c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
+			admissiontest.Commit(t, filterLoader.Options.Session, nil)
+			filter := filterLoader.Options.Session
+			c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
 			s.SetIncluded(parent.Named(), true, true)
 			docs := []map[string]any{
 				{
@@ -163,7 +163,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				visible, selected := true, true
 				for _, child := range children {
 					visible = visible && s.GetObject(child.Obj.Named()) != nil
-					selected = selected && filter.ShouldReconcile(child.Obj.Named())
+					selected = selected && filter.Snapshot().Reconcile(child.Obj.Named())
 				}
 				arrivals <- observation{id, selected, visible, len(s.Productions(id, index)) > 0}
 			}, false)
@@ -192,7 +192,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				assert.Equal(t, got.visible, true)
 				assert.Equal(t, got.owned, true)
 			}
-			assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+			assert.Equal(t, filter.Snapshot().Reconcile(sibling.Named()), false)
 			assert.Equal(t, s.GetObject(testutil.KustomizationID("", "child")), nil)
 		})
 	}

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -50,7 +52,8 @@ func TestEntryQualification_OrderedPrefixAndReplacement(t *testing.T) {
 	st.AddObject(later)
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
+	qualifyForTest(t, l, first.Named(), later.Named())
 	a := &Admission{
 		store:         st,
 		input:         input,
@@ -127,6 +130,15 @@ func TestEntryQualification_PreparationReuse(t *testing.T) {
 	fixture.cfg.Work = recorder.Scope()
 	fixture.cfg.Store.SetWorkTree(manifest.TreeID{}, fixture.cfg.Work)
 	fixture.cfg.Loader = loader.New(fixture.cfg.Store)
+	configureSelection(
+		t,
+		fixture.cfg.Loader,
+		selection.Request{
+			Roots: []manifest.NamedResource{
+				{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps"},
+			},
+		},
+	)
 	d := newDiscoverer(&fixture.cfg)
 	t.Cleanup(d.Close)
 	assert.NoError(t, d.loadManifests(t.Context(), fixture.cfg.Input.LocalPath, false))
@@ -136,7 +148,7 @@ func TestEntryQualification_PreparationReuse(t *testing.T) {
 		reads.Init(fixture.cfg.Store, manifest.BootstrapSourceID, nil)
 		reads.RequireQualification(fixture.parent.Named())
 		walk := qualificationWalk{q: q, admission: d.admission(), store: fixture.cfg.Store, reads: &reads}
-		committed, err := walk.commit(t.Context(), &loader.PrepareRequest{Invocation: true, Reads: &reads})
+		committed, err := walk.commit(t.Context(), &selection.PrepareRequest{Invocation: true, Reads: &reads})
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
 		reads.Retire()

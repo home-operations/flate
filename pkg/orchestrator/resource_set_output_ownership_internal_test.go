@@ -151,8 +151,7 @@ func testOrchestratorRenderResourceSetEffectiveOwnershipCaseTailSegment(
 	t.Helper()
 	var previous map[manifest.NamedResource][]map[string]any
 	for range 2 {
-		renderedSingleton2, err := RenderTrees(
-			t.Context(),
+		renderedSingleton2, err := renderTreesForTest(t.Context(), t,
 			[]Tree{{Path: (*tailCaseInput.root), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{Concurrency: 2},
 		)
@@ -189,8 +188,7 @@ func testOrchestratorRenderResourceSetDocumentBoundarySegment(
 	t.Helper()
 	var previous map[manifest.NamedResource][]map[string]any
 	for range 2 {
-		renderedSingleton3, err := RenderTrees(
-			t.Context(),
+		renderedSingleton3, err := renderTreesForTest(t.Context(), t,
 			[]Tree{{Path: (*path), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{Concurrency: 2},
 		)

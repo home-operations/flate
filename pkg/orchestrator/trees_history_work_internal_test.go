@@ -285,7 +285,7 @@ func testCRDMutationHistoryWorkCase(t *testing.T, tc *crdMutationCase) {
 		control := tree
 		control.ID.Side, control.Input = manifest.TreeHead, nil
 		control.RepoRoot, control.Path = root, filepath.Join(root, "flux")
-		runs, err := RenderTrees(t.Context(), []Tree{control}, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{control}, Config{RecordWork: true, Concurrency: 2})
 		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 		full[side] = runs[0].Result
 	}
@@ -295,7 +295,7 @@ func testCRDMutationHistoryWorkCase(t *testing.T, tc *crdMutationCase) {
 	trees := historyWorkTrees(resolved, "crd-cluster", tree.SelfURLs)
 	var previous []byte
 	for repeat := range 2 {
-		runs, runErr := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+		runs, runErr := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 		assert.Equal(t, errors.Is(runErr, manifest.ErrFlux), tc.name != "33.9-change")
 		for side, run := range runs {
 			tc.assertRun(t, run, full[side], side)
@@ -326,8 +326,7 @@ func testHistoryWorkWitnessCase(t *testing.T, name *string) {
 	reverted := (*name) == "staged-revert" || (*name) == "endpoint-revert"
 	var full [2]*Result
 	for side, directory := range []string{beforeRoot, root} {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{witnessTree(directory, manifest.TreeHead)},
 			Config{RecordWork: true, Concurrency: 2},
 		)
@@ -341,7 +340,7 @@ func testHistoryWorkWitnessCase(t *testing.T, name *string) {
 	trees := historyWorkTrees(resolved, ".", nil)
 	var first []byte
 	for repeat := range 2 {
-		runs, err := RenderTrees(t.Context(), trees, cfg)
+		runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 		assert.NoError(t, err)
 		a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
 		for side, run := range runs {

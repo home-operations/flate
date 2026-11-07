@@ -33,7 +33,7 @@ func crdSelectionOutput(t *testing.T, tc crdSelectionCase, cfgValue *Config) crd
 		Namespace: "other",
 		Name:      "missing-widget",
 	}
-	full, fullErr := RenderTrees(t.Context(), []Tree{crdWorkTree(t, tc.present, tc.foreign)}, cfg)
+	full, fullErr := renderTreesForTest(t.Context(), t, []Tree{crdWorkTree(t, tc.present, tc.foreign)}, cfg)
 	assert.Equal(t, errors.Is(fullErr, manifest.ErrFlux), true)
 	assert.Equal(t, len(full), 1)
 	assert.Diff(t, full[0].Result.Blocked[unrelated], []manifest.NamedResource{widget})
@@ -174,9 +174,8 @@ func crdSelectionWork(treeValue *Tree, success bool) map[manifest.WorkKey]manife
 			Attempts: 1, Completed: 1, LocalAcquisitions: 1,
 		},
 		{Tree: tree.ID, Owner: ks, Source: source, Phase: manifest.WorkCache}: {
-			Attempts:     2,
-			Completed:    2,
-			CacheService: 1,
+			Attempts:  1,
+			Completed: 1,
 		},
 		{Tree: tree.ID, Owner: ks, Source: source, Phase: manifest.WorkKustomize}: {Attempts: 1, Completed: 1},
 	}
@@ -323,7 +322,7 @@ func testCRDSelectionWork(t *testing.T, tc crdSelectionCase) {
 	var previous []byte
 	for repeat := range 2 {
 		tree := crdWorkTree(t, tc.present, tc.foreign)
-		runs, runErr := RenderTrees(t.Context(), []Tree{tree}, cfg)
+		runs, runErr := renderTreesForTest(t.Context(), t, []Tree{tree}, cfg)
 		assert.Equal(t, errors.Is(runErr, manifest.ErrFlux), !tc.success)
 		assert.Equal(t, len(runs), 1)
 		result := runs[0].Result
@@ -333,7 +332,8 @@ func testCRDSelectionWork(t *testing.T, tc crdSelectionCase) {
 		for _, info := range result.Failed {
 			assert.Equal(t, info.Status, store.StatusFailed)
 		}
-		selected, selectedErr, remainder := Select(runs, runErr, cfg.Selection.Roots, nil)
+		projectedResults0, projectionErrors0 := Select(runs, runErr, cfg.Selection.Roots, nil)
+		selected, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, selectedErr)
 		assert.NoError(t, remainder)
 		assert.Diff(t, outputByParent(selected[0].Manifests), want)

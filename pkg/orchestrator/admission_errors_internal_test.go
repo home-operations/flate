@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -102,7 +104,7 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 						RecordWork:        true,
 						Concurrency:       2,
 						AllowMissingKinds: missingKinds,
-						Selection: manifest.Selection{
+						Selection: selection.Request{
 							Roots: []manifest.NamedResource{
 								consumer,
 							},
@@ -114,7 +116,7 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 				assert.NoError(t, o.discover(t.Context()))
 				assert.NoError(t, o.loader.FinalizeIndex(t.Context(), root, true))
 				o.completeBootstrap()
-				assert.NoError(t, o.buildChangeFilter(t.Context()))
+				assert.NoError(t, o.prepareInvocation(t.Context()))
 				assert.NoError(t, o.installAdmission(t.Context()))
 				dependency := manifest.NamedResource{Kind: tc.kind, Namespace: "apps", Name: "input"}
 				assert.Equal(t, o.store.GetObject(dependency) == nil, true)
@@ -146,6 +148,7 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				execution.Close()
 				result, err := o.collectResult(o.run(t.Context()))
+				t.Cleanup(result.Close)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				status, _ := o.store.GetStatus(consumer)
 				assert.Equal(t, status.Status, store.StatusFailed)

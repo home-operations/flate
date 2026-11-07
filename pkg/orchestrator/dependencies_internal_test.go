@@ -52,6 +52,7 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 					"apps",
 				), "raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
 			res, err := o.collectResult(o.run(t.Context()))
+			t.Cleanup(res.Close)
 			assert.FatalIf(
 				t,
 				err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0,
@@ -93,8 +94,7 @@ func TestRenderTrees_UnknownOrderingTargetStillFails(t *testing.T) {
 	for _, dir := range []string{baseDir, headDir} {
 		testutil.WriteFile(t, dir, "flux/selected.yaml", ksYAML("selected", "apps/selected", "unknown"))
 	}
-	renderedTrees2, err := RenderTrees(
-		t.Context(),
+	renderedTrees2, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -223,8 +223,7 @@ func testExcludedOrderingAndPromotion(t *testing.T, broken bool) {
 				"mple.test/, kind: Widget, name: missing}]\n",
 		)
 	}
-	renderedTrees1, err := RenderTrees(
-		t.Context(),
+	renderedTrees1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -294,7 +293,7 @@ func assertExcludedOrderingState(t *testing.T, side Rendered, broken bool) {
 	)
 	assert.FatalIf(
 		t,
-		st.GetObject(chart) == nil || !side.filter.ShouldReconcile(chart),
+		st.GetObject(chart) == nil || !side.selection.Snapshot().Reconcile(chart),
 		"required shared chart was not admitted: %s",
 		chart,
 	)
@@ -305,8 +304,9 @@ func assertExcludedOrderingState(t *testing.T, side Rendered, broken bool) {
 		Name:      "selected-source",
 	}
 	{
-		info, known := side.statusOf(otherSource)
-		assert.FatalIf(t, side.filter.ShouldReconcile(otherSource) ||
+		projected, _ := Select([]Rendered{side}, nil, []manifest.NamedResource{otherSource}, nil)
+		info, known := projected[0].Statuses[otherSource]
+		assert.FatalIf(t, side.selection.Snapshot().Reconcile(otherSource) ||
 			(known || st.GetObject(otherSource) != nil) &&
 				info.Outcome() != store.OutcomeUnchanged, "excluded source sibling was activated: %+v", info)
 	}
@@ -322,7 +322,7 @@ func assertExcludedOrderingState(t *testing.T, side Rendered, broken bool) {
 	} {
 		assert.FatalIf(
 			t,
-			st.GetObject(id) == nil || !side.filter.ShouldReconcile(id),
+			st.GetObject(id) == nil || !side.selection.Snapshot().Reconcile(id),
 			"selected source or consumer missing: %s",
 			id,
 		)
@@ -579,8 +579,7 @@ func testSelectedMalformedOrderingReference(t *testing.T) {
 			"e: invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: e"+
 			"xample.test/, kind: Widget, name: missing}]\n",
 	)
-	renderedSingleton1, err := RenderTrees(
-		t.Context(),
+	renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{RecordWork: true, Concurrency: 2, CacheDir: t.TempDir()},
 	)
@@ -606,12 +605,13 @@ func testSelectedMalformedOrderingReference(t *testing.T) {
 	}
 	runs := []Rendered{{Orchestrator: o, Result: res, Err: err}}
 	for _, name := range []string{"apps", "good"} {
-		_, selectedErr, remainder := Select(
+		projectedResults0, projectionErrors0 := Select(
 			runs,
 			err,
 			[]manifest.NamedResource{testutil.KustomizationID("flux-system", name)},
 			nil,
 		)
+		_, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.FatalIf(
 			t,
 			remainder != nil || (selectedErr != nil) != (name == "apps"),
@@ -634,7 +634,8 @@ func assertExcludedOrderingSiblings(t *testing.T, side Rendered) {
 	} {
 		assert.ErrorIf(
 			t,
-			(id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) || side.filter.ShouldReconcile(id),
+			(id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) ||
+				side.selection.Snapshot().Reconcile(id),
 			"excluded sibling or ordering target admitted: %s",
 			id,
 		)
@@ -646,8 +647,9 @@ func assertExcludedOrderingSiblings(t *testing.T, side Rendered) {
 		Name:      "excluded-source",
 	}
 	{
-		info, known := side.statusOf(excludedSource)
-		assert.FatalIf(t, side.filter.ShouldReconcile(excludedSource) ||
+		projected, _ := Select([]Rendered{side}, nil, []manifest.NamedResource{excludedSource}, nil)
+		info, known := projected[0].Statuses[excludedSource]
+		assert.FatalIf(t, side.selection.Snapshot().Reconcile(excludedSource) ||
 			(known || st.GetObject(excludedSource) != nil) &&
 				info.Outcome() != store.OutcomeUnchanged, "discovered excluded source was activated: %+v", info)
 	}

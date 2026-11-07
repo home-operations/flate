@@ -3,6 +3,8 @@ package cli
 import (
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -16,7 +18,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	t.Parallel()
 	root := writeNamedScopeFixture(t)
 	flags := commonFlags{path: root, cacheDir: t.TempDir(), concurrency: 2}
-	runs, runErr := orchestrator.RenderTrees(t.Context(), inputTrees(&flags), buildOrchCfg(&flags))
+	runs, runErr := renderTreesForTest(t.Context(), t, inputTrees(&flags), buildOrchCfg(&flags))
 	assert.FatalIf(t, len(runs) != 1, "missing run: %v", runErr)
 	assert.NoError(t, runErr)
 	run := runs[0]
@@ -42,24 +44,25 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		current: {Status: store.StatusFailed, Message: "current input failure"},
 		old:     {Status: store.StatusFailed, Message: "old input failure"},
 	}}
-	selection, selectedErr, _ := orchestrator.Select(
+	projectedResults0, projectionErrors0 := orchestrator.Select(
 		[]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-		&orchestrator.FailuresError{
+		&selection.FailuresError{
 			Message: "raw reconcile failures",
 		},
 		[]manifest.NamedResource{{Group: id.Group, Kind: id.Kind, Name: id.Name}},
 		nil,
 	)
-	assert.FatalIf(t, len(selection) != 1 || selectedErr == nil, "selection failed: %v", selectedErr)
+	selectedResults, selectedErr, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
+	assert.FatalIf(t, len(selectedResults) != 1 || selectedErr == nil, "selection failed: %v", selectedErr)
 	{
-		_, ok := selection[0].Failed[id]
+		_, ok := selectedResults[0].Failed[id]
 		assert.FatalIf(t, !ok, "%v", "stale artifact weakened selected failure")
 	}
-	if len(selection[0].Failed) != 2 || selection[0].Failed[current].String() != "current input failure" ||
+	if len(selectedResults[0].Failed) != 2 || selectedResults[0].Failed[current].String() != "current input failure" ||
 		len(
-			selection[0].Unrelated,
-		) != 1 || selection[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id, store.ArtifactContent) != nil {
-		t.Fatalf("projection did not follow current canonical refs: %+v", selection[0])
+			selectedResults[0].Unrelated,
+		) != 1 || selectedResults[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id, store.ArtifactContent) != nil {
+		t.Fatalf("projection did not follow current canonical refs: %+v", selectedResults[0])
 	}
 	_, _, accepted := o.Store().GetEmission(id)
 	defer accepted.Finish()

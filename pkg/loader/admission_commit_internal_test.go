@@ -1,12 +1,8 @@
 package loader
 
 import (
-	"context"
-	"errors"
-	"runtime"
 	"slices"
 	"testing"
-	"weak"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -14,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -34,8 +31,8 @@ func TestCommit_ConstructionGuard(t *testing.T) {
 	st.AddObject(parent)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection.Changed = true
+
+	configureSelection(t, l, selection.Request{Changed: true})
 	l.Options.Changes = change.NewSet([]string{"first.yaml", "second.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -59,12 +56,14 @@ func TestCommit_ConstructionGuard(t *testing.T) {
 		guard.Init(st, parent.Named(), nil)
 		guard.GetDeclaration(parent.Named())
 		guard.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-		proposal, prepareErr := l.Prepare(
-			t.Context(),
-			PrepareRequest{Generation: []store.Child{incoming}, Reads: guard, Invocation: true},
-		)
+		proposal, prepareErr := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+			Changes:    l.Options.Changes,
+			Generation: []store.Child{incoming},
+			Reads:      guard,
+			Invocation: true,
+		})
 		assert.NoError(t, prepareErr)
-		committed, err = l.Commit(t.Context(), proposal, Construction)
+		_, committed, err = l.Options.Session.Commit(t.Context(), proposal, selection.Construction)
 		assert.NoError(t, err)
 		proposal.Retire()
 		if committed {
@@ -86,23 +85,25 @@ func TestCommit_ConstructionGuard(t *testing.T) {
 			name,
 		)
 	}
-	assert.Equal(t, l.Options.Filter.Membership(incoming.Obj.Named()).Selected, false)
-	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
+	assert.Equal(t, l.Options.Session.Snapshot().Output(incoming.Obj.Named()), false)
+	assert.Equal(t, len(proposalSelected(l.Options.Session.Snapshot(), l.Index)), 0)
 
 	guard := new(store.ReadSet)
 	guard.Init(st, parent.Named(), nil)
 	guard.GetDeclaration(parent.Named())
 	source := guard.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	defer st.Retire(guard)
-	proposal, err := l.Prepare(
-		t.Context(),
-		PrepareRequest{Generation: []store.Child{incoming}, Reads: guard, Invocation: true},
-	)
+	proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+		Changes:    l.Options.Changes,
+		Generation: []store.Child{incoming},
+		Reads:      guard,
+		Invocation: true,
+	})
 	assert.NoError(t, err)
 	replaced := *source
 	replaced.Content = "replacement"
 	st.SetArtifact(manifest.BootstrapSourceID, &replaced)
-	committed, err = l.Commit(t.Context(), proposal, Construction)
+	_, committed, err = l.Options.Session.Commit(t.Context(), proposal, selection.Construction)
 	assert.NoError(t, err)
 	assert.FatalIf(t, committed || guard.Valid(), "construction accepted a replaced source")
 	proposal.Retire()
@@ -121,22 +122,23 @@ func TestCommit_RetiredSourceSupport(t *testing.T) {
 	admitForTest(st, root)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection.Changed = true
+
+	configureSelection(t, l, selection.Request{Changed: true})
 	l.Options.Changes = change.NewSet([]string{"input.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	proposal, err := l.Prepare(
-		t.Context(),
-		PrepareRequest{Invocation: true, Generation: []store.Child{{Obj: &manifest.Kustomization{
+	proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+		Changes:    l.Options.Changes,
+		Invocation: true,
+		Generation: []store.Child{{Obj: &manifest.Kustomization{
 			Name: "entry", Namespace: "apps",
 			PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 				{Kind: manifest.KindConfigMap, Name: "input"},
 			}},
-		}, Entry: &manifest.EntryApplication{}}}},
-	)
+		}, Entry: &manifest.EntryApplication{}}},
+	})
 	assert.NoError(t, err)
-	committed, err := l.Commit(t.Context(), proposal, Execution)
+	_, committed, err := l.commitSelection(t.Context(), t, proposal, selection.Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
@@ -176,27 +178,29 @@ func TestCommit_RequiredClosureRetries(t *testing.T) {
 	st.AddObject(parent)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection.Roots = []manifest.NamedResource{parent.Named()}
+
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{parent.Named()}})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	_, retry := l.Options.Filter.AddEmitted(
-		change.MembershipUpdate{
-			Selected: []manifest.NamedResource{parent.Named()},
-			Dirty:    []manifest.NamedResource{parent.Named()},
-		},
-		0,
-	)
-	assert.Equal(t, retry, false)
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	initial, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
-	committed, err := l.Commit(t.Context(), proposal, Execution)
+	_, initialCommitted, err := l.commitSelection(t.Context(), t, initial, selection.Execution)
+	assert.NoError(t, err)
+	assert.Equal(t, initialCommitted, true)
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
+	assert.NoError(t, err)
+	_, committed, err := l.commitSelection(t.Context(), t, proposal, selection.Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	for _, name := range []string{"first", "second"} {
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}
 		assert.FatalIf(t, st.GetDeclaration(id) == nil, "retry omitted required declaration %s", id)
-		assert.Equal(t, l.Options.Filter.Membership(id).Needed, true)
+		assert.Equal(t, l.Options.Session.Snapshot().Reconcile(id), true)
 	}
 }
 
@@ -229,26 +233,32 @@ func TestCommit_OrdinaryNativeRoots(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &source)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection.Changed = true
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
+
 	l.Options.Changes = change.NewSet([]string{"shared/cm.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	for _, name := range []string{"a", "b"} {
 		id := testutil.KustomizationID("apps", name)
 		assert.Equal(
 			t,
-			l.roots.get(id).independent && l.roots.get(id).occurrence.Declaration != (OccurrenceID{}),
+			selection.Root(l.RootEvidence(id, nil)).Independent &&
+				selection.Root(l.RootEvidence(id, nil)).Occurrence.Declaration != (selection.OccurrenceID{}),
 			false,
 		)
 		at := slices.IndexFunc(proposal.Objects, func(child store.Child) bool { return child.Obj.Named() == id })
 		assert.FatalIf(t, at < 0, "ordinary native root omitted %s", id)
 		assert.Equal(t, proposal.Objects[at].SourceSupport, manifest.BootstrapSourceID)
 	}
-	committed, err := l.Commit(t.Context(), proposal, Execution)
+	_, committed, err := l.commitSelection(t.Context(), t, proposal, selection.Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
@@ -265,7 +275,12 @@ func TestCommit_OrdinaryNativeRoots(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &replacement)
 	assert.Equal(t, st.GetDeclaration(a), nil)
 	assert.Equal(t, st.GetDeclaration(b), nil)
-	retry, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	retry, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	defer retry.Retire()
 	assert.Equal(
@@ -306,108 +321,24 @@ func TestCommit_AuthoritativeEntry(t *testing.T) {
 	assert.Equal(t, st.GetDeclaration(child.Obj.Named()), child.Obj)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
+
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{child.Obj.Named()}})
 	var guard store.ReadSet
 	guard.Init(st, manifest.BootstrapSourceID, nil)
 	defer st.Retire(&guard)
 	guard.GetDeclaration(child.Obj.Named())
 	child.Entry = &manifest.EntryApplication{}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{child}, Reads: &guard})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{child}, Reads: &guard},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(proposal.Objects), 0)
-	_, err = l.Commit(t.Context(), proposal, Construction)
+	_, _, err = l.Options.Session.Commit(t.Context(), proposal, selection.Construction)
 	assert.NoError(t, err)
 	assert.Equal(t, output.Valid(), true)
 	assert.Equal(t, st.GetDeclaration(child.Obj.Named()), child.Obj)
 	assert.Equal(t, st.EmissionOwner(child.Obj.Named()), parent.Named())
-}
-
-func TestCommit_ProposalLifetime(t *testing.T) {
-	t.Parallel()
-	for _, outcome := range []string{"success", "retry", "cancel", "abandon", "stale"} {
-		t.Run(outcome, func(t *testing.T) {
-			t.Parallel()
-			st := store.New()
-			admitForTest(st, t.TempDir())
-			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			st.AddObject(parent)
-			l := New(st)
-			l.Options.Filter = change.NewFilter()
-			var guard store.ReadSet
-			guard.Init(st, parent.Named(), nil)
-			t.Cleanup(guard.Retire)
-			guard.GetDeclaration(parent.Named())
-			guard.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
-			initial, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{{Obj: parent}}})
-			assert.NoError(t, err)
-			committed, err := l.Commit(t.Context(), initial, Construction)
-			assert.NoError(t, err)
-			assert.Equal(t, committed, true)
-			before := l.constructionPurpose.Load()
-			assert.Equal(t, before != nil, true)
-			assert.Diff(t, *before, initial.Ordinary)
-			var declaration weak.Pointer[manifest.Kustomization]
-			proposal := func() *Admission {
-				child := &manifest.Kustomization{Name: "entry", Namespace: "apps"}
-				declaration = weak.Make(child)
-				proposal, err := l.Prepare(t.Context(), PrepareRequest{
-					Generation: []store.Child{{Obj: child, Entry: &manifest.EntryApplication{}}}, Reads: &guard,
-				})
-				assert.NoError(t, err)
-				return proposal
-			}()
-			t.Cleanup(proposal.Retire)
-			needed := slices.Clone(proposal.Needed)
-			ctx, cancel := context.WithCancel(t.Context())
-			t.Cleanup(cancel)
-			switch outcome {
-			case "cancel":
-				cancel()
-			case "stale":
-				replacement := parent.Clone()
-				replacement.Path = "./replacement"
-				st.AddObject(replacement)
-			case "retry":
-				_, retry := l.Options.Filter.AddEmitted(change.MembershipUpdate{
-					Needed: []manifest.NamedResource{testutil.KustomizationID("apps", "other")},
-				}, proposal.Revision)
-				assert.Equal(t, retry, false)
-			}
-			if outcome == "abandon" {
-				proposal.Retire()
-			} else {
-				committed, err := l.Commit(ctx, proposal, Construction)
-				assert.Equal(t, errors.Is(err, context.Canceled), outcome == "cancel")
-				assert.Equal(t, committed, outcome == "success" || outcome == "retry")
-			}
-			assert.Equal(t, proposal.reads, nil)
-			assert.Equal(t, len(proposal.Objects)+len(proposal.sources), 0)
-			assert.Equal(t, len(proposal.Request.Generation), 0)
-			assert.Equal(t, proposal.Request.Reads, nil)
-			assert.Diff(t, proposal.Needed, needed)
-			assert.Equal(t, guard.Valid(), outcome != "stale")
-			if outcome == "success" || outcome == "retry" {
-				assert.Equal(t, l.constructionPurpose.Load() != before, true)
-				assert.Diff(t, *l.constructionPurpose.Load(), proposal.Ordinary)
-				empty, err := l.Prepare(t.Context(), PrepareRequest{})
-				assert.NoError(t, err)
-				committed, err := l.Commit(t.Context(), empty, Construction)
-				assert.NoError(t, err)
-				assert.Equal(t, committed, true)
-				assert.Equal(t, len(*l.constructionPurpose.Load()), 0)
-			} else {
-				assert.Equal(t, l.constructionPurpose.Load(), before)
-			}
-			l.Retire()
-			assert.Equal(t, l.constructionPurpose.Load(), nil)
-			proposal.Retire()
-			st.DeleteObject(testutil.KustomizationID("apps", "entry"))
-			for range st.Sweep() {
-			}
-			runtime.GC()
-			assert.Equal(t, declaration.Value(), nil)
-			runtime.KeepAlive(proposal)
-			runtime.KeepAlive(&guard)
-		})
-	}
 }

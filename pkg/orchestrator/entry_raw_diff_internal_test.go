@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -90,8 +92,8 @@ spec:
 			ExternalChanges: change.NewSet([]string{"workload/value.yaml"}),
 		}
 	}
-	runs, err := RenderTrees(t.Context(), trees, Config{
-		CacheDir: t.TempDir(), Concurrency: 2, Selection: manifest.Selection{Changed: true},
+	runs, err := renderTreesForTest(t.Context(), t, trees, Config{
+		CacheDir: t.TempDir(), Concurrency: 2, Selection: selection.Request{Changed: true},
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, len(runs), 2)

@@ -1,13 +1,15 @@
 package discovery
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -45,11 +47,11 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 	testutil.WriteFile(t, root, "child/kustomization.yaml", "resources: []\n")
 	st := store.New()
 	l := loader.New(st)
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
 	session, err := Begin(t.Context(), Config{
 		Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st, Loader: l,
 		Trees:     kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2)),
-		Selection: manifest.Selection{Changed: true},
+		Selection: selection.Request{Changed: true},
 	})
 	assert.NoError(t, err)
 	child := testutil.KustomizationID("apps", "child")
@@ -62,7 +64,7 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 	st.AddObject(declaration.Obj, declaration.Doc)
 	assert.Equal(t, st.GetDeclaration(parent) != nil, true)
 	assert.Equal(t, len(st.Productions(child, l.Index)) != 0, true)
-	_, err = session.Advance(t.Context(), &loader.Admission{Needed: []manifest.NamedResource{child}})
+	_, err = session.Advance(t.Context(), &selection.Admission{Needed: []manifest.NamedResource{child}})
 	assert.NoError(t, err)
 	for owner := range session.prepared {
 		assert.FatalIf(
@@ -71,5 +73,53 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 			"%v",
 			"producer with unresolved substitutions supplied prepared declarations",
 		)
+	}
+}
+
+func TestAdvance_ProducerDemandRejectsChangedAuthority(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"before preparation", "during preparation"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "outside/kustomization.yaml", "resources: []\n")
+			st := store.New()
+			owner := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "outside"}
+			replacement := owner.Clone()
+			replacement.Path = "replaced"
+			observed := &rebindingEntryFS{FS: os.DirFS(root)}
+			input := &store.SourceArtifact{LocalPath: root, FS: observed}
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			st.AddObject(owner)
+			var guard store.ReadSet
+			guard.Init(st, manifest.NamedResource{}, nil)
+			defer st.Retire(&guard)
+			guard.GetDeclaration(owner.Named())
+			if phase == "before preparation" {
+				st.AddObject(replacement)
+			} else {
+				observed.rebind = func() {
+					if observed.changed.CompareAndSwap(false, true) {
+						st.AddObject(replacement)
+					}
+				}
+			}
+			d := &Session{loader: loader.New(st), cfg: Config{
+				Store: st, Input: input, Path: root, RepoRoot: root,
+				Trees: kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2)),
+			}}
+			defer d.Close()
+			prepared, err := d.prepareDemandedProducers(t.Context(), []selection.Demand{{
+				Identity: owner.Named(), Witness: owner, Reads: &guard,
+			}}, root)
+			assert.NoError(t, err)
+			assert.Equal(t, prepared, false)
+			if phase == "before preparation" {
+				assert.Equal(t, d.prepared[owner.Named()] == nil, true)
+			} else {
+				assert.Equal(t, observed.changed.Load(), true)
+				assert.Equal(t, d.prepared[owner.Named()].registered, false)
+			}
+		})
 	}
 }

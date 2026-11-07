@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
@@ -192,7 +194,7 @@ func (d *Session) addLoadedSources(
 	if d.loader == nil {
 		return nil
 	}
-	restricted := d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0
+	restricted := d.loader != nil && d.loader.Options.Session != nil
 	for child, err := range d.loader.Sources(ctx) {
 		if err != nil {
 			return err
@@ -202,8 +204,7 @@ func (d *Session) addLoadedSources(
 		group.evidence = child
 		groups[id] = group
 		if restricted {
-			record, _ := d.loader.Index.Lookup(id)
-			if d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path) {
+			if selection.Root(d.loader.RootEvidence(id, nil)).Admitted {
 				addEntrySource(groups, id, manifest.NamedResource{})
 			}
 		}
@@ -250,11 +251,11 @@ func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]ent
 	if d.loader == nil {
 		return
 	}
-	for id, record := range d.loader.Index.Files() { //nolint:gocritic // The iterator yields records by value.
+	for id := range d.loader.Index.Files() {
 		if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil {
 			continue
 		}
-		if !d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path) {
+		if !selection.Root(d.loader.RootEvidence(id, nil)).Admitted {
 			continue
 		}
 		for ref := range d.loader.References(id) {
@@ -276,7 +277,7 @@ func (d *Session) entrySourceObject(
 		}
 		return group.evidence.Obj
 	}
-	restricted := d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0
+	restricted := d.loader != nil && d.loader.Options.Session != nil
 	obj := d.cfg.Store.GetObject(id)
 	if previous, seen := d.resolvedSources[id]; restricted && seen && previous.synthetic && obj == previous.object &&
 		group.evidence.Obj != nil {
@@ -288,8 +289,7 @@ func (d *Session) entrySourceObject(
 	obj = group.evidence.Obj
 	independentlyAdmitted := false
 	if restricted && obj != nil {
-		record, _ := d.loader.Index.Lookup(id)
-		independentlyAdmitted = d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path)
+		independentlyAdmitted = selection.Root(d.loader.RootEvidence(id, nil)).Admitted
 	}
 	if obj != nil &&
 		(independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool { return d.cfg.Store.GetObject(requester) != nil })) {
@@ -379,6 +379,7 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) {
 type Admission struct {
 	entryPreparation kustomize.Preparation
 	entryRequest     kustomize.RenderRequest
+	requestedEntry   manifest.EntryApplication
 	entryEvidence    *kustomize.EntryEvidence
 	applications     atomic.Pointer[applicationEvidence]
 	entryBound       atomic.Bool
@@ -390,6 +391,7 @@ type Admission struct {
 	entryDemand      bool
 	qualification    *entryQualification
 	store            *store.Store
+	acceptedEntry    *selection.EntryRoute
 	assessment       *store.ReadSet
 	loader           *loader.Loader
 	trees            *kustomize.TreeCache
@@ -429,11 +431,15 @@ func (d *Session) admission() *Admission {
 		session:       d,
 		substitutions: d.substitutions,
 	}
+	admission.requestedEntry = manifest.EntryApplication{
+		Source: manifest.BootstrapSourceID, Path: admission.entryPath(),
+	}
 	d.entryState = entryQualification{loader: d.loader, trees: d.cfg.Trees, session: d}
 	admission.entryDemand = d.requiresEntry()
 	d.entryState.closed = !admission.entryDemand
 	admission.qualification = &d.entryState
 	d.entryAdmission = admission
+	admission.publishEntry(nil, manifest.NamedResource{})
 	return admission
 }
 
@@ -595,7 +601,7 @@ func (a *Admission) entrySourceView(
 func (d *Session) publishEntrySource(candidate *entryResolution, artifact *store.SourceArtifact) {
 	id := candidate.object.Named()
 	if candidate.synthetic ||
-		(d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0) && d.cfg.Store.GetObject(id) != nil &&
+		d.loader != nil && d.loader.Options.Session != nil && d.cfg.Store.GetObject(id) != nil &&
 			d.cfg.Store.GetObject(id) != candidate.object {
 		d.cfg.Store.AddObject(candidate.object)
 	}

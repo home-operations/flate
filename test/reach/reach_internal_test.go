@@ -34,6 +34,9 @@ func (o *reachOracle) base(t *testing.T) {
 			tc := &o.worlds[i].spec
 			trees := []orchestrator.Tree{reachTree(controls[tc.name].root, tc, manifest.TreeBase)}
 			runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+			for _, run := range runs {
+				t.Cleanup(run.Result.Close)
+			}
 			if err != nil && !errors.Is(err, manifest.ErrFlux) {
 				t.Fatal(err)
 			}
@@ -86,6 +89,9 @@ func (o *reachOracle) head(t *testing.T) {
 			tc := &world.spec
 			trees := []orchestrator.Tree{reachTree(world.roots[1], tc, manifest.TreeHead)}
 			runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+			for _, run := range runs {
+				t.Cleanup(run.Result.Close)
+			}
 			if err != nil && !errors.Is(err, manifest.ErrFlux) {
 				t.Fatal(err)
 			}
@@ -223,6 +229,9 @@ func runReachWorld(t *testing.T, world *reachWorld, cfg *orchestrator.Config) (s
 		reachTree(world.roots[1], tc, manifest.TreeHead),
 	}
 	runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+	for _, run := range runs {
+		t.Cleanup(run.Result.Close)
+	}
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), tc.fixture == "global")
 	joint := map[string]uint64{}
 	output := [2]map[string][]map[string]any{}

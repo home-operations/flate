@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -25,6 +26,7 @@ type scopeConstruction struct {
 	contributions []scopeContribution
 	claims        []manifest.KSClaim
 	roots         []string
+	rootFacts     []selection.NativeRootFacts
 	traversalWork map[string]*manifest.WorkRecord
 }
 

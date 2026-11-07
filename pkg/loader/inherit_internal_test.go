@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/manifest"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -80,7 +82,7 @@ func TestAdmitsRoot_PlainDiscoveryShortcut(t *testing.T) {
 	id := testutil.KustomizationID("apps", "one")
 	file := filepath.Join(root, "peers.yaml")
 	allocs := testing.AllocsPerRun(10, func() {
-		if !l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file) {
+		if !selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, file)).Admitted {
 			t.Fatal("plain discovery candidate was rejected")
 		}
 	})

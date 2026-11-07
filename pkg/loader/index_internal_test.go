@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -352,7 +353,7 @@ func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
 func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {
 	t.Parallel()
 	l := New(store.New())
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	objects := []manifest.BaseManifest{
 		&manifest.RawObject{
 			Kind:       "Widget",
@@ -380,7 +381,7 @@ func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {
 			if r.Path != "" || r.File != "" || len(r.Productions) != 0 || r.Parent != (manifest.NamedResource{}) {
 				t.Fatalf("pathless record: %+v", r)
 			}
-			assert.Equal(t, l.AdmitsRoot(obj, ""), false)
+			assert.Equal(t, selection.Root(rootAtForTest(l, obj, "")).Admitted, false)
 		}
 	}
 }

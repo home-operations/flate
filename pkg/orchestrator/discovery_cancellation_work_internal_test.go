@@ -32,7 +32,7 @@ func TestRenderTrees_DiscoveryCancellationWork(t *testing.T) {
 	var runs []Rendered
 	go func() {
 		var err error
-		runs, err = RenderTrees(ctx, []Tree{{
+		runs, err = renderTreesForTest(ctx, t, []Tree{{
 			RepoRoot: root, Path: root,
 			ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
 		}},

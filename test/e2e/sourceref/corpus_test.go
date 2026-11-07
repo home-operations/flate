@@ -31,11 +31,6 @@ func TestE2E_SourceCorpus(t *testing.T) {
 	} {
 		for _, name := range scenario.cases {
 			t.Run(scenario.name+"/"+name, func(t *testing.T) {
-				if name == "source-ref--path-orig-uses-own-object-store-identical-spec" {
-					t.Skip(
-						"Changed-only selection ignores divergent source revisions with identical authored files. The source-store owner tracks this defect.",
-					)
-				}
 				fixture := harness.Open(t, scenario.name, name)
 				want := fixture.Want(t)
 				first, second := fixture.Run(t), fixture.Run(t)

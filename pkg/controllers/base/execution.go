@@ -8,8 +8,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/depwait"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -22,7 +23,7 @@ type Execution struct {
 	*Controller
 
 	Preparation           preparation
-	AdmissionPreparation  *loader.Preparation
+	AdmissionPreparation  *selection.Preparation
 	ProbeLeft, ProbeRight *Execution
 	ProbeConsumed         bool
 	probeStored           bool
@@ -47,9 +48,7 @@ type Execution struct {
 // Init starts capture in caller-owned storage before declaration or dependency assessment.
 // The execution MUST remain live until its registrations and output borrowers retire.
 func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
-	if c.filterActive() {
-		c.Store.SetIncluded(id, c.filter.ShouldReconcile(id), c.filter.OrdinaryDemand(id))
-	}
+	c.selection.Include(id)
 	if c.preflight != nil {
 		message, failed := c.preflight(id)
 		if !failed {
@@ -186,13 +185,13 @@ func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, 
 	admit := false
 	for _, dep := range deps {
 		e.Reads.Require(dep)
-		admit = admit || e.filterActive() && !e.filter.ShouldReconcile(dep.NamedResource)
+		admit = admit || e.selection != nil && !e.selection.Snapshot().Reconcile(dep.NamedResource)
 	}
 	if admit {
 		if _, err := e.KeepEmitted(
 			ctx,
 			manifest.NamedResource{},
-			loader.PrepareRequest{Generation: nil, Reads: &e.Reads, Preparation: &e.AdmissionPreparation},
+			selection.PrepareRequest{Generation: nil, Reads: &e.Reads, Preparation: &e.AdmissionPreparation},
 		); err != nil {
 			return err
 		}
@@ -381,11 +380,11 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 	obj, ok := e.Reads.Get[T](id)
 	e.declaration = obj
 	policy := e.Reads.Policy(id)
-	if ok && e.filterActive() {
+	if ok && e.selection != nil {
 		if _, err := e.KeepEmitted(
 			ctx,
 			manifest.NamedResource{},
-			loader.PrepareRequest{
+			selection.PrepareRequest{
 				Generation:  []store.Child{{Obj: obj, Origin: policy.Origin}},
 				Reads:       &e.Reads,
 				Preparation: &e.AdmissionPreparation,
@@ -563,8 +562,8 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 }
 
 func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
-	return !e.filterActive() || e.filter.ShouldReconcile(id) ||
-		(e.existence == nil || !e.existence.IsFileIndexed(id)) && e.Reads.GetObject(id) == nil
+	return e.selection.Snapshot().
+		Ordering(id, e.Reads.GetObject(id) != nil, e.existence != nil && e.existence.IsFileIndexed(id))
 }
 
 // Deduplication omits its fingerprint when no stable content key exists.
@@ -596,9 +595,9 @@ func (e *Execution) FingerprintDedup(
 	if err := e.Checkpoint(); err != nil {
 		return Deduplication{Fingerprint: "", Reused: true}, err
 	}
-	if e.filter != nil {
-		membership := e.filter.Membership(id)
-		selected, dirty := membership.Selected, membership.Dirty
+	if e.selection != nil {
+		decision := e.selection.Snapshot()
+		selected, dirty := decision.Output(id), decision.Changed(id)
 		if selected && !dirty {
 			e.Disposition = store.AssessmentReused
 			e.Store.UpdateStatus(
@@ -797,7 +796,7 @@ func compactDataIDs(ids []manifest.NamedResource) []manifest.NamedResource {
 }
 
 func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) error {
-	if e.filter.Enabled() {
+	if e.selection != nil {
 		var proof store.ReadSet
 		proof.Init(e.Store, e.Reads.ID(), nil)
 		proof.SetWork(e.Reads.Work())
@@ -806,7 +805,7 @@ func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) 
 		if _, err := e.KeepEmitted(
 			ctx,
 			manifest.NamedResource{},
-			loader.PrepareRequest{Generation: nil, Reads: &proof, Preparation: &e.AdmissionPreparation},
+			selection.PrepareRequest{Generation: nil, Reads: &proof, Preparation: &e.AdmissionPreparation},
 		); err != nil {
 			return err
 		}
@@ -814,7 +813,7 @@ func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) 
 	if e.existence != nil {
 		_, err := e.existence.Promote(
 			ctx,
-			loader.PrepareRequest{Reads: &e.Reads, Preparation: &e.AdmissionPreparation},
+			selection.PrepareRequest{Reads: &e.Reads, Preparation: &e.AdmissionPreparation},
 			id,
 		)
 		return err

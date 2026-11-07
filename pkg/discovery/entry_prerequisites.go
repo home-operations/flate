@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -17,7 +19,7 @@ type entryPrerequisites struct {
 	owner         *manifest.Kustomization
 	children      []store.Child
 	batch         map[manifest.NamedResource]manifest.BaseManifest
-	roots         []loader.Occurrence
+	roots         []selection.OccurrenceFacts
 	seen          map[manifest.NamedResource]bool
 	source        manifest.NamedResource
 }

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
 
@@ -17,7 +17,7 @@ import (
 type errorPromotion struct{ cause error }
 
 func (errorPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p errorPromotion) Promote(context.Context, loader.PrepareRequest, manifest.NamedResource) (bool, error) {
+func (p errorPromotion) Promote(context.Context, selection.PrepareRequest, manifest.NamedResource) (bool, error) {
 	return false, p.cause
 }
 

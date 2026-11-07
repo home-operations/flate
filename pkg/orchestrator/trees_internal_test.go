@@ -38,7 +38,7 @@ func TestRenderTrees_FullDiscoveryOnce(t *testing.T) {
 			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\ndata: {value: kept}\n"),
 		},
 	}}
-	results, err := RenderTrees(t.Context(), []Tree{{
+	results, err := renderTreesForTest(t.Context(), t, []Tree{{
 		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root,
 		Input: &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input},
 	}}, Config{Concurrency: 2})
@@ -152,12 +152,12 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 			st.AddObject(local)
 			root := t.TempDir()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
-			filter := admissiontest.Filter(
+			filter := admissiontest.Decision(
 				t,
 				admissiontest.Config{Changes: paired, Index: &manifest.DiscoveryIndex{}, Inventory: st, Root: root},
 			)
-			assert.Equal(t, filter.ShouldReconcile(to), true)
-			assert.Equal(t, filter.ShouldReconcile(from), false)
+			assert.Equal(t, filter.Reconcile(to), true)
+			assert.Equal(t, filter.Reconcile(from), false)
 			assert.Diff(t, changes.Paths(), []string{"removed.yaml"})
 			assert.Diff(t, index.Readers["removed.yaml"], readers)
 			projected.Readers["removed.yaml"][0].Exact = false

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -164,9 +164,10 @@ func (o *Orchestrator) visitNodes(
 			}
 			return nil
 		}
+		o.selection.Include(id)
 		policy := o.store.Policy(id)
 		eligible := o.schedulable(obj)
-		if o.filter.Enabled() && eligible && !o.includeNode(id) {
+		if (o.selection != nil) && eligible && !o.includeNode(id) {
 			return nil
 		}
 		runnable := eligible && (policy.Root || dependency)
@@ -184,39 +185,24 @@ func (o *Orchestrator) visitNodes(
 }
 
 func (o *Orchestrator) includeNode(id manifest.NamedResource) bool {
-	included := o.filter.ShouldReconcile(id)
-	o.store.SetIncluded(id, included, o.filter.OrdinaryDemand(id))
-	return included
+	return o.selection.Snapshot().Reconcile(id)
 }
 
 func (d dagDispatcher) admitRawRoots(ctx context.Context) bool {
-	var reads *store.ReadSet
-	for id, record := range d.o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		selected := d.o.filter.Membership(id).Selected
-		if selected && record.Path != "" && record.Parent == (manifest.NamedResource{}) &&
-			record.BuilderOwner == (manifest.NamedResource{}) &&
-			d.o.loader.AdmitsRoot(d.o.loader.CatalogObject(id), record.Path) &&
-			d.o.store.GetObject(id) == nil {
-			if reads == nil {
-				reads = &store.ReadSet{}
-				reads.Init(d.o.store, manifest.NamedResource{}, nil)
-			}
-			reads.RequireData(id)
-		}
+	reads := d.o.selection.PendingRoots()
+	if reads == nil {
+		return false
 	}
-	if reads != nil {
-		_, err := d.o.ksc.KeepEmitted(
-			ctx,
-			manifest.NamedResource{},
-			loader.PrepareRequest{Generation: nil, Reads: reads, Preparation: &d.o.admissionPreparation},
-		)
-		d.o.store.Retire(reads)
-		if err != nil {
-			d.o.entryFailure = err
-		}
-		return true
+	defer d.o.store.Retire(reads)
+	_, err := d.o.ksc.KeepEmitted(
+		ctx,
+		manifest.NamedResource{},
+		selection.PrepareRequest{Reads: reads, Preparation: &d.o.admissionPreparation},
+	)
+	if err != nil {
+		d.o.entryFailure = err
 	}
-	return false
+	return true
 }
 
 func (o *Orchestrator) admitEntry(ctx context.Context) (bool, error) {
@@ -255,22 +241,8 @@ func (o *Orchestrator) commitEntry(
 	changed := root == nil || root != o.store.GetDeclaration(root.Named())
 	previous := o.entryBinding
 	if changed {
-		incoming := store.Child{}
-		if root != nil {
-			application := manifest.EntryApplication{Source: root.SourceID(), Path: root.Path}
-			incoming = store.Child{Obj: root, Entry: &application}
-		}
-		proposal, err := o.loader.Prepare(
-			ctx,
-			loader.PrepareRequest{
-				Generation: []store.Child{incoming}, Reads: binding.Reads, Preparation: &o.admissionPreparation,
-			},
-		)
-		if err != nil {
-			return false, err
-		}
-		committed, err := o.loader.Commit(ctx, proposal, loader.Execution)
-		if err != nil || !committed || !binding.Reads.Valid() {
+		committed, err := o.publishEntry(ctx, root, binding)
+		if err != nil || !committed {
 			return false, err
 		}
 	}
@@ -283,6 +255,32 @@ func (o *Orchestrator) commitEntry(
 		return true, nil
 	}
 	return true, o.installAdmission(ctx)
+}
+
+func (o *Orchestrator) publishEntry(
+	ctx context.Context,
+	root *manifest.Kustomization,
+	binding *discovery.Binding,
+) (bool, error) {
+	incoming := store.Child{}
+	if root != nil {
+		application := manifest.EntryApplication{Source: root.SourceID(), Path: root.Path}
+		incoming = store.Child{Obj: root, Entry: &application}
+	}
+	if o.selection == nil {
+		if incoming.Obj != nil {
+			binding.Reads.Admit(incoming, binding.Source, manifest.NamedResource{})
+		}
+		return binding.Reads.Valid(), nil
+	}
+	proposal, err := o.prepareAdmission(ctx, selection.PrepareRequest{
+		Generation: []store.Child{incoming}, Reads: binding.Reads, Preparation: &o.admissionPreparation,
+	})
+	if err != nil {
+		return false, err
+	}
+	_, committed, err := o.commitAdmission(ctx, proposal)
+	return committed && binding.Reads.Valid(), err
 }
 
 func (o *Orchestrator) visitNodeReferences(

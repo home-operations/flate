@@ -75,7 +75,7 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	defer unsub()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	_, err = o.render(ctx)
+	_, err = o.render(ctx, t)
 	assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil,
 		"Render error=%v context=%v, want scheduler redispatch error", err, ctx.Err())
 }

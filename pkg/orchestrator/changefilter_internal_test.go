@@ -28,7 +28,7 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	assert.NoError(t, o.bootstrap(t.Context()))
-	assert.Equal(t, o.filter.Enabled(), true)
+	assert.Equal(t, (o.selection != nil), true)
 	warnings := o.store.Warnings()
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want one", warnings)
@@ -124,20 +124,20 @@ data:
 		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 
-	f := o.filter
+	f := o.selection
 
 	assert.FatalIf(
 		t,
 		f == nil,
 		"%v",
-		"expected change.Filter to be wired (PathOrig was set), got nil — buildChangeFilter dropped the filter",
+		"expected selection session when PathOrig is set",
 	)
 
 	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
 
 	assert.ErrorIf(
 		t,
-		!f.ShouldReconcile(clusterApps),
+		!f.Snapshot().Reconcile(clusterApps),
 		"cluster-apps owns the changed file (apps/foo/cm.yaml) but was filtered out of the keep set; diff did not widen to repo root",
 	)
 }
@@ -177,7 +177,7 @@ func TestBuildChangeFilter_HistoryWorkOwners(t *testing.T) {
 	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
 	fresh.cfg.Input = warm.cfg.Input
 	fresh.completeBootstrap()
-	assert.NoError(t, fresh.buildChangeFilter(t.Context()))
+	assert.NoError(t, fresh.prepareInvocation(t.Context()))
 	work := fresh.freezeWork()
 	for _, name := range []string{"a", "b"} {
 		owner := testutil.KustomizationID("apps", name)

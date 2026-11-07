@@ -19,12 +19,12 @@ import (
 	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/imageutil"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 func runClusterInputs(t *testing.T, argv ...string) cliResult {
@@ -62,7 +62,7 @@ func runClusterInputs(t *testing.T, argv ...string) cliResult {
 	}
 	cfg := buildOrchCfg(&c)
 	cfg.HeadOnly = verb != "diff" && c.pathOrig != ""
-	runs, err := orchestrator.RenderTrees(t.Context(), trees, cfg)
+	runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 	assert.FatalIf(t, len(runs) == 0, "independent trees unavailable: %v", err)
 	kinds := renderKinds
 	switch kind {
@@ -101,7 +101,7 @@ func runClusterInputs(t *testing.T, argv ...string) cliResult {
 	return cliResult{stdout: stdout.String(), stderr: stderr.String(), code: 0}
 }
 
-func clusterSnapshot(side *selection.Selection) diff.Snapshot {
+func clusterSnapshot(side *selection.Result) diff.Snapshot {
 	return diff.Snapshot{
 		Subjects:     side.Subjects,
 		Manifests:    side.Manifests,
@@ -587,7 +587,8 @@ func clusterSelectGroups(req *selectedRequest, inv *selectedInvocation, runs []o
 		if !req.pair {
 			groupRuns = groupRuns[len(groupRuns)-1:]
 		}
-		group.sides, group.err, group.remainder = orchestrator.Select(groupRuns, groupErr, req.roots, nil)
+		projectedResults0, projectionErrors0 := orchestrator.Select(groupRuns, groupErr, req.roots, nil)
+		group.sides, group.err, group.remainder = projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		inv.groups = append(inv.groups, group)
 		first = last
 	}

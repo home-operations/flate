@@ -135,7 +135,7 @@ items:
 	complete, err := reader.fileObjects(file, manifest.ParseDocOptions{})
 	assert.NoError(t, err)
 	assert.Equal(t, len(complete), 2)
-	reader.coordinate = &OccurrenceID{Document: 1, item: 1}
+	reader.coordinate = &occurrenceID{Document: 1, item: 1}
 	children, err := reader.parseFile(t.Context(), file, manifest.ParseDocOptions{})
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(children) != 1, "exact children=%d, want 1", len(children))

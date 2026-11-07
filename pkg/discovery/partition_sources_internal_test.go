@@ -6,6 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -44,7 +46,7 @@ func TestPlan_SourceOccurrenceIsolation(t *testing.T) {
 				Input:     input,
 				Path:      root,
 				SelfURLs:  []string{"https://example.invalid/left"},
-				Selection: manifest.Selection{Changed: changed},
+				Selection: selection.Request{Changed: changed},
 			}
 			entries, err := Plan(t.Context(), cfg)
 			assert.NoError(t, err)

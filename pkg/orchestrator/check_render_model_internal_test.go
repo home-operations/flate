@@ -84,8 +84,7 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 		scan string
 		out  *Rendered
 	}{{beforeRoot, beforeScan, &fullBefore}, {afterRoot, fixture.scan, &fullAfter}} {
-		runs, renderErr := RenderTrees(
-			t.Context(),
+		runs, renderErr := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
@@ -108,7 +107,7 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 	}
 	baseTree.Input, baseTree.BaseInput, baseTree.ExternalChanges = cfg.BaseInput, cfg.Input, cfg.ExternalChanges
 	headTree.Input, headTree.BaseInput, headTree.ExternalChanges = cfg.Input, cfg.BaseInput, cfg.ExternalChanges
-	runs, pairErr := RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg.Config)
+	runs, pairErr := renderTreesForTest(t.Context(), t, []Tree{baseTree, headTree}, cfg.Config)
 	old, current := runs[0], runs[1]
 	selection := compareModelWorlds(fixture.before, fixture.after)
 	var problems []error
@@ -357,10 +356,11 @@ func TestRenderTrees_IndependentModel(t *testing.T) {
 		"work_final_and_retired",
 		func(t *testing.T) {
 			t.Parallel()
-			o := newOrchestrator(
+			o, constructionErr := newOrchestrator(
 				t.Context(), &Config{RecordWork: true},
 				&Tree{ID: manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}}, task.NewBounded(2),
 			)
+			assert.NoError(t, constructionErr)
 			defer o.stop()
 			o.index = &manifest.DiscoveryIndex{}
 			o.rsc.Configure(base.Options{})
@@ -380,6 +380,7 @@ func TestRenderTrees_IndependentModel(t *testing.T) {
 			first.Retire()
 			assert.FatalIf(t, !final.Valid(), "%v", "final live execution is invalid")
 			result, err := o.collectResult(nil)
+			t.Cleanup(result.Close)
 			assert.FatalIf(t, err != nil, "%v", err)
 			{
 				got := workCounts(result.Work, owner.Named(), manifest.WorkEvaluation)
@@ -639,12 +640,12 @@ func testIndependentModelObservationRejectsCase(
 		side.store.AddObject(&manifest.Kustomization{Name: "extra", Namespace: "flux-system"})
 	case "unselected-emission", "unselected-output":
 		selected = true
-		side.loader = admissiontest.New(
+		side.loader, side.selection = admissiontest.New(
 			t,
 			admissiontest.Config{Changes: change.NewSet(nil), Index: nil, Inventory: nil, Root: ""},
 		)
-		admissiontest.Commit(t, side.loader, nil)
-		side.filter = side.loader.Options.Filter
+		admissiontest.Commit(t, side.selection, nil)
+
 		if testCaseInput.name == "unselected-output" {
 			side.Result.Manifests = []manifest.DocumentBatch{
 				{

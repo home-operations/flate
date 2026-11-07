@@ -10,16 +10,18 @@ import (
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 func (o *Orchestrator) reportingClaims() []manifest.KSClaim {
 	candidates := o.store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	for id, record := range o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		if !id.KindInfo().Structural {
-			continue
-		}
-		if ks, ok := o.unchangedDeclaration(id, &record).(*manifest.Kustomization); ok {
+	snapshot := selection.Snapshot{Store: o.store, Index: o.index, Decision: o.selection.Snapshot()}
+	if o.selection != nil {
+		snapshot.Facts = o.loader.DetachCatalog()
+	}
+	for object := range snapshot.UnchangedDeclarations(o.cfg.Selection) {
+		if ks, ok := object.(*manifest.Kustomization); ok {
 			candidates = append(candidates, ks)
 		}
 	}
@@ -33,8 +35,7 @@ func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSC
 	for _, claim := range claims {
 		obj := o.store.GetObject(claim.ID)
 		if obj == nil {
-			record, _ := o.index.Lookup(claim.ID)
-			obj = o.unchangedDeclaration(claim.ID, &record)
+			obj = o.catalogObject(claim.ID)
 		}
 		source, _, _ := obj.SourcePath()
 		if !loader.SourceView(o.store, source, o.repoRoot).External {
@@ -108,22 +109,11 @@ func (o *Orchestrator) classifyCompleted() {
 
 func (o *Orchestrator) finalize() error {
 	failed := o.store.FailedResources()
-	counts := map[string]int{}
-	for info := range manifest.Kinds() {
-		if !info.Render {
-			continue
-		}
-		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
-			if o.store.Policy(obj.Named()).Report {
-				counts[info.Kind]++
-			}
-		}
+	snapshot := selection.Snapshot{Store: o.store, Index: o.index, Decision: o.selection.Snapshot()}
+	if o.selection != nil {
+		snapshot.Facts = o.loader.DetachCatalog()
 	}
-	for id, record := range o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		if id.KindInfo().Render && !id.ReportHidden() && o.unchangedDeclaration(id, &record) != nil {
-			counts[id.Kind]++
-		}
-	}
+	counts := snapshot.ReportCounts(o.cfg.Selection)
 	ksCount, hrCount := counts[manifest.KindKustomization], counts[manifest.KindHelmRelease]
 	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
 		o.store.AddWarning(
@@ -247,7 +237,7 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 		"helm_releases", hrCount,
 		"failed", len(failed),
 		"work", &o.work)
-	if o.filter.Enabled() && ksCount == 0 && hrCount == 0 {
+	if (o.selection != nil) && ksCount == 0 && hrCount == 0 {
 		if o.entryBinding.Producer != (manifest.NamedResource{}) {
 			return
 		}
@@ -265,14 +255,6 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 	}
 }
 
-// FailuresError aggregates per-resource reconcile failure messages.
-type FailuresError struct{ Message string }
-
-func (e *FailuresError) Error() string { return e.Message }
-
-// Unwrap returns the shared domain identity for resource failures.
-func (*FailuresError) Unwrap() error { return manifest.ErrFlux }
-
 func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
 	for id, info := range failed {
@@ -283,7 +265,7 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 		}
 	}
 	slices.Sort(msgs) // deterministic ordering across runs
-	return &FailuresError{Message: fmt.Sprintf("reconcile completed with %d failure(s):\n  %s",
+	return &selection.FailuresError{Message: fmt.Sprintf("reconcile completed with %d failure(s):\n  %s",
 		len(msgs), strings.Join(msgs, "\n  "))}
 }
 
@@ -295,8 +277,16 @@ func (o *Orchestrator) fileOf(id manifest.NamedResource) string {
 func (o *Orchestrator) diagnostic(id manifest.NamedResource) manifest.DiagnosticIdentity {
 	obj := o.store.GetObject(id)
 	if obj == nil {
-		record, _ := o.index.Lookup(id)
-		obj = o.unchangedDeclaration(id, &record)
+		obj = o.catalogObject(id)
 	}
 	return manifest.DiagnosticFor(id, obj)
+}
+
+//nolint:ireturn // Catalog witnesses MUST preserve their concrete manifest types.
+func (o *Orchestrator) catalogObject(id manifest.NamedResource) manifest.BaseManifest {
+	if o.loader != nil {
+		return o.loader.CatalogObject(id)
+	}
+	record, _ := o.index.Lookup(id)
+	return record.Declaration
 }

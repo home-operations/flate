@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -15,7 +16,7 @@ func (l *Loader) applyAdmittedObjects(
 ) bool {
 	changed := false
 	for _, id := range slices.SortedFunc(maps.Keys(l.admitted), manifest.NamedResource.Compare) {
-		if _, survives := next[id]; !survives || !allowed.get(id).admitted {
+		if _, survives := next[id]; !survives || !selection.Root(allowed.get(id).facts).Admitted {
 			if l.Store.GetObject(id) == l.admitted[id] && l.Store.GetArtifact(id, store.ArtifactContent) == nil {
 				l.Store.DeleteObject(id)
 				changed = true
@@ -29,10 +30,8 @@ func (l *Loader) applyAdmittedObjects(
 	for _, id := range slices.SortedFunc(maps.Keys(objects), manifest.NamedResource.Compare) {
 		child := objects[id]
 		obj := child.Obj
-		if !allowed.get(id).admitted || !manifest.KindOf(obj).Discovery || l.documents.compact && next[id].Path != "" {
-			continue
-		}
-		if next[id].Builder != "" && !allowed.get(id).independent {
+		if !selection.Root(allowed.get(id).facts).Admitted || !manifest.KindOf(obj).Discovery ||
+			l.documents.compact && next[id].Path != "" {
 			continue
 		}
 		changed = l.publishAdmittedObject(&child) || changed
@@ -65,18 +64,11 @@ func (l *Loader) allowAuthoredObjects(
 ) {
 	for id := range objects {
 		child := objects[id]
-		if !manifest.AdmitsRoot(child.Obj) {
-			allowed.set(id, &rootEvidence{})
-			continue
-		}
 		r := next[id]
-		if r.Path == "" && r.Authored == (manifest.NamedResource{}) {
-			evidence := allowed.get(id)
-			evidence.admitted = r.Parent == (manifest.NamedResource{})
-			allowed.set(id, &evidence)
-			continue
-		}
 		evidence := scopes[r.Path].evidence(l, id, &r)
+		evidence.facts.Scope.Records = next
+		evidence.facts.Scope.NamespaceEligible = manifest.AdmitsRoot(child.Obj)
+		evidence.facts.Scope.Candidate = true
 		allowed.set(id, &evidence)
 	}
 }
@@ -92,15 +84,14 @@ func (l *Loader) allowAuthoredRecords(
 		if _, known := objects[id]; known {
 			continue
 		}
-		if obj := l.catalogObject(id, &record); obj == nil || !manifest.AdmitsRoot(obj) {
-			allowed.set(id, &rootEvidence{})
-			continue
-		}
 		scope, known := scopes[record.Path]
 		if !known {
 			scope = l.rootAdmission(record.Path, record.File, id.KindInfo().Structural)
 		}
 		evidence := scope.evidence(l, id, &record)
+		evidence.facts.Scope.Records = next
+		object := l.catalogObject(id, &record)
+		evidence.facts.Scope.NamespaceEligible = object != nil && manifest.AdmitsRoot(object)
 		allowed.set(id, &evidence)
 	}
 }

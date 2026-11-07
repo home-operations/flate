@@ -172,7 +172,7 @@ func (v *graphVisit) localCoordinate() string {
 
 type producerDeclaration struct {
 	obj      manifest.BaseManifest
-	fact     *Occurrence
+	fact     *authoredOccurrence
 	identity manifest.NamedResource
 	authored manifest.NamedResource
 	visit    graphVisit
@@ -183,7 +183,7 @@ type selfProduceBuilder struct {
 	idx            *manifest.DiscoveryIndex
 	emittedFiles   map[string][]manifest.NamedResource
 	store          *store.Store
-	locations      map[manifest.NamedResource]Occurrence
+	locations      map[manifest.NamedResource]authoredOccurrence
 	scanExclusions bool
 	err            error
 }

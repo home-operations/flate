@@ -68,8 +68,7 @@ spec:
 `, name, dependencies, name, name)
 		}
 		testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
-		renderedSingleton2, err := RenderTrees(
-			t.Context(),
+		renderedSingleton2, err := renderTreesForTest(t.Context(), t,
 			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{CacheDir: cache, Concurrency: 2, AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}},
 		)
@@ -206,12 +205,12 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	}
 	s.AddObject(&fresh)
 	if strings.HasPrefix((*testCaseInput), "filter") {
-		opts.Loader = admissiontest.New(
+		opts.Loader, opts.Session = admissiontest.New(
 			t,
 			admissiontest.Config{Changes: change.NewSet(nil), Index: indexForTest(nil), Inventory: s, Root: ""},
 		)
-		admissiontest.Commit(t, opts.Loader, nil)
-		opts.Filter = opts.Loader.Options.Filter
+		admissiontest.Commit(t, opts.Session, nil)
+
 		c = resourcesetctrl.New(s, tasks, nil)
 		c.Configure(opts)
 		c.StartLifecycle()

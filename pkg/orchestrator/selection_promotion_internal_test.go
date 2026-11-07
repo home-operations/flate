@@ -185,15 +185,14 @@ func testSelectionPromotionBubble(
 		assert.NoError(t, err)
 	}
 	s.SetDiscoveryIndex(index)
-	filterLoader := admissiontest.New(
+	filterLoader, session := admissiontest.New(
 		t,
 		admissiontest.Config{Changes: changes, Index: index, Inventory: s, Root: root},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
+	admissiontest.Commit(t, session, nil)
 	c := base.New(s, tasks)
 	assert.NoError(t, filterLoader.FinalizeIndex(t.Context(), root, true))
-	c.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
+	c.Configure(base.Options{Session: session, Loader: filterLoader, Index: index})
 	release := make(chan struct{})
 	var dispatches, renders atomic.Int64
 	dispatch := fixtureDispatcher{
@@ -274,15 +273,15 @@ func testSelectionPromotionBubble(
 
 	sched := schedule.New(tasks, dispatch)
 	o := &Orchestrator{
-		store:  s,
-		src:    &sourcectrl.Controller{},
-		filter: filter,
-		loader: filterLoader,
-		index:  index,
+		store:     s,
+		src:       &sourcectrl.Controller{},
+		selection: session,
+		loader:    filterLoader,
+		index:     index,
 	}
 	defer o.watchDAG(sched)()
 	seeds := []schedule.NodeID{emitter.Named()}
-	if filter.ShouldReconcile(consumer.Named()) {
+	if session.Snapshot().Reconcile(consumer.Named()) {
 		seeds = append(seeds, consumer.Named())
 	}
 	sched.Seed(seeds)
@@ -291,7 +290,7 @@ func testSelectionPromotionBubble(
 	synctest.Wait()
 	_, initialStatus := s.GetStatus(consumer.Named())
 	initialDispatches, initialRenders := dispatches.Load(), renders.Load()
-	initiallySelected := filter.ShouldReconcile(consumer.Named())
+	initiallySelected := session.Snapshot().Reconcile(consumer.Named())
 	close(release)
 	{
 		err := <-done
@@ -305,7 +304,7 @@ func testSelectionPromotionBubble(
 	} else {
 		assert.Equal(t, initiallySelected, true)
 	}
-	assert.Equal(t, filter.ShouldReconcile(consumer.Named()), true)
+	assert.Equal(t, session.Snapshot().Reconcile(consumer.Named()), true)
 	assert.Equal(t, tasks.Failures(), 0)
 	assert.FatalIf(
 		t,
@@ -332,12 +331,14 @@ func testSelectionPromotionBubble(
 			consumer.Named().String(),
 		}
 		slices.Sort(want)
-		assert.Diff(t, filter.KeepNames(), want)
+		assert.Diff(t, selectionNamesForTest(session, filterLoader.Store, filterLoader.Index), want)
 		t.Logf(
-			"upfront=%t exact final identities=%v bytes=%q", testCaseInput.mode.upfront, filter.KeepNames(),
+			"upfront=%t exact final identities=%v bytes=%q",
+			testCaseInput.mode.upfront,
+			selectionNamesForTest(session, filterLoader.Store, filterLoader.Index),
 			outputBytes,
 		)
-		assert.Equal(t, filter.ShouldReconcile(source.Named()), true)
+		assert.Equal(t, session.Snapshot().Reconcile(source.Named()), true)
 		assert.Equal(t, s.GetObject(source.Named()).(*manifest.GitRepository).URL, replacement.URL)
 	}
 	comparePromotionOutput(t, previous, outputBytes)

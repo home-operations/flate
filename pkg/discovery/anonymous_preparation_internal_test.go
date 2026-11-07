@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -26,16 +27,17 @@ func TestRun_AnonymousAdmissionPreparation(t *testing.T) {
 	st := store.New()
 	st.SetWorkTree(manifest.TreeID{}, work.Scope())
 	l := loader.New(st)
-	l.Options.Filter = change.NewFilter()
 	l.Options.Changes = change.NewSet([]string{"entry/release.yaml"})
-	l.Options.Selection = manifest.Selection{Changed: true}
+	request := selection.Request{Changed: true}
+	configureSelection(t, l, request)
 	session, err := Begin(t.Context(), Config{
 		Input: input, Path: filepath.Join(root, "entry"), Store: st, Loader: l,
-		Trees: testTrees(t), Work: work.Scope(), Selection: l.Options.Selection,
+		Trees: testTrees(t), Work: work.Scope(), Selection: request,
 	})
 	assert.NoError(t, err)
 	defer session.Close()
-	proposal, err := l.Prepare(t.Context(), loader.PrepareRequest{Invocation: true})
+	preparation := session.prepareRequest(&selection.PrepareRequest{Invocation: true})
+	proposal, err := session.prepare(t.Context(), preparation)
 	assert.NoError(t, err)
 	advanced, err := session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)

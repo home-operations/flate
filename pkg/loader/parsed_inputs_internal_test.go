@@ -14,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -119,7 +120,8 @@ func TestParsedInputs_PhysicalReplayLifetime(t *testing.T) {
 				st := store.New()
 				st.SetArtifact(manifest.BootstrapSourceID, input)
 				l := New(st)
-				l.SourceRoot, l.Options.Selection.Changed, l.Options.ParsedInputs = root, compact, parsed
+				l.SourceRoot, l.Options.ParsedInputs = root, parsed
+				configureSelection(t, l, selection.Request{Changed: compact})
 				_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 				occurrences, err := l.Occurrences(t.Context(), root, "")
@@ -362,7 +364,7 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 			},
 		)
 		l.SourceRoot = root
-		l.Options.Selection = manifest.Selection{Changed: true}
+		configureSelection(t, l, selection.Request{Changed: true})
 		l.Options.ParsedInputs = parsed
 		return l
 	}
@@ -481,7 +483,7 @@ func testParsedInputsCompactPhysicalFactsCase1(t *testing.T) {
 			)
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection.Changed = true
+			configureSelection(t, l, selection.Request{Changed: true})
 			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))

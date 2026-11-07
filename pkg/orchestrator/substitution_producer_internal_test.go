@@ -57,7 +57,7 @@ func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
 				"namespace: flux-system\nresources: [missing.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+map[string]string{manifest.KindConfigMap: "configMapGenerator", manifest.KindSecret: "secretGenerator"}[kind]+":\n- name: settings\n  envs: [version.env]\n",
 			)
 			o := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: root})
-			res, err := o.render(t.Context())
+			res, err := o.render(t.Context(), t)
 			consumer, producer := testutil.KustomizationID(
 				"flux-system",
 				"consumer",

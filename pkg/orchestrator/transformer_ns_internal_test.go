@@ -77,8 +77,7 @@ spec:
 	testutil.WriteFile(t, dir, "charts/myapp/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-output}\n")
 
-	renderedSingleton1, err := RenderTrees(
-		t.Context(),
+	renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 4, RecordWork: true},
 	)
@@ -138,8 +137,7 @@ spec:
 		),
 	)
 	path := dir + "/cluster"
-	renderedSingleton2, err := RenderTrees(
-		t.Context(),
+	renderedSingleton2, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: path, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 4},
 	)
@@ -264,6 +262,7 @@ spec:
 	other := testutil.KustomizationID("other", "myapp")
 
 	res, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil || len(res.Failed) != 0,
 		"changed-only Render: %v; failures=%v", err, res.Failed)
 
@@ -271,12 +270,12 @@ spec:
 		"dirty=%s ShouldReconcile(%s)=%t keep=%v",
 		dirty,
 		other,
-		o.filter.ShouldReconcile(other),
-		o.filter.KeepNames(),
+		o.selection.Snapshot().Reconcile(other),
+		selectionNamesForTest(o.selection, o.store, o.index),
 	)
 	assert.ErrorIf(
 		t,
-		!o.filter.Enabled() || !o.filter.ShouldReconcile(other),
+		o.selection == nil || !o.selection.Snapshot().Reconcile(other),
 		"second-source change did not select %s",
 		other,
 	)

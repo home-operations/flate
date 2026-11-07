@@ -13,9 +13,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -288,7 +289,7 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	}
 	st := store.New()
 	l := loader.New(st)
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
 	session, err := Begin(
 		t.Context(),
 		Config{
@@ -296,35 +297,39 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 			Path:      filepath.Join(root, "flux"),
 			Store:     st,
 			Loader:    l,
-			Selection: manifest.Selection{Changed: true},
+			Selection: selection.Request{Changed: true},
 		},
 	)
 	assert.NoError(t, err)
 	input.statErr = fs.ErrPermission
 	leaf := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
-	proposal, err := l.Prepare(
-		t.Context(),
-		loader.PrepareRequest{Generation: []store.Child{{Obj: leaf, Entry: &manifest.EntryApplication{}}}},
+	proposal, err := prepareSelection(t.Context(), t, l,
+		selection.PrepareRequest{Generation: []store.Child{{Obj: leaf, Entry: &manifest.EntryApplication{}}}},
 	)
 	assert.NoError(t, err)
 	advanced, err := session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, true)
 	assert.Equal(t, st.GetObject(leaf.Named()), manifest.BaseManifest(leaf))
-	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
+	assert.Equal(t, len(selectedNames(l)), 0)
 	var reads store.ReadSet
 	reads.Init(st, manifest.NamedResource{}, nil)
 	defer reads.Retire()
 	reads.RequireData(leaf.Named())
-	proposal, err = l.Prepare(t.Context(), loader.PrepareRequest{Generation: []store.Child{{Obj: leaf}}, Reads: &reads})
+	proposal, err = prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Generation: []store.Child{{Obj: leaf}}, Reads: &reads},
+	)
 	assert.NoError(t, err)
-	committed, err := l.Commit(t.Context(), proposal, loader.Execution)
+	committed, err := commitSelection(t.Context(), l, proposal, selection.Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
-	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Needed, true)
-	assert.Equal(t, l.Options.Filter.OrdinaryDemand(leaf.Named()), true)
-	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Selected, false)
-	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Dirty, false)
+	assert.Equal(t, l.Options.Session.Snapshot().Reconcile(leaf.Named()), true)
+	assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(leaf.Named()), true)
+	assert.Equal(t, l.Options.Session.Snapshot().Output(leaf.Named()), false)
+	assert.Equal(t, l.Options.Session.Snapshot().Changed(leaf.Named()), false)
 }
 
 func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCase) {

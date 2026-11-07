@@ -86,7 +86,7 @@ func testRegisterBuiltStandaloneRootsCase(t *testing.T, testCaseInput *struct {
 		want = []string{"entry"}
 	}
 	{
-		roots := l.StandaloneRoots(root)
+		roots := standaloneRootsForTest(t, l, root)
 		assert.FatalIf(t, !slices.Equal(roots, want), "standalone roots = %v, want %v", roots, want)
 	}
 	{

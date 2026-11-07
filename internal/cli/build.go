@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 type buildFlags struct {
@@ -77,7 +77,7 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 	return cmd
 }
 
-func collectRendered(res *selection.Selection, b *buildFlags) []map[string]any {
+func collectRendered(res *selection.Result, b *buildFlags) []map[string]any {
 	out := make([]map[string]any, 0, renderedDocumentCount(res))
 	for _, batch := range res.Manifests {
 		out = append(out, emissionDocs(batch.Documents, b)...)
@@ -101,7 +101,7 @@ func compareDocs(a, b map[string]any) int {
 	return manifest.DocIdentity(a).Compare(manifest.DocIdentity(b))
 }
 
-func renderedDocumentCount(res *selection.Selection) int {
+func renderedDocumentCount(res *selection.Result) int {
 	total := 0
 	for _, batch := range res.Manifests {
 		total += len(batch.Documents)

@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -59,8 +61,7 @@ func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n",
 	)
 	assert.NoError(t, os.Remove(filepath.Join(root, "app", "cm.yaml")))
-	runs, err := RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}},
 		Config{Concurrency: 2},
 	)
@@ -75,12 +76,13 @@ func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
 
 	cleanupErr := errors.New("backing close failed")
 	joined := errors.Join(err, cleanupErr)
-	_, selected, remainder := Select(
+	projectedResults0, projectionErrors0 := Select(
 		runs,
 		joined,
 		[]manifest.NamedResource{testutil.KustomizationID("", "healthy")},
 		nil,
 	)
+	_, selected, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	for _, projected := range []error{selected, remainder} {
 		assert.FatalIf(
 			t,
@@ -90,7 +92,7 @@ func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
 		)
 
 		{
-			_, ok := errors.AsType[*FailuresError](projected)
+			_, ok := errors.AsType[*selection.FailuresError](projected)
 			assert.FatalIf(t, ok, "unrelated resource failure retained: %v", projected)
 		}
 	}
@@ -261,8 +263,9 @@ data: {greeting: {{ .Values.greeting | quote }}}
 			release := testutil.HelmReleaseID("apps", "demo")
 			owner := testutil.KustomizationID("flux-system", "demo")
 			assert.Equal(t, o.store.GetObject(release) == nil, true)
-			assert.Equal(t, o.filter.ShouldReconcile(owner), true)
+			assert.Equal(t, o.selection.Snapshot().Reconcile(owner), true)
 			result, err := o.collectResult(o.run(t.Context()))
+			t.Cleanup(result.Close)
 
 			assert.FatalIf(t, err != nil, "%v", err)
 
@@ -276,7 +279,7 @@ data: {greeting: {{ .Values.greeting | quote }}}
 			assert.FatalIf(t, !ok, "%v", "selected release did not render")
 
 			assert.Equal(t, rendered.Data["greeting"], "production")
-			assert.Equal(t, o.filter.ShouldReconcile(testutil.HelmReleaseID("apps", "sibling")), false)
+			assert.Equal(t, o.selection.Snapshot().Reconcile(testutil.HelmReleaseID("apps", "sibling")), false)
 			assert.Equal(
 				t,
 				o.store.GetArtifact(testutil.HelmReleaseID("apps", "sibling"), store.ArtifactContent) == nil,
@@ -295,8 +298,7 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 	testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
 	tree := Tree{RepoRoot: root}
 	cfg := treeConfig{Cache: c, Concurrency: (*testCaseInput), Tree: Tree{}}
-	renderedTrees4, err := RenderTrees(
-		t.Context(),
+	renderedTrees4, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				RepoRoot:        tree.RepoRoot,
@@ -393,8 +395,7 @@ func testRenderTreesNetworkRunIsolationCase(t *testing.T, testCaseInput *int,
 	if hits.Load() != 0 {
 		t.Fatalf("suppressed requests=%d", hits.Load())
 	}
-	renderedTrees5, err := RenderTrees(
-		t.Context(),
+	renderedTrees5, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				RepoRoot:        tree.RepoRoot,
@@ -484,8 +485,7 @@ func testRenderTreesNetworkRunIsolationRemoteGenerators(t *testing.T) {
 	for _, v := range []int32{1, 2} {
 		version.Store(v)
 		before := requests.Load()
-		renderedTrees6, err := RenderTrees(
-			t.Context(),
+		renderedTrees6, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					RepoRoot:        root,
@@ -575,7 +575,7 @@ func testOrchestratorRunJoinsRemoteWorkersCase(
 		}()
 	}
 	<-entered
-	result, err := o.render(t.Context())
+	result, err := o.render(t.Context(), t)
 	assert.NoError(t, err)
 
 	assert.FatalIf(t, result == nil, "%v", "cleanup discarded successful result")

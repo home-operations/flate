@@ -17,7 +17,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
@@ -333,7 +333,7 @@ func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCovered
 		raw.Named():    {File: "unchanged.yaml", Productions: []manifest.Production{production}},
 	}}
 	if (*testCaseInput.order) == "excluded then refire" {
-		o.loader = admissiontest.New(
+		o.loader, o.selection = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet([]string{"changed.yaml"}),
@@ -342,11 +342,11 @@ func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCovered
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, o.loader, nil)
-		o.filter = o.loader.Options.Filter
+		admissiontest.Commit(t, o.selection, nil)
+
 		assert.FatalIf(
 			t,
-			o.filter.ShouldReconcile(raw.Named()),
+			o.selection.Snapshot().Reconcile(raw.Named()),
 			"%v",
 			"fixture already selects covered source",
 		)
@@ -407,7 +407,7 @@ func testCoveredArrivalBubble(t *testing.T, testCaseInput testDAGDispatchCovered
 					o.ksc.KeepEmitted(
 						t.Context(),
 						id,
-						loader.PrepareRequest{Generation: []store.Child{{Obj: &accepted}}, Reads: nil},
+						selection.PrepareRequest{Generation: []store.Child{{Obj: &accepted}}, Reads: nil},
 					)
 				} else {
 					s.RecordEmitted(

@@ -71,8 +71,7 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 		allowed = []string{manifest.KindSecret, manifest.KindConfigMap}
 	}
 	cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingKinds: allowed}
-	runs, err := orchestrator.RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]orchestrator.Tree{
 			{
 				ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
@@ -126,8 +125,9 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 	}
 	cli := runCLI(t, args...)
 	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
-	selection, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{run}, runErr,
+	projectedResults0, projectionErrors0 := orchestrator.Select([]orchestrator.Rendered{run}, runErr,
 		[]manifest.NamedResource{{Group: hr.Group, Kind: hr.Kind, Name: hr.Name}}, nil)
+	selection, selectedErr, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.FatalIf(t, len(selection) != 1, "selection failed: %v", selectedErr)
 	if _, failed := selection[0].Failed[producer]; failed != wantFailure ||
 		(selectedErr != nil) != wantFailure {
@@ -235,7 +235,7 @@ func runNamedScopeSubstituteOwnersName(t *testing.T, tc *struct {
 		}
 	}
 	flags := commonFlags{path: filepath.Join(root, "cluster"), cacheDir: t.TempDir(), concurrency: 2}
-	runs, runErr := orchestrator.RenderTrees(t.Context(), inputTrees(&flags), buildOrchCfg(&flags))
+	runs, runErr := renderTreesForTest(t.Context(), t, inputTrees(&flags), buildOrchCfg(&flags))
 	assert.FatalIf(t, len(runs) != 1, "missing run: %v", runErr)
 	run := runs[0]
 	res := run.Result

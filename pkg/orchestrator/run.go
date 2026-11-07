@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"iter"
 	"maps"
 	"slices"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -31,73 +33,94 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 //nolint:gocritic // The admission contract requires an independent request snapshot.
 func (e *orchestratorExistence) Promote(
 	ctx context.Context,
-	request loader.PrepareRequest,
+	request selection.PrepareRequest,
 	id manifest.NamedResource,
 ) (bool, error) {
-	reads := request.Reads
-
 	if e.o.preparation != nil {
 		return e.promotePrepared(ctx, request, id)
 	}
-	if e.o.filter.Enabled() {
-		captured := reads
-		if captured == nil {
-			captured = &store.ReadSet{}
-			captured.Init(e.o.store, id, nil)
-			defer captured.Retire()
+	if e.o.selection != nil {
+		return e.promoteSelected(ctx, &request, id)
+	}
+	if object := e.o.store.GetObject(id); object != nil {
+		for range selection.Declarations([]store.Child{{Obj: object}}) {
+			return true, nil
 		}
-		request.Reads = captured
-		_, err := e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, request)
+		return false, nil
+	}
+	return e.promoteFull(ctx, &request, id)
+}
+
+func (e *orchestratorExistence) promoteSelected(
+	ctx context.Context,
+	request *selection.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
+	reads := request.Reads
+	captured := reads
+	if captured == nil {
+		captured = &store.ReadSet{}
+		captured.Init(e.o.store, id, nil)
+		defer captured.Retire()
+	}
+	request.Reads = captured
+	_, err := e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, *request)
+	if err != nil {
+		return false, err
+	}
+	return e.o.selection.Snapshot().Reconcile(id) && captured.GetObject(id) != nil, nil
+}
+
+func (e *orchestratorExistence) promoteFull(
+	ctx context.Context,
+	request *selection.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
+	reads := request.Reads
+	addWarning := e.o.store.AddWarning
+	if reads != nil {
+		addWarning = reads.AddWarning
+	}
+	if reads == nil {
+		reads = &store.ReadSet{}
+		reads.Init(e.o.store, id, nil)
+		defer reads.Retire()
+	}
+	request.Reads = reads
+	productions := reads.Promotions(id, e.o.index)
+	for i := range productions {
+		production := &productions[i]
+		children, err := loader.Promote(ctx, e.o.store, id, loader.PromoteOptions{Record: *production, Reads: reads})
 		if err != nil {
 			return false, err
 		}
-		return e.o.filter.ShouldReconcile(id) && captured.GetObject(id) != nil, nil
-	}
-	obj := e.o.store.GetObject(id)
-	var productions []manifest.Production
-	if obj == nil || e.o.filter.Enabled() {
-		if reads != nil {
-			productions = reads.Promotions(id, e.o.index)
-		} else {
-			productions = e.o.store.Productions(id, e.o.index)
+		for child := range selection.Declarations(children) {
+			if err := ctx.Err(); err != nil {
+				return false, fmt.Errorf("context: %w", err)
+			}
+			if !reads.Valid() {
+				return false, nil
+			}
+			for i := range child.Warnings {
+				warning := child.Warnings[i]
+				warning.Resource = child.Obj.Named()
+				addWarning(warning)
+			}
+			reads.Admit(child, child.SourceSupport, production.Owner)
 		}
-	}
-	if obj != nil {
-		return e.admit(ctx, store.Child{Obj: obj, Productions: productions}, request)
-	}
-	{
-		pValues := productions
-		for pIndex := range pValues {
-			p := pValues[pIndex]
-
-			admit := func(obj manifest.BaseManifest) (bool, error) {
-				return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, request)
-			}
-			promoted, err := loader.Promote(
-				ctx,
-				e.o.store,
-				id,
-				loader.PromoteOptions{Record: p, Reads: reads, Admit: admit},
-			)
-			if err != nil {
-				return false, err
-			}
-			if !promoted {
-				continue
-			}
-			if reads != nil {
-				reads.Productions(id, e.o.index)
-			}
+		if e.o.store.GetObject(id) != nil {
+			reads.Productions(id, e.o.index)
 			return true, nil
 		}
 	}
-	return e.promoteAdmission(ctx, request, id)
+
+	return e.promoteAdmission(ctx, *request, id)
 }
 
 //nolint:gocritic // The admission contract requires an independent request snapshot.
 func (e *orchestratorExistence) promotePrepared(
 	ctx context.Context,
-	request loader.PrepareRequest,
+	request selection.PrepareRequest,
 	id manifest.NamedResource,
 ) (bool, error) {
 	reads := request.Reads
@@ -114,7 +137,7 @@ func (e *orchestratorExistence) promotePrepared(
 //nolint:gocritic // The admission contract requires an independent request snapshot.
 func (e *orchestratorExistence) promoteAdmission(
 	ctx context.Context,
-	request loader.PrepareRequest,
+	request selection.PrepareRequest,
 	id manifest.NamedResource,
 ) (bool, error) {
 	reads := request.Reads
@@ -123,7 +146,11 @@ func (e *orchestratorExistence) promoteAdmission(
 	}
 	child, artifact, err := e.o.admission.Resolve(ctx, id, nil, reads.Work().Scope())
 	if err == nil && child.Obj != nil && artifact != nil && reads.Valid() {
-		accepted, admissionErr := e.admit(ctx, child, request)
+		request.Generation = slices.Collect(selection.Declarations([]store.Child{child}))
+		if len(request.Generation) == 0 {
+			return false, nil
+		}
+		accepted, admissionErr := e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, request)
 		if admissionErr != nil {
 			return false, admissionErr
 		}
@@ -137,23 +164,9 @@ func (e *orchestratorExistence) promoteAdmission(
 	return false, nil
 }
 
-//nolint:gocritic // Immutable value inputs preserve snapshot semantics.
-func (e *orchestratorExistence) admit(
-	ctx context.Context,
-	child store.Child,
-	request loader.PrepareRequest,
-) (bool, error) {
-	info := manifest.KindOf(child.Obj)
-	if !info.Tracked || info.Group != manifest.SourceDomain && info.Runnable {
-		return false, nil
-	}
-	request.Generation = []store.Child{child}
-	return e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, request)
-}
-
 func (o *Orchestrator) run(ctx context.Context) error {
 	o.cfg.work.Scope().Reserve(len(o.index.Records))
-	if !o.filter.Enabled() {
+	if o.selection == nil {
 		o.configureControllers()
 	}
 	// Cycle failures MUST publish before scheduler admission of emitted objects.
@@ -171,7 +184,7 @@ func (o *Orchestrator) run(ctx context.Context) error {
 // Configure MUST precede dispatch; controllers freeze shaping config on start.
 func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
-		Filter:              o.filter,
+		Session:             o.selection,
 		Loader:              o.loader,
 		AllowMissingSecrets: slices.Contains(o.cfg.AllowMissingKinds, manifest.KindSecret),
 		Admission:           o.admission,
@@ -180,7 +193,7 @@ func (o *Orchestrator) configureControllers() {
 	common := base.Options{
 		SkipKinds:               o.cfg.HelmOptions.SkipResourceKinds(),
 		DependencySubstitutions: o.dependencySubstitutions,
-		Filter:                  o.filter,
+		Session:                 o.selection,
 		Loader:                  o.loader,
 		Index:                   o.index,
 		Existence:               existence,
@@ -209,7 +222,10 @@ func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 	}
 	// Completed inventory survives a failed successor; diagnostics remain attached to its input.
 	failed := o.store.FailedResources()
-	res.Manifests = o.collectManifests()
+	res.Manifests, res.emissions = o.collectCompletedManifests()
+	res.catalog = o.loader.DetachCatalog()
+	o.index = selection.ProjectIndex(o.index, o.selection.Snapshot())
+	o.store.SetDiscoveryIndex(o.index)
 	maps.Copy(res.Failed, failed)
 	maps.Copy(res.Orphans, o.orphans)
 	// Tag the derived (dependency-blocked) failures so a consumer can collapse
@@ -222,9 +238,9 @@ func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 	return res, runErr
 }
 
-// collectManifests filters completed output without changing stored documents needed by value consumers.
 // Accepted completed output MUST remain available after a failed successor.
-func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
+func (o *Orchestrator) collectCompletedManifests() ([]manifest.DocumentBatch, []selection.EmissionFacts) {
+	var emissions []selection.EmissionFacts
 	var objects []manifest.BaseManifest
 	for info := range manifest.Kinds() {
 		if info.Runnable {
@@ -246,19 +262,18 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 		if effective == nil {
 			continue
 		}
-		ownership := emissionOwnership(obj, parentAttributed)
-		documentScope, filterOwnership := ownership.document, ownership.filter
-		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
-		o.selectCollectionChildren(id, parentAttributed, attempt.Children, selected)
-		for _, occurrence := range attempt.Manifests {
-			doc := occurrence.Document
-			target := resourceset.DedupKey(doc)
-			if !o.collectionDocumentSelected(id, target, documentScope) {
-				continue
-			}
-			target, identifiable := collectionDocumentTarget(doc, target, id.Namespace, parentAttributed)
-			if filterOwnership && identifiable && !selected[target] &&
-				!o.collectionOwnershipAllows(target, parentAttributed) {
+		var emission selection.EmissionFacts
+		if o.selection != nil {
+			emission.Emitter, emission.Parent = obj, o.store.GetObject(parent)
+		}
+		documents := o.collectionDocuments(obj, parentAttributed, &attempt)
+		for doc := range documents {
+			identity := resourceset.DedupKey(doc)
+			if o.selection != nil {
+				emission.Documents = append(
+					emission.Documents,
+					selection.DocumentFact{Document: doc, Identity: identity},
+				)
 				continue
 			}
 			position, ok := positions[parent]
@@ -269,8 +284,38 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 			}
 			out[position].Documents = append(out[position].Documents, doc)
 		}
+		if len(emission.Documents) != 0 {
+			emissions = append(emissions, emission)
+		}
 	}
-	return out
+	snapshot := selection.Snapshot{Decision: o.selection.Snapshot(), Manifests: out, Emissions: emissions}
+	snapshot.CollectEmissions()
+	return snapshot.Manifests, emissions
+}
+
+func (o *Orchestrator) collectionDocuments(
+	obj manifest.BaseManifest,
+	parentAttributed bool,
+	attempt *store.Emission,
+) iter.Seq[map[string]any] {
+	return func(yield func(map[string]any) bool) {
+		id := obj.Named()
+		filterOwnership := emissionOwnership(obj, parentAttributed)
+		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
+		o.collectionChildren(id, parentAttributed, attempt.Children, selected)
+		for _, occurrence := range attempt.Manifests {
+			doc := occurrence.Document
+			target := resourceset.DedupKey(doc)
+			target, identifiable := collectionDocumentTarget(doc, target, id.Namespace, parentAttributed)
+			if filterOwnership && identifiable && !selected[target] &&
+				!o.collectionOwnershipAllows(target, parentAttributed) {
+				continue
+			}
+			if !yield(doc) {
+				return
+			}
+		}
+	}
 }
 
 func (o *Orchestrator) collectionOwnershipAllows(target manifest.NamedResource, parentAttributed bool) bool {
@@ -293,7 +338,7 @@ func collectionDocumentTarget(
 	return target, identifiable
 }
 
-func (o *Orchestrator) selectCollectionChildren(
+func (o *Orchestrator) collectionChildren(
 	id manifest.NamedResource,
 	parentAttributed bool,
 	children []store.Child,
@@ -308,16 +353,6 @@ func (o *Orchestrator) selectCollectionChildren(
 				o.store.EmissionOwner(target) == id
 		}
 	}
-}
-
-func (o *Orchestrator) collectionDocumentSelected(id, target manifest.NamedResource, documentScope bool) bool {
-	if o.filter != nil && !documentScope {
-		ownerSelected := o.filter.Membership(id).Selected
-		if !ownerSelected && !o.filter.ShouldReconcile(target) {
-			return false
-		}
-	}
-	return true
 }
 
 func (o *Orchestrator) collectionParent(
@@ -342,21 +377,13 @@ func (o *Orchestrator) collectionParent(
 	return parent, true
 }
 
-type emissionScope struct {
-	document bool
-	filter   bool
-}
-
-func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) emissionScope {
-	documentScope := false
-	filterOwnership := parentAttributed
+func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) bool {
 	if producer, ok := obj.(interface {
 		EmissionPolicy() manifest.EmissionPolicy
 	}); ok {
-		documentScope = producer.EmissionPolicy().DocumentScope
-		filterOwnership = filterOwnership || documentScope
+		return parentAttributed || producer.EmissionPolicy().DocumentScope
 	}
-	return emissionScope{document: documentScope, filter: filterOwnership}
+	return parentAttributed
 }
 
 func (o *Orchestrator) stop() {

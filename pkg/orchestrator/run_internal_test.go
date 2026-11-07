@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -68,7 +70,7 @@ spec: {}
 		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
 	}}
 	{
-		promoted, err := e.Promote(t.Context(), loader.PrepareRequest{Reads: nil}, id)
+		promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: nil}, id)
 		assert.FatalIf(t, err != nil || !promoted || st.GetObject(id) == nil, "%v", "selected data must be admitted")
 	}
 	for _, excluded := range []manifest.NamedResource{
@@ -154,7 +156,7 @@ spec: {url: https://example.test/excluded.git}
 		chart:          "bundle.yaml",
 		excludedSource: "bundle.yaml",
 	}
-	filter := admissiontest.Filter(
+	idx, session := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"consumer.yaml"}),
@@ -162,28 +164,27 @@ spec: {url: https://example.test/excluded.git}
 			Inventory: st,
 		},
 	)
+	admissiontest.Commit(t, session, nil)
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	testutil.WriteFile(t, dir, "kustomization.yaml", "namespace: apps\nresources: [bundle.yaml]\n")
-	idx := loader.New(st)
 	idx.SourceRoot = dir
-	idx.Options.Filter, idx.Options.Changes = filter, change.NewSet([]string{"consumer.yaml"})
-	idx.Options.Selection.Changed = true
+	idx.Options.Session = session
 	_, err = idx.Load(t.Context(), dir, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, idx.FinalizeIndex(t.Context(), dir, true))
 	controller := base.New(st, nil)
-	controller.Configure(base.Options{Filter: filter, Index: idx.Index, Loader: idx})
+	controller.Configure(base.Options{Session: session, Index: idx.Index, Loader: idx})
 	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
-		store:  idx.Store,
-		index:  idx.Index,
-		loader: idx,
-		cfg:    treeConfig{Config: Config{}},
-		filter: filter,
-		ksc:    &kustomization.Controller{Controller: controller},
+		store:     idx.Store,
+		index:     idx.Index,
+		loader:    idx,
+		cfg:       treeConfig{Config: Config{}},
+		selection: session,
+		ksc:       &kustomization.Controller{Controller: controller},
 	}}
-	size := len(filter.KeepNames())
+	size := len(selectionNamesForTest(session, st, idx.Index))
 	reads := &store.ReadSet{}
 	reads.Init(st, hr.Named(), nil)
 	defer reads.Retire()
@@ -192,7 +193,7 @@ spec: {url: https://example.test/excluded.git}
 	{
 		promoted, err := e.Promote(
 			t.Context(),
-			loader.PrepareRequest{Reads: reads},
+			selection.PrepareRequest{Reads: reads},
 			selected,
 		)
 		assert.FatalIf(t, err != nil || !promoted || st.GetObject(selected) == nil ||
@@ -206,17 +207,22 @@ spec: {url: https://example.test/excluded.git}
 		{
 			promoted, err := e.Promote(
 				t.Context(),
-				loader.PrepareRequest{Reads: nil},
+				selection.PrepareRequest{Reads: nil},
 				id,
 			)
 			assert.ErrorIf(t, err != nil || promoted || st.GetObject(id) != nil ||
-				filter.ShouldReconcile(id), "excluded sibling %s must remain absent", id)
+				session.Snapshot().Reconcile(id), "excluded sibling %s must remain absent", id)
 		}
 	}
-	assert.ErrorIf(t, len(filter.KeepNames()) != size, "%v", "ordering promotion must not expand keep")
+	assert.ErrorIf(
+		t,
+		len(selectionNamesForTest(session, st, idx.Index)) != size,
+		"%v",
+		"ordering promotion must not expand keep",
+	)
 	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
 	{
-		promoted, err := e.Promote(t.Context(), loader.PrepareRequest{Reads: nil}, excluded)
+		promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: nil}, excluded)
 		assert.ErrorIf(t, err != nil || promoted, "%v", "availability must not bypass admission")
 	}
 }
@@ -242,20 +248,24 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	record.Path = filepath.Join(dir, file)
 	record.Productions = []manifest.Production{{Authored: id, Source: source.Named(), Path: record.Path, File: file}}
 	index.Records[id] = record
-	filterLoader := admissiontest.New(
+	filterLoader, session := admissiontest.New(
 		t,
 		admissiontest.Config{Changes: change.NewSet([]string{file}), Index: index, Inventory: st, Root: dir},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
-	assert.FatalIf(t, filter.ShouldReconcile(id), "%v", "unavailable source evidence must not admit existing data")
+	admissiontest.Commit(t, session, nil)
+	assert.FatalIf(
+		t,
+		session.Snapshot().Reconcile(id),
+		"%v",
+		"unavailable source evidence must not admit existing data",
+	)
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
 	assert.NoError(t, err)
 	st.SetArtifact(source.Named(), input)
 	controller := base.New(st, nil)
-	controller.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
+	controller.Configure(base.Options{Session: session, Loader: filterLoader, Index: index})
 	e := &orchestratorExistence{DiscoveryIndex: index, o: &Orchestrator{
-		store: st, index: index, filter: filter, loader: filterLoader,
+		store: st, index: index, selection: session, loader: filterLoader,
 		ksc: &kustomization.Controller{Controller: controller},
 	}}
 	var reads store.ReadSet
@@ -263,10 +273,10 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	defer reads.Close()
 	reads.RequireData(id)
 	{
-		promoted, err := e.Promote(t.Context(), loader.PrepareRequest{Reads: &reads}, id)
+		promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: &reads}, id)
 		assert.FatalIf(
 			t,
-			err != nil || !promoted || !filter.ShouldReconcile(id),
+			err != nil || !promoted || !session.Snapshot().Reconcile(id),
 			"%v",
 			"new source evidence must admit the existing changed data",
 		)
@@ -354,7 +364,7 @@ func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
 				Namespace: "sources",
 				Name:      "missing",
 			}
-			promoted, err := e.Promote(t.Context(), loader.PrepareRequest{Reads: &reads}, id)
+			promoted, err := e.Promote(t.Context(), selection.PrepareRequest{Reads: &reads}, id)
 			assert.NoError(t, err)
 			assert.Equal(t, promoted, tc.want)
 			if !tc.want {

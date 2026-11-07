@@ -119,8 +119,7 @@ spec:
 	if testCaseInput.allow {
 		cfg.AllowMissingKinds = []string{manifest.KindSecret}
 	}
-	rendered, err := RenderTrees(
-		t.Context(),
+	rendered, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: root, RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		cfg,
 	)

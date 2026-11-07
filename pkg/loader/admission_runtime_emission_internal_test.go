@@ -40,27 +40,30 @@ func TestFilter_AddExtendsKeepSetAtRuntime(t *testing.T) {
 			child := &manifest.Kustomization{Name: "leaf-app", Namespace: "database"}
 			sibling := testutil.KustomizationID("database", "sibling")
 			foreign := testutil.KustomizationID("other", child.Name)
+			objects := filtertest.MapLister{
+				parent: &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace},
+			}
 			f := newAdmission(
 				t,
 				admissionConfig{
 					changes: change.NewSet([]string{"parent.yaml"}),
 					index: new(filterFixture{
 						files:   map[manifest.NamedResource]string{parent: "parent.yaml", sibling: "sibling.yaml"},
-						objects: filtertest.EmptyLister(),
+						objects: objects,
 					}).index(),
-					inventory: filtertest.EmptyLister(),
+					inventory: objects,
 					root:      "",
 				},
 			)
-			assert.Equal(t, f.ShouldReconcile(parent), true)
+			assert.Equal(t, f.Reconcile(parent), true)
 			tasks := task.NewBounded(workers)
 			captured, published := make(chan bool, workers), make(chan struct{})
 			observations := make(chan bool, workers)
 			for range workers {
 				tasks.Go(t.Context(), "selection-reader", func(context.Context) {
-					captured <- f.ShouldReconcile(child.Named())
+					captured <- f.Reconcile(child.Named())
 					<-published
-					observations <- f.ShouldReconcile(child.Named()) && !f.ShouldReconcile(sibling) && !f.ShouldReconcile(foreign)
+					observations <- f.Reconcile(child.Named()) && !f.Reconcile(sibling) && !f.Reconcile(foreign)
 				})
 			}
 			for range workers {
@@ -88,7 +91,7 @@ func TestFilter_AddOnDisabledFilterIsNoOp(t *testing.T) {
 	id := testutil.KustomizationID("ns", "x")
 	f.addUngated(id)
 	other := testutil.HelmReleaseID("ns", "y")
-	assert.ErrorIf(t, !f.ShouldReconcile(other), "disabled filter must still keep everything after Add()")
+	assert.ErrorIf(t, !f.Reconcile(other), "disabled filter must still keep everything after Add()")
 }
 
 // TestFilter_AddEmittedRejectsAncestorOnlyEmitter pins the
@@ -143,13 +146,13 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 		},
 	)
 
-	if !f.ShouldReconcile(leafKS) {
+	if !f.Reconcile(leafKS) {
 		t.Fatalf("leaf KS (owner of changed file) must be in keep; keep=%v", f.KeepNames())
 	}
-	if !f.ShouldReconcile(clusterApps) {
+	if !f.Reconcile(clusterApps) {
 		t.Fatalf("cluster-apps ancestor must be in keep (so its patches render); keep=%v", f.KeepNames())
 	}
-	if f.ShouldReconcile(siblingApp) {
+	if f.Reconcile(siblingApp) {
 		t.Fatalf(
 			"precondition: sibling under same ancestor must NOT be in keep at resolve time; keep=%v",
 			f.KeepNames(),
@@ -159,7 +162,7 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 	// Simulate cluster-apps rendering and emitting the file-loaded
 	// sibling. AddEmitted must NOT keep-add it.
 	f.AddEmitted(clusterApps, new(store.Child{Obj: refObj(siblingApp)}), f.objs)
-	if f.ShouldReconcile(siblingApp) {
+	if f.Reconcile(siblingApp) {
 		t.Errorf(
 			"AddEmitted(ancestor, sibling) over-extended keep set; sibling should remain SKIPPED; keep=%v",
 			f.KeepNames(),
@@ -171,7 +174,7 @@ func TestFilter_AddEmittedRejectsAncestorOnlyEmitter(t *testing.T) {
 	// and an unchanged emitter wouldn't produce a different child.
 	renderOnly := testutil.KustomizationID("rendered", "from-replacement")
 	f.AddEmitted(clusterApps, new(store.Child{Obj: refObj(renderOnly)}), f.objs)
-	if f.ShouldReconcile(renderOnly) {
+	if f.Reconcile(renderOnly) {
 		t.Errorf("AddEmitted(ancestor, render-only) should reject when ancestor is not primary; keep=%v", f.KeepNames())
 	}
 }
@@ -255,13 +258,13 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 
 	// Precondition: the leaf and its ancestor chain are in keep.
 	for _, id := range []manifest.NamedResource{reloaderApp, reloader, kubeSystem, clusterApps} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Fatalf("expected %s in keep at resolve time; keep=%v", id, f.KeepNames())
 		}
 	}
 	// And the unrelated siblings are NOT.
 	for _, id := range []manifest.NamedResource{mediaSibling, spegelSibling, reloaderSibling} {
-		if f.ShouldReconcile(id) {
+		if f.Reconcile(id) {
 			t.Fatalf("precondition: %s must NOT be in keep before emissions; keep=%v", id, f.KeepNames())
 		}
 	}
@@ -281,13 +284,13 @@ func TestFilter_AddEmittedNoCascadeAcrossDeepAncestorChain(t *testing.T) {
 	// keep only as ancestor-only — none of their AddEmitted calls
 	// should promote a file-loaded sibling into keep.
 	for _, id := range []manifest.NamedResource{mediaSibling, spegelSibling, reloaderSibling} {
-		if f.ShouldReconcile(id) {
+		if f.Reconcile(id) {
 			t.Errorf("ancestor-only cascade leaked: %s joined keep via AddEmitted; keep=%v", id, f.KeepNames())
 		}
 	}
 	// Sanity: the ancestor chain itself is still kept.
 	for _, id := range []manifest.NamedResource{reloaderApp, reloader, kubeSystem, clusterApps} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("ancestor chain entry %s dropped after AddEmitted churn; keep=%v", id, f.KeepNames())
 		}
 	}
@@ -302,6 +305,7 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 	t.Parallel()
 	parent := testutil.KustomizationID("flux-system", "database")
 	child := testutil.KustomizationID("database", "leaf-app")
+	objects := filtertest.MapLister{parent: &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}}
 
 	f := newAdmission(
 		t,
@@ -310,18 +314,18 @@ func TestFilter_AddEmittedFromPrimaryParent(t *testing.T) {
 			index: new(filterFixture{
 				files:   map[manifest.NamedResource]string{parent: "apps/database/parent.yaml"},
 				root:    "",
-				objects: filtertest.EmptyLister(),
+				objects: objects,
 			}).index(),
-			inventory: filtertest.EmptyLister(),
+			inventory: objects,
 			root:      "",
 		},
 	)
-	if !f.ShouldReconcile(parent) {
+	if !f.Reconcile(parent) {
 		t.Fatalf("parent must be primary from direct file change; keep=%v", f.KeepNames())
 	}
 
 	f.AddEmitted(parent, new(store.Child{Obj: refObj(child)}), f.objs)
-	if !f.ShouldReconcile(child) {
+	if !f.Reconcile(child) {
 		t.Errorf("AddEmitted(primary parent, child) should keep-add child; keep=%v", f.KeepNames())
 	}
 }

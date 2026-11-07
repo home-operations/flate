@@ -100,7 +100,7 @@ func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Discovery = opts.Discovery
 	c.retry = retry
 	c.strictSubstitutions = opts.StrictSubstitutions
-	c.restricted = opts.Filter != nil
+	c.restricted = opts.Session != nil
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked

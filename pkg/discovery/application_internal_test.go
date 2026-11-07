@@ -8,9 +8,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -52,7 +53,7 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 	}
 	result, err := Run(t.Context(), Config{
 		Input: input, Path: filepath.Join(root, "entry"), Store: st, Trees: testTrees(t),
-		Selection: manifest.Selection{Changed: true},
+		Selection: selection.Request{Changed: true},
 	})
 	assert.NoError(t, err)
 	a := result.Admission
@@ -107,13 +108,16 @@ func testEntryQualificationReceiptInputsCase(t *testing.T, testCaseInput *string
 		}
 	}
 	provider := &manifest.ResourceSet{Name: "provider", Namespace: "apps"}
-	membership := q.loader.Options.Filter.Membership(provider.Named())
-	_, retry := q.loader.Options.Filter.AddEmitted(
-		change.MembershipUpdate{Needed: []manifest.NamedResource{provider.Named()}},
-		membership.Revision,
-	)
-	assert.Equal(t, retry, false)
 	st.AddObject(provider)
+	var required store.ReadSet
+	required.Init(st, provider.Named(), nil)
+	defer required.Retire()
+	required.RequireQualification(provider.Named())
+	proposal, err := prepareSelection(t.Context(), t, q.loader, selection.PrepareRequest{Reads: &required})
+	assert.NoError(t, err)
+	committed, err := commitSelection(t.Context(), q.loader, proposal, selection.Execution)
+	assert.NoError(t, err)
+	assert.Equal(t, !committed, false)
 	evidence.Owner, evidence.Root = provider.Named(), provider.Named()
 	a.entryDemand = true
 	q.closed = false
@@ -179,9 +183,6 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			}
 			st := store.New()
 			l := loader.New(st)
-			l.Options.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
-				testutil.KustomizationID("apps", "child"): nil,
-			}
 			cfg := Config{
 				Store:  st,
 				Loader: l,
@@ -190,7 +191,7 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 				Trees:  testTrees(t),
 			}
 			if scenario == "unresolved changed-only" {
-				cfg.Selection = manifest.Selection{Changed: true}
+				cfg.Selection = selection.Request{Changed: true}
 			}
 			if scenario == "nil trees" {
 				cfg.Trees = nil
@@ -202,7 +203,7 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			a := result.Admission
 			assert.Equal(t, a.entryBound.Load(), scenario == "bound")
 			assert.Equal(t, a.qualification != nil, scenario == "unresolved changed-only")
-			assert.Equal(t, len(l.Options.HistoryOwners) == 0, scenario != "unresolved changed-only")
+			assert.Equal(t, session.entryState.loader == nil, scenario != "unresolved changed-only")
 			if scenario != "unresolved changed-only" {
 				assert.Equal(t, session.entryState.loader == nil, true)
 				return

@@ -73,6 +73,7 @@ spec:
 		}()
 		assert.NoError(t, o.bootstrap(t.Context()))
 		result, err := o.collectResult(o.run(t.Context()))
+		t.Cleanup(result.Close)
 		assert.NoError(t, err)
 		return result
 	}
@@ -221,10 +222,10 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 		return
 	}
 	o.cfg.ExternalChanges = change.NewSet(nil)
-	err = o.buildChangeFilter(ctx)
+	err = o.prepareInvocation(ctx)
 	assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, len(o.filter.KeepNames()), 0)
+	assert.Equal(t, len(selectionNamesForTest(o.selection, o.store, o.index)), 0)
 	declaration := o.store.GetObject(owner).(*manifest.Kustomization).Clone()
 	declaration.Path = "./different"
 	o.store.AddObject(declaration)
@@ -484,7 +485,7 @@ spec:
 	}
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.NoError(t, fresh.lookupHistory(t.Context()))
-	assert.Equal(t, len(fresh.loader.Options.HistoryOwners[owner]) != 0, true)
+	assert.Equal(t, len(fresh.historyOwners[owner]) != 0, true)
 	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
 	assert.FatalIf(
 		t,
@@ -508,16 +509,17 @@ spec:
 		assert.Equal(t, fresh.store.GetObject(supplied) != nil, true)
 	}
 	fresh.completeBootstrap()
-	assert.NoError(t, fresh.buildChangeFilter(t.Context()))
+	assert.NoError(t, fresh.prepareInvocation(t.Context()))
 	assert.NoError(t, fresh.installAdmission(t.Context()))
-	assert.Equal(t, fresh.filter.ShouldReconcile(child), true)
-	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(child), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), true)
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
 	unrelated := testutil.HelmReleaseID("apps", "unrelated")
-	assert.Equal(t, fresh.filter.ShouldReconcile(unrelated), false)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(unrelated), false)
 	result, err := fresh.collectResult(fresh.run(t.Context()))
+	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	docs := outputByParent(result.Manifests)[child]
 	assert.FatalIf(t, len(docs) != 1, "changed generated child output: %v", docs)
@@ -757,13 +759,13 @@ spec:
 		entry.Finish()
 		entryReads.Retire()
 		assert.Equal(t, fresh.store.EmissionOwner(supplied), fresh.entryBinding.Producer)
-		assert.NoError(t, fresh.buildChangeFilter(t.Context()))
+		assert.NoError(t, fresh.prepareInvocation(t.Context()))
 		assert.NoError(t, fresh.installAdmission(t.Context()))
 	} else {
 		assert.NoError(t, fresh.bootstrap(t.Context()))
 	}
-	assert.Equal(t, fresh.filter.ShouldReconcile(owner), (*testCaseInput) != "helm_values_from")
-	assert.Equal(t, fresh.filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), (*testCaseInput) != "helm_values_from")
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(testutil.KustomizationID("apps", "consumer")), true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 }
 

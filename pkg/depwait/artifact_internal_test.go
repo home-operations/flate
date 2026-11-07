@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
 
@@ -28,7 +28,7 @@ func (*artifactPromotion) IsFileIndexed(manifest.NamedResource) bool { return tr
 //nolint:gocritic // The admission contract requires an independent request snapshot.
 func (p *artifactPromotion) Promote(
 	_ context.Context,
-	_ loader.PrepareRequest,
+	_ selection.PrepareRequest,
 	id manifest.NamedResource,
 ) (bool, error) {
 	return p.promote(id), nil

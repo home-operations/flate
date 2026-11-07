@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -44,9 +46,8 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		assert.FatalIf(t, root == nil, "source replacement control did not propose an entry")
 		application, ok := manifest.ApplicationFor(root)
 		assert.Equal(t, ok, true)
-		proposal, err := f.loader.Prepare(
-			t.Context(),
-			loader.PrepareRequest{Generation: []store.Child{{Obj: root, Entry: &application}}, Reads: binding.Reads},
+		proposal, err := prepareSelection(t.Context(), t, f.loader,
+			selection.PrepareRequest{Generation: []store.Child{{Obj: root, Entry: &application}}, Reads: binding.Reads},
 		)
 		assert.NoError(t, err)
 		replacement := *f.views[0]
@@ -54,7 +55,7 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		f.views[0] = &replacement
 		f.store.SetArtifact(f.sources[0], &replacement)
 		assert.Equal(t, binding.Reads.Valid(), false)
-		committed, err := f.loader.Commit(t.Context(), proposal, loader.Execution)
+		committed, err := commitSelection(t.Context(), f.loader, proposal, selection.Execution)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, false)
 		assert.Equal(t, acceptEntryForTest(t, f.admission, &binding), Binding{})
@@ -96,7 +97,7 @@ func newLiteralSourceViewsFixture(t *testing.T, changed bool) *literalSourceView
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	f := &literalSourceViewsFixture{store: st, loader: loader.New(st), trees: testTrees(t)}
 	f.loader.SourceRoot = root
-	f.loader.Options.Selection = manifest.Selection{Changed: changed}
+	configureSelection(t, f.loader, selection.Request{Changed: changed})
 	t.Cleanup(f.loader.Retire)
 	f.admission = &Admission{
 		store:       st,
@@ -156,6 +157,7 @@ func newLiteralSourceViewsFixture(t *testing.T, changed bool) *literalSourceView
 		f.raw[i] = parsed.Object
 		st.AddObject(parsed.Object, parsed.Document)
 	}
+	qualifyForTest(t, f.loader, f.raw[0].Named(), f.raw[1].Named())
 	f.trees.SetGitBaseFetcher(
 		func(_ context.Context, _ kustomize.GitBaseRequest, _ cache.RetryConfig) (*store.SourceArtifact, error) {
 			f.fetches.Add(1)
@@ -175,15 +177,25 @@ func (f *literalSourceViewsFixture) literal(t *testing.T, index int) *manifest.K
 	literal := manifest.NewEntryKustomization(application.Source, application.Path, f.raw[index].Named())
 	var reads store.ReadSet
 	reads.Init(f.store, literal.Named(), nil)
+	reads.RequireQualification(f.raw[index].Named())
 	reads.GetDeclaration(f.raw[index].Named())
 	reads.GetArtifact(application.Source, store.ArtifactContent)
-	proposal, err := f.loader.Prepare(
-		t.Context(),
-		loader.PrepareRequest{Generation: []store.Child{{Obj: literal, Entry: &application}}, Reads: &reads},
-	)
-	assert.NoError(t, err)
-	committed, err := f.loader.Commit(t.Context(), proposal, loader.Execution)
-	assert.NoError(t, err)
+	child := store.Child{Obj: literal, Entry: &application}
+	var committed bool
+	if f.loader.Options.Session == nil {
+		reads.Admit(child, manifest.BootstrapSourceID, manifest.NamedResource{})
+		committed = reads.Valid()
+	} else {
+		proposal, err := prepareSelection(
+			t.Context(),
+			t,
+			f.loader,
+			selection.PrepareRequest{Generation: []store.Child{child}, Reads: &reads},
+		)
+		assert.NoError(t, err)
+		committed, err = commitSelection(t.Context(), f.loader, proposal, selection.Execution)
+		assert.NoError(t, err)
+	}
 	assert.Equal(t, committed, true)
 	reads.Retire()
 	f.literals[index] = literal

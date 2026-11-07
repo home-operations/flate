@@ -12,6 +12,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -426,14 +428,14 @@ func testSourceDeclarationContributorsReuseCase(
 	first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
 	second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
 	var filterLoader *loader.Loader
-	var filter *change.Filter
+	var filter *selection.Session
 	if testCaseInput.tc.filtered {
 		index := &manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				chart.Named(): {File: "chart.yaml"},
 			},
 		}
-		filterLoader = admissiontest.New(
+		filterLoader, _ = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet([]string{"chart.yaml"}),
@@ -442,13 +444,13 @@ func testSourceDeclarationContributorsReuseCase(
 				Root:      "/repo",
 			},
 		)
-		admissiontest.Commit(t, filterLoader, nil)
-		filter = filterLoader.Options.Filter
+		admissiontest.Commit(t, filterLoader.Options.Session, nil)
+		filter = filterLoader.Options.Session
 	}
 	c, st := newConfiguredController(
 		t,
 		map[string]src.Fetcher{manifest.KindHelmChart: f},
-		FetchOptions{Filter: filter, Loader: filterLoader},
+		FetchOptions{Session: filter, Loader: filterLoader},
 	)
 	st.AddObjects([]manifest.BaseManifest{first, second})
 	secret := &manifest.Secret{
@@ -811,7 +813,7 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 	c := New(st, tasks)
 	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 	c.Fetchers[manifest.KindGitRepository] = f
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet(nil),
@@ -820,9 +822,9 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
-	c.Configure(FetchOptions{Filter: filter, Loader: filterLoader}, sourcecache.RetryConfig{})
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
+	c.Configure(FetchOptions{Session: filter, Loader: filterLoader}, sourcecache.RetryConfig{})
 	t.Cleanup(func() { tasks.BlockTillDone() })
 	repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
 	st.AddObject(repo)

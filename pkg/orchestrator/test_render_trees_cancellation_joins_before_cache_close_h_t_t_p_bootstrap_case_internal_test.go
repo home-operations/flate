@@ -63,8 +63,7 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseHTTPBootstrapCase(
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := RenderTrees(
-			ctx,
+		_, err := renderTreesForTest(ctx, t,
 			[]Tree{
 				{
 					RepoRoot:        trees[0].RepoRoot,

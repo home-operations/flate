@@ -4,6 +4,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -20,7 +22,9 @@ func assertHeadOnlyWork(t *testing.T, rendered Rendered) {
 	if result == nil || len(result.Work) == 0 {
 		t.Fatal("head-only preparation lost its work")
 	}
-	assert.Diff(t, result, &Result{Work: result.Work})
+	if difference := cmp.Diff(&Result{Work: result.Work}, result, cmp.AllowUnexported(Result{})); difference != "" {
+		t.Errorf("head-only result differs (-want +got):\n%s", difference)
+	}
 	assert.Equal(t, workCounts(result.Work, manifest.NamedResource{}, manifest.WorkKustomize).Attempts, uint64(0))
 	assert.Equal(t, workCounts(result.Work, manifest.NamedResource{}, manifest.WorkHelm).Attempts, uint64(0))
 	for recordIndex := range result.Work {
@@ -58,8 +62,7 @@ func TestWork_BorrowedOwners(t *testing.T) {
 		for side := range trees {
 			wg.Go(
 				func() {
-					results[side], errs[side] = RenderTrees(
-						t.Context(),
+					results[side], errs[side] = renderTreesForTest(t.Context(), t,
 						[]Tree{
 							trees[side],
 						},

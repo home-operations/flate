@@ -85,7 +85,7 @@ spec:
 
 	render := func(trees []Tree) []Rendered {
 		t.Helper()
-		runs, err := RenderTrees(t.Context(), trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), len(trees))
 		for _, run := range runs {
@@ -98,10 +98,11 @@ spec:
 	}
 	compare := func(runs []Rendered) []byte {
 		t.Helper()
-		selected, selectedErr, remainder := Select(runs, nil, []manifest.NamedResource{
+		projectedResults0, projectionErrors0 := Select(runs, nil, []manifest.NamedResource{
 			testutil.KustomizationID("", ""),
 			{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet},
 		}, nil)
+		selected, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, selectedErr)
 		assert.NoError(t, remainder)
 		body, _, _, err := diff.Compare(
@@ -126,7 +127,7 @@ spec:
 
 	full := []Rendered{render(trees[:1])[0], render(trees[1:])[0]}
 	for _, run := range full {
-		assert.Equal(t, run.filter.Enabled(), false)
+		assert.Equal(t, (run.selection != nil), false)
 	}
 	testRenderTreesChangedOnlyAndDiffSelectorRelabelTail(
 		t,
@@ -151,7 +152,7 @@ func testRenderTreesChangedOnlyAndDiffSelectorRelabelTail(
 	for run := range 2 {
 		paired := (*tailCaseInput.render)((*tailCaseInput.trees))
 		for _, side := range paired {
-			assert.Equal(t, side.filter.Enabled(), true)
+			assert.Equal(t, (side.selection != nil), true)
 			assert.Diff(t, side.cfg.ExternalChanges.Paths(), []string{"provider-a.yaml"})
 		}
 		assert.Diff(t, configMapNames(paired[0].Result), map[string]bool{"cfg-a": true, "cfg-b": true})
@@ -325,8 +326,7 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	renderedTrees1, err := RenderTrees(
-		ctx,
+	renderedTrees1, err := renderTreesForTest(ctx, t,
 		[]Tree{
 			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -389,8 +389,9 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, ns, "")
 	}
 
-	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
+	projectedResults1, projectionErrors1 := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+	selected, selectedErr, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 	body, _, _, err := diff.Compare(
 		diff.Snapshot{
 			Subjects:     selected[0].Subjects,
@@ -517,8 +518,7 @@ func assertFullRemoteTrees(t *testing.T, roots []string, query string) {
 	for side, root := range roots {
 		var first []byte
 		for run := range 2 {
-			rendered, err := RenderTrees(
-				t.Context(),
+			rendered, err := renderTreesForTest(t.Context(), t,
 				[]Tree{
 					{
 						RepoRoot: root,

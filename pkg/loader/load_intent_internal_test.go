@@ -11,14 +11,14 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestLoad_ReadIntentReuse(t *testing.T) {
 	t.Parallel()
-	for _, stage := range []CommitStage{Construction, Execution} {
+	for _, stage := range []selection.CommitStage{selection.Construction, selection.Execution} {
 		for _, physicalFirst := range []bool{false, true} {
 			name := "application first"
 			if physicalFirst {
@@ -32,7 +32,7 @@ func TestLoad_ReadIntentReuse(t *testing.T) {
 	}
 }
 
-func testLoadReadIntentReuse(t *testing.T, stage CommitStage, physicalFirst bool) {
+func testLoadReadIntentReuse(t *testing.T, stage selection.CommitStage, physicalFirst bool) {
 	t.Helper()
 	root := t.TempDir()
 	files := fstest.MapFS{
@@ -86,28 +86,35 @@ spec:
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection.Changed = true
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
+
 	owner := testutil.KustomizationID("apps", "owner")
 	st.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
-	commit := func(stage CommitStage) {
+	commit := func(stage selection.CommitStage) {
+		before := l.Options.Session.Snapshot()
 		var reads store.ReadSet
 		reads.Init(st, manifest.NamedResource{}, nil)
 		defer reads.Retire()
 		reads.RequireData(owner)
-		proposal, err := l.Prepare(t.Context(), PrepareRequest{Reads: &reads})
+		proposal, err := prepareSelection(
+			t.Context(),
+			t,
+			l,
+			selection.PrepareRequest{Changes: l.Options.Changes, Reads: &reads},
+		)
 		assert.NoError(t, err)
-		committed, err := l.Commit(t.Context(), proposal, stage)
+		_, committed, err := l.commitSelection(t.Context(), t, proposal, stage)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
-		if stage == Construction {
-			assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
-			assert.Equal(t, l.Options.Filter.Membership(owner).Selected, false)
-			assert.Equal(t, l.Options.Filter.Membership(owner).Dirty, false)
-			assert.Equal(t, l.Options.Filter.OrdinaryDemand(owner), false)
-			assert.Equal(t, l.constructionPurpose.Load() != nil, true)
+		if stage == selection.Construction {
+			assert.Equal(t, len(proposalSelected(l.Options.Session.Snapshot(), l.Index)), 0)
+			assert.Equal(t, l.Options.Session.Snapshot().Output(owner), false)
+			assert.Equal(t, l.Options.Session.Snapshot().Changed(owner), false)
+			assert.Equal(t, before.OrdinaryDemand(owner), false)
+			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(owner), true)
+			assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(owner), true)
 		} else {
-			assert.Equal(t, l.constructionPurpose.Load(), nil)
+			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(owner), true)
 		}
 	}
 	load := func() { _, err := l.Load(t.Context(), root, owner, nil); assert.NoError(t, err) }
@@ -149,7 +156,7 @@ spec:
 	load()
 	assert.Equal(t, reads["objects.yaml"].Load(), count)
 	assert.Equal(t, directories.Load(), listings)
-	commit(Execution)
+	commit(selection.Execution)
 	load()
 	assert.Equal(t, reads["objects.yaml"].Load(), count)
 	assert.Equal(t, directories.Load(), listings)

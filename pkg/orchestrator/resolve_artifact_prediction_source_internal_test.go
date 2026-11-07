@@ -73,7 +73,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 				Namespace: "apps",
 				Name:      "app-api",
 			}
-			assert.FatalIf(t, !o.filter.ShouldReconcile(producer), "%v", "prediction owner not selected")
+			assert.FatalIf(t, !o.selection.Snapshot().Reconcile(producer), "%v", "prediction owner not selected")
 			info := controllertest.DispatchToFixpoint(
 				t.Context(),
 				t,
@@ -113,7 +113,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 				reader.Outcome(),
 				reader.(*base.Execution).Blocked,
 				o.store.FailedResources(),
-				o.filter.ShouldReconcile(testutil.KustomizationID("apps", "reader")),
+				o.selection.Snapshot().Reconcile(testutil.KustomizationID("apps", "reader")),
 			)
 		})
 	}
@@ -149,7 +149,7 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 				}
 				f.o.index.Claims = map[string][]manifest.NamedResource{"reader/": {reader}}
 				f.o.store.SetDiscoveryIndex(f.o.index)
-				f.o.loader = admissiontest.New(
+				f.o.loader, f.o.selection = admissiontest.New(
 					t,
 					admissiontest.Config{
 						Changes:   change.NewSet([]string{"reader/output.yaml"}),
@@ -158,11 +158,11 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 						Root:      "",
 					},
 				)
-				admissiontest.Commit(t, f.o.loader, nil)
-				f.o.filter = f.o.loader.Options.Filter
+				admissiontest.Commit(t, f.o.selection, nil)
+
 				assert.FatalIf(
 					t,
-					!f.o.filter.ShouldReconcile(reader) || !f.o.filter.ShouldReconcile(f.supplier),
+					!f.o.selection.Snapshot().Reconcile(reader) || !f.o.selection.Snapshot().Reconcile(f.supplier),
 					"%v",
 					"changed-only selection lost optional materializer",
 				)
@@ -180,7 +180,8 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 					},
 				)
 			}
-			selected, err, _ := Select(runs, nil, []manifest.NamedResource{reader}, nil)
+			projectedResults0, projectionErrors0 := Select(runs, nil, []manifest.NamedResource{reader}, nil)
+			selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.NoError(t, err)
 			assert.Equal(t, len(selected), 2)
 			for side, want := range []string{"fallback", "exact"} {

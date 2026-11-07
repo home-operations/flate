@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/opencontainers/go-digest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -108,7 +110,7 @@ func newGeneratedChartFixture(t *testing.T) generatedChartFixture {
 	var full [2][]map[string]any
 	for side, value := range []string{"before", "after"} {
 		tree := generatedChartTree(t, server.URL, value, manifest.TreeHead)
-		runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		full[side] = outputByParent(runs[0].Result.Manifests)[hr]
 		assert.Equal(t, len(full[side]), 1)
@@ -174,7 +176,7 @@ func assertGeneratedSourcePhases(t *testing.T, result *Result, kind string, sour
 			Namespace: "apps",
 			Name:      "selected",
 		}] = 1
-		caches[owner] = manifest.WorkCounts{Attempts: 9, Completed: 6, Failures: 3, CacheService: 2}
+		caches[owner] = manifest.WorkCounts{Attempts: 4, Completed: 2, Failures: 2}
 	case manifest.KindExternalArtifact:
 		generator := manifest.NamedResource{
 			Group:     "source.extensions.fluxcd.io",
@@ -341,9 +343,9 @@ func TestRenderTrees_GeneratedSourceSelectionWork(t *testing.T) {
 			tree, sourceID := generatedSourceWorkTree(t, kind)
 			var previous manifest.WorkSummary
 			for repeat := range 2 {
-				runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{
+				runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{
 					RecordWork: true, Concurrency: 2, CacheDir: t.TempDir(),
-					Selection: manifest.Selection{Roots: []manifest.NamedResource{sourceID}},
+					Selection: selection.Request{Roots: []manifest.NamedResource{sourceID}},
 				})
 				assert.NoError(t, err)
 				if kind != manifest.KindHelmChart {
@@ -374,7 +376,8 @@ func TestRenderTrees_GeneratedSourceSelectionWork(t *testing.T) {
 func assertGeneratedChartSelection(t *testing.T, runs []Rendered, full [2][]map[string]any, paired bool) {
 	t.Helper()
 	hr := testutil.HelmReleaseID("apps", "selected")
-	selected, selectionErr, remainder := Select(runs, nil, []manifest.NamedResource{hr}, nil)
+	projectedResults0, projectionErrors0 := Select(runs, nil, []manifest.NamedResource{hr}, nil)
+	selected, selectionErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.NoError(t, selectionErr)
 	assert.NoError(t, remainder)
 	for side := range selected {
@@ -522,9 +525,9 @@ func testGeneratedChartWork(t *testing.T, fixtureValue *generatedChartFixture, t
 			trees = trees[1:]
 		}
 		beforeIndex, beforeChart := indexHits.Load(), chartHits.Load()
-		runs, err := RenderTrees(t.Context(), trees, Config{
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{
 			RecordWork: true, Concurrency: 2, Cache: owner, Network: network,
-			Selection: manifest.Selection{Roots: tc.roots},
+			Selection: selection.Request{Roots: tc.roots},
 		})
 		assert.NoError(t, err)
 		if tc.outcome != "missing-generated-inputs" {

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -259,12 +261,12 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 		Path:      filepath.Join(root, "entry"),
 		RepoRoot:  root,
 		Store:     st,
-		Selection: manifest.Selection{Roots: []manifest.NamedResource{requester.Named()}},
+		Selection: selection.Request{Roots: []manifest.NamedResource{requester.Named()}},
 	}
 	if *testCaseInput.independent {
 		cfg.Selection.Roots = []manifest.NamedResource{id}
 	}
-	l.Options.Selection = cfg.Selection
+	configureSelection(t, l, cfg.Selection)
 	d := Session{cfg: cfg, loader: l}
 
 	{

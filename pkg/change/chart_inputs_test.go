@@ -281,7 +281,7 @@ func testFinalizeIndexChartInputsCase(t *testing.T, testCaseInput *string,
 	}
 	for _, file := range want {
 		assert.Equal(t, len(ownersForFilter(l.Index, file)), 0)
-		filter := admissiontest.Filter(
+		filter := admissiontest.Decision(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet([]string{file}),
@@ -290,11 +290,11 @@ func testFinalizeIndexChartInputsCase(t *testing.T, testCaseInput *string,
 				Root:      "",
 			},
 		)
-		assert.Equal(t, filter.ShouldReconcile(release.Named()), true)
-		assert.Equal(t, filter.ShouldReconcile(source.Named()), true)
-		assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+		assert.Equal(t, filter.Reconcile(release.Named()), true)
+		assert.Equal(t, filter.Reconcile(source.Named()), true)
+		assert.Equal(t, filter.Reconcile(sibling.Named()), false)
 	}
-	filter := admissiontest.Filter(
+	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{path.Join(location, "excluded/invalid.yaml")}),
@@ -303,5 +303,5 @@ func testFinalizeIndexChartInputsCase(t *testing.T, testCaseInput *string,
 			Root:      "",
 		},
 	)
-	assert.Equal(t, filter.ShouldReconcile(release.Named()), false)
+	assert.Equal(t, filter.Reconcile(release.Named()), false)
 }

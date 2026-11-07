@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -36,13 +38,14 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			if named {
 				query.Name = id.Name
 			}
-			selection, selectedErr, remainder := orchestrator.Select(
+			projectedResults0, projectionErrors0 := orchestrator.Select(
 				[]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-				&orchestrator.FailuresError{Message: "raw reconcile failures"},
+				&selection.FailuresError{Message: "raw reconcile failures"},
 				[]manifest.NamedResource{query},
 				nil,
 			)
-			assert.FatalIf(t, len(selection) != 1 || selectedErr == nil, "selection failed: %v", selectedErr)
+			selectedResults, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
+			assert.FatalIf(t, len(selectedResults) != 1 || selectedErr == nil, "selection failed: %v", selectedErr)
 			var out bytes.Buffer
 			extra := fmt.Errorf("reconcile: %w", context.Canceled)
 			got := finishSelected(
@@ -51,7 +54,7 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 					groups: []selectedGroup{
 						{
 							cluster:   ".",
-							sides:     selection,
+							sides:     selectedResults,
 							err:       errors.Join(selectedErr, extra),
 							remainder: errors.Join(remainder, extra),
 						},
@@ -70,7 +73,9 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			got = finishSelected(
 				&selectedRequest{roots: []manifest.NamedResource{query}, stderr: failingWriter{err: writeErr}},
 				&selectedInvocation{
-					groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}},
+					groups: []selectedGroup{
+						{cluster: ".", sides: selectedResults, err: selectedErr, remainder: remainder},
+					},
 				},
 				&selectedPayload{},
 			)

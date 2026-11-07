@@ -9,9 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -21,7 +23,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	closeErr := errors.New("shared cache close")
 	inputErr := manifest.NewError(manifest.ErrInput, nil, "independent input")
 	domainErr := manifest.NewError(manifest.ErrFlux, nil, "independent domain")
-	failed := selectedRun(
+	failed := selectedRun(t,
 		&Result{
 			Failed: map[manifest.NamedResource]store.StatusInfo{
 				testutil.KustomizationID("flux-system", "failed"): {
@@ -31,7 +33,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 			},
 		},
 	)
-	failed.Err = errors.Join(&FailuresError{Message: "raw failures"}, context.Canceled)
+	failed.Err = errors.Join(&selection.FailuresError{Message: "raw failures"}, context.Canceled)
 	t.Run("head_only", func(t *testing.T) {
 		t.Parallel()
 		testSelectErrorAggregationRetainsSharedTeardownHeadOnly(
@@ -187,38 +189,35 @@ func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
 			t.Parallel()
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
-			run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+			run := selectedRun(t, &Result{Failed: map[manifest.NamedResource]store.StatusInfo{
 				child.Named(): {Status: store.StatusFailed, Message: "child failed"},
 			}})
 			run.store.AddObject(parent)
 			run.store.AddObject(child)
 			publishFixture(t, run.store, parent.Named(), []manifest.NamedResource{child.Named()})
-			run.filter = change.NewFilter()
 			selected := []manifest.NamedResource{parent.Named()}
 			if tc.selected {
 				selected = append(selected, child.Named())
 			}
-			_, retry := run.filter.AddEmitted(
-				change.MembershipUpdate{
-					Needed:   []manifest.NamedResource{child.Named()},
-					Selected: selected,
-					Dirty:    nil,
-					Ordinary: []manifest.NamedResource{child.Named()},
-				},
-				0,
-			)
+			if !tc.selected && !tc.named {
+				run.index.Records[parent.Named()] = manifest.DiscoveryRecord{File: "parent.yaml"}
+				run.index.Records[child.Named()] = manifest.DiscoveryRecord{File: "child.yaml", Declaration: child}
+				run.cfg.ExternalChanges = change.NewSet([]string{"parent.yaml"})
+			}
+			retry := prepareSelectionForTest(t, &run, []manifest.NamedResource{child.Named()}, selected)
 			assert.Equal(t, retry, false)
 			name := ""
 			if tc.named {
 				name = parent.Name
 			}
-			run.Err = &FailuresError{Message: "child failed"}
-			result, err, remainder := Select(
+			run.Err = &selection.FailuresError{Message: "child failed"}
+			projectedResults0, projectionErrors0 := Select(
 				[]Rendered{run},
 				run.Err,
 				[]manifest.NamedResource{testutil.KustomizationID("", name), testutil.HelmReleaseID("", name)},
 				nil,
 			)
+			result, err, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.Equal(t, err != nil, tc.selected || tc.named)
 			assert.NoError(t, remainder)
 			_, failed := result[0].Failed[child.Named()]
@@ -230,27 +229,19 @@ func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
 		parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 		child := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 		failure := store.StatusInfo{Status: store.StatusFailed, Message: "source failed"}
-		run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{child.Named(): failure}})
+		run := selectedRun(t, &Result{Failed: map[manifest.NamedResource]store.StatusInfo{child.Named(): failure}})
 		run.store.AddObjects([]manifest.BaseManifest{parent, child})
 		publishFixture(t, run.store, parent.Named(), []manifest.NamedResource{child.Named()})
-		run.filter = change.NewFilter()
-		_, retry := run.filter.AddEmitted(
-			change.MembershipUpdate{
-				Needed:   nil,
-				Selected: []manifest.NamedResource{parent.Named(), child.Named()},
-				Dirty:    nil,
-				Ordinary: nil,
-			},
-			0,
-		)
+		retry := prepareSelectionForTest(t, &run, nil, []manifest.NamedResource{parent.Named(), child.Named()})
 		assert.Equal(t, retry, false)
 		roots := []manifest.NamedResource{testutil.KustomizationID("apps", "")}
-		assert.Equal(t, (manifest.Selection{Roots: roots}).Matches(child.Named()), false)
-		membershipResult1 := run.filter.Membership(child.Named())
-		_, selectedChild, _, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
+		assert.Equal(t, (selection.Request{Roots: roots}).Matches(child.Named()), false)
+		membershipResult1 := run.selection.Snapshot()
+		selectedChild := membershipResult1.Output(child.Named())
 		assert.Equal(t, selectedChild, true)
-		run.Err = &FailuresError{Message: failure.Message}
-		result, err, remainder := Select([]Rendered{run}, run.Err, roots, nil)
+		run.Err = &selection.FailuresError{Message: failure.Message}
+		projectedResults1, projectionErrors1 := Select([]Rendered{run}, run.Err, roots, nil)
+		result, err, remainder := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 		assert.Equal(t, err != nil, true)
 		assert.NoError(t, remainder)
 		assert.Equal(t, len(result[0].Failed), 1)
@@ -272,12 +263,13 @@ func testSelectErrorAggregationRetainsSharedTeardownHeadOnly(
 	t.Helper()
 
 	raw := errors.Join(errors.Join((*testCaseInput.inputErr), testCaseInput.failed.Err), (*testCaseInput.closeErr))
-	selected, err, remainder := Select(
+	projectedResults2, projectionErrors2 := Select(
 		[]Rendered{(*testCaseInput.failed)},
 		raw,
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	selected, err, remainder := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 	assert.FatalIf(
 		t,
 		len(selected) != 1 || len(selected[0].Failed) != 1,
@@ -296,11 +288,11 @@ func testSelectErrorAggregationRetainsSharedTeardownHeadOnly(
 		}
 	}
 	{
-		_, ok := errors.AsType[*FailuresError](err)
+		_, ok := errors.AsType[*selection.FailuresError](err)
 		assert.FatalIf(t, !ok, "%v", "selected failure identity lost")
 	}
 	{
-		_, ok := errors.AsType[*FailuresError](remainder)
+		_, ok := errors.AsType[*selection.FailuresError](remainder)
 		assert.FatalIf(t, ok, "resource failure entered remainder: %v", remainder)
 	}
 }
@@ -326,19 +318,20 @@ func testSelectErrorAggregationRetainsSharedTeardownCase(
 ) {
 	t.Helper()
 
-	runs := []Rendered{selectedRun(&Result{}), selectedRun(&Result{})}
+	runs := []Rendered{selectedRun(t, &Result{}), selectedRun(t, &Result{})}
 	for i, err := range []error{testCaseInput.tc.orig, testCaseInput.tc.current} {
 		if err != nil {
 			runs[i] = (*testCaseInput.failed)
 		}
 		runs[i].Err = err
 	}
-	_, err, remainder := Select(
+	projectedResults3, projectionErrors3 := Select(
 		runs,
 		errors.Join(errors.Join(testCaseInput.tc.orig, testCaseInput.tc.current), testCaseInput.tc.shared),
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	_, err, remainder := projectedResults3, projectionErrors3.Selected, projectionErrors3.Remaining
 	assert.FatalIf(
 		t,
 		(err != nil) != (testCaseInput.tc.orig != nil || testCaseInput.tc.current != nil || testCaseInput.tc.shared != nil) ||
@@ -367,7 +360,7 @@ func testSelectErrorAggregationRetainsSharedTeardownCase(
 		remainder,
 	)
 	{
-		_, ok := errors.AsType[*FailuresError](remainder)
+		_, ok := errors.AsType[*selection.FailuresError](remainder)
 		assert.FatalIf(t, ok, "resource failures entered remainder: %v", remainder)
 	}
 }
@@ -384,20 +377,21 @@ func testSelectErrorAggregationRetainsSharedTeardownCase2(
 	t.Helper()
 
 	teardownA, teardownB := errors.New("teardown A"), errors.New("teardown B")
-	baseFailure := &FailuresError{Message: "raw base failure"}
-	runs := []Rendered{(*testCaseInput.failed), selectedRun(&Result{})}
+	baseFailure := &selection.FailuresError{Message: "raw base failure"}
+	runs := []Rendered{(*testCaseInput.failed), selectedRun(t, &Result{})}
 	runs[0].Err, runs[1].Err = baseFailure, context.Canceled
 	nested := fmt.Errorf("outer: %w", errors.Join(baseFailure, context.Canceled))
 	children := []error{teardownA, nested, teardownB}
 	if *testCaseInput.reversed {
 		slices.Reverse(children)
 	}
-	selected, err, remainder := Select(
+	projectedResults4, projectionErrors4 := Select(
 		runs,
 		errors.Join(children...),
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	selected, err, remainder := projectedResults4, projectionErrors4.Selected, projectionErrors4.Remaining
 	want := "both snapshots had reconcile failures\norig snapshot: reconcile completed with 1 failure(s):\n  " + testutil.KustomizationID("flux-system", "failed").
 		String() +
 		": resource failed\ncurrent snapshot: context canceled"
@@ -426,11 +420,11 @@ func testSelectErrorAggregationRetainsSharedTeardownCase2(
 		assert.FatalIf(t, errors.Is(got, baseFailure), "raw base failure entered projection: %v", got)
 	}
 	{
-		_, ok := errors.AsType[*FailuresError](err)
+		_, ok := errors.AsType[*selection.FailuresError](err)
 		assert.FatalIf(t, !ok, "%v", "selected failure identity lost")
 	}
 	{
-		_, ok := errors.AsType[*FailuresError](remainder)
+		_, ok := errors.AsType[*selection.FailuresError](remainder)
 		assert.FatalIf(t, ok, "%v", "resource failure entered remainder")
 	}
 }
@@ -447,7 +441,7 @@ func testSelectErrorAggregationRetainsSharedTeardownCase3(
 	t.Helper()
 
 	causes := [2]error{errors.New("base operation"), errors.New("head operation")}
-	runs := []Rendered{selectedRun(&Result{}), selectedRun(&Result{})}
+	runs := []Rendered{selectedRun(t, &Result{}), selectedRun(t, &Result{})}
 	gates := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
 	finished := make(chan int)
 	for i := range runs {
@@ -465,12 +459,13 @@ func testSelectErrorAggregationRetainsSharedTeardownCase3(
 		}
 	}
 	raw := errors.Join(errors.Join(runs[0].Err, runs[1].Err), (*testCaseInput.closeErr))
-	selected, err, remainder := Select(
+	projectedResults5, projectionErrors5 := Select(
 		runs,
 		raw,
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	selected, err, remainder := projectedResults5, projectionErrors5.Selected, projectionErrors5.Remaining
 	assert.FatalIf(t, len(selected) != 2, "lost partial sides: %v", selected)
 	for _, got := range []error{raw, err, remainder} {
 		previous := -1
@@ -501,7 +496,7 @@ func testSelectUnavailabilityUsesLocalCanonicalEvidenceCase(
 ) {
 	t.Helper()
 
-	orig := selectedRun(
+	orig := selectedRun(t,
 		&Result{
 			Manifests: []manifest.DocumentBatch{
 				{
@@ -514,7 +509,7 @@ func testSelectUnavailabilityUsesLocalCanonicalEvidenceCase(
 			},
 		},
 	)
-	current := selectedRun(&Result{})
+	current := selectedRun(t, &Result{})
 	orig.store.AddObject(
 		&manifest.HelmRelease{Name: testCaseInput.child.Name, Namespace: testCaseInput.child.Namespace},
 	)
@@ -532,14 +527,15 @@ func testSelectUnavailabilityUsesLocalCanonicalEvidenceCase(
 	if *testCaseInput.reverse {
 		slices.Reverse(runs)
 	}
-	results, err, _ := Select(
+	projectedResults6, projectionErrors6 := Select(
 		runs,
-		&FailuresError{Message: "raw failures"},
+		&selection.FailuresError{Message: "raw failures"},
 		[]manifest.NamedResource{
 			{Group: testCaseInput.child.Group, Kind: testCaseInput.child.Kind, Namespace: "apps"},
 		},
 		nil,
 	)
+	results, err, _ := projectedResults6, projectionErrors6.Selected, projectionErrors6.Remaining
 	assert.Equal(t, err != nil, testCaseInput.disposition.Status == store.StatusFailed)
 	index := 1
 	if *testCaseInput.reverse {
@@ -584,7 +580,7 @@ func testSelectRequiredFailureOutsideOutputNamespaceCase(
 	parent := testutil.KustomizationID("flux-system", "parent")
 	child := testutil.HelmReleaseID("apps", "child")
 	sibling := testutil.HelmReleaseID("monitoring", "excluded")
-	run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+	run := selectedRun(t, &Result{Failed: map[manifest.NamedResource]store.StatusInfo{
 		parent: {Status: store.StatusFailed, Message: "parent failed"},
 	}})
 	run.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
@@ -605,41 +601,29 @@ func testSelectRequiredFailureOutsideOutputNamespaceCase(
 		}
 	}
 	if !testCaseInput.full {
-		run.filter = change.NewFilter()
-		_, retry := run.filter.AddEmitted(
-			change.MembershipUpdate{
-				Needed:   needed,
-				Selected: []manifest.NamedResource{child},
-				Dirty:    nil,
-				Ordinary: needed,
-			},
-			0,
-		)
+		retry := prepareSelectionForTest(t, &run, needed, []manifest.NamedResource{child})
 		assert.Equal(t, retry, false)
 	}
-	run.Err = &FailuresError{Message: "parent failed"}
+	run.Err = &selection.FailuresError{Message: "parent failed"}
 	runs := []Rendered{run}
 	if testCaseInput.paired {
-		other := selectedRun(&Result{})
-		other.filter = change.NewFilter()
-		_, retry := other.filter.AddEmitted(
-			change.MembershipUpdate{
-				Needed:   nil,
-				Selected: []manifest.NamedResource{testutil.HelmReleaseID(parent.Namespace, "other")},
-				Dirty:    nil,
-				Ordinary: nil,
-			},
-			0,
+		other := selectedRun(t, &Result{})
+		retry := prepareSelectionForTest(
+			t,
+			&other,
+			nil,
+			[]manifest.NamedResource{testutil.HelmReleaseID(parent.Namespace, "other")},
 		)
 		assert.Equal(t, retry, false)
 		runs = append(runs, other)
 	}
-	selected, err, remainder := Select(
+	projectedResults7, projectionErrors7 := Select(
 		runs,
 		run.Err,
 		[]manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Namespace: testCaseInput.namespace}},
 		nil,
 	)
+	selected, err, remainder := projectedResults7, projectionErrors7.Selected, projectionErrors7.Remaining
 	assert.Equal(t, err != nil, testCaseInput.required)
 	assert.Equal(t, remainder == nil, true)
 	_, visible := selected[0].Failed[parent]
@@ -657,7 +641,7 @@ func testSelectRequiredFailureOutsideOutputNamespaceUnscopedRequiredDescendant(t
 
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 	child := &manifest.HelmRelease{Name: "child", Namespace: "monitoring"}
-	run := selectedRun(
+	run := selectedRun(t,
 		&Result{
 			Failed: map[manifest.NamedResource]store.StatusInfo{
 				child.Named(): {Status: store.StatusFailed, Message: "required descendant failed"},
@@ -678,27 +662,24 @@ func testSelectRequiredFailureOutsideOutputNamespaceUnscopedRequiredDescendant(t
 	reads.Retire()
 	_, required := maps.Collect(run.store.RequiredInputs(parent.Named()))[child.Named()]
 	assert.Equal(t, required, true)
-	run.filter = change.NewFilter()
-	_, retry := run.filter.AddEmitted(
-		change.MembershipUpdate{
-			Needed:   []manifest.NamedResource{parent.Named(), child.Named()},
-			Selected: []manifest.NamedResource{parent.Named()},
-			Dirty:    nil,
-			Ordinary: []manifest.NamedResource{parent.Named(), child.Named()},
-		},
-		0,
+	retry := prepareSelectionForTest(
+		t,
+		&run,
+		[]manifest.NamedResource{parent.Named(), child.Named()},
+		[]manifest.NamedResource{parent.Named()},
 	)
 	assert.Equal(t, retry, false)
-	membershipResult2 := run.filter.Membership(child.Named())
-	_, selectedChild, _, _ := membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
+	membershipResult2 := run.selection.Snapshot()
+	selectedChild := membershipResult2.Output(child.Named())
 	assert.Equal(t, selectedChild, false)
-	run.Err = &FailuresError{Message: "required descendant failed"}
-	selected, err, remainder := Select(
+	run.Err = &selection.FailuresError{Message: "required descendant failed"}
+	projectedResults8, projectionErrors8 := Select(
 		[]Rendered{run},
 		run.Err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 		nil,
 	)
+	selected, err, remainder := projectedResults8, projectionErrors8.Selected, projectionErrors8.Remaining
 	assert.Equal(t, err != nil, true)
 	assert.NoError(t, remainder)
 	_, retained := selected[0].Failed[child.Named()]

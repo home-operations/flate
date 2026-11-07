@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/manifest"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -38,10 +40,13 @@ func testAdmitGraphProjectionBootstrapDocumentOwners(t *testing.T) {
 	for _, name := range []string{"self", "excluded"} {
 		id := testutil.KustomizationID("apps", name)
 		assert.FatalIf(t, l.Store.GetObject(id) != nil ||
-			l.AdmitsRoot(
-				l.IndexedObject(id, l.Index.Records[id]).Obj,
-				filepath.Join(root, "app", "siblings.yaml"),
-			), "omitted declaration became runnable: %s", id)
+			selection.Root(
+				rootAtForTest(
+					l,
+					l.IndexedObject(id, l.Index.Records[id]).Obj,
+					filepath.Join(root, "app", "siblings.yaml"),
+				),
+			).Admitted, "omitted declaration became runnable: %s", id)
 		{
 			_, ok := l.Index.Lookup(id)
 			assert.FatalIf(t, !ok, "lost inactive evidence: %s", id)
@@ -49,11 +54,8 @@ func testAdmitGraphProjectionBootstrapDocumentOwners(t *testing.T) {
 	}
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	assert.FatalIf(t, l.AdmitsRoot(
-		l.IndexedObject(
-			testutil.KustomizationID("apps", "self"),
-			l.Index.Records[testutil.KustomizationID("apps", "self")],
-		).Obj,
-		filepath.Join(root, "app", "siblings.yaml"),
-	), "%s", "finalization lost denial")
+	assert.FatalIf(t, selection.Root(rootAtForTest(l, l.IndexedObject(
+		testutil.KustomizationID("apps", "self"),
+		l.Index.Records[testutil.KustomizationID("apps", "self")],
+	).Obj, filepath.Join(root, "app", "siblings.yaml"))).Admitted, "%s", "finalization lost denial")
 }

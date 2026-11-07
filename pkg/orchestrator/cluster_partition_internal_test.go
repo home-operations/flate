@@ -67,7 +67,7 @@ func TestRenderTrees_ClusterPartitionRoot(t *testing.T) {
 	}
 	var first []Rendered
 	for repeat := range 2 {
-		runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.FatalIf(t, len(runs) != len(clusters), "rendered %d clusters, want %d", len(runs), len(clusters))
 		for i, cluster := range clusters {
@@ -110,7 +110,7 @@ func TestRenderTrees_ClusterPartitionRoot(t *testing.T) {
 	}
 	writePartitionClusters(t, root, clusters, true)
 	tree.ExternalChanges = change.NewSet([]string{"kubernetes/apps/main/cm.yaml"})
-	runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(runs) != len(clusters), "rendered %d clusters, want %d", len(runs), len(clusters))
 	owner := testutil.KustomizationID("flux-system", "cluster-apps")
@@ -155,7 +155,7 @@ func TestRenderTrees_ClusterPartitionUnion(t *testing.T) {
 			union := append(slices.Clone(tc.before), tc.after...)
 			slices.Sort(union)
 			union = slices.Compact(union)
-			runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
+			runs, err := renderTreesForTest(t.Context(), t, trees, Config{Concurrency: 2})
 			assert.NoError(t, err)
 			assert.FatalIf(t, len(runs) != len(union)*2, "rendered %d sides, want %d", len(runs), len(union)*2)
 			assert.Equal(t, slices.IsSortedFunc(runs, func(a, b Rendered) int { return a.ID.Compare(b.ID) }), true)
@@ -193,7 +193,7 @@ func TestRenderTrees_ExpandedDuplicateBeforeLaunch(t *testing.T) {
 	var previous string
 	for range 2 {
 		var updates atomic.Int32
-		runs, err := RenderTrees(t.Context(), trees, Config{
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{
 			Concurrency:    2,
 			StatusListener: func(_ manifest.TreeID, _ manifest.DiagnosticIdentity, _ store.StatusInfo) { updates.Add(1) },
 		})
@@ -218,7 +218,7 @@ func TestRenderTrees_ClusterPartitionExplicitIdentity(t *testing.T) {
 	root := t.TempDir()
 	writePartitionClusters(t, root, []string{"main", "test", "utility"}, false)
 	id := manifest.TreeID{Cluster: "chosen", Side: manifest.TreeHead}
-	runs, err := RenderTrees(t.Context(), []Tree{
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{
 		{
 			ID:       id,
 			RepoRoot: root,

@@ -51,18 +51,18 @@ func TestAddEmitted_AlreadySelectedSourceRetained(t *testing.T) {
 			root:      "",
 		},
 	)
-	assert.Equal(t, f.ShouldReconcile(oldSource), true)
-	assert.Equal(t, f.ShouldReconcile(child.Named()), true)
-	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), false)
+	assert.Equal(t, f.Reconcile(oldSource), true)
+	assert.Equal(t, f.Reconcile(child.Named()), true)
+	assert.Equal(t, f.Reconcile(child.ChartSource()), false)
 
 	added := f.AddEmitted(parent, new(store.Child{Obj: child}), f.objs)
 
 	assert.Equal(t, len(added), 1)
 	for _, id := range []manifest.NamedResource{child.Named(), child.ChartSource()} {
-		assert.Equal(t, f.ShouldReconcile(id), true)
+		assert.Equal(t, f.Reconcile(id), true)
 		assert.Equal(t, slices.Contains(added, id), id == child.ChartSource())
 	}
-	assert.Equal(t, f.ShouldReconcile(oldSource), true)
+	assert.Equal(t, f.Reconcile(oldSource), true)
 	assert.Equal(t, slices.Contains(added, oldSource), false)
 }
 
@@ -89,7 +89,9 @@ func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
 	old := *child.Clone()
 	old.ChartRef.Name = "old-chart"
 	old.Chart = manifest.HelmChart{}
-	objects := filtertest.MapLister{old.Named(): &old}
+	objects := filtertest.MapLister{
+		parent: &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}, old.Named(): &old,
+	}
 	f := newAdmission(
 		t,
 		admissionConfig{
@@ -103,7 +105,7 @@ func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
 		},
 	)
 	for _, id := range []manifest.NamedResource{child.Named(), child.ChartSource(), old.ChartSource()} {
-		assert.Equal(t, f.ShouldReconcile(id), false)
+		assert.Equal(t, f.Reconcile(id), false)
 	}
 	start := make(chan struct{})
 	var ready, joined sync.WaitGroup
@@ -127,9 +129,9 @@ func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
 		}
 	}
 	assert.Diff(t, returned, map[manifest.NamedResource]int{child.Named(): 1, child.ChartSource(): 1})
-	assert.Equal(t, f.ShouldReconcile(child.Named()), true)
-	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), true)
-	assert.Equal(t, f.ShouldReconcile(old.ChartSource()), false)
+	assert.Equal(t, f.Reconcile(child.Named()), true)
+	assert.Equal(t, f.Reconcile(child.ChartSource()), true)
+	assert.Equal(t, f.Reconcile(old.ChartSource()), false)
 }
 
 // TestFilter_KeepByNameDoesNotLeakAcrossNamespaces pins the
@@ -185,32 +187,33 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 				Name:      kept.Name,
 			}
 			files := map[manifest.NamedResource]string{kept: "changed.yaml", collider: "unchanged.yaml"}
+			objects := filtertest.MapLister{kept: refObj(kept)}
 			f := newAdmission(
 				t,
 				admissionConfig{
 					changes:   changes,
 					index:     new(filterFixture{files: files}).index(),
-					inventory: filtertest.EmptyLister(),
+					inventory: objects,
 					root:      "",
 				},
 			)
-			assert.Equal(t, f.ShouldReconcile(kept), true)
-			assert.Equal(t, f.ShouldReconcile(collider), false)
+			assert.Equal(t, f.Reconcile(kept), true)
+			assert.Equal(t, f.Reconcile(collider), false)
 			projected := kept
 			projected.Namespace = "effective"
-			assert.Equal(t, f.ShouldReconcile(projected), false)
+			assert.Equal(t, f.Reconcile(projected), false)
 			child := kept
 			child.Name, child.Namespace = "emitted", ""
 			assert.Equal(t, len(f.AddEmitted(collider, new(store.Child{Obj: refObj(child)}), f.objs)), 0)
-			assert.Equal(t, f.ShouldReconcile(child), false)
+			assert.Equal(t, f.Reconcile(child), false)
 			f.AddEmitted(kept, new(store.Child{Obj: refObj(child)}), f.objs)
-			assert.Equal(t, f.ShouldReconcile(child), true)
+			assert.Equal(t, f.Reconcile(child), true)
 			child.Namespace = "effective"
-			assert.Equal(t, f.ShouldReconcile(child), false)
+			assert.Equal(t, f.Reconcile(child), false)
 			child.Group = tc.otherGroup
 			child.Namespace = tc.otherNamespace
 			if tc.group != tc.otherGroup {
-				assert.Equal(t, f.ShouldReconcile(child), false)
+				assert.Equal(t, f.Reconcile(child), false)
 			}
 		})
 	}

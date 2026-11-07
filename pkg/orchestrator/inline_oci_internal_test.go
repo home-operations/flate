@@ -312,7 +312,7 @@ func testRenderInlineOCIRegistryParityCase(t *testing.T, tc *struct {
 		}
 		o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "cluster"), RepoRoot: root}, cfg)
 		assert.NoError(t, err)
-		result, renderErr := o.render(t.Context())
+		result, renderErr := o.render(t.Context(), t)
 		id := testutil.HelmReleaseID("apps", "demo")
 		sourceID := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
@@ -403,8 +403,7 @@ func testRenderTreesInlineOCIIndependentGenerationsCase(t *testing.T, tc *struct
 			registry.TagGeneration.Store(1)
 		}
 		tree.ID.Side = manifest.TreeHead
-		full, err := RenderTrees(
-			t.Context(),
+		full, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				tree,
 			},
@@ -434,8 +433,7 @@ func testRenderTreesInlineOCIIndependentGenerationsCase(t *testing.T, tc *struct
 	var previous []byte
 	for round := range 2 {
 		requests := registry.Requests.Load()
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			trees,
 			Config{
 				RecordWork:  true,
@@ -679,10 +677,10 @@ func (f *inlineGenerationAssertions) assertSide(t *testing.T, run *Rendered, i i
 	t.Helper()
 	mode, registry, id, sourceID, expected := f.mode, f.registry, f.owner, f.source, f.expected
 
-	assert.Equal(t, run.filter.ShouldReconcile(id), mode != "no_op" && mode != "upstream")
+	assert.Equal(t, run.selection.Snapshot().Reconcile(id), mode != "no_op" && mode != "upstream")
 	assert.FatalIf(
 		t,
-		run.filter.ShouldReconcile(testutil.HelmReleaseID("apps", "sibling")),
+		run.selection.Snapshot().Reconcile(testutil.HelmReleaseID("apps", "sibling")),
 		"%v",
 		"template declaration selected unchanged sibling",
 	)

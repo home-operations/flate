@@ -62,11 +62,15 @@ func (r *Result) Close() {
 		delete(r.prepared, id)
 	}
 	if r.Admission != nil {
+		if r.loader != nil {
+			r.loader.Options.Session.PublishEntry(nil)
+		}
 		if q := r.Admission.qualification; q != nil {
 			q.close()
 		}
 		r.Admission.entryPreparation.Retire()
 		r.Admission.entryRequest = kustomize.RenderRequest{}
+		r.Admission.acceptedEntry = nil
 	}
 	if r.ownsLoader {
 		r.loader.Close()
@@ -89,11 +93,13 @@ func (d *Session) Close() {
 		delete(d.prepared, id)
 	}
 	if d.entryAdmission != nil {
+		d.loader.Options.Session.PublishEntry(nil)
 		if q := d.entryAdmission.qualification; q != nil {
 			q.close()
 		}
 		d.entryAdmission.entryPreparation.Retire()
 		d.entryAdmission.entryRequest = kustomize.RenderRequest{}
+		d.entryAdmission.acceptedEntry = nil
 	}
 	if d.ownsLoader {
 		d.loader.Close()

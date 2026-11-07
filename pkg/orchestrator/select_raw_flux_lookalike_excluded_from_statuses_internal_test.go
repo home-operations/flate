@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -15,7 +17,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -25,7 +26,7 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 	for _, kind := range []string{manifest.KindBucket, manifest.KindKustomization, manifest.KindHelmRelease, manifest.KindResourceSet} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
-			run := selectedRun(&Result{})
+			run := selectedRun(t, &Result{})
 			obj := &manifest.RawObject{
 				Kind:       kind,
 				APIVersion: "seaweed.seaweedfs.com/v1",
@@ -34,12 +35,13 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 			}
 			run.store.AddObject(obj)
 			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			selected, err, _ := Select(
+			projectedResults0, projectionErrors0 := Select(
 				[]Rendered{run},
 				nil,
 				[]manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Kind}},
 				nil,
 			)
+			selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			if err != nil || len(selected[0].Statuses) != 0 {
 				t.Fatalf("foreign Flux lookalike entered roster: %+v %v", selected[0].Statuses, err)
 			}
@@ -55,12 +57,13 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 		var objects []manifest.BaseManifest
 		var versions map[manifest.NamedResource]string
 		for i := range 2 {
-			selected, err, diagnostic := Select(
+			projectedResults1, projectionErrors1 := Select(
 				[]Rendered{run},
 				nil,
 				[]manifest.NamedResource{{Group: id.Group, Kind: id.Kind}},
 				nil,
 			)
+			selected, err, diagnostic := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 			assert.NoError(t, err)
 			assert.NoError(t, diagnostic)
 			assert.FatalIf(
@@ -194,8 +197,7 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 	}
 	current.Warnings = []manifest.Warning{status, raw}
 	for range 2 {
-		renderedTrees1, err := RenderTrees(
-			t.Context(),
+		renderedTrees1, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					RepoRoot:  root,
@@ -218,12 +220,13 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 			artifact := head.store.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Diff(t, artifact.Warnings, []manifest.Warning(nil))
 		}
-		selected, err, diagnostic := Select(
+		projectedResults2, projectionErrors2 := Select(
 			[]Rendered{orig, head},
 			err,
 			[]manifest.NamedResource{testutil.KustomizationID("", "")},
 			nil,
 		)
+		selected, err, diagnostic := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 		assert.NoError(t, err)
 		assert.NoError(t, diagnostic)
 		for _, warning := range selected[0].Warnings {
@@ -259,8 +262,7 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
-	runs, err := RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				ID:    manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
@@ -331,7 +333,7 @@ type testSelectExplicitChartVersionCaseInputs struct {
 func testSelectExplicitChartVersionCase(t *testing.T, testCaseInput testSelectExplicitChartVersionCaseInputs) {
 	t.Helper()
 
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	kind := testCaseInput.tc.kind
 	if kind == "" {
 		kind = manifest.KindOCIRepository
@@ -381,7 +383,7 @@ type testSelectExplicitChartVersionCase2Inputs struct {
 func testSelectExplicitChartVersionCase2(t *testing.T, testCaseInput testSelectExplicitChartVersionCase2Inputs) {
 	t.Helper()
 
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	run.store.AddObject((*testCaseInput.obj))
 	{
 		versions := (*testCaseInput.selectVersions)(t, run, (*testCaseInput.obj))
@@ -407,7 +409,7 @@ func testSelectDiagnosticOnlyRunsCase(t *testing.T, testCaseInput testSelectDiag
 		},
 		Err: (*testCaseInput.failure),
 	}
-	complete := selectedRun(
+	complete := selectedRun(t,
 		&Result{
 			Warnings: []manifest.Warning{
 				{Category: manifest.WarnSkippedSubmodule, Message: "complete", Count: 1},
@@ -425,12 +427,13 @@ func testSelectDiagnosticOnlyRunsCase(t *testing.T, testCaseInput testSelectDiag
 		runs = []Rendered{complete, failed}
 		runErr = errors.Join(errors.Join(nil, (*testCaseInput.failure)), (*testCaseInput.teardown))
 	}
-	selected, err, diagnostic := Select(
+	projectedResults3, projectionErrors3 := Select(
 		runs,
 		runErr,
 		[]manifest.NamedResource{testutil.KustomizationID("ns", "named")},
 		nil,
 	)
+	selected, err, diagnostic := projectedResults3, projectionErrors3.Selected, projectionErrors3.Remaining
 	assert.FatalIf(
 		t,
 		!errors.Is(err, (*testCaseInput.failure)) || !errors.Is(err, (*testCaseInput.teardown)) || !errors.Is(diagnostic, (*testCaseInput.failure)) ||
@@ -476,13 +479,13 @@ func testSelectComparedRootFailureOutsideLocalNamespaceCase(
 
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "monitoring"}
 	child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
-	failed, other := selectedRun(&Result{}), selectedRun(&Result{})
-	failed.filter, other.filter = change.NewFilter(), change.NewFilter()
+	failed, other := selectedRun(t, &Result{}), selectedRun(t, &Result{})
+	prepareSelectionForTest(t, &failed, nil, nil)
 	failed.store.AddObject(parent)
 	failed.Result.Failed = map[manifest.NamedResource]store.StatusInfo{
 		parent.Named(): {Status: store.StatusFailed, Message: "external producer failed"},
 	}
-	failed.Err = &FailuresError{Message: "external producer failed"}
+	failed.Err = &selection.FailuresError{Message: "external producer failed"}
 	other.store.AddObject(child)
 	owner := parent.Named()
 	if !(*testCaseInput.required) {
@@ -492,14 +495,11 @@ func testSelectComparedRootFailureOutsideLocalNamespaceCase(
 		other.Orchestrator,
 		map[manifest.NamedResource]manifest.NamedResource{child.Named(): owner},
 	)
-	_, retry := other.filter.AddEmitted(
-		change.MembershipUpdate{
-			Needed:   []manifest.NamedResource{child.Named(), owner},
-			Selected: []manifest.NamedResource{child.Named()},
-			Dirty:    nil,
-			Ordinary: []manifest.NamedResource{child.Named(), owner},
-		},
-		0,
+	retry := prepareSelectionForTest(
+		t,
+		&other,
+		[]manifest.NamedResource{child.Named(), owner},
+		[]manifest.NamedResource{child.Named()},
 	)
 	assert.Equal(t, retry, false)
 	runs := []Rendered{failed, other}
@@ -508,12 +508,13 @@ func testSelectComparedRootFailureOutsideLocalNamespaceCase(
 		slices.Reverse(runs)
 		index = 1
 	}
-	selected, err, remainder := Select(
+	projectedResults4, projectionErrors4 := Select(
 		runs,
 		failed.Err,
 		[]manifest.NamedResource{testutil.HelmReleaseID("apps", "")},
 		nil,
 	)
+	selected, err, remainder := projectedResults4, projectionErrors4.Selected, projectionErrors4.Remaining
 	assert.Equal(t, err != nil, (*testCaseInput.required))
 	assert.NoError(t, remainder)
 	_, retained := selected[index].Failed[parent.Named()]
@@ -533,9 +534,8 @@ func testSelectComparedRootFailureOutsideLocalNamespaceCase2(
 	anchor := &manifest.Kustomization{Name: "anchor", Namespace: "apps"}
 	other := &manifest.HelmRelease{Name: "other", Namespace: "media"}
 	for side := range 2 {
-		run := selectedRun(&Result{})
+		run := selectedRun(t, &Result{})
 		run.store.AddObjects([]manifest.BaseManifest{failed, anchor, other})
-		run.filter = change.NewFilter()
 		selected := anchor.Named()
 		if side == 1 {
 			selected = other.Named()
@@ -546,26 +546,24 @@ func testSelectComparedRootFailureOutsideLocalNamespaceCase2(
 			run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{
 				failed.Named(): {Status: store.StatusFailed, Message: "required chart unavailable"},
 			}
-			run.Err = &FailuresError{Message: "required chart unavailable"}
+			run.Err = &selection.FailuresError{Message: "required chart unavailable"}
 		}
-		_, retry := run.filter.AddEmitted(
-			change.MembershipUpdate{
-				Needed:   []manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()},
-				Selected: []manifest.NamedResource{selected},
-				Dirty:    nil,
-				Ordinary: []manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()},
-			},
-			0,
+		retry := prepareSelectionForTest(
+			t,
+			&run,
+			[]manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()},
+			[]manifest.NamedResource{selected},
 		)
 		assert.Equal(t, retry, false)
 		runs = append(runs, run)
 	}
-	selected, err, _ := Select(
+	projectedResults5, projectionErrors5 := Select(
 		runs,
 		runs[0].Err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 		nil,
 	)
+	selected, err, _ := projectedResults5, projectionErrors5.Selected, projectionErrors5.Remaining
 	assert.Equal(t, err != nil, (*testCaseInput))
 	_, retained := selected[0].Failed[failed.Named()]
 	assert.Equal(t, retained, (*testCaseInput))

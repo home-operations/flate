@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -77,7 +78,7 @@ func testSelectSingleRunOmitsExternalDisclosuresCase(
 			},
 		}
 	}
-	run, other := selectedRun(&Result{}), selectedRun(&Result{})
+	run, other := selectedRun(t, &Result{}), selectedRun(t, &Result{})
 	run.repoRoot = t.TempDir()
 	run.store.AddObject(&manifest.OCIRepository{Name: source.Name, Namespace: source.Namespace})
 	status := store.StatusInfo{
@@ -111,7 +112,7 @@ func testSelectSingleRunOmitsExternalDisclosuresCase(
 		run.index = indexForTest(
 			map[manifest.NamedResource]string{kept.Named(): "kept.yaml", obj.Named(): "external.yaml"},
 		)
-		run.loader = admissiontest.New(
+		run.loader, run.selection = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet([]string{"kept.yaml"}),
@@ -120,9 +121,13 @@ func testSelectSingleRunOmitsExternalDisclosuresCase(
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, run.loader, nil)
-		run.filter = run.loader.Options.Filter
+		admissiontest.Commit(t, run.selection, nil)
 	}
+	if run.loader == nil {
+		run.loader = loader.New(run.store)
+	}
+	run.loader.Index, run.loader.SourceRoot = run.index, run.repoRoot
+	run.Result.catalog = run.loader.DetachCatalog()
 	var labels map[string]string
 	if testCaseInput.labels {
 		labels = map[string]string{"app": "excluded"}
@@ -153,12 +158,14 @@ func testSelectSingleRunOmitsExternalDisclosuresCaseTail(
 			Namespace: (*tailCaseInput.testCaseInput).namespace,
 		},
 	}
-	selected, err, _ := Select([]Rendered{(*tailCaseInput.run)}, nil, root, (*tailCaseInput.labels))
+	projectedResults0, projectionErrors0 := Select([]Rendered{(*tailCaseInput.run)}, nil, root, (*tailCaseInput.labels))
+	selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	if err != nil || len(selected[0].External) != 0 {
 		t.Fatalf("single-run external disclosures: %+v %v", selected[0].External, err)
 	}
 	for externalSide, runs := range [][]Rendered{{(*tailCaseInput.run), (*tailCaseInput.other)}, {(*tailCaseInput.other), (*tailCaseInput.run)}} {
-		selected, err, _ = Select(runs, nil, root, (*tailCaseInput.labels))
+		projectedResults1, projectionErrors1 := Select(runs, nil, root, (*tailCaseInput.labels))
+		selected, err, _ = projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 		assert.FatalIf(t, err != nil, "%v", err)
 		for i, res := range selected {
 			var want []manifest.Warning

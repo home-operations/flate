@@ -4,10 +4,11 @@ import (
 	"path/filepath"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 type rootCoordinate struct {
-	declaration OccurrenceID
+	declaration occurrenceID
 	identity    manifest.NamedResource
 	context     string
 }
@@ -16,6 +17,7 @@ type rootInventory struct {
 	occurrences map[rootCoordinate]rootEvidence
 	identities  map[manifest.NamedResource]rootCoordinate
 	packages    map[string]rootCoordinate
+	currentOnly manifest.DiscoveryIndex
 }
 
 func (r *rootInventory) lookup(id manifest.NamedResource) (rootEvidence, bool) {
@@ -32,7 +34,7 @@ func (r *rootInventory) get(id manifest.NamedResource) rootEvidence {
 	return evidence
 }
 
-func (r *rootInventory) remember(occurrence *Occurrence, context string) rootCoordinate {
+func (r *rootInventory) remember(occurrence *authoredOccurrence, context string) rootCoordinate {
 	if r.occurrences == nil {
 		r.occurrences = map[rootCoordinate]rootEvidence{}
 		r.identities = map[manifest.NamedResource]rootCoordinate{}
@@ -40,6 +42,7 @@ func (r *rootInventory) remember(occurrence *Occurrence, context string) rootCoo
 	coordinate := rootCoordinate{declaration: occurrence.Declaration, identity: occurrence.Identity, context: context}
 	evidence := r.occurrences[coordinate]
 	evidence.occurrence = *occurrence
+	evidence.facts.Identity, evidence.facts.Occurrence = occurrence.Identity, occurrenceView(occurrence)
 	r.occurrences[coordinate] = evidence
 	return coordinate
 }
@@ -47,6 +50,7 @@ func (r *rootInventory) remember(occurrence *Occurrence, context string) rootCoo
 func (r *rootInventory) set(id manifest.NamedResource, evidence *rootEvidence) {
 	occurrence := evidence.occurrence
 	occurrence.Identity = id
+	evidence.facts.Identity, evidence.facts.Occurrence.Identity = id, id
 	coordinate := r.remember(&occurrence, filepath.ToSlash(filepath.Dir(occurrence.Declaration.File)))
 	r.occurrences[coordinate] = *evidence
 	r.identities[id] = coordinate
@@ -55,7 +59,7 @@ func (r *rootInventory) set(id manifest.NamedResource, evidence *rootEvidence) {
 func (r *rootInventory) retainIndependent() {
 	for coordinate := range r.occurrences {
 		evidence := r.occurrences[coordinate]
-		if !evidence.independent {
+		if !selection.Root(evidence.facts).Independent {
 			delete(r.occurrences, coordinate)
 			if r.identities[coordinate.identity] == coordinate {
 				delete(r.identities, coordinate.identity)

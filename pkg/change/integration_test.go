@@ -123,6 +123,9 @@ data:
 			ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
 		},
 	}, orchestrator.Config{Concurrency: 2})
+	for _, run := range runs {
+		t.Cleanup(run.Result.Close)
+	}
 	assert.FatalIf(t, err != nil, "%v", err)
 	assert.FatalIf(t, len(runs) != 1 || runs[0].Orchestrator == nil, "%v", "missing completed tree")
 	o := runs[0].Orchestrator

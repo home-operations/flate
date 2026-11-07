@@ -41,7 +41,7 @@ func newTestController(t *testing.T, l *loader.Loader) (*Controller, *store.Stor
 	t.Helper()
 	opts := base.Options{}
 	if l != nil {
-		opts.Filter, opts.Loader = l.Options.Filter, l
+		opts.Session, opts.Loader = l.Options.Session, l
 	}
 	return newTestControllerWithOptions(t, &opts)
 }
@@ -160,7 +160,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			t.Parallel()
 			var filterLoader *loader.Loader
 			if !tc.suspend {
-				filterLoader = admissiontest.New(
+				filterLoader, _ = admissiontest.New(
 					t,
 					admissiontest.Config{
 						Changes: change.NewSet(nil),
@@ -171,7 +171,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 						Root:      "",
 					},
 				)
-				admissiontest.Commit(t, filterLoader, nil)
+				admissiontest.Commit(t, filterLoader.Options.Session, nil)
 			}
 			c, st := newTestController(t, filterLoader)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}

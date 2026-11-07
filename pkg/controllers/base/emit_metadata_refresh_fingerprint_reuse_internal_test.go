@@ -8,7 +8,7 @@ import (
 	"testing"
 	"weak"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
@@ -118,7 +118,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{obj.Named(): {File: "reader.yaml"}},
 			}
-			admissionLoader1 := admissiontest.New(
+			admissionLoader1, _ := admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"reader.yaml"}),
@@ -127,8 +127,8 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 					Root:      "",
 				},
 			)
-			admissiontest.Commit(t, admissionLoader1, nil)
-			c.Configure(Options{Filter: admissionLoader1.Options.Filter, Index: index, Loader: admissionLoader1})
+			admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
+			c.Configure(Options{Session: admissionLoader1.Options.Session, Index: index, Loader: admissionLoader1})
 			first := newExecution(c, obj.Named())
 			first.Reads.GetObject(obj.Named())
 			warning := manifest.Warning{
@@ -344,6 +344,7 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 			},
 		},
 	}
+	s.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
 	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {
 		s.AddObject(obj)
 		s.UpdateStatus(
@@ -391,12 +392,12 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 			},
 		},
 	}
-	admissionLoader1 := admissiontest.New(
+	admissionLoader1, _ := admissiontest.New(
 		t,
 		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
 	)
-	admissiontest.Commit(t, admissionLoader1, nil)
-	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Index: index, Loader: admissionLoader1})
+	admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
+	c.Configure(Options{Session: admissionLoader1.Options.Session, Index: index, Loader: admissionLoader1})
 
 	captured := make(map[manifest.NamedResource]*Execution)
 	for _, obj := range []manifest.BaseManifest{producer, chart, foreignProducer} {
@@ -409,8 +410,8 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		captured[obj.Named()] = execution
 	}
 
-	c.KeepEmitted(t.Context(), parent, loader.PrepareRequest{Generation: []store.Child{{Obj: consumer}}, Reads: nil})
-	c.KeepEmitted(t.Context(), parent, loader.PrepareRequest{Generation: []store.Child{{Obj: release}}, Reads: nil})
+	c.KeepEmitted(t.Context(), parent, selection.PrepareRequest{Generation: []store.Child{{Obj: consumer}}, Reads: nil})
+	c.KeepEmitted(t.Context(), parent, selection.PrepareRequest{Generation: []store.Child{{Obj: release}}, Reads: nil})
 
 	for _, tc := range []struct {
 		obj      manifest.BaseManifest
@@ -658,7 +659,9 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 	s := store.New()
 	c := New(s, nil)
 	obj := (*testCaseInput.obj).WithNamespace("apps")
-	s.AddObject(obj)
+	s.AddObjects([]manifest.BaseManifest{
+		&manifest.Kustomization{Name: testCaseInput.parent.Name, Namespace: testCaseInput.parent.Namespace}, obj,
+	})
 	s.UpdateStatus(
 		obj.Named(),
 		store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
@@ -666,7 +669,7 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 	index := &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{(*testCaseInput.parent): {File: "parent.yaml"}},
 	}
-	admissionLoader2 := admissiontest.New(
+	admissionLoader2, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"parent.yaml"}),
@@ -675,8 +678,8 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, admissionLoader2, nil)
-	c.Configure(Options{Filter: admissionLoader2.Options.Filter, Index: index, Loader: admissionLoader2})
+	admissiontest.Commit(t, admissionLoader2.Options.Session, nil)
+	c.Configure(Options{Session: admissionLoader2.Options.Session, Index: index, Loader: admissionLoader2})
 	s.SetIncluded(obj.Named(), false, false)
 	execution := newExecution(c, obj.Named())
 	t.Cleanup(execution.Close)
@@ -684,7 +687,7 @@ func testKeepEmittedInvalidatesCapturedExclusionCase(
 	c.KeepEmitted(
 		t.Context(),
 		(*testCaseInput.parent),
-		loader.PrepareRequest{Generation: []store.Child{{Obj: obj}}, Reads: nil},
+		selection.PrepareRequest{Generation: []store.Child{{Obj: obj}}, Reads: nil},
 	)
 	assert.Equal(t, execution.Reads.Valid(), false)
 	next := newExecution(c, obj.Named())

@@ -496,8 +496,7 @@ func testMissingCRDsChildrenAndProducersCase(
 	if testCaseInput.enabled {
 		allowed = []string{manifest.KindCustomResourceDefinition}
 	}
-	renderedSingleton1, err := RenderTrees(
-		t.Context(),
+	renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingKinds: allowed},
 	)

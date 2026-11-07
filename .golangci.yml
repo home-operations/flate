@@ -161,6 +161,26 @@ linters:
           deny:
             - pkg: github.com/home-operations/flate/pkg
               desc: leaf packages import nothing from pkg/
+        selection:
+          list-mode: strict
+          files: ["**/pkg/selection/**", "!$test"]
+          allow:
+            - $gostd
+            - github.com/home-operations/flate/pkg/manifest
+            - github.com/home-operations/flate/pkg/store
+            - github.com/home-operations/flate/pkg/change
+        selection-foundation:
+          files:
+            - "**/pkg/manifest/**"
+            - "**/pkg/store/**"
+            - "**/pkg/change/**"
+            - "**/pkg/source/**"
+            - "**/pkg/values/**"
+            - "**/pkg/schedule/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/home-operations/flate/pkg/selection
+              desc: facts do not depend on render selection
         store:
           files: ["**/pkg/store/**", "!$test"]
           deny:

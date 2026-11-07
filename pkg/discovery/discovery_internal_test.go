@@ -10,13 +10,14 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -717,8 +718,9 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 	)
 	st := store.New()
 	l := loader.New(st)
-	l.Options.Filter = change.NewFilter()
 	consumer := testutil.KustomizationID("apps", "consumer")
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer}})
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer}})
 	supplier := testutil.KustomizationID("apps", "supplier")
 	unused := testutil.KustomizationID("apps", "unused")
 	data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}
@@ -730,7 +732,7 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 			Store:     st,
 			Loader:    l,
 			Trees:     testTrees(t),
-			Selection: manifest.Selection{Roots: []manifest.NamedResource{consumer}},
+			Selection: selection.Request{Roots: []manifest.NamedResource{consumer}},
 		},
 	)
 	assert.NoError(t, err)
@@ -746,18 +748,18 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 		true,
 	)
 	assert.Equal(t, st.GetObject(data), nil)
-	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
-	proposal, err := l.Prepare(t.Context(), loader.PrepareRequest{Invocation: true})
+	assert.Equal(t, len(selectedNames(l)), 0)
+	proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, supplier), true)
 	assert.Equal(t, slices.Contains(proposal.Ordinary, supplier), true)
 	assert.Equal(t, slices.Contains(proposal.Needed, unused), false)
 	assert.Equal(t, slices.Contains(proposal.Selected, supplier), false)
-	committed, err := l.Commit(t.Context(), proposal, loader.Construction)
+	committed, err := commitSelection(t.Context(), l, proposal, selection.Construction)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
-	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
-	assert.Equal(t, l.Options.Filter.OrdinaryDemand(supplier), false)
+	assert.Equal(t, len(selectedNames(l)), 0)
+	assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(supplier), true)
 	assert.Equal(t, st.GetObject(unused), nil)
 	assert.Equal(t, st.GetArtifact(unused, store.ArtifactContent), nil)
 }

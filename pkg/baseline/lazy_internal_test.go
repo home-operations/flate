@@ -159,11 +159,11 @@ func TestAutoResolve_TwoSidedInput(t *testing.T) {
 			Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}},
 		},
 	}}
-	filter := admissiontest.Filter(
+	filter := admissiontest.Decision(
 		t,
 		admissiontest.Config{Changes: res.Changes, Index: index, Inventory: nil, Root: ""},
 	)
-	assert.FatalIf(t, filter.ShouldReconcile(app), "%v", "two-sided input supplied an absent input identity")
+	assert.FatalIf(t, filter.Reconcile(app), "%v", "two-sided input supplied an absent input identity")
 }
 
 func TestSelection_OneSidedInputOrder(t *testing.T) {
@@ -734,13 +734,13 @@ func testAutoResolveIgnoreMembershipFlipsCase(
 		}}
 		objects := store.New()
 		objects.SetArtifact(manifest.BootstrapSourceID, input)
-		filter := admissiontest.Filter(
+		filter := admissiontest.Decision(
 			t,
 			admissiontest.Config{Changes: changes, Index: index, Inventory: objects, Root: input.LocalPath},
 		)
 		assert.ErrorIf(
 			t,
-			!filter.ShouldReconcile(app),
+			!filter.Reconcile(app),
 			"side %d ignore %s did not select optional input consumer",
 			side, (*testCaseInput),
 		)

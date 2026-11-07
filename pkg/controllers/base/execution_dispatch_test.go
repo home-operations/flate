@@ -430,7 +430,7 @@ func testExecutionDispatchCase(t *testing.T, testCaseInput *struct {
 	c := base.New(st, nil)
 	opts := base.Options{}
 	if testCaseInput.filtered {
-		admissionLoader1 := admissiontest.New(
+		admissionLoader1, _ := admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes: change.NewSet([]string{"other.yaml"}),
@@ -441,8 +441,8 @@ func testExecutionDispatchCase(t *testing.T, testCaseInput *struct {
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, admissionLoader1, nil)
-		opts.Filter, opts.Loader = admissionLoader1.Options.Filter, admissionLoader1
+		admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
+		opts.Session, opts.Loader = admissionLoader1.Options.Session, admissionLoader1
 	}
 	if testCaseInput.preflight {
 		opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }

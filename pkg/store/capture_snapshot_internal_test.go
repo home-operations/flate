@@ -35,6 +35,33 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 		"%s",
 		"refreshing registrations replaced the acquired mutable material",
 	)
+	var refreshed ReadSet
+	refreshed.Init(st, ownerID("consumer"), nil)
+	defer refreshed.Retire()
+	assert.Equal(t, refreshed.Matches(&before), true)
+	assert.Equal(t, before.MatchesContent(&refreshed, source.Named()), true)
+	var metadataBefore ReadSet
+	metadataBefore.Init(st, ownerID("metadata-consumer"), nil)
+	defer metadataBefore.Retire()
+	metadataBefore.GetArtifact(source.Named(), ArtifactContent|ArtifactRevision)
+	metadata := artifact.WithReads(&ReadSet{})
+	metadata.Revision = "next"
+	st.SetArtifact(source.Named(), metadata)
+	var metadataCurrent ReadSet
+	metadataCurrent.Init(st, ownerID("metadata-consumer"), nil)
+	defer metadataCurrent.Retire()
+	assert.Equal(t, metadataCurrent.Matches(&metadataBefore), false)
+	var contentCurrent ReadSet
+	contentCurrent.Init(st, ownerID("content-consumer"), nil)
+	defer contentCurrent.Retire()
+	assert.Equal(t, contentCurrent.Matches(&before), true)
+	changed := artifact.WithReads(&ReadSet{})
+	changed.Key = "different"
+	st.SetArtifact(source.Named(), changed)
+	var contentChanged ReadSet
+	contentChanged.Init(st, ownerID("content-consumer"), nil)
+	defer contentChanged.Retire()
+	assert.Equal(t, contentChanged.Matches(&before), false)
 	st.SetArtifact(source.Named(), &SourceArtifact{LocalPath: artifact.LocalPath, FS: artifact.FS})
 	var replacement ReadSet
 	replacement.Init(st, ownerID("consumer"), nil)

@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
@@ -70,14 +72,13 @@ spec:
 			},
 		)
 	}
-	results, err := RenderTrees(
-		t.Context(),
+	results, err := renderTreesForTest(t.Context(), t,
 		trees,
 		Config{
 			CacheDir:       t.TempDir(),
 			RegistryConfig: registryConfig,
 			Concurrency:    2,
-			Selection:      manifest.Selection{Changed: true},
+			Selection:      selection.Request{Changed: true},
 		},
 	)
 	assert.NoError(t, err)
@@ -228,14 +229,13 @@ spec:
 			ExternalChanges: inputs.Changes,
 		},
 	}
-	results, err := RenderTrees(
-		t.Context(),
+	results, err := renderTreesForTest(t.Context(), t,
 		trees,
 		Config{
 			Cache:          cache,
 			RegistryConfig: registryConfig,
 			Concurrency:    2,
-			Selection:      manifest.Selection{Changed: true},
+			Selection:      selection.Request{Changed: true},
 		},
 	)
 	assert.NoError(t, err)

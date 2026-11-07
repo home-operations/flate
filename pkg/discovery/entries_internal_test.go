@@ -8,11 +8,12 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -85,7 +86,7 @@ spec:
 				Config{
 					Input:       input,
 					Path:        root,
-					Selection:   manifest.Selection{Changed: true},
+					Selection:   selection.Request{Changed: true},
 					Projections: projections,
 				},
 			)
@@ -111,7 +112,7 @@ spec:
 				Input:     entry.Input,
 				Path:      entry.Path,
 				Store:     store.New(),
-				Selection: manifest.Selection{Changed: true},
+				Selection: selection.Request{Changed: true},
 			},
 		)
 		assert.NoError(t, err)
@@ -330,8 +331,8 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
-	selection := manifest.Selection{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")}}
-	cfg := Config{Input: input, Path: filepath.Join(root, "flux"), Selection: selection}
+	request := selection.Request{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")}}
+	cfg := Config{Input: input, Path: filepath.Join(root, "flux"), Selection: request}
 	entries, err := Plan(t.Context(), cfg)
 	assert.NoError(t, err)
 	before := reads.Load()
@@ -339,7 +340,7 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 	assert.Equal(t, requiredReads.Load(), int64(1))
 	cfg.Store = store.New()
 	cfg.Loader = loader.New(cfg.Store)
-	cfg.Loader.Options.Filter = change.NewFilter()
+	configureSelection(t, cfg.Loader, cfg.Selection)
 	cfg.Entry = &entries[0]
 	session, err := Begin(t.Context(), cfg)
 	assert.NoError(t, err)
@@ -351,6 +352,6 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 	record, ok := cfg.Loader.Index.Lookup(data)
 	assert.Equal(t, ok, true)
 	assert.Equal(t, record.File, "supplier/cm.yaml")
-	assert.Equal(t, len(cfg.Loader.Options.Filter.KeepNames()), 0)
+	assert.Equal(t, len(selectedNames(cfg.Loader)), 0)
 	assert.Equal(t, cfg.Store.GetObject(data), nil)
 }

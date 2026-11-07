@@ -230,7 +230,7 @@ func testReconcileProviderInventorySettlementCase(
 		index := &manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {File: "reader.yaml"}},
 		}
-		filterLoader := admissiontest.New(
+		filterLoader, _ := admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet([]string{"reader.yaml"}),
@@ -239,22 +239,22 @@ func testReconcileProviderInventorySettlementCase(
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, filterLoader, nil)
-		filter := filterLoader.Options.Filter
+		admissiontest.Commit(t, filterLoader.Options.Session, nil)
+		filter := filterLoader.Options.Session
 		_, _, before := st.GetEmission(rs.Named())
 		childValues := before.Children
 		for childIndex := range childValues {
 			child := childValues[childIndex]
 			assert.FatalIf(
 				t,
-				!filter.ShouldReconcile(child.Obj.Named()),
+				!filter.Snapshot().Reconcile(child.Obj.Named()),
 				"%v",
 				"accepted child missing before replay",
 			)
 		}
 		before.Finish()
 		c := New(st, tasks, nil)
-		c.Configure(base.Options{Filter: filter, Index: index, Loader: filterLoader})
+		c.Configure(base.Options{Session: filter, Index: index, Loader: filterLoader})
 		c.StartLifecycle()
 
 		info := controllertest.DispatchToFixpoint(
@@ -276,7 +276,7 @@ func testReconcileProviderInventorySettlementCase(
 			childValues2 := current.Children
 			for childIndex2 := range childValues2 {
 				child := childValues2[childIndex2]
-				assert.FatalIf(t, !filter.ShouldReconcile(child.Obj.Named()),
+				assert.FatalIf(t, !filter.Snapshot().Reconcile(child.Obj.Named()),
 					"accepted child %s missing from changed-only selection", child.Obj.Named())
 			}
 		}

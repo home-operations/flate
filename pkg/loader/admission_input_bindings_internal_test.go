@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -36,14 +36,19 @@ func TestAdmission_InputGate(t *testing.T) {
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection = manifest.Selection{
+
+	configureSelection(t, l, selection.Request{
 		Roots: []manifest.NamedResource{(&manifest.ResourceSet{Name: "consumer", Namespace: "apps"}).Named()},
-	}
+	})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	gate := (&manifest.Kustomization{Name: "gate", Namespace: "apps"}).Named()
 	assert.Equal(t, slices.Contains(proposal.Needed, gate), true)
@@ -68,19 +73,24 @@ func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
+
 	l.Options.Changes = change.NewSet([]string{"input.yaml"})
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	producer := (&manifest.ResourceSet{Name: "templates", Namespace: "apps"}).Named()
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
-	l.Options.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
+	historyOwners := map[manifest.NamedResource][]manifest.SourceEvidence{
 		producer: {
 			{
 				Source: st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
@@ -90,80 +100,16 @@ func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 			},
 		},
 	}
-	proposal, err = l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err = prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{HistoryOwners: historyOwners, Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
-}
-
-type admissionArtifactReads struct {
-	admissionReader
-
-	calls       int
-	lists       int
-	wideLists   int
-	productions []manifest.NamedResource
-	bySource    map[manifest.NamedResource]int
-}
-
-//nolint:ireturn // The reader contract returns heterogeneous artifact implementations.
-func (r *admissionArtifactReads) GetArtifact(id manifest.NamedResource, read store.ArtifactRead) store.Artifact {
-	r.calls++
-	if r.bySource != nil {
-		r.bySource[id]++
-	}
-	return r.admissionReader.GetArtifact(id, read)
-}
-
-func (r *admissionArtifactReads) ListObjects(group, kind string) []manifest.BaseManifest {
-	r.lists++
-	if group == "" && kind == "" {
-		r.wideLists++
-	}
-	return r.admissionReader.ListObjects(group, kind)
-}
-
-func TestAdmission_InputChangesQualifiedOnce(t *testing.T) {
-	t.Parallel()
-	for _, changed := range []string{"selected.yaml", "unrelated.yaml"} {
-		t.Run(changed, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
-			l := New(st)
-			l.SourceRoot = root
-			l.Options.Changes = change.NewSet([]string{changed})
-			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
-			inputs := make([]string, 100)
-			for i := range inputs {
-				inputs[i] = "other-" + strings.Repeat("x", i) + ".yaml"
-			}
-			inputs[len(inputs)-1] = "selected.yaml"
-			l.Index.Records[id] = manifest.DiscoveryRecord{File: "settings.yaml", Inputs: inputs}
-			var captured store.ReadSet
-			captured.Init(st, id, nil)
-			t.Cleanup(captured.Close)
-			var work manifest.WorkRecorder
-			captured.SetWork(&work)
-			reads := &admissionArtifactReads{admissionReader: &captured}
-			c := admissionClosure{loader: l, objects: reads}
-			assert.Equal(t, c.affected(id, nil), changed == "selected.yaml")
-			calls := reads.calls
-			assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(1))
-			assert.Equal(t, c.affected(id, nil), changed == "selected.yaml")
-			assert.Equal(t, reads.calls, calls)
-			assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(1))
-			if reads.calls > 3 {
-				t.Fatalf(
-					"qualified one changed path %d times for %d recorded inputs; want at most 3 artifact reads",
-					reads.calls,
-					len(inputs),
-				)
-			}
-		})
-	}
 }
 
 func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
@@ -219,8 +165,8 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 	l := New(stores[1])
 	l.SourceRoot = roots[1]
 	l.Options.Changes = changes
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
+
 	for _, replaced := range []bool{false, true} {
 		if replaced {
 			for _, id := range sources {
@@ -231,16 +177,22 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 		}
 		var captured store.ReadSet
 		captured.Init(stores[1], consumer.Named(), nil)
-		reads := &admissionArtifactReads{admissionReader: &captured, bySource: map[manifest.NamedResource]int{}}
-		c := admissionClosure{loader: l, objects: reads, generation: []store.Child{{Obj: consumer}}}
-		c.proposal = new(Admission)
-		proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
+		session, err := selection.New(l.Store, l, selection.Request{Changed: true})
 		assert.NoError(t, err)
+		proposal, err := session.Prepare(t.Context(), selection.PrepareRequest{
+			Generation: []store.Child{{Obj: consumer}}, Reads: &captured, Invocation: true,
+		})
+		assert.NoError(t, err)
+		t.Cleanup(proposal.Retire)
 		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), !replaced)
-		if len(reads.bySource) < len(sources) {
-			t.Fatalf("captured %d source identities for %d suppliers", len(reads.bySource), len(sources))
+		for _, id := range sources {
+			l.SourceFacts(id, &captured)
 		}
-		for id, count := range reads.bySource {
+		capturedSources := sourceCaptures(&captured)
+		if len(capturedSources) < len(sources) {
+			t.Fatalf("captured %d source identities for %d suppliers", len(capturedSources), len(sources))
+		}
+		for id, count := range capturedSources {
 			assert.Equal(t, count, 1)
 			assert.Equal(t, slices.Contains(slices.Collect(captured.Inputs()), id), true)
 		}
@@ -261,9 +213,10 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 	l := New(stores[1])
 	l.SourceRoot = roots[1]
 	l.Options.Changes = changes
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
+
 	l.sideKnown, l.side = true, manifest.TreeHead
+	l.ensureScopes()
 	l.freezeConstruction()
 	input := stores[1].GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
 	var captured [2]store.ReadSet
@@ -286,13 +239,16 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 		}
 		captured[i].Init(stores[1], consumer.Named(), nil)
 		closers = append(closers, captured[i].Close)
-		reads := &admissionArtifactReads{admissionReader: &captured[i], bySource: map[manifest.NamedResource]int{}}
-		c := admissionClosure{loader: l, objects: reads, generation: []store.Child{{Obj: consumer}}}
-		c.proposal = new(Admission)
-		proposal, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
+		session, err := selection.New(l.Store, l, selection.Request{Changed: true})
 		assert.NoError(t, err)
+		proposal, err := session.Prepare(t.Context(), selection.PrepareRequest{
+			Generation: []store.Child{{Obj: consumer}}, Reads: &captured[i], Invocation: true,
+		})
+		assert.NoError(t, err)
+		t.Cleanup(proposal.Retire)
 		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), true)
-		assert.Equal(t, reads.bySource[source.Named()], 1)
+		l.SourceFacts(source.Named(), &captured[i])
+		assert.Equal(t, sourceCaptures(&captured[i])[source.Named()], 1)
 		assert.Equal(t, slices.Contains(slices.Collect(captured[i].Inputs()), source.Named()), true)
 		assert.Equal(t, captured[i].Valid(), true)
 	}
@@ -302,14 +258,9 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 	for i := range captured {
 		assert.Equal(t, captured[i].Valid(), false)
 	}
-	c := admissionClosure{
-		loader:      l,
-		objects:     stores[1],
-		comparisons: &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}},
-	}
-	evidence := c.boundSource(source.Named())
-	assert.Equal(t, evidence.input, &replacement)
-	assert.Equal(t, evidence.paired, false)
+	evidence := l.SourceFacts(source.Named(), nil)
+	assert.Equal(t, evidence.Input, &replacement)
+	assert.Equal(t, evidence.Paired, false)
 }
 
 func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
@@ -320,22 +271,20 @@ func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
 	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
+
 	l.Options.Changes = change.NewSet([]string{"before.yaml"})
-	c := admissionClosure{loader: l, objects: st}
-	c.proposal = new(Admission)
-	before, _, _ := c.delta(source)
+	before := l.SourceFacts(source, nil).Delta
 	assert.Equal(t, before.Contains("before.yaml"), true)
-	_, err := c.evaluate(t.Context(), new(PrepareRequest{Invocation: true}))
+	_, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	l.Options.Changes = change.NewSet([]string{"after.yaml"})
-	next := admissionClosure{
-		loader:      l,
-		objects:     st,
-		comparisons: &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}},
-	}
-	after, _, _ := next.delta(source)
+	after := l.SourceFacts(source, nil).Delta
 	assert.Equal(t, after.Contains("before.yaml"), false)
 	assert.Equal(t, after.Contains("after.yaml"), true)
 }
@@ -402,8 +351,8 @@ func testAdmissionUnreferencedInputCollisionCase(
 		)
 		l := New(st)
 		l.SourceRoot = root
-		l.Options.Selection = manifest.Selection{Changed: true}
-		l.Options.Filter = change.NewFilter()
+		configureSelection(t, l, selection.Request{Changed: true})
+
 		for _, dir := range []string{"flux", "decls", "app"} {
 			_, err := l.Load(t.Context(), filepath.Join(root, dir), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
@@ -415,7 +364,12 @@ func testAdmissionUnreferencedInputCollisionCase(
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.Options.Changes = changes
-		proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+		proposal, err := prepareSelection(
+			t.Context(),
+			t,
+			l,
+			selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+		)
 		assert.NoError(t, err)
 		if len(proposal.Needed) != 0 {
 			t.Errorf("side %d admitted unrelated objects: %v", side, proposal.Needed)
@@ -423,71 +377,12 @@ func testAdmissionUnreferencedInputCollisionCase(
 	}
 }
 
-func (r *admissionArtifactReads) ListProductionCandidates(
-	group, kind string,
-	index *manifest.DiscoveryIndex,
-	prospective map[manifest.NamedResource]bool,
-) []manifest.BaseManifest {
-	r.lists++
-	return r.admissionReader.ListProductionCandidates(group, kind, index, prospective)
-}
-
-func (r *admissionArtifactReads) Productions(
-	id manifest.NamedResource,
-	index *manifest.DiscoveryIndex,
-) []manifest.Production {
-	r.productions = append(r.productions, id)
-	return r.admissionReader.Productions(id, index)
-}
-
-func TestAdmission_NarrowerSuccessorKeepsCompleteEvidence(t *testing.T) {
-	t.Parallel()
-	st := store.New()
-	root := t.TempDir()
-	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
-	first := &manifest.Kustomization{Name: "first", Namespace: "apps", Path: "first"}
-	second := &manifest.Kustomization{
-		Name:      "second",
-		Namespace: "apps",
-		Path:      "second",
-		PostBuild: &kustomizev1.PostBuild{
-			SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values"}},
-		},
+func sourceCaptures(reads *store.ReadSet) map[manifest.NamedResource]int {
+	counts := map[manifest.NamedResource]int{}
+	for id := range reads.Inputs() {
+		if id.KindInfo().SourceArtifact {
+			counts[id]++
+		}
 	}
-	input := manifest.NewConfigMap(
-		manifest.NamedResource{Name: "values", Namespace: "apps"},
-		map[string]any{"value": "before"},
-	)
-	st.AddObjects([]manifest.BaseManifest{first, second, input})
-	l := New(st)
-	defer l.Close()
-	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection.Roots = []manifest.NamedResource{first.Named(), second.Named()}
-	var preparation *Preparation
-	defer func() { preparation.Retire() }()
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
-	assert.NoError(t, err)
-	assert.Equal(t, preparation.closure.states[second.Named()].initialKnown, true)
-	proposal.Retire()
-	for range st.Sweep() {
-	}
-	var guard store.ReadSet
-	guard.Init(st, first.Named(), nil)
-	guard.RequireData(first.Named())
-	defer guard.Close()
-	proposal, err = l.Prepare(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
-	assert.NoError(t, err)
-	assert.Equal(t, preparation.closure.states[second.Named()].initialKnown, true)
-	assert.Equal(t, slices.Contains(slices.Collect(proposal.reads.Inputs()), input.Named()), true)
-	proposal.Retire()
-	for range st.Sweep() {
-	}
-	st.AddObject(manifest.NewConfigMap(input.Named(), map[string]any{"value": "after"}))
-	proposal, err = l.Prepare(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
-	assert.NoError(t, err)
-	defer proposal.Retire()
-	assert.Equal(t, preparation.closure.states[first.Named()].initialKnown, true)
-	assert.Equal(t, preparation.closure.states[second.Named()].initialKnown, false)
-	assert.Equal(t, proposal.reads.Valid(), true)
+	return counts
 }

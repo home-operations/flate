@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -42,13 +43,18 @@ spec: {path: ./sibling, targetNamespace: sibling, components: [../shared]}
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
+
 	l.Options.Changes = change.NewSet([]string{"selected/payload.yaml"})
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	selected := manifest.NamedResource{
 		Group:     manifest.FluxKustomizeDomain,
@@ -107,8 +113,8 @@ func TestAdmission_DeclaredChartSourceNamespace(t *testing.T) {
 	st.AddObject(opaque)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
+
 	l.Options.Changes = change.NewSet([]string{"app/release.yaml"})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
@@ -124,7 +130,12 @@ func TestAdmission_DeclaredChartSourceNamespace(t *testing.T) {
 		t.Fatalf("declared chart source is missing: index=%+v", l.Index.Records)
 	}
 	assert.Equal(t, record.Authored.Namespace, "")
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, id), true)
 	assert.Equal(t, slices.Contains(proposal.Needed, opaque.Named()), false)
@@ -177,11 +188,11 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 	}
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
+
 	if testCaseInput.allowMissing {
 		l.Options.AllowMissingKinds = []string{kind}
 	}
-	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer.Named()}}
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer.Named()}})
 	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		consumer.Named(): {
 			Parent:      owner.Named(),
@@ -201,8 +212,14 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 	}
 	occurrence := compactOccurrence(opaque, projectedProducerForTest(opaque))
 	occurrence.Declaration.Source = root
-	l.locations = map[manifest.NamedResource]Occurrence{opaque.Named(): occurrence}
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	l.locations = map[manifest.NamedResource]authoredOccurrence{opaque.Named(): occurrence}
+	l.Index.Records[opaque.Named()] = manifest.DiscoveryRecord{}
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), true)
 	assert.Equal(
@@ -215,7 +232,12 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 			testCaseInput.production != "self",
 	)
 	assert.Equal(t, slices.Contains(proposal.Selected, opaque.Named()), false)
-	plain, err := l.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{{Obj: consumer}}})
+	plain, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{{Obj: consumer}}},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(plain.Needed, owner.Named()), true)
 	wantOpaque := testCaseInput.complete && !testCaseInput.optional && !testCaseInput.generated &&
@@ -224,17 +246,23 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 	assertAdmissionCapturedMembership(t, l, consumer, plain)
 }
 
-func assertAdmissionCapturedMembership(t *testing.T, l *Loader, consumer manifest.BaseManifest, plain *Admission) {
+func assertAdmissionCapturedMembership(
+	t *testing.T,
+	l *Loader,
+	consumer manifest.BaseManifest,
+	plain *selection.Admission,
+) {
 	t.Helper()
 	var reads store.ReadSet
 	owner := l.Index.Records[consumer.Named()].Parent
 	reads.Init(l.Store, owner, nil)
 	defer reads.Close()
 	for range 2 {
-		captured, err := l.Prepare(
-			t.Context(),
-			PrepareRequest{Generation: []store.Child{{Obj: consumer}}, Reads: &reads},
-		)
+		captured, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+			Changes:    l.Options.Changes,
+			Generation: []store.Child{{Obj: consumer}},
+			Reads:      &reads,
+		})
 		assert.NoError(t, err)
 		assert.Diff(t, captured.Needed, plain.Needed)
 		assert.Diff(t, captured.Selected, plain.Selected)

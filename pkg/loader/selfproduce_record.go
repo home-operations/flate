@@ -21,7 +21,7 @@ func (pr *productionRecorder) record(b *selfProduceBuilder, l *Loader, childArg 
 	production.publish(pr, b, l)
 }
 
-func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact *Occurrence, version string) {
+func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact *authoredOccurrence, version string) {
 	o := *fact
 	if !o.facts.retained && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
 		return

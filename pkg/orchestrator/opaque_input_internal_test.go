@@ -124,7 +124,7 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 		assert.NoError(t, openErr)
 		defer func() { assert.NoError(t, owner.Close()) }()
 		persistent = owner.CanPersistRenders()
-		runs, err := RenderTrees(t.Context(), input, Config{Concurrency: 2, CacheDir: cacheDir, Cache: owner})
+		runs, err := renderTreesForTest(t.Context(), t, input, Config{Concurrency: 2, CacheDir: cacheDir, Cache: owner})
 		counts := opaqueInputWork(t, &logs)
 		fetched := opaqueInputDownloadDelta(tailCaseInput.downloads, before)
 		t.Logf("%s work=%v chart_downloads=%v error=%v", label, counts, fetched, err)
@@ -145,12 +145,13 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 	}
 	delta := func(runs []Rendered, runErr error) ([]byte, error) {
 		t.Helper()
-		selected, selectedErr, err := Select(
+		projectedResults0, projectionErrors0 := Select(
 			runs,
 			runErr,
 			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 			nil,
 		)
+		selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		if err != nil {
 			return nil, err
 		}

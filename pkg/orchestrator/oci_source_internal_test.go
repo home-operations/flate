@@ -135,7 +135,7 @@ spec:
 	assert.FatalIf(t, err != nil, "%v", err)
 	f := &generatedOCIFetcher{root: artifact, err: testCaseInput.fetchErr, wantRetry: retry}
 	o.src.Fetchers[manifest.KindOCIRepository] = f
-	res, err := o.render(t.Context())
+	res, err := o.render(t.Context(), t)
 	assert.FatalIf(
 		t,
 		(err == nil) != (testCaseInput.producer && testCaseInput.fetchErr == nil),

@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -25,7 +25,7 @@ type stateReader interface {
 
 // Waiter holds the parameters for one dependency-classification operation.
 type Waiter struct {
-	Preparation **loader.Preparation
+	Preparation **selection.Preparation
 	Store       stateReader
 	Parent      manifest.NamedResource
 
@@ -62,7 +62,7 @@ type ExistenceLookup interface {
 	// Promote attempts to materialize id into the Store from the
 	// discovery index. Returns true when promotion succeeded
 	// and id is now reachable via store.GetObject.
-	Promote(context.Context, loader.PrepareRequest, manifest.NamedResource) (bool, error)
+	Promote(context.Context, selection.PrepareRequest, manifest.NamedResource) (bool, error)
 }
 
 type expressionReadiness struct {

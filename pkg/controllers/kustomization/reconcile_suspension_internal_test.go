@@ -23,6 +23,7 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -636,23 +637,18 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 
 func promoteSourceCoverage(t *testing.T, s *store.Store, index *manifest.DiscoveryIndex, id manifest.NamedResource) {
 	t.Helper()
-	{
-		pValues := s.Productions(id, index)
-		for pIndex := range pValues {
-			p := pValues[pIndex]
-
-			if p.Path != "" {
-				loader.Promote(
-					t.Context(),
-					s,
-					id,
-					loader.PromoteOptions{
-						Record: p,
-						Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
-					},
-				)
-			}
+	productions := s.Productions(id, index)
+	for i := range productions {
+		production := &productions[i]
+		if production.Path == "" {
+			continue
+		}
+		children, err := loader.Promote(t.Context(), s, id, loader.PromoteOptions{Record: *production})
+		assert.NoError(t, err)
+		for child := range selection.Declarations(children) {
+			s.AddObject(child.Obj, child.Doc)
 		}
 	}
+
 	assert.FatalIf(t, s.GetObject(id) == nil, "missing promoted seed %s", id)
 }

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/helm"
@@ -135,7 +136,8 @@ func benchmarkDirtyRerunDynamicEmissionChainCase(b *testing.B, root *string, wor
 			},
 		)
 		tree.Input, tree.Path = input, path
-		o := newOrchestrator(b.Context(), new(config), new(tree), task.NewBounded(config.Concurrency))
+		o, constructionErr := newOrchestrator(b.Context(), new(config), new(tree), task.NewBounded(config.Concurrency))
+		assert.NoError(b, constructionErr)
 		if localErr := o.bootstrap(b.Context()); localErr != nil {
 			b.Fatal(localErr)
 		}

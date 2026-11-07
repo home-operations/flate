@@ -3,15 +3,14 @@ package loader
 import (
 	"path/filepath"
 	"slices"
-	"strconv"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -40,8 +39,8 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			st.AddObject(owner)
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection.Changed = tc.compact
-			l.Options.Filter = change.NewFilter()
+			configureSelection(t, l, selection.Request{Changed: tc.compact})
+
 			packageRoot := filepath.Join(root, "parent")
 			_, err := l.Load(t.Context(), packageRoot, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
@@ -92,17 +91,24 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			emission.Finish()
 			status, _ := st.GetStatus(owner.Named())
 			assert.FatalIf(t, status.Status == store.StatusReady, "construction marked the owner Ready")
+			configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{id}})
+			commit := func(child store.Child, reads *store.ReadSet) bool {
+				proposal, prepareErr := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+					Changes:    l.Options.Changes,
+					Generation: []store.Child{child},
+					Reads:      reads,
+					Invocation: true,
+				})
+				assert.NoError(t, prepareErr)
+				_, committed, commitErr := l.Options.Session.Commit(t.Context(), proposal, selection.Construction)
+				assert.NoError(t, commitErr)
+				return committed
+			}
 
 			current, valid := l.BuiltChildren(packageRoot, owner.Named(), binding)
 			assert.FatalIf(t, !valid || len(current) != 1, "supported construction batch disappeared")
 			current[0].Entry = &manifest.EntryApplication{}
-			proposal, err := l.Prepare(
-				t.Context(),
-				PrepareRequest{Generation: []store.Child{current[0]}, Reads: binding, Invocation: true},
-			)
-			assert.NoError(t, err)
-			committed, err := l.Commit(t.Context(), proposal, Construction)
-			assert.NoError(t, err)
+			committed := commit(current[0], binding)
 			assert.Equal(t, committed, false)
 			assert.Equal(t, binding.Valid(), false)
 			st.Retire(binding)
@@ -112,13 +118,7 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 			current, valid = l.BuiltChildren(packageRoot, owner.Named(), binding)
 			assert.FatalIf(t, !valid || len(current) != 1, "supported construction batch disappeared")
 			current[0].Entry = &manifest.EntryApplication{}
-			proposal, err = l.Prepare(
-				t.Context(),
-				PrepareRequest{Generation: []store.Child{current[0]}, Reads: binding, Invocation: true},
-			)
-			assert.NoError(t, err)
-			committed, err = l.Commit(t.Context(), proposal, Construction)
-			assert.NoError(t, err)
+			committed = commit(current[0], binding)
 			assert.Equal(t, committed, true)
 			assert.Equal(t, st.GetDeclaration(id), children[0].Obj)
 
@@ -162,7 +162,7 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 
 func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 	t.Parallel()
-	for _, invalidation := range []string{"owner", "source"} {
+	for _, invalidation := range []string{"owner", "source", "native_source"} {
 		t.Run(invalidation, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -170,9 +170,15 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 			st := store.New()
 			admitForTest(st, root)
 			owner := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./parent"}
+			if invalidation == "native_source" {
+				owner = manifest.NewEntryKustomization(manifest.BootstrapSourceID, "parent", manifest.NamedResource{})
+			}
 			st.AddObject(owner)
 			l := New(st)
 			l.SourceRoot = root
+			if invalidation == "native_source" {
+				configureSelection(t, l, selection.Request{Changed: true})
+			}
 			packageRoot := filepath.Join(root, "parent")
 			_, err := l.Load(t.Context(), packageRoot, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
@@ -188,6 +194,15 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 				Support: support,
 			}
 			l.RegisterBuilt(input, children)
+			if invalidation == "native_source" {
+				var before store.ReadSet
+				before.Init(st, manifest.NamedResource{}, nil)
+				facts := l.RootEvidence(children[0].Obj.Named(), &before)
+				assert.Equal(t, facts.PreparedRoot, packageRoot)
+				assert.Equal(t, facts.Scope.Prepared, true)
+				assert.Equal(t, selection.Root(facts).Independent, true)
+				before.Retire()
+			}
 			binding := new(store.ReadSet)
 			binding.Init(st, testutil.KustomizationID("apps", "binding"), nil)
 			defer st.Retire(binding)
@@ -201,6 +216,20 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 				replaced := *source
 				replaced.Content = "replacement"
 				st.SetArtifact(manifest.BootstrapSourceID, &replaced)
+			}
+			if invalidation == "native_source" {
+				var after store.ReadSet
+				after.Init(st, manifest.NamedResource{}, nil)
+				facts := l.RootEvidence(children[0].Obj.Named(), &after)
+				assert.Equal(t, facts.Record.Builder != "", true)
+				assert.Equal(t, facts.PreparedRoot, "")
+				assert.Equal(t, facts.Scope.Prepared, false)
+				assert.Equal(t, facts.BuiltCurrent, false)
+				result := selection.Root(facts)
+				assert.Equal(t, result.Owner, owner.Named())
+				assert.Equal(t, result.Admitted, false)
+				assert.Equal(t, result.Independent, false)
+				after.Retire()
 			}
 			assert.FatalIf(
 				t,
@@ -216,46 +245,6 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 			_, complete = l.BuiltChildren(packageRoot, owner.Named(), fresh)
 			assert.FatalIf(t, complete, "rejected preparation installed an empty batch")
 			l.Retire()
-		})
-	}
-}
-
-func TestEntryRoots_NativeOperand(t *testing.T) {
-	t.Parallel()
-	for _, native := range []bool{false, true} {
-		t.Run(strconv.FormatBool(native), func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			testutil.WriteFile(
-				t,
-				root,
-				"one/object.yaml",
-				"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: one, namespace: apps}\nspec: {resources: []}\n",
-			)
-			if native {
-				testutil.WriteFile(t, root, "one/kustomization.yaml", "resources: [object.yaml]\n")
-			}
-			st := store.New()
-			admitForTest(st, root)
-			l := New(st)
-			l.SourceRoot = root
-			l.Options.Filter = change.NewFilter()
-			l.Options.Selection.Changed = true
-			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
-			assert.NoError(t, err)
-			l.Admit(root)
-			id := manifest.NamedResource{
-				Group:     manifest.FluxOperatorDomain,
-				Kind:      manifest.KindResourceSet,
-				Namespace: "apps",
-				Name:      "one",
-			}
-			assert.Equal(
-				t,
-				l.roots.get(id).independent && l.roots.get(id).occurrence.Declaration != (OccurrenceID{}),
-				!native,
-			)
-			assert.Equal(t, l.AdmitsRoot(l.CatalogObject(id), l.Index.Records[id].Path), true)
 		})
 	}
 }

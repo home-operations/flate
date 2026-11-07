@@ -4,13 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -101,11 +102,12 @@ func newTestOrchestratorTail(tailCaseInput *newTestOrchestratorTailInputs) (*Orc
 			DisableChartDigestTracking: tailCaseInput.cfg.HelmOptions.DisableChartDigestTracking,
 		},
 	)
-	o := newOrchestrator((*tailCaseInput.tb).Context(),
+	o, constructionErr := newOrchestrator((*tailCaseInput.tb).Context(),
 		new(*tailCaseInput.cfg),
 		new(*tailCaseInput.tree),
 		task.NewBounded(tailCaseInput.cfg.Concurrency),
 	)
+	assert.NoError(*tailCaseInput.tb, constructionErr)
 	(*tailCaseInput.tb).
 		Cleanup(func() {
 			o.stop()
@@ -152,9 +154,9 @@ func (o *Orchestrator) prepareBootstrap(ctx context.Context) error {
 		if err := o.lookupHistory(ctx); err != nil {
 			return err
 		}
-		proposal, err := o.loader.Prepare(
+		proposal, err := o.prepareAdmission(
 			ctx,
-			loader.PrepareRequest{Generation: nil, Reads: nil, History: o.history, Invocation: true},
+			selection.PrepareRequest{Generation: nil, Reads: nil, History: o.history, Invocation: true},
 		)
 		if err != nil {
 			return err
@@ -179,30 +181,33 @@ func (o *Orchestrator) bootstrap(ctx context.Context) error {
 		return err
 	}
 	o.completeBootstrap()
-	if err := o.buildChangeFilter(ctx); err != nil {
+	if err := o.prepareInvocation(ctx); err != nil {
 		return err
 	}
-	if o.filter.Enabled() && len(o.admission.EntryProducers()) == 0 {
-		proposal, err := o.loader.Prepare(ctx, loader.PrepareRequest{Invocation: true, History: o.history})
+	if (o.selection != nil) && len(o.admission.EntryProducers()) == 0 {
+		proposal, err := o.prepareAdmission(ctx, selection.PrepareRequest{Invocation: true, History: o.history})
 		if err != nil {
 			return err
 		}
-		if _, err = o.loader.Commit(ctx, proposal, loader.Execution); err != nil {
+		if _, _, err = o.selection.Commit(ctx, proposal, selection.Execution); err != nil {
 			return err
 		}
 	}
-	if o.filter.Enabled() {
+	if o.selection != nil {
 		return o.installAdmission(ctx)
 	}
 	return nil
 }
 
-func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
+func (o *Orchestrator) render(ctx context.Context, tb testing.TB) (*Result, error) {
+	tb.Helper()
 	defer o.stop()
 	if err := o.bootstrap(ctx); err != nil {
 		return nil, err
 	}
-	return o.collectResult(o.run(ctx))
+	result, err := o.collectResult(o.run(ctx))
+	tb.Cleanup(result.Close)
+	return result, err
 }
 
 func reconcileEntryForTest(t *testing.T, o *Orchestrator) {
@@ -224,4 +229,9 @@ type newTestOrchestratorTailInputs struct {
 		TB
 
 	tree *Tree
+}
+
+func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
+	manifests, _ := o.collectCompletedManifests()
+	return manifests
 }

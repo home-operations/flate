@@ -144,16 +144,16 @@ func TestFilter_ReverseEdgeCentralizedOCIRepository(t *testing.T) {
 		},
 	)
 
-	if !f.ShouldReconcile(oci) {
+	if !f.Reconcile(oci) {
 		t.Fatalf("changed OCIRepository must be in keep; keep=%v", f.KeepNames())
 	}
-	if !f.ShouldReconcile(hr) {
+	if !f.Reconcile(hr) {
 		t.Fatalf("reverse edge: HR consuming the changed OCIRepository must be in keep; keep=%v", f.KeepNames())
 	}
-	if !f.ShouldReconcile(appKS.Named()) {
+	if !f.Reconcile(appKS.Named()) {
 		t.Errorf("HR owner KS must render (ancestor) to emit the HR; keep=%v", f.KeepNames())
 	}
-	if f.ShouldReconcile(sibling) {
+	if f.Reconcile(sibling) {
 		t.Errorf("sibling HR consuming an unchanged source must NOT be pulled in; keep=%v", f.KeepNames())
 	}
 	// Namespace scoping (scopedNamespaces → KeepNamespaces) gates diff
@@ -201,13 +201,13 @@ func TestFilter_ReverseEdgeHelmChartKeepsEmitter(t *testing.T) {
 	}).index(), inventory: objects, root: ""})
 
 	for _, id := range []manifest.NamedResource{oci, chart, app.Named(), meta.Named()} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("source, chart and emitting ancestors must be kept: missing %s; keep=%v", id, f.KeepNames())
 		}
 	}
-	assert.Equal(t, f.ShouldReconcile(sibling), false)
+	assert.Equal(t, f.Reconcile(sibling), false)
 	f.AddEmitted(app.Named(), new(store.Child{Obj: refObj(sibling)}), f.objs)
-	assert.Equal(t, f.ShouldReconcile(sibling), false)
+	assert.Equal(t, f.Reconcile(sibling), false)
 }
 
 // TestFilter_ReverseEdgeNoCascadeFromChangedConsumer pins the guard on
@@ -245,10 +245,10 @@ func TestFilter_ReverseEdgeNoCascadeFromChangedConsumer(t *testing.T) {
 		},
 	)
 
-	if !f.ShouldReconcile(aID) {
+	if !f.Reconcile(aID) {
 		t.Fatalf("changed HR a must be in keep; keep=%v", f.KeepNames())
 	}
-	if f.ShouldReconcile(bID) {
+	if f.Reconcile(bID) {
 		t.Errorf("unchanged sibling HR b reverse-cascaded via shared source; keep=%v", f.KeepNames())
 	}
 }
@@ -289,10 +289,10 @@ func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
 		},
 	)
 
-	if !f.ShouldReconcile(hr) {
+	if !f.Reconcile(hr) {
 		t.Fatalf("changed HelmRelease must be in keep; keep=%v", f.KeepNames())
 	}
-	if !f.ShouldReconcile(oci) {
+	if !f.Reconcile(oci) {
 		t.Fatalf(
 			"forward edge: the changed HR's chartRef OCIRepository must be in keep so its chart is fetched; keep=%v",
 			f.KeepNames(),
@@ -300,7 +300,7 @@ func TestFilter_ForwardEdgeChangedHRKeepsChartRefSource(t *testing.T) {
 	}
 	// Keeping the shared source via plex's forward edge must NOT reverse-
 	// cascade to a sibling HR that merely shares it (its file is unchanged).
-	if f.ShouldReconcile(sibling) {
+	if f.Reconcile(sibling) {
 		t.Errorf("sibling HR sharing the chart source must NOT be pulled in; keep=%v", f.KeepNames())
 	}
 }
@@ -339,7 +339,7 @@ func testFilterTransitiveDepsHelmReleaseViaHelmChartCRDInitialization(
 		},
 	)
 	for _, id := range []manifest.NamedResource{(*testCaseInput.hrID), (*testCaseInput.hcID), (*testCaseInput.ociID)} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("transitive dependency %s not selected: keep=%v", id, f.KeepNames())
 		}
 	}
@@ -360,7 +360,10 @@ func testFilterTransitiveDepsHelmReleaseViaHelmChartCRDRuntime(
 	t.Helper()
 
 	parent := testutil.KustomizationID("apps", "parent")
-	objects := filtertest.MapLister{(*testCaseInput.hcID): (*testCaseInput.hc)}
+	objects := filtertest.MapLister{
+		parent:                &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace},
+		(*testCaseInput.hcID): (*testCaseInput.hc),
+	}
 	f := newAdmission(
 		t,
 		admissionConfig{
@@ -374,14 +377,14 @@ func testFilterTransitiveDepsHelmReleaseViaHelmChartCRDRuntime(
 		},
 	)
 	for _, id := range []manifest.NamedResource{(*testCaseInput.hrID), (*testCaseInput.hcID), (*testCaseInput.ociID)} {
-		assert.Equal(t, f.ShouldReconcile(id), false)
+		assert.Equal(t, f.Reconcile(id), false)
 	}
 
 	added := f.AddEmitted(parent, new(store.Child{Obj: (*testCaseInput.hr)}), f.objs)
 
 	assert.Equal(t, len(added), 3)
 	for _, id := range []manifest.NamedResource{(*testCaseInput.hrID), (*testCaseInput.hcID), (*testCaseInput.ociID)} {
-		if !f.ShouldReconcile(id) || !slices.Contains(added, id) {
+		if !f.Reconcile(id) || !slices.Contains(added, id) {
 			t.Errorf(
 				"transitive dependency %s not selected and returned: added=%v, keep=%v",
 				id,

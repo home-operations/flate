@@ -22,8 +22,7 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
-	runs, err := orchestrator.RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]orchestrator.Tree{
 			{
 				ID:    manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
@@ -83,7 +82,7 @@ func renderTreesInputWarningOnlyCase(t *testing.T, warning *struct {
 		base.FS = nil
 		wantErr = manifest.ErrInput
 	}
-	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{
+	runs, err := renderTreesForTest(t.Context(), t, []orchestrator.Tree{
 		{
 			ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
 			Path:            (*root),
@@ -117,7 +116,8 @@ func renderTreesInputWarningOnlyCase(t *testing.T, warning *struct {
 	}
 	assert.Diff(t, warnings, []manifest.Warning{baseWarning, headWarning})
 	roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
-	sides, selectedErr, remainder := orchestrator.Select(runs, err, roots, nil)
+	projectedResults0, projectionErrors0 := orchestrator.Select(runs, err, roots, nil)
+	sides, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.FatalIf(
 		t,
 		!errors.Is(selectedErr, wantErr) || !errors.Is(remainder, wantErr) || len(sides) != len(runs),

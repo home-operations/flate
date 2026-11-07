@@ -10,8 +10,8 @@ import (
 
 	"github.com/home-operations/flate/internal/imageutil"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 func newGetCmd() *cobra.Command {
@@ -33,7 +33,7 @@ func ksView() listView[*manifest.Kustomization] {
 			{Header: "NAME", Key: nameKey},
 			{Header: "PATH", Key: pathKey},
 		},
-		mapper: func(_ *selection.Selection, o *manifest.Kustomization) (map[string]string, map[string]any) {
+		mapper: func(_ *selection.Result, o *manifest.Kustomization) (map[string]string, map[string]any) {
 			source := o.SourceID()
 			doc := map[string]any{
 				kindKey: manifest.KindKustomization, namespaceKey: o.Namespace,
@@ -73,7 +73,7 @@ func hrView() listView[*manifest.HelmRelease] {
 			{Header: "VERSION", Key: versionFlag},
 			{Header: "SOURCE", Key: sourceKey},
 		},
-		mapper: func(res *selection.Selection, o *manifest.HelmRelease) (map[string]string, map[string]any) {
+		mapper: func(res *selection.Result, o *manifest.HelmRelease) (map[string]string, map[string]any) {
 			source := o.ChartSource()
 			chart := o.Chart
 			if source.Name != "" {
@@ -156,7 +156,7 @@ type listView[T manifest.BaseManifest] struct {
 	use, short, kind string
 	aliases          []string
 	cols             []output.Column
-	mapper           func(*selection.Selection, T) (map[string]string, map[string]any)
+	mapper           func(*selection.Result, T) (map[string]string, map[string]any)
 }
 
 func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {

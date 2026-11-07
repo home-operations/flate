@@ -140,39 +140,6 @@ func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 	}
 }
 
-// SelectOutput reports whether this producer's batch or document matches requested output scope.
-//
-//nolint:gocritic // Preserve the existing value API and its snapshot semantics.
-func (p EmissionPolicy) SelectOutput(
-	doc map[string]any,
-	roots []NamedResource,
-	namespaces map[string]struct{},
-	labels map[string]string,
-) bool {
-	if !p.DocumentScope {
-		return true
-	}
-	if roots[0].Name != "" || !slices.ContainsFunc(roots, func(root NamedResource) bool {
-		return root.Group == FluxKustomizeDomain && root.Kind == KindKustomization
-	}) {
-		return false
-	}
-	id := DocIdentity(doc)
-	if id.Namespace != "" && namespaces != nil {
-		if _, ok := namespaces[id.Namespace]; !ok {
-			return false
-		}
-	}
-	md, _ := doc[metadataKey].(map[string]any)
-	actual, _ := md["labels"].(map[string]any)
-	for key, value := range labels {
-		if got, ok := actual[key]; !ok || got != value {
-			return false
-		}
-	}
-	return true
-}
-
 const (
 	ownerLabelCount = 2
 )

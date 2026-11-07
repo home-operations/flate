@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -104,7 +105,7 @@ spec:
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
 		l.SourceRoot = root
-		l.Options.Selection.Changed = true
+		configureSelection(t, l, selection.Request{Changed: true})
 		_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -187,7 +188,7 @@ spec:
 	}
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.Equal(t, l.scopes, nil)
-	assert.Equal(t, before[0].object.Named().Name, "before")
+	assert.Equal(t, before[0].Object.Named().Name, "before")
 }
 
 func testAdmitLateFallbackCase(t *testing.T, testCaseInput *bool,

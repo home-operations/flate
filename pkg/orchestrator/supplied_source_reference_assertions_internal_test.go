@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"testing"
 
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -18,8 +19,8 @@ func assertSuppliedSourceReference(t *testing.T, o *Orchestrator, result *Result
 		if _, known := o.store.GetStatus(id); known {
 			t.Fatal("explicit selector executed supplied source")
 		}
-		membershipResult1 := o.filter.Membership(id)
-		needed, selected, _, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
+		membershipResult1 := o.selection.Snapshot()
+		needed, selected := membershipResult1.Reconcile(id), membershipResult1.Output(id)
 		if needed || selected {
 			t.Fatal("reference selected itself or unrelated consumers")
 		}
@@ -32,24 +33,49 @@ func assertSuppliedSourceReference(t *testing.T, o *Orchestrator, result *Result
 		t.Fatal("supplied source became output")
 	}
 	if mode != "full" {
-		if _, included := o.filter.KeepNamespaces()["supply-only"]; included {
-			membershipResult2 := o.filter.Membership(id)
-			needed, selected, dirty, _ := membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
-			t.Fatalf(
-				"needed source selected its namespace: needed=%t selected=%t dirty=%t filter=%v",
-				needed,
-				selected,
-				dirty,
-				o.filter,
-			)
-		}
-		membershipResult3 := o.filter.Membership(id)
-		_, selected, _, _ := membershipResult3.Needed, membershipResult3.Selected, membershipResult3.Dirty, membershipResult3.Revision
-		if selected {
-			t.Fatal("source selected as a consumer")
-		}
+		assertSuppliedSourceMembership(t, o, result, id)
 	}
 	if len(result.Manifests) == 0 {
 		t.Fatal("consumer produced no output")
+	}
+}
+
+func assertSuppliedSourceMembership(t *testing.T, o *Orchestrator, result *Result, id manifest.NamedResource) {
+	t.Helper()
+	if _, included := selectionNamespacesForTest(o.selection, o.store, o.index)["supply-only"]; included {
+		membershipResult2 := o.selection.Snapshot()
+		needed, selected, dirty := membershipResult2.Reconcile(
+			id,
+		), membershipResult2.Output(
+			id,
+		), membershipResult2.Changed(
+			id,
+		)
+		t.Fatalf(
+			"needed source selected its namespace: needed=%t selected=%t dirty=%t filter=%v",
+			needed,
+			selected,
+			dirty,
+			o.selection,
+		)
+	}
+	roots := o.cfg.Selection.Roots
+	if len(roots) == 0 {
+		for kind := range manifest.Kinds() {
+			if kind.Render {
+				roots = append(roots, manifest.NamedResource{Group: kind.Group, Kind: kind.Kind})
+			}
+		}
+	}
+	projected, failures := Select(
+		[]Rendered{{Orchestrator: o, Result: result}}, nil, roots, o.cfg.Selection.Labels,
+	)
+	if failures.Selected != nil || failures.Remaining != nil {
+		t.Fatalf("source projection: selected=%v remaining=%v", failures.Selected, failures.Remaining)
+	}
+	for _, object := range projected[0].Objects {
+		if object.Named() == id {
+			t.Fatal("source selected as a consumer")
+		}
 	}
 }

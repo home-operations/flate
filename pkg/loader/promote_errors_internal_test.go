@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -30,33 +32,38 @@ func testPromoteAdmissionErrorsCase(t *testing.T, testCaseInput *string,
 	first := &manifest.ConfigMap{Name: "first", Namespace: "apps"}
 	target := &manifest.ConfigMap{Name: "target", Namespace: "apps"}
 	last := &manifest.ConfigMap{Name: "last", Namespace: "apps"}
-	docs := []store.Child{{Obj: first}, {Obj: target}, {Obj: last}}
-	if (*testCaseInput) == "existing" {
+	if *testCaseInput == "existing" {
 		st.AddObject(target)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	cause := manifest.NewError(manifest.ErrInput, nil, "exact admission failed")
-	calls := 0
-	admit := func(obj manifest.BaseManifest) (bool, error) {
-		if obj.Named() != target.Named() {
-			return true, nil
-		}
-		calls++
-		if (*testCaseInput) == "cancel" {
-			cancel()
-			return true, nil
-		}
-		if (*testCaseInput) != "final" || calls == 2 {
-			return false, cause
-		}
-		return true, nil
+	if *testCaseInput != "existing" {
+		got, err := promoteForTest(ctx, t, st, first.Named(), PromoteOptions{Documents: []store.Child{{Obj: first}}})
+		assert.NoError(t, err)
+		assert.Equal(t, got, true)
 	}
-	got, err := Promote(ctx, st, target.Named(), PromoteOptions{Documents: docs, Admit: admit})
-	var want error = cause
-	if (*testCaseInput) == "cancel" {
+	if *testCaseInput == "final" {
+		got, err := promoteForTest(ctx, t, st, target.Named(), PromoteOptions{Documents: []store.Child{{Obj: target}}})
+		assert.NoError(t, err)
+		assert.Equal(t, got, true)
+	}
+	input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{
+		"objects.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: [\n")},
+	}}
+	occurrence := selection.OccurrenceFacts{
+		Declaration: selection.OccurrenceID{Source: input.LocalPath, File: "objects.yaml"},
+		Identity:    target.Named(), Authored: target.Named(),
+	}
+	if *testCaseInput == "final" {
+		occurrence.Identity, occurrence.Authored = last.Named(), last.Named()
+	}
+	want := manifest.ErrInput
+	if *testCaseInput == "cancel" {
+		cancel()
 		want = context.Canceled
 	}
+	child, err := New(st).OccurrenceObject(ctx, &occurrence, input)
+	got := child.Obj != nil
 	assert.FatalIf(t, got || !errors.Is(err, want), "Promote = %v, %v, want false, %v", got, err, want)
 	assert.FatalIf(
 		t,

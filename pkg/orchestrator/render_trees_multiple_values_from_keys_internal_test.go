@@ -94,7 +94,7 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 	parent := testutil.KustomizationID("apps", "parent")
 	full := make([]Rendered, 2)
 	for side, tree := range trees {
-		runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 1)
 		full[side] = runs[0]
@@ -112,12 +112,13 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 				assert.Diff(t, docs[0]["data"], map[string]any{"value": fmt.Sprintf("v%d", side+1)})
 			}
 		}
-		selected, selectedErr, err := Select(
+		projectedResults0, projectionErrors0 := Select(
 			runs,
 			nil,
 			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 			nil,
 		)
+		selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
 		body, warnings, suppressed, err := diff.Compare(
 			diff.Snapshot{
@@ -156,13 +157,19 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 		for side := range trees {
 			trees[side].ExternalChanges = changes
 		}
-		runs, err := RenderTrees(t.Context(), trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 2)
 		assert.Equal(t, string(delta(runs)), string(want))
 		for side, rendered := range runs {
-			membershipResult1 := rendered.filter.Membership(parent)
-			needed, selected, dirty, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
+			membershipResult1 := rendered.selection.Snapshot()
+			needed, selected, dirty := membershipResult1.Reconcile(
+				parent,
+			), membershipResult1.Output(
+				parent,
+			), membershipResult1.Changed(
+				parent,
+			)
 			assert.Equal(t, needed, true)
 			assert.Equal(t, selected, true)
 			t.Logf(
@@ -173,8 +180,8 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 				selected,
 				dirty,
 			)
-			membershipResult2 := rendered.filter.Membership(child)
-			_, selected, dirty, _ = membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
+			membershipResult2 := rendered.selection.Snapshot()
+			selected, dirty = membershipResult2.Output(child), membershipResult2.Changed(child)
 			assert.Equal(t, selected, true)
 			assert.Equal(t, dirty, true)
 			assert.Equal(t, rendered.Store().GetObject(child) != nil, true)
@@ -237,8 +244,7 @@ spec:
       data: {key: losing-omitted}
 `, i+1))
 	}
-	renderedTrees3, err := RenderTrees(
-		t.Context(),
+	renderedTrees3, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -305,8 +311,9 @@ spec:
 			},
 		)
 	}
-	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
+	projectedResults1, projectionErrors1 := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+	selected, selectedErr, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 	body, _, _, err := diff.Compare(
 		diff.Snapshot{
 			Subjects:     selected[0].Subjects,
@@ -384,8 +391,7 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	entry := func(root string) string { return root + "/kubernetes/flux/cluster" }
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	renderedTrees4, err := RenderTrees(
-		ctx,
+	renderedTrees4, err := renderTreesForTest(ctx, t,
 		[]Tree{
 			{RepoRoot: baseDir, Path: entry(baseDir), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, Path: entry(headDir), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -401,8 +407,9 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 		base.Result,
 		head.Result,
 	)
-	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
+	projectedResults2, projectionErrors2 := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+	selected, selectedErr, _ := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 	body, _, _, err := diff.Compare(
 		diff.Snapshot{
 			Subjects:     selected[0].Subjects,
@@ -495,7 +502,7 @@ func testRenderTreesMultipleValuesFromKeysCase(
 			ExternalChanges: change.NewSet([]string{"flux/values.yaml"}),
 		}
 	}
-	runs, err := RenderTrees(t.Context(), trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
+	runs, err := renderTreesForTest(t.Context(), t, trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	assert.NoError(t, err)
 	assert.Equal(t, len(runs), 2)
 	app := testutil.HelmReleaseID("apps", "app")
@@ -504,8 +511,8 @@ func testRenderTreesMultipleValuesFromKeysCase(
 		assert.Equal(t, len(run.Result.Warnings), 0)
 		assert.Equal(t, len(run.Result.ClusterWarnings), 0)
 		assert.Equal(t, len(run.Result.Blocked), 0)
-		membershipResult3 := run.filter.Membership(app)
-		_, selected, dirty, _ := membershipResult3.Needed, membershipResult3.Selected, membershipResult3.Dirty, membershipResult3.Revision
+		membershipResult3 := run.selection.Snapshot()
+		selected, dirty := membershipResult3.Output(app), membershipResult3.Changed(app)
 		assert.Equal(t, selected, testCaseInput.changed)
 		assert.Equal(t, dirty, testCaseInput.changed)
 		docs := outputByParent(run.Result.Manifests)[app]
@@ -606,8 +613,7 @@ spec: {url: https://example.test/cluster.git}
 	}
 	fullApp := make([][]map[string]any, 2)
 	for side, input := range []*store.SourceArtifact{inputs.BaseInput, inputs.Source} {
-		renderedSingleton1, err := RenderTrees(
-			t.Context(),
+		renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					Path:     input.LocalPath,
@@ -669,8 +675,7 @@ func testRenderTreesOptionalInputRoutesCaseTail(
 	}
 	var first [2][]byte
 	for run := range 2 {
-		renderedTrees2, err := RenderTrees(
-			t.Context(),
+		renderedTrees2, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					RepoRoot:        baseTree.RepoRoot,

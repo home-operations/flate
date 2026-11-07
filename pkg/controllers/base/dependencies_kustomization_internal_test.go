@@ -29,7 +29,7 @@ func BenchmarkCollectDeps(b *testing.B) {
 	}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	admissionLoader1 := admissiontest.New(
+	admissionLoader1, _ := admissiontest.New(
 		b,
 		admissiontest.Config{
 			Changes: change.NewSet([]string{"target.yaml"}),
@@ -40,8 +40,8 @@ func BenchmarkCollectDeps(b *testing.B) {
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(b, admissionLoader1, nil)
-	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
+	admissiontest.Commit(b, admissionLoader1.Options.Session, nil)
+	c.Configure(Options{Session: admissionLoader1.Options.Session, Loader: admissionLoader1})
 	b.ReportAllocs()
 	for b.Loop() {
 		c.dependencies(ks, manifest.GateInputs)
@@ -141,7 +141,7 @@ func TestCollectDeps_Allocations(t *testing.T) {
 	}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	admissionLoader1 := admissiontest.New(
+	admissionLoader1, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes: change.NewSet([]string{"target.yaml"}),
@@ -152,8 +152,8 @@ func TestCollectDeps_Allocations(t *testing.T) {
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, admissionLoader1, nil)
-	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
+	admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
+	c.Configure(Options{Session: admissionLoader1.Options.Session, Loader: admissionLoader1})
 	allocs := testing.AllocsPerRun(100, func() { c.dependencies(ks, manifest.GateInputs) })
 
 	assert.FatalIf(t, allocs > 3, "dependency collection allocated %g times, want at most 3", allocs)
@@ -244,7 +244,7 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 	fixture := store.New()
 	fixture.AddObjects([]manifest.BaseManifest{consumerObj, producerObj, cmObj})
 	fixture.SetDiscoveryIndex(index)
-	fLoader := admissiontest.New(
+	fLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"kubernetes/apps/changed.yaml"}),
@@ -253,11 +253,11 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, fLoader, nil)
-	f := fLoader.Options.Filter
+	admissiontest.Commit(t, fLoader.Options.Session, nil)
+	f := fLoader.Options.Session
 
 	c := New(store.New(), nil)
-	c.Configure(Options{Filter: f, Index: index, Loader: fLoader})
+	c.Configure(Options{Session: f, Index: index, Loader: fLoader})
 	execution := gateExecution(c, consumerObj.Named())
 	input := values.NewStoreProvider(&execution.Reads).
 		Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: consumer.Namespace, Name: cmID.Name})
@@ -301,7 +301,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	fixture := store.New()
 	fixture.AddObjects([]manifest.BaseManifest{selfObj, cmObj})
 	fixture.SetDiscoveryIndex(index)
-	fLoader := admissiontest.New(
+	fLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}),
@@ -310,11 +310,11 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, fLoader, nil)
-	f := fLoader.Options.Filter
+	admissiontest.Commit(t, fLoader.Options.Session, nil)
+	f := fLoader.Options.Session
 
 	c := New(store.New(), nil)
-	c.Configure(Options{Filter: f, Index: index, Loader: fLoader})
+	c.Configure(Options{Session: f, Index: index, Loader: fLoader})
 
 	{
 		owners := c.Store.Productions(cmID, index)
@@ -698,7 +698,7 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 	if testCaseInput.noData {
 		consumer.PostBuild = nil
 	}
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes: changes,
@@ -712,8 +712,8 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
 	parent := testutil.KustomizationID("apps", "parent")
 	producers := []manifest.NamedResource{
 		testutil.KustomizationID("apps", "second"),
@@ -734,12 +734,12 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 					},
 				},
 			},
-			Filter:    filter,
+			Session:   filter,
 			Existence: indexedOrderingDeps{target.Named(): testCaseInput.indexed},
 			Loader:    filterLoader,
 		},
 	)
-	size := len(filter.KeepNames())
+	decision := filter.Snapshot()
 	deps := gateExecution(c, consumer.Named()).authoredDependenciesForTest(consumer)
 	var want []manifest.DependencyRef
 	if testCaseInput.retain {
@@ -762,7 +762,7 @@ func testCollectDepsOrderingFilterCase(t *testing.T, testCaseInput *struct {
 
 	assert.ErrorIf(
 		t,
-		len(filter.KeepNames()) != size || len(consumer.DependsOn) != 2,
+		filter.Snapshot() != decision || len(consumer.DependsOn) != 2,
 		"%v",
 		"ordering collection must preserve keep and input edges",
 	)

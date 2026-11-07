@@ -6,9 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
@@ -46,7 +47,7 @@ func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	cmd.SetErr(&errOut)
 	got := cmd.ExecuteContext(t.Context())
 	{
-		_, ok := errors.AsType[*orchestrator.FailuresError](got)
+		_, ok := errors.AsType[*selection.FailuresError](got)
 		assert.FatalIf(t, !ok || !errors.Is(got, writeErr), "render or writer error lost: %v", got)
 	}
 	{

@@ -1,0 +1,666 @@
+package selection
+
+import (
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+)
+
+func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *selectionSide) {
+	if len(s.run.Failed) == 0 {
+		return
+	}
+	s.result.Failed = make(map[manifest.NamedResource]store.StatusInfo)
+	s.result.Blocked = make(map[manifest.NamedResource][]manifest.NamedResource)
+	var required map[manifest.NamedResource]struct{}
+	if roots[0].Name != "" || roots[0].Namespace != "" || s.run.Decision.restricted() {
+		required = s.requiredClosure(roots, other)
+	}
+	unrelated := make(map[manifest.NamedResource]store.StatusInfo)
+	for id, info := range s.run.Failed {
+		_, needed := required[id]
+		if required != nil && !needed {
+			if s.includes(id.Namespace) {
+				unrelated[id] = info
+			}
+			continue
+		}
+		s.result.Failed[id] = info
+		if deps := s.run.Blocked[id]; len(deps) > 0 {
+			s.result.Blocked[id] = deps
+		}
+	}
+	if len(unrelated) > 0 {
+		s.result.Unrelated = s.unrelatedFailures(&s.run, unrelated, required)
+	}
+	s.result.Causes = s.failureCauses(s.result.Failed, s.result.Blocked)
+}
+
+func (s *selectionSide) requiredClosure(
+	roots []manifest.NamedResource,
+	other *selectionSide,
+) map[manifest.NamedResource]struct{} {
+	q := requiredSelection{
+		side:   s,
+		intent: Request{Roots: roots},
+		seen:   make(map[manifest.NamedResource]struct{}),
+	}
+	q.seedRoots()
+	children := s.run.childrenByParent()
+	if roots[0].Name != "" {
+		for _, kids := range children {
+			for _, id := range kids {
+				q.seed(id)
+			}
+		}
+	}
+	// Prerequisites MUST NOT expand downward into unrelated siblings.
+	if roots[0].Name != "" || roots[0].Namespace != "" {
+		q.expandChildren(children)
+	}
+	if id := s.run.Entry.Producer; id != (manifest.NamedResource{}) && s.run.Decision.restricted() &&
+		s.run.Decision.Reconcile(id) {
+		q.add(id)
+	}
+	if other != nil {
+		q.seedOther(other)
+	}
+	q.expandPrerequisites()
+	return q.seen
+}
+
+type requiredSelection struct {
+	side   *selectionSide
+	intent Request
+	seen   map[manifest.NamedResource]struct{}
+	work   []manifest.NamedResource
+}
+
+func (q *requiredSelection) add(id manifest.NamedResource) {
+	if _, ok := q.seen[id]; !ok {
+		q.seen[id] = struct{}{}
+		q.work = append(q.work, id)
+	}
+}
+
+func (q *requiredSelection) seed(id manifest.NamedResource) {
+	s := q.side
+	if q.intent.Roots[0].Name == "" && s.run.Decision.restricted() {
+		if selected := s.run.Decision.Output(id); !selected {
+			return
+		}
+	}
+	if q.intent.Matches(id) && s.includes(id.Namespace) {
+		q.add(id)
+	}
+}
+
+func (q *requiredSelection) seedRoots() {
+	s := q.side
+	for _, id := range s.roots {
+		q.seed(id)
+	}
+	if s.run.Index != nil {
+		for id := range s.run.Index.Records {
+			q.seed(id)
+		}
+	}
+	for id := range s.run.Failed {
+		q.seed(id)
+	}
+}
+
+func (q *requiredSelection) expandChildren(children map[manifest.NamedResource][]manifest.NamedResource) {
+	for i := 0; i < len(q.work); i++ { //nolint:intrange // Descendants extend this traversal.
+		for _, child := range children[q.work[i]] {
+			if q.selectedChild(child) {
+				q.add(child)
+			}
+		}
+	}
+}
+
+func (q *requiredSelection) selectedChild(child manifest.NamedResource) bool {
+	if q.intent.Roots[0].Name != "" {
+		return true
+	}
+	s := q.side
+	if s.run.Decision.restricted() {
+		selected := s.run.Decision.Output(child)
+		return selected
+	}
+	return s.includes(child.Namespace)
+}
+
+func (q *requiredSelection) seedOther(other *selectionSide) {
+	s := q.side
+	for _, id := range other.roots {
+		if s.run.Decision.restricted() {
+			if selected := other.run.Decision.Output(id); selected {
+				q.add(id)
+			}
+		}
+		q.addOtherParents(other, id)
+	}
+}
+
+func (q *requiredSelection) addOtherParents(other *selectionSide, id manifest.NamedResource) {
+	s := q.side
+	visited := make(map[manifest.NamedResource]bool)
+	for s.run.Store.GetObject(id) == nil && !visited[id] {
+		visited[id] = true
+		parent, ok := other.run.parentOf(id)
+		if !ok {
+			break
+		}
+		actual := s.actualProducer(other.comparisonKey(parent))
+		q.add(actual)
+		if actual != parent {
+			break
+		}
+		id = parent
+	}
+}
+
+func (q *requiredSelection) expandPrerequisites() {
+	for len(q.work) > 0 {
+		id := q.work[len(q.work)-1]
+		q.work = q.work[:len(q.work)-1]
+		if parent, ok := q.side.run.parentOf(id); ok {
+			q.add(parent)
+		}
+		for dep := range q.side.run.Store.RequiredInputs(id) {
+			q.add(dep)
+		}
+	}
+}
+
+func rootsOf(
+	id manifest.NamedResource,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) []manifest.NamedResource {
+	var out []manifest.NamedResource
+	seen := map[manifest.NamedResource]bool{id: true}
+	var walk func(manifest.NamedResource)
+	walk = func(n manifest.NamedResource) {
+		for _, dep := range blocked[n] {
+			if seen[dep] {
+				continue
+			}
+			seen[dep] = true
+			if _, derived := blocked[dep]; derived {
+				walk(dep)
+			} else {
+				out = append(out, dep)
+			}
+		}
+	}
+	walk(id)
+	return out
+}
+
+func rootVictims(
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) map[manifest.NamedResource][]manifest.NamedResource {
+	byRoot := make(map[manifest.NamedResource][]manifest.NamedResource)
+	for id := range blocked {
+		for _, root := range rootsOf(id, blocked) {
+			byRoot[root] = append(byRoot[root], id)
+		}
+	}
+	for root, ids := range byRoot {
+		slices.SortFunc(ids, manifest.NamedResource.Compare)
+		byRoot[root] = slices.Compact(ids)
+	}
+	return byRoot
+}
+
+func (s *selectionSide) failureCauses(
+	failed map[manifest.NamedResource]store.StatusInfo,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) map[manifest.NamedResource][]manifest.NamedResource {
+	byRoot := rootVictims(blocked)
+	covered := make(map[manifest.NamedResource]bool)
+	for root, ids := range byRoot {
+		covered[root] = true
+		for _, id := range ids {
+			covered[id] = true
+		}
+	}
+	for id := range failed {
+		if _, derived := blocked[id]; !derived {
+			covered[id] = true
+		}
+	}
+	cycles := make(map[manifest.NamedResource]bool)
+	markDependencyCycles(failed, blocked, covered, cycles)
+	view := blocked
+	if len(cycles) > 0 {
+		view = maps.Clone(blocked)
+		for id := range cycles {
+			delete(view, id)
+			peers := slices.Clone(blocked[id])
+			slices.SortFunc(peers, manifest.NamedResource.Compare)
+			names := make([]string, len(peers))
+			for i, peer := range peers {
+				names[i] = s.result.Diagnostic(peer).String()
+			}
+			info := failed[id]
+			info.Message = "dependency cycle: blocked by " + strings.Join(names, ", ")
+			failed[id] = info
+		}
+		byRoot = rootVictims(view)
+	}
+	for id := range failed {
+		if _, derived := view[id]; !derived {
+			if _, exists := byRoot[id]; !exists {
+				byRoot[id] = nil
+			}
+		}
+	}
+	return byRoot
+}
+
+func markDependencyCycles(
+	failed map[manifest.NamedResource]store.StatusInfo,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+	covered, cycles map[manifest.NamedResource]bool,
+) {
+	for id := range failed {
+		if covered[id] {
+			continue
+		}
+		seen := make(map[manifest.NamedResource]bool)
+		var reaches func(manifest.NamedResource) bool
+		reaches = func(dep manifest.NamedResource) bool {
+			if dep == id {
+				return true
+			}
+			if seen[dep] {
+				return false
+			}
+			seen[dep] = true
+			return slices.ContainsFunc(blocked[dep], reaches)
+		}
+		if slices.ContainsFunc(blocked[id], reaches) {
+			cycles[id] = true
+		}
+	}
+}
+
+func (s *selectionSide) unrelatedFailures(
+	raw *Snapshot,
+	unrelated map[manifest.NamedResource]store.StatusInfo,
+	required map[manifest.NamedResource]struct{},
+) []manifest.Warning {
+	byRoot := rootVictims(raw.Blocked)
+	covered := make(map[manifest.NamedResource]bool)
+	var warnings []manifest.Warning
+	for id, info := range raw.Failed {
+		if _, derived := raw.Blocked[id]; derived {
+			continue
+		}
+		if _, ok := unrelated[id]; ok {
+			covered[id] = true
+			detail, related := s.unrelatedWarningChildren(byRoot[id], unrelated, covered)
+			warnings = append(
+				warnings,
+				manifest.Warning{
+					Resource: id,
+					Subject:  s.result.Diagnostic(id),
+					Related:  related,
+					Category: manifest.WarnUnrelatedFailure,
+					Message:  info.Message,
+					Detail:   detail,
+				},
+			)
+		}
+	}
+	for root, victims := range byRoot {
+		if _, failed := raw.Failed[root]; failed {
+			continue
+		}
+		if _, needed := required[root]; needed {
+			continue
+		}
+		if detail, related := s.unrelatedWarningChildren(victims, unrelated, covered); len(detail) > 0 {
+			warnings = append(
+				warnings,
+				manifest.Warning{
+					Resource: root,
+					Subject:  s.result.Diagnostic(root),
+					Related:  related,
+					Category: manifest.WarnUnrelatedFailure,
+					Message:  "not found; required by",
+					Detail:   detail,
+				},
+			)
+		}
+	}
+	for id, info := range unrelated {
+		if covered[id] {
+			continue
+		}
+		deps := slices.Clone(raw.Blocked[id])
+		slices.SortFunc(deps, manifest.NamedResource.Compare)
+		var detail []string
+		deps = slices.Compact(deps)
+		for _, dep := range deps {
+			detail = append(detail, "blocked by "+s.result.Diagnostic(dep).String())
+		}
+		warnings = append(
+			warnings,
+			manifest.Warning{
+				Resource: id,
+				Subject:  s.result.Diagnostic(id),
+				Related:  deps,
+				Category: manifest.WarnUnrelatedFailure,
+				Message:  info.Message,
+				Detail:   detail,
+			},
+		)
+	}
+	slices.SortFunc(warnings, func(a, b manifest.Warning) int { return a.Resource.Compare(b.Resource) })
+	return warnings
+}
+
+func (s *selectionSide) unrelatedWarningChildren(
+	ids []manifest.NamedResource,
+	unrelated map[manifest.NamedResource]store.StatusInfo,
+	covered map[manifest.NamedResource]bool,
+) ([]string, []manifest.NamedResource) {
+	var out []string
+	var related []manifest.NamedResource
+	for _, id := range ids {
+		if _, ok := unrelated[id]; ok {
+			out = append(out, s.result.Diagnostic(id).String())
+			related = append(related, id)
+			covered[id] = true
+		}
+	}
+	return out, related
+}
+
+func (s *selectionSide) prepareStatuses(name string) {
+	seen := make(map[manifest.NamedResource]bool)
+	blocked := make(map[manifest.NamedResource][]manifest.NamedResource)
+	add := func(id manifest.NamedResource, info store.StatusInfo) {
+		seen[id] = true
+		if s.result.Statuses == nil {
+			s.result.Statuses = make(map[manifest.NamedResource]store.StatusInfo)
+		}
+		s.result.Statuses[id] = info
+		if info.Status == store.StatusFailed && info.IsDependencyFailure() {
+			blocked[id] = info.BlockedBy()
+		}
+	}
+	for _, obj := range s.result.Objects {
+		if !manifest.KindOf(obj).Tracked {
+			continue
+		}
+		id := obj.Named()
+		info, hidden := s.run.Store.ReportStatus(id)
+		if hidden {
+			continue
+		}
+		if info.Status == "" {
+			var known bool
+			info, known = s.statusOf(id)
+			if !known {
+				info = s.status(id)
+			}
+		}
+		add(id, info)
+	}
+	s.prepareFailedStatuses(name, seen, add)
+	s.describeBlockedStatuses(seen, blocked)
+}
+
+func (s *selectionSide) prepareFailedStatuses(
+	name string,
+	seen map[manifest.NamedResource]bool,
+	add func(manifest.NamedResource, store.StatusInfo),
+) {
+	for id := range s.run.Failed {
+		if seen[id] {
+			continue
+		}
+		hidden := s.run.Store.ReportHidden(id)
+		if hidden {
+			if _, selected := s.result.Failed[id]; !selected || !id.KindInfo().Render {
+				continue
+			}
+		} else if (name != "" && id.Name != name) || !s.includes(id.Namespace) {
+			continue
+		}
+		if info, known := s.statusOf(id); known {
+			add(id, info)
+		}
+	}
+}
+
+func (s *selectionSide) describeBlockedStatuses(
+	seen map[manifest.NamedResource]bool,
+	blocked map[manifest.NamedResource][]manifest.NamedResource,
+) {
+	for victim, blockers := range blocked {
+		roots := rootsOf(victim, s.run.Blocked)
+		if len(roots) == 0 {
+			roots = slices.Clone(blockers)
+		}
+		slices.SortFunc(roots, manifest.NamedResource.Compare)
+		names := make([]string, len(roots))
+		for i, root := range roots {
+			subject := s.result.Diagnostic(root)
+			names[i] = subject.Resource.NamespacedName()
+			if subject.Path != "" || subject.Resource == (manifest.NamedResource{}) {
+				names[i] = subject.String()
+			}
+			if info, known := s.run.Store.GetStatus(root); !known {
+				names[i] += " (not found)"
+			} else if !seen[root] && info.Status == store.StatusFailed {
+				names[i] += ": " + info.String()
+			}
+		}
+		info := s.result.Statuses[victim]
+		info.Message = "blocked by " + strings.Join(names, ", ")
+		s.result.Statuses[victim] = info
+	}
+}
+
+func selectedFailures(res *Result) error {
+	if len(res.Failed) == 0 {
+		return nil
+	}
+	msgs := make([]string, 0, len(res.Causes))
+	blocked := res.BlockedCount()
+	for root := range res.Causes {
+		if info, failed := res.Failed[root]; failed {
+			msgs = append(msgs, fmt.Sprintf("%s: %s", res.Diagnostic(root), info.String()))
+		} else {
+			msgs = append(msgs, fmt.Sprintf("%s: not found", res.Diagnostic(root)))
+		}
+	}
+	slices.Sort(msgs)
+	msg := fmt.Sprintf("reconcile completed with %d failure(s)", len(msgs))
+	if len(msgs) > 0 {
+		msg += ":\n  " + strings.Join(msgs, "\n  ")
+	}
+	if blocked > 0 {
+		msg += fmt.Sprintf("\n  (+%d blocked by failed/missing dependencies)", blocked)
+	}
+	return &FailuresError{Message: msg}
+}
+
+func nonResourceErrors(err error) error {
+	if err == nil {
+		return nil
+	}
+	failure, ok := errors.AsType[*FailuresError](err)
+	if !ok {
+		return err
+	}
+	if err == failure { //nolint:errorlint // Prune only the concrete aggregate node, preserving joined siblings.
+		return nil
+	}
+	if e, ok := errors.AsType[interface {
+		error
+		Unwrap() []error
+	}](err); ok {
+		children := e.Unwrap()
+		projected := make([]error, 0, len(children))
+		for _, child := range children {
+			projected = append(projected, nonResourceErrors(child))
+		}
+		return errors.Join(projected...)
+	}
+	return nonResourceErrors(errors.Unwrap(err))
+}
+
+// ProjectionErrors keeps selected failures separate from diagnostics outside the projection.
+type ProjectionErrors struct {
+	Selected  error
+	Remaining error
+}
+
+func selectionError(sides []selectionSide, runErr error) ProjectionErrors {
+	if runErr == nil {
+		return ProjectionErrors{}
+	}
+	selected := make([]error, len(sides))
+	remainders := make([]error, len(sides))
+	for i := range sides {
+		side := &sides[i]
+		remainder := side.run.Err
+		remainders[i] = nonResourceErrors(remainder)
+		selected[i] = errors.Join(selectedFailures(side.result), remainders[i])
+	}
+	projection := projectSelectionError(runErr, sides, selected, remainders)
+	if projection.mask == 0 {
+		projected := projectSelectionSides((1<<len(sides))-1, sides, selected, remainders)
+		return ProjectionErrors{
+			Selected:  errors.Join(projected.Selected, projection.selected),
+			Remaining: errors.Join(projected.Remaining, projection.remaining),
+		}
+	}
+	return ProjectionErrors{Selected: projection.selected, Remaining: projection.remaining}
+}
+
+func projectSelectionSides(
+	mask uint,
+	sides []selectionSide,
+	selected, remainders []error,
+) ProjectionErrors {
+	if len(sides) == 1 {
+		return ProjectionErrors{Selected: selected[0], Remaining: remainders[0]}
+	}
+	var chosen, remaining [2]error
+	for i := range sides {
+		if mask&(1<<i) != 0 {
+			chosen[i], remaining[i] = selected[i], remainders[i]
+		}
+	}
+	return ProjectionErrors{
+		Selected:  joinSelectedErrors(chosen[0], chosen[1]),
+		Remaining: joinSelectedErrors(remaining[0], remaining[1]),
+	}
+}
+
+func matchingSelectionSides(err error, sides []selectionSide) uint {
+	var mask uint
+	for i := range sides {
+		side := &sides[i]
+		if side.run.Err != nil && errors.Is(side.run.ErrorIdentity, err) && errors.Is(err, side.run.ErrorIdentity) {
+			mask |= 1 << i
+		}
+	}
+	return mask
+}
+
+type errorProjection struct {
+	mask      uint
+	clean     bool
+	selected  error
+	remaining error
+}
+
+func projectSelectionError(
+	err error,
+	sides []selectionSide,
+	selected, remainders []error,
+) errorProjection {
+	if err == nil {
+		return errorProjection{mask: 0, clean: true, selected: nil, remaining: nil}
+	}
+	mask := matchingSelectionSides(err, sides)
+	if mask != 0 {
+		projection := projectSelectionSides(mask, sides, selected, remainders)
+		return errorProjection{mask: mask, clean: true, selected: projection.Selected, remaining: projection.Remaining}
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var projected, remaining []error
+		clean := true
+		for _, child := range joined.Unwrap() {
+			childProjection := projectSelectionError(child, sides, selected, remainders)
+			projected, remaining = append(
+				projected,
+				childProjection.selected,
+			), append(
+				remaining,
+				childProjection.remaining,
+			)
+			mask, clean = mask|childProjection.mask, clean && childProjection.clean
+		}
+		if mask != 0 && clean {
+			projection := projectSelectionSides(mask, sides, selected, remainders)
+			return errorProjection{
+				mask:      mask,
+				clean:     true,
+				selected:  projection.Selected,
+				remaining: projection.Remaining,
+			}
+		}
+		if mask != 0 {
+			return errorProjection{
+				mask:      mask,
+				clean:     false,
+				selected:  errors.Join(projected...),
+				remaining: errors.Join(remaining...),
+			}
+		}
+	} else if child := errors.Unwrap(err); child != nil {
+		projection := projectSelectionError(child, sides, selected, remainders)
+		if projection.mask != 0 {
+			return projection
+		}
+	}
+	remainder := nonResourceErrors(err)
+	return errorProjection{mask: 0, clean: false, selected: remainder, remaining: remainder}
+}
+
+func joinSelectedErrors(orig, current error) error {
+	switch {
+	case orig != nil && current != nil:
+		return errors.Join(
+			errors.New("both snapshots had reconcile failures"),
+			fmt.Errorf("orig snapshot: %w", orig),
+			fmt.Errorf("current snapshot: %w", current),
+		)
+	case orig != nil:
+		return fmt.Errorf("orig snapshot: %w", orig)
+	case current != nil:
+		return fmt.Errorf("current snapshot: %w", current)
+	}
+	return nil
+}
+
+// FailuresError retains the domain identity of resource reconciliation failures.
+type FailuresError struct{ Message string }
+
+func (e *FailuresError) Error() string { return e.Message }
+func (*FailuresError) Unwrap() error   { return manifest.ErrFlux }

@@ -217,8 +217,15 @@ func (l *Loader) packageProjectionKnown(location string, known bool) bool {
 	return known
 }
 
+type projectionInputs struct {
+	payload    *inputPayload
+	Names      map[string]struct{}
+	Known      bool
+	NamesKnown bool
+}
+
 type projectionRead struct {
-	documents   []manifest.DocOccurrence
+	inputs      *projectionInputs
 	known, stop bool
 }
 
@@ -226,21 +233,40 @@ func (l *Loader) projectionFile(
 	ctx context.Context,
 	input *store.SourceArtifact,
 	file string,
-	known bool,
+	active bool,
 ) (projectionRead, error) {
 	if err := ctx.Err(); err != nil {
 		return projectionRead{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
 	location := filepath.Join(input.LocalPath, filepath.FromSlash(file))
-	known = l.packageProjectionKnown(location, known)
-	raw, err := fs.ReadFile(input.FS, file)
-	if err != nil {
-		//nolint:nilerr // Read failures invalidate projection proof and stop only the current source.
-		return projectionRead{stop: true}, nil
+	known := l.packageProjectionKnown(location, true)
+	mounted := l.documents.artifacts[input.LocalPath]
+	shared := mounted != nil && parsedInputIdentity(mounted) == parsedInputIdentity(input) &&
+		mounted.Input(
+			store.ArtifactContent|store.ArtifactRevision,
+		) == input.Input(
+			store.ArtifactContent|store.ArtifactRevision,
+		)
+	var retained *projectionInputs
+	if shared {
+		l.documents.restore(location)
+		retained = l.documents.cache[location].projection
+		if retained != nil && (!active || retained.NamesKnown) {
+			return projectionRead{inputs: retained, known: known && retained.Known}, nil
+		}
 	}
-	docs, decoded := projectionDocuments(raw)
-	known = known && decoded
-	return projectionRead{documents: docs, known: known, stop: false}, nil
+	projection, err := retained.readProjection(input, file, active, shared && l.documents.recordInputs)
+	if err != nil || projection.stop {
+		return projection, err
+	}
+	inputs := projection.inputs
+
+	if shared {
+		doc := l.documents.cache[location]
+		doc.projection = inputs
+		l.documents.cache[location] = doc
+	}
+	return projectionRead{inputs: inputs, known: known && inputs.Known}, nil
 }
 
 type projectionNames struct {
@@ -253,15 +279,13 @@ func (l *Loader) projectionNames(
 	child, prepared *manifest.Kustomization,
 	roots map[manifest.NamedResource][]string,
 ) (projectionNames, error) {
-	known := true
-	var documents []manifest.DocOccurrence
+	active := len(prepared.PostBuild.Substitute) != 0 ||
+		prepared.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
 	declared, err := child.RenderDocument()
-	if err != nil || child.NamePrefix != "" || child.NameSuffix != "" || len(child.Images) != 0 {
-		known = false
-	}
+	known := err == nil && child.NamePrefix == "" && child.NameSuffix == "" && len(child.Images) == 0
 	declared, decoded := projectionPatches(declared)
 	known = known && decoded
-	documents = append(documents, manifest.DocOccurrence{Document: map[string]any{"input": declared}})
+	names := values.SubstitutionNames([]manifest.DocOccurrence{{Document: map[string]any{"input": declared}}}, active)
 	for source, files := range roots {
 		known = known && len(files) != 0
 		input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
@@ -270,21 +294,18 @@ func (l *Loader) projectionNames(
 			break
 		}
 		for _, file := range files {
-			projection, err := l.projectionFile(ctx, input, file, known)
+			projection, err := l.projectionFile(ctx, input, file, active)
 			if err != nil {
 				return projectionNames{}, err
 			}
-			known = projection.known
+			known = known && projection.known
 			if projection.stop {
 				break
 			}
-			documents = append(documents, projection.documents...)
+			names = mergeProjectionNames(names, projection.inputs, active)
 		}
 	}
 	known = known && len(roots) != 0
-	active := len(prepared.PostBuild.Substitute) != 0 ||
-		prepared.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
-	names := values.SubstitutionNames(documents, active)
 	return projectionNames{names: names, active: active, known: known}, nil
 }
 
@@ -508,4 +529,63 @@ func (p *pathResolution) resolveRecord(
 		return err
 	}
 	return nil
+}
+
+func (p *projectionInputs) readProjection(
+	input *store.SourceArtifact,
+	file string,
+	active, record bool,
+) (projectionRead, error) {
+	if p != nil && p.payload != nil {
+		data, err := p.payload.read()
+		if err != nil {
+			return projectionRead{}, err
+		}
+		docs, err := manifest.DecodeRender(data)
+		if err != nil {
+			return projectionRead{}, err
+		}
+		inputs := &projectionInputs{
+			payload:    p.payload,
+			Names:      values.SubstitutionNames(docs, active),
+			Known:      p.Known,
+			NamesKnown: active,
+		}
+		return projectionRead{inputs: inputs, known: p.Known}, nil
+	}
+	raw, err := fs.ReadFile(input.FS, file)
+	if err != nil {
+		//nolint:nilerr // Read failures invalidate projection proof and stop only the current source.
+		return projectionRead{stop: true}, nil
+	}
+	docs, decoded := projectionDocuments(raw)
+	var payload *inputPayload
+	if record {
+		data, encodeErr := manifest.EncodeRender(docs)
+		if encodeErr != nil {
+			return projectionRead{}, encodeErr
+		}
+		payload = &inputPayload{data: data}
+	}
+	inputs := &projectionInputs{
+		payload:    payload,
+		Names:      values.SubstitutionNames(docs, active),
+		Known:      decoded,
+		NamesKnown: active,
+	}
+	return projectionRead{inputs: inputs, known: decoded}, nil
+}
+
+func mergeProjectionNames(names map[string]struct{}, inputs *projectionInputs, active bool) map[string]struct{} {
+	if !active {
+		return names
+	}
+	input := inputs.Names
+	if input == nil {
+		return nil
+	}
+	if names != nil {
+		maps.Copy(names, input)
+	}
+	return names
 }

@@ -39,6 +39,7 @@ type traversal struct {
 	build        bool
 	ignoreCache  map[ignoreKey]bool
 	scopeVisits  *[]graphVisit
+	scopeInputs  *[]walkInput
 	scopeSkipped int
 	count        int
 	err          error
@@ -165,28 +166,22 @@ func (w *traversal) reference(
 			return decision.more
 		}
 	case traversalProof:
-		if ref.Role != kustomizeinput.Resource &&
-			(ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers")) ||
-			ref.Inline {
-			return true
+		if decision := w.proofReference(&visit); decision.done {
+			return decision.more
 		}
-		target, ok := kustomizeinput.Local(v.root, v.dir, ref.Path)
-		if !ok {
-			return true
-		}
-		if new(w.documents).fileHasNamespaceTransformer(v.root, target) {
-			return false
-		}
-		child.dir = target
+
 	case traversalScope:
 		if decision := w.scopeReference(ctx, &visit, yield); decision.done {
 			return decision.more
 		}
 	}
 	count := w.count
-	start, skipped := 0, w.scopeSkipped
+	start, inputStart, skipped := 0, 0, w.scopeSkipped
 	if w.scopeVisits != nil {
 		start = len(*w.scopeVisits)
+		if w.scopeInputs != nil {
+			inputStart = len(*w.scopeInputs)
+		}
 	}
 	w.depth++
 	more := w.walk(ctx, child, yield)
@@ -197,7 +192,11 @@ func (w *traversal) reference(
 			sourceRoot:   w.loader.SourceRoot, prefix: child.prefix, localBase: child.localBase,
 		}
 		facts := w.loader.sourceFacts(child.root)
-		facts.walks[key] = physicalWalk{visits: (*w.scopeVisits)[start:]}
+		walk := physicalWalk{visits: (*w.scopeVisits)[start:]}
+		if w.scopeInputs != nil {
+			walk.inputs = (*w.scopeInputs)[inputStart:]
+		}
+		facts.walks.values[key] = walk
 	}
 	if !more && !w.canceled {
 		w.count = count
@@ -500,4 +499,24 @@ func (w *traversal) shouldSkipDir(root, name, full string) bool {
 		return false
 	}
 	return w.ignoreMatches(root, full, true)
+}
+
+func (w *traversal) proofReference(visit *referenceVisit) traversalDecision {
+	if visit.reference.Role != kustomizeinput.Resource &&
+		(visit.reference.Role != kustomizeinput.Configuration || !strings.HasPrefix(visit.reference.Field, ".transformers")) ||
+		visit.reference.Inline {
+		return traversalDecision{done: true, more: true}
+	}
+	target, ok := kustomizeinput.Local(visit.parent.root, visit.parent.dir, visit.reference.Path)
+	if !ok {
+		return traversalDecision{done: true, more: true}
+	}
+	if w.scopeInputs != nil {
+		*w.scopeInputs = append(*w.scopeInputs, walkInput{path: filepath.Join(visit.parent.root, target)})
+	}
+	if new(w.documents).fileHasNamespaceTransformer(visit.parent.root, target) {
+		return traversalDecision{done: true}
+	}
+	visit.child.dir = target
+	return traversalDecision{}
 }

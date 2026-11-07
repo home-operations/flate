@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
@@ -196,6 +197,7 @@ func failedTrees(trees []Tree, err error) []Rendered {
 
 func (r *renderInvocation) discoverTrees(ctx context.Context) {
 	for i, tree := range r.trees {
+		r.trees[i].entry = nil
 		r.byID[tree.ID] = i
 		r.results[i].ID = tree.ID
 		if tree.Input == nil {
@@ -657,8 +659,9 @@ func prepareTreeEntries(ctx context.Context, trees []Tree, cfg *Config, inputs *
 			request.Changed = request.Changed || tree.ExternalChanges != nil
 			var err error
 			entries[i], err = discovery.Plan(ctx, discovery.Config{
-				Work: tree.work.Scope(), Projections: cfg.projections,
-				Declarations: cfg.Supply, Selection: request,
+				Cache: cfg.Cache,
+				Work:  tree.work.Scope(), Projections: cfg.projections,
+				Declarations: cfg.Supply, Selection: request, Changes: tree.ExternalChanges,
 				Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, Input: tree.Input,
 				RemoteInputs: inputs, RemoteRetry: cfg.SourceRetry,
 				StrictSubstitutions: cfg.StrictSubstitutions, SkipKinds: cfg.HelmOptions.SkipResourceKinds(),
@@ -739,7 +742,33 @@ func prepareTreeInputs(
 			return err
 		}
 	}
+	excludeTreeInputs(trees, cfg.Cache.Directory())
 	return nil
+}
+
+func excludeTreeInputs(trees []Tree, directory string) {
+	if directory == "" {
+		return
+	}
+	selected := make(map[*store.SourceArtifact]*store.SourceArtifact)
+	for i := range trees {
+		for _, artifact := range []**store.SourceArtifact{&trees[i].Input, &trees[i].BaseInput} {
+			input := *artifact
+			if input == nil {
+				continue
+			}
+			if previous := selected[input]; previous != nil {
+				*artifact = previous
+				continue
+			}
+			filtered := gittree.ExcludeDirectory(input, directory)
+			if filtered == input {
+				continue
+			}
+			*artifact = filtered
+			selected[input] = *artifact
+		}
+	}
 }
 
 func (tr *Tree) prepareInput(ctx context.Context, admitted map[string]*store.SourceArtifact) error {

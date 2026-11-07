@@ -10,7 +10,6 @@ import (
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -93,18 +92,16 @@ func (l *Loader) nativeOperand(file string) bool {
 	if l.scopes == nil {
 		return l.documents.cache[file].rootNative
 	}
-	for i := range l.scopes.contributions {
-		contribution := &l.scopes.contributions[i]
+	for _, ref := range l.scopes.visits[file] {
+		contribution := &l.scopes.contributions[ref.contribution]
 		if contribution.membershipOnly || contribution.owner != (manifest.NamedResource{}) ||
 			l.documents.cache[filepath.Join(contribution.context.root, contribution.context.dir)].body == nil {
 			continue
 		}
-		for j := range contribution.visits {
-			visit := &contribution.visits[j]
-			if visit.role == kustomizeinput.Resource &&
-				(visit.file == file || visit.origin != "" && visit.origin == file) {
-				return true
-			}
+		visit := &contribution.visits[ref.visit]
+		if visit.role == kustomizeinput.Resource &&
+			(visit.file == file || visit.origin != "" && visit.origin == file) {
+			return true
 		}
 	}
 	return false
@@ -122,7 +119,14 @@ func (l *Loader) EntryRoots(
 	}
 	query := rootQuery{loader: l, objects: objects}
 	seen := map[rootCoordinate]bool{}
+	queried := map[manifest.NamedResource]bool{}
 	add := func(id manifest.NamedResource, original *rootEvidence) {
+		if original == nil {
+			if queried[id] {
+				return
+			}
+			queried[id] = true
+		}
 		occurrence, available := query.entryRoot(id, original)
 		if !available {
 			return
@@ -163,6 +167,10 @@ func (l *Loader) EntryRoots(
 	if l.nativeEntry != nil {
 		add(l.nativeEntry.Named(), nil)
 	}
+	// The complete query MUST be discarded if any captured dependency changes.
+	if reads != nil && !reads.Valid() {
+		return nil
+	}
 	return roots
 }
 
@@ -180,13 +188,13 @@ func (q *rootQuery) entryRoot(
 		evidence.Occurrence = selection.OccurrenceFacts{Identity: id, Object: l.nativeEntry, Catalog: l.nativeEntry}
 		evidence.Scope.NativeEntry, evidence.Scope.NamespaceEligible = true, true
 	}
-	rootSupport(&evidence, objects, l.Index, &l.roots.currentOnly, l.SourceRoot)
+	captureRootSupport(&evidence, objects, l.Index, &l.roots.currentOnly, l.SourceRoot)
 	evidence.Needed = l.Options.Session.Snapshot().Reconcile(id)
 	if selection.Root(evidence).NeedsOwnerSupport {
 		if evidence.Record.Path != "" {
 			evidence.CoveringOwners = q.coveringFacts()
 		}
-		captureRootOwners(&evidence, objects, l.Index)
+		captureRootOwnerFacts(&evidence, objects, l.Index)
 	}
 	result := selection.Root(evidence)
 	if !result.Entry {
@@ -399,33 +407,38 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 
 func (l *Loader) packageOwners(packages []PackageEvidence) [][]int {
 	owners := make([][]int, len(packages))
+	paths := make([]string, len(packages))
+	targets := make(map[string]int, len(packages))
+	for i := range packages {
+		paths[i] = filepath.Join(l.SourceRoot, filepath.FromSlash(packages[i].Path))
+		targets[paths[i]] = i
+	}
+	claims := map[string][]int{}
 	for i := range packages {
 		p := &packages[i]
-		dir := filepath.Join(l.SourceRoot, filepath.FromSlash(p.Path))
-		doc := l.documents.cache[dir]
+		doc := l.documents.cache[paths[i]]
 		if l.documents.cache[doc.file].eligible == selection.RootInactive {
 			continue
 		}
-		var visits []graphVisit
 		if doc.body != nil {
-			visits = l.scopeWalk(new(graphVisit{root: l.SourceRoot, dir: p.Path, role: kustomizeinput.Resource}))
+			l.addNativePackageOwners(p.Path, i, targets, owners)
 		}
-		claims := l.packageClaims(p.Occurrences)
-		for j := range packages {
-			if i == j {
-				continue
-			}
-			target := filepath.Join(l.SourceRoot, filepath.FromSlash(packages[j].Path))
-			native := slices.ContainsFunc(visits, func(visit graphVisit) bool {
-				return visit.file == target || filepath.Dir(visit.file) == target
-			})
-			application := slices.ContainsFunc(claims, func(claim string) bool {
-				return safepath.Contains(claim, target)
-			})
-			if native || application {
-				owners[j] = append(owners[j], i)
-			}
+		for _, claim := range l.packageClaims(p.Occurrences) {
+			claims[claim] = append(claims[claim], i)
 		}
+	}
+	for target, dir := range paths {
+		for {
+			owners[target] = append(owners[target], claims[dir]...)
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+		owners[target] = slices.DeleteFunc(owners[target], func(owner int) bool { return owner == target })
+		slices.Sort(owners[target])
+		owners[target] = slices.Compact(owners[target])
 	}
 	return owners
 }
@@ -446,4 +459,16 @@ func (l *Loader) packageClaims(occurrences []selection.OccurrenceFacts) []string
 		}
 	}
 	return claims
+}
+
+func (l *Loader) addNativePackageOwners(path string, owner int, targets map[string]int, owners [][]int) {
+	visits := l.scopeWalk(new(graphVisit{root: l.SourceRoot, dir: path, role: kustomizeinput.Resource}))
+	for visitIndex := range visits {
+		visit := &visits[visitIndex]
+		for _, file := range [2]string{visit.file, filepath.Dir(visit.file)} {
+			if target, known := targets[file]; known && target != owner {
+				owners[target] = append(owners[target], owner)
+			}
+		}
+	}
 }

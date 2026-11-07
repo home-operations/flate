@@ -302,6 +302,28 @@ func TestEntryRoots_CurrentOwnership(t *testing.T) {
 	assert.Equal(t, contains(l.EntryRoots(nil, nil)), true)
 }
 
+func TestEntryRoots_RejectsChangedQuery(t *testing.T) {
+	t.Parallel()
+	l, _, factory, owner, child := admissionMembershipFixture(t)
+	object := l.CatalogObject(child)
+	l.Store.AddObject(object, testutil.ObjectDocument(object))
+	var reads store.ReadSet
+	reads.Init(l.Store, manifest.NamedResource{}, nil)
+	defer reads.Retire()
+	roots := l.EntryRoots(func(yield func(manifest.BaseManifest) bool) {
+		if !yield(object) {
+			return
+		}
+		l.Store.RecordEmitted(
+			factory.Named(),
+			&store.Emission{Children: []store.Child{{Obj: owner}}, Complete: true},
+			nil,
+		)
+	}, &reads)
+	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, len(roots), 0)
+}
+
 func TestEntryRoots_AcceptedSupport(t *testing.T) {
 	t.Parallel()
 	l, _, factory, _, child := admissionMembershipFixture(t)

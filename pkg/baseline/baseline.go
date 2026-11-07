@@ -80,6 +80,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	if err != nil {
 		return nil, err
 	}
+	input = gittree.ExcludeDirectory(input, owner.Directory())
 	current, _ := input.FS.(*gittree.FS)
 	s := selection{repo: repo, current: current, owner: owner}
 	r, err := s.resolve(ctx, location, base)

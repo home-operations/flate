@@ -106,7 +106,9 @@ func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) 
 		}
 		if r.cache != nil {
 			cached := r.cache[path]
+			cached.sourceRoot = new(r).mountedRoot(path)
 			cached.objects, cached.coverage = out, r.intent
+			cached.parsed = nil
 			r.cache[path] = cached
 		}
 	}
@@ -145,6 +147,7 @@ func (r documentReader) decodeFileObjects(
 			return fmt.Errorf("read %s: %w", path, readErr)
 		}
 		cached := r.cache[path]
+		cached.sourceRoot = new(r).mountedRoot(path)
 		cached.possible = application.Contains(data)
 		r.cache[path] = cached
 		if !cached.possible {
@@ -184,6 +187,7 @@ func (r documentReader) censusFile(
 		}
 		if application.Contains([]byte(child.version)) {
 			cached := r.cache[path]
+			cached.sourceRoot = new(r).mountedRoot(path)
 			cached.possible = true
 			r.cache[path] = cached
 		}
@@ -212,6 +216,13 @@ func (r documentReader) censusFile(
 		if o.facts.structural != nil {
 			structural = o.facts.structural
 		}
+		var payload *inputPayload
+		if r.recordInputs && o.facts.retained && child.Doc != nil {
+			payload = &inputPayload{}
+			payload.data, _ = manifest.EncodeRender(
+				[]manifest.DocOccurrence{{Document: child.Doc, Ordinal: child.outcome.Ordinal}},
+			)
+		}
 		manifest.ReleaseDoc(child.Doc)
 		outcome := child.outcome
 		outcome.Document = nil
@@ -223,7 +234,7 @@ func (r documentReader) censusFile(
 				item:     child.item,
 				fact:     &o,
 				outcome:  outcome,
-				version:  child.version,
+				version:  child.version, payload: payload,
 			},
 		)
 	})
@@ -234,7 +245,9 @@ func (r documentReader) censusFile(
 		resolveDeclaredFingerprints(facts)
 	}
 	cached := r.cache[path]
+	cached.sourceRoot = new(r).mountedRoot(path)
 	cached.objects, cached.decodeErr, cached.coverage = facts, err, r.intent
+	cached.parsed = nil
 	r.cache[path] = cached
 	return facts, err
 }

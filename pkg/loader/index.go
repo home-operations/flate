@@ -21,6 +21,11 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		return nil
 	}
 	l.mountSources()
+	if freeze {
+		if err := l.PersistInputs(ctx); err != nil {
+			return err
+		}
+	}
 	l.prepareIndexScopes(repoRoot, freeze)
 	if l.documents.compact && l.indexDerived && l.derived == l.construction {
 		if freeze {
@@ -133,7 +138,7 @@ func (l *Loader) Retire() {
 			l.producerFacts[i].Store(nil)
 		}
 		l.documents = documentReader{}
-		l.facts, l.scopes, l.Options.ParsedInputs = nil, nil, nil
+		l.facts, l.scopes, l.Options.ParsedInputs, l.snapshot = nil, nil, nil, nil
 		l.candidates, l.admitted, l.locations = nil, nil, nil
 		l.roots = rootInventory{}
 		l.bindings.Store(nil)
@@ -222,7 +227,8 @@ func (l *Loader) Close() {
 	l.InputContent = nil
 	l.Options.ParsedInputs, l.Options.Changes, l.Options.Projections = nil, nil, nil
 	l.Options.ConfiguredInput = nil
-	l.facts, l.scopes, l.admitted = nil, nil, nil
+	l.Options.Cache, l.inputCaches = nil, nil
+	l.facts, l.scopes, l.admitted, l.snapshot = nil, nil, nil, nil
 	l.inputReaders, l.inputObjects, l.templateProjections = nil, nil, nil
 	l.bindings.Store(nil)
 	for i := range l.producerFacts {
@@ -262,7 +268,15 @@ func (l *Loader) publishFrozenRecords() {
 	l.frozen = true
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopeRoots = l.scopes.rootFacts
-	l.scopes, l.facts, l.Options.ParsedInputs, l.documents.parsed = nil, nil, nil, nil
+	l.scopes, l.facts, l.Options.ParsedInputs, l.documents.parsed, l.snapshot = nil, nil, nil, nil, nil
+	l.Options.Cache, l.inputCaches = nil, nil
+	l.documents.recordInputs = false
+	// Authored payloads remain available; snapshot and projection scratch end at freeze.
+	//nolint:gocritic // Map values must be replaced after releasing snapshot scratch.
+	for file, doc := range l.documents.cache {
+		doc.parsed, doc.projection = nil, nil
+		l.documents.cache[file] = doc
+	}
 }
 
 func (l *Loader) prepareIndexScopes(repoRoot string, freeze bool) {

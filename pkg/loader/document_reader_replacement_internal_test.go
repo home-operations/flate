@@ -238,3 +238,25 @@ func replaceSourceView(
 		}
 	}
 }
+
+func TestDocumentReader_MountedRoot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	reader := documentReader{views: map[string]fs.FS{root: nil, nested: nil}}
+	for _, tc := range []struct {
+		name, file, want string
+	}{
+		{name: "root", file: root, want: root},
+		{name: "child", file: filepath.Join(root, "file"), want: root},
+		{name: "nested", file: filepath.Join(nested, "dir", "file"), want: nested},
+		{name: "sibling prefix", file: filepath.Join(root, "nested-other", "file"), want: root},
+		{name: "outside", file: root + "-other/file"},
+		{name: "cleaned", file: nested + string(filepath.Separator) + string(filepath.Separator) + "file", want: nested},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, new(reader).mountedRoot(tc.file), tc.want)
+		})
+	}
+}

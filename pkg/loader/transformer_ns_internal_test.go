@@ -431,7 +431,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 			testutil.WriteFile(t, tempDirRoot, fmt.Sprintf("d%d/transformer.yaml", depth), namespaceTransformer)
 			got := new(
 				readerForTest(tempDirRoot),
-			).subtreeHasNamespaceTransformer(tempDirRoot, "d0", map[string]struct{}{})
+			).subtreeHasNamespaceTransformer(tempDirRoot, "d0", map[string]struct{}{}, nil)
 
 			assert.FatalIf(t, got != (depth == transformerScanMaxDepth), "proof at depth %d = %t", depth, got)
 		})
@@ -447,7 +447,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 
 	assert.FatalIf(
 		t,
-		new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}),
+		new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}, nil),
 		"%s",
 		"Component edge supplied namespace proof",
 	)
@@ -458,7 +458,7 @@ func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 
 	assert.ErrorIf(
 		t,
-		new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}),
+		new(readerForTest(root)).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}, nil),
 		"%s",
 		"want false on a reference cycle (must not loop)",
 	)

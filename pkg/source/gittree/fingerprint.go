@@ -3,6 +3,7 @@ package gittree
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"maps"
 	"path"
@@ -22,6 +23,7 @@ import (
 
 type contentFingerprint struct {
 	files atomic.Pointer[map[string]string]
+	types map[string]fs.FileMode
 	once  sync.Once
 	key   string
 	err   error
@@ -48,7 +50,7 @@ func ContentFingerprint(ctx context.Context, input fs.FS) (string, error) {
 		run := false
 		content.once.Do(func() {
 			run = true
-			content.initialize(ctx, g)
+			content.initialize(ctx, g, false)
 		})
 		if errors.Is(content.err, context.Canceled) || errors.Is(content.err, context.DeadlineExceeded) {
 			g.content.CompareAndSwap(content, nil)
@@ -63,14 +65,15 @@ func ContentFingerprint(ctx context.Context, input fs.FS) (string, error) {
 	}
 }
 
-func (g *FS) identifyFiles(ctx context.Context, files map[string]string) error {
+func (g *FS) identifyFiles(ctx context.Context, inventory fingerprintInventory, fresh bool) error {
+	files := inventory.files
 	var v *gitView
 	subdir, origin := ".", "."
-	nodes := map[string]noder.Noder{}
+	nodes := map[string]noder.Noder{".": nil}
 	prefix := "."
 	root := ""
 	g.fingerprintOrigin(&v, &subdir, &origin, &root)
-	if root != "" && g.location != nil && g.location.Repository != nil && (v == nil || v.identity == "") {
+	if !fresh && root != "" && g.location != nil && g.location.Repository != nil && (v == nil || v.identity == "") {
 		idx, err := g.location.Repository.Storer.Index()
 		if err != nil {
 			return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
@@ -88,7 +91,7 @@ func (g *FS) identifyFiles(ctx context.Context, files map[string]string) error {
 	}
 	var lookup func(string) (noder.Noder, error)
 	lookup = func(name string) (noder.Noder, error) {
-		if node := nodes[name]; node != nil || name == "." {
+		if node, known := nodes[name]; known {
 			return node, nil
 		}
 		parent, err := lookup(path.Dir(name))
@@ -104,13 +107,17 @@ func (g *FS) identifyFiles(ctx context.Context, files map[string]string) error {
 		}
 		return nodes[name], nil
 	}
-	selected := fileIdentity{git: v, origin: origin, prefix: prefix, lookup: lookup}
+	selected := fileIdentity{git: v, origin: origin, prefix: prefix, lookup: lookup, types: inventory.types}
 	for _, name := range slices.Sorted(maps.Keys(files)) {
 		identity, err := selected.identify(ctx, g, name)
-		if err != nil {
+		switch {
+		case fresh && errors.Is(err, fs.ErrNotExist):
+			delete(files, name)
+		case err != nil:
 			return err
+		default:
+			files[name] = manifest.Fingerprint(identity)
 		}
-		files[name] = manifest.Fingerprint(identity)
 	}
 	return nil
 }
@@ -157,14 +164,14 @@ func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
 	return g.snapshot.load(g)
 }
 
-func (c *contentFingerprint) initialize(ctx context.Context, g *FS) {
+func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool) {
 	policy, err := g.SourcePolicy(ctx)
 	if err != nil {
 		c.err = err
 		return
 	}
 	v, native := g.view.(*gitView)
-	inventory, err := g.fingerprintFiles(ctx, v, native)
+	inventory, err := g.fingerprintFiles(ctx, v, native, fresh)
 
 	c.err = err
 	if c.err != nil {
@@ -175,25 +182,38 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS) {
 	if !selectedPolicy {
 		sourceignore.Select(policy, inventory.files, inventory.ignores)
 	}
-	if c.err = g.identifyFiles(ctx, inventory.files); c.err != nil {
+	if c.err = g.identifyFiles(ctx, inventory, fresh); c.err != nil {
 		return
 	}
-	c.key = manifest.Fingerprint(inventory.files)
-	if v, ok := g.view.(*gitView); ok && v.identity != "" {
-		c.key = v.identity
+	if !fresh {
+		c.key = manifest.Fingerprint(inventory.files)
+		if v, ok := g.view.(*gitView); ok && v.identity != "" {
+			c.key = v.identity
+			if g.excluded != "" {
+				c.key = manifest.Fingerprint(struct{ Content, Excluded string }{v.identity, g.excluded})
+			}
+		}
 	}
 	files := inventory.files
+	c.types = inventory.types
 	c.files.Store(&files)
 }
 
-func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native bool) (fingerprintInventory, error) {
+func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native, observe bool) (fingerprintInventory, error) {
 	var err error
 
 	files := map[string]string{}
+	var types map[string]fs.FileMode
+	if observe {
+		types = map[string]fs.FileMode{}
+	}
 	var ignores []string
 	visit := func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if observe {
+			types[name] = entry.Type()
 		}
 		if err := ctx.Err(); err != nil || entry.IsDir() {
 			return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
@@ -207,6 +227,9 @@ func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native bool) (fin
 	if native {
 		files = make(map[string]string, len(v.nodes))
 		for name := range v.nodes {
+			if g.excludes(name) {
+				continue
+			}
 			if err = visit(name, gitEntry{v, name}, nil); err != nil {
 				break
 			}
@@ -215,7 +238,7 @@ func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native bool) (fin
 		err = fs.WalkDir(g, ".", visit)
 	}
 	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
-	return fingerprintInventory{files: files, ignores: ignores}, err
+	return fingerprintInventory{files: files, ignores: ignores, types: types}, err
 }
 
 func selectedSourcePolicy(policy *sourceignore.Matcher, v *gitView, native bool, files map[string]string) bool {
@@ -250,6 +273,7 @@ func (g *FS) fingerprintOrigin(v **gitView, subdir, origin, root *string) {
 }
 
 type fileIdentity struct {
+	types          map[string]fs.FileMode
 	git            *gitView
 	origin, prefix string
 	lookup         func(string) (noder.Noder, error)
@@ -273,17 +297,96 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 			identity = plumbing.Hash(node.Hash()[:len(identity)])
 		}
 	}
-	if identity == plumbing.ZeroHash {
-		data, err := g.ReadFile(name)
-		if err != nil {
-			return plumbing.ZeroHash, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
-		}
-		identity = plumbing.ComputeHash(plumbing.BlobObject, data)
+	if identity != plumbing.ZeroHash {
+		return identity, nil
 	}
-	return identity, nil
+	var data []byte
+	var err error
+	mode, observed := s.types[name]
+	if observed && mode.IsRegular() {
+		file, openErr := g.OpenRegular(name)
+		if openErr != nil {
+			return plumbing.ZeroHash, openErr
+		}
+		data, err = io.ReadAll(file)
+		err = errors.Join(err, file.Close())
+	} else {
+		data, err = g.ReadFile(name)
+	}
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return plumbing.ComputeHash(plumbing.BlobObject, data), nil
 }
 
 type fingerprintInventory struct {
+	types   map[string]fs.FileMode
 	files   map[string]string
 	ignores []string
+}
+
+// InputObservations borrows current file identities and node kinds from one source observation.
+// Both maps MUST remain read-only.
+type InputObservations struct {
+	Files map[string]string
+	Types map[string]fs.FileMode
+}
+
+// FreshInputs MUST observe mutable bytes and membership without prior operation memos or Git stat evidence.
+func (g *FS) FreshInputs(ctx context.Context) (InputObservations, error) {
+	if view, ok := g.view.(*gitView); ok && view.identity != "" {
+		if _, err := ContentFingerprint(ctx, g); err != nil {
+			return InputObservations{}, err
+		}
+		inventory, err := g.fingerprintFiles(ctx, view, true, true)
+		return InputObservations{Files: g.FileDigests(), Types: inventory.types}, err
+	}
+	input, err := g.freshInput(ctx)
+	if err != nil {
+		return InputObservations{}, err
+	}
+	var evidence contentFingerprint
+	evidence.initialize(ctx, input, true)
+	if evidence.err != nil {
+		return InputObservations{}, evidence.err
+	}
+	return InputObservations{Files: *evidence.files.Load(), Types: evidence.types}, nil
+}
+
+func (g *FS) freshInput(ctx context.Context) (*FS, error) {
+	switch v := g.view.(type) {
+	case *localView:
+		input := newLocal(v.root, true, &localPolicy{})
+		input.location = g.location
+		input.excluded = g.excluded
+		return input, nil
+	case *scopedView:
+		parent, err := v.parent.freshInput(ctx)
+		if err != nil {
+			return nil, err
+		}
+		input, err := Sub(parent, v.path)
+		if err != nil {
+			return nil, err
+		}
+		return input.(*FS), nil //nolint:errcheck // Sub preserves the concrete owner for a native parent.
+	case *gitView:
+		if v.refresh == nil {
+			return g, nil
+		}
+		opts := *v.refresh
+		opts.excluded = g.excluded
+		opts.policy = nil
+		if current, ok := opts.Current.(*FS); ok {
+			var err error
+			opts.Current, err = current.freshInput(ctx)
+			if err != nil {
+				return nil, err
+			}
+		}
+		input, _, err := New(ctx, v.backing, v.commit, opts)
+		return input, err
+	default:
+		return &FS{view: g.view, location: g.location, excluded: g.excluded, snapshot: &localPolicy{}}, nil
+	}
 }

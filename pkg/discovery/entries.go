@@ -71,6 +71,9 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := l.PersistInputs(ctx); err != nil {
+		return nil, err
+	}
 	for i := range entries {
 		entry := &entries[i]
 		views := map[string]*store.SourceArtifact{}

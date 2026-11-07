@@ -17,6 +17,19 @@ func rootSupport(
 	index, currentOnly *manifest.DiscoveryIndex,
 	sourceRoot string,
 ) {
+	captureRootSupport(evidence, objects, index, currentOnly, sourceRoot)
+	if capture, ok := objects.(*store.ReadSet); ok {
+		evidence.Stale = !capture.Valid()
+	}
+}
+
+//nolint:revive // Capture keeps the reader and both indexed/current production views explicit.
+func captureRootSupport(
+	evidence *selection.RootEvidence,
+	objects admissionReader,
+	index, currentOnly *manifest.DiscoveryIndex,
+	sourceRoot string,
+) {
 	id := evidence.Identity
 	evidence.Captured = true
 	if !evidence.Scope.NativeEntry {
@@ -47,9 +60,6 @@ func rootSupport(
 		evidence.Scope.Claim = filepath.ToSlash(coordinate) + "/"
 	}
 	captureRootSources(evidence, objects)
-	if capture, ok := objects.(*store.ReadSet); ok {
-		evidence.Stale = !capture.Valid()
-	}
 }
 
 func completeRootSupport(
@@ -121,6 +131,17 @@ func captureRootOwners(
 	objects admissionReader,
 	index *manifest.DiscoveryIndex,
 ) {
+	captureRootOwnerFacts(evidence, objects, index)
+	if capture, ok := objects.(*store.ReadSet); ok {
+		evidence.Stale = !capture.Valid()
+	}
+}
+
+func captureRootOwnerFacts(
+	evidence *selection.RootEvidence,
+	objects admissionReader,
+	index *manifest.DiscoveryIndex,
+) {
 	pending := rootOwnerCandidates(evidence)
 	for cursor := 0; cursor < len(pending); cursor++ {
 		owner := pending[cursor]
@@ -154,9 +175,6 @@ func captureRootOwners(
 				pending = append(pending, ancestor)
 			}
 		}
-	}
-	if capture, ok := objects.(*store.ReadSet); ok {
-		evidence.Stale = !capture.Valid()
 	}
 }
 

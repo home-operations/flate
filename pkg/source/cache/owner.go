@@ -132,6 +132,14 @@ func (s *storeSnapshot) reopen(disk *os.Root) *oci.Store {
 	return nil
 }
 
+// Directory returns the resolved disk boundary, or empty for a memory owner.
+func (c *Cache) Directory() string {
+	if c == nil || c.root == nil {
+		return ""
+	}
+	return c.root.Name()
+}
+
 func openCacheRoot(root string) (*os.Root, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {

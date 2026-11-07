@@ -306,6 +306,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
 	}
 	config := discovery.Config{
+		Cache:        o.cfg.Cache,
 		Work:         o.cfg.work.Scope(),
 		Declarations: o.cfg.Supply,
 		Selection:    o.cfg.Selection, Loader: o.loader,
@@ -315,6 +316,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipResourceKinds(),
 	}
+	o.cfg.entry = nil
 	var res *discovery.Result
 	var err error
 	if o.selection != nil {

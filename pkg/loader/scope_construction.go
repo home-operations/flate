@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"iter"
 	"path/filepath"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -22,7 +23,7 @@ type scopeConstruction struct {
 	inputs        []scopeInput
 	complete      bool
 	inactive      bool
-	visits        map[string][]graphVisit
+	visits        map[string][]scopeVisit
 	contributions []scopeContribution
 	claims        []manifest.KSClaim
 	roots         []string
@@ -86,7 +87,7 @@ func (l *Loader) ensureScopes() {
 		l.scopes = &scopeConstruction{
 			walks:   map[graphContext]scopeTraversal{},
 			scanned: map[string]manifest.DocumentRole{},
-			visits:  map[string][]graphVisit{},
+			visits:  map[string][]scopeVisit{},
 		}
 		l.scopes.sources = l.scopes.sourceBuf[:0]
 	}
@@ -211,5 +212,28 @@ func (l *Loader) publishScopeClaims(repoRoot string) {
 	l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
 	for _, claim := range l.scopes.claims {
 		l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
+	}
+}
+
+// Scope references MUST borrow physical visits without retaining owner-specific copies.
+type scopeVisit struct{ contribution, visit int }
+
+func (s *scopeConstruction) fileVisits(file string) iter.Seq[graphVisit] {
+	return func(yield func(graphVisit) bool) {
+		for _, ref := range s.visits[file] {
+			c := &s.contributions[ref.contribution]
+			v := c.visits[ref.visit]
+			if v.file != file && v.localFile != file {
+				continue
+			}
+			v.owner, v.source, v.input = c.owner, c.source, c.input
+			v.membershipOnly = c.membershipOnly
+			if c.membershipOnly {
+				v.owner, v.deferMaterialization = manifest.NamedResource{}, false
+			}
+			if !yield(v) {
+				return
+			}
+		}
 	}
 }

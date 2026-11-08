@@ -7,10 +7,10 @@ import (
 	"weak"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
 )
 
 func TestRenderInvocation_AdmissionReclaimsRetiredCaptures(t *testing.T) {

@@ -9,15 +9,15 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
-	src "github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/internal/schedule"
+	src "github.com/home-operations/flate/internal/source"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/controllers/base"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {

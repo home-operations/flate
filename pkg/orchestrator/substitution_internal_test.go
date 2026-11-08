@@ -17,14 +17,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/loader"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 )
 
 func substitutionKS(name, path, postBuild string) string {

@@ -9,14 +9,14 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/diff"
+	"github.com/home-operations/flate/internal/discovery"
+	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/diff"
-	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestSelect_EntryDocuments(t *testing.T) {

@@ -14,15 +14,15 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/internal/schedule"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diff"
+	"github.com/home-operations/flate/internal/helm"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/diff"
-	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:paralleltest // This test changes process-global state.

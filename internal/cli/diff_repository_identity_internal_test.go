@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func runDiffKSPathOrigRepositoryIdentityName(t *testing.T, tc *struct {

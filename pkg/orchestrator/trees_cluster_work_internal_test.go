@@ -11,10 +11,10 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diff"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func clusterSourceQualifiedTrees(t *testing.T) []Tree {

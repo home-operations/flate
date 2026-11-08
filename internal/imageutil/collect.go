@@ -2,7 +2,7 @@
 package imageutil
 
 import (
-	"github.com/home-operations/flate/pkg/image"
+	"github.com/home-operations/flate/internal/image"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

@@ -15,12 +15,12 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/baseline"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func crdMutationHistoryFixture(t *testing.T, tc crdMutationCase) (Tree, string, plumbing.Hash) {

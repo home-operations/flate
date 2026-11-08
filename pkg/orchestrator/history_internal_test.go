@@ -15,21 +15,21 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/internal/selection"
 
-	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/internal/schedule"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/kustomize"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/internal/values"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
@@ -87,7 +87,7 @@ func (f *entryBuildFS) Open(name string) (fs.File, error) {
 		frames := runtime.CallersFrames(callers[:runtime.Callers(2, callers[:])])
 		for {
 			frame, more := frames.Next()
-			if frame.Function == "github.com/home-operations/flate/internal/kustomize.Build" {
+			if frame.Function == "github.com/home-operations/flate/internal/kustomizestate.Build" {
 				f.builds.Add(1)
 				break
 			}

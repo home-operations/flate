@@ -20,15 +20,15 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/controllers/base"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
 
-	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
+	sourcectrl "github.com/home-operations/flate/internal/controllers/source"
+	"github.com/home-operations/flate/internal/schedule"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/task"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {

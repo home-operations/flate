@@ -22,9 +22,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"go.yaml.in/yaml/v4"
 
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func mutateRenderModel(f *renderModelCase, opcode, target, value byte) {

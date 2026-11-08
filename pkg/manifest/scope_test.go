@@ -6,7 +6,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
-	"github.com/home-operations/flate/internal/kustomize"
+	kustomize "github.com/home-operations/flate/internal/kustomizestate"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

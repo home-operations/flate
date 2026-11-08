@@ -5,13 +5,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/internal/selection"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/task"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 func BenchmarkRender_Namespace(b *testing.B) {

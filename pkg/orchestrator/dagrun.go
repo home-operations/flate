@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/internal/selection"
 
-	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/internal/discovery"
+	"github.com/home-operations/flate/internal/schedule"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 type dagDispatcher struct{ o *Orchestrator }

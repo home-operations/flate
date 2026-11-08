@@ -12,7 +12,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
-	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/internal/source/cache"
 )
 
 func TestCacheGC_ExplicitRoot(t *testing.T) {

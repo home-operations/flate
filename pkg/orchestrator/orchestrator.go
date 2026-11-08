@@ -8,28 +8,28 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/home-operations/flate/pkg/controllers/artifactgenerator"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/controllers/helmrelease"
-	"github.com/home-operations/flate/pkg/controllers/kustomization"
-	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
-	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
-	"github.com/home-operations/flate/pkg/discovery"
-	"github.com/home-operations/flate/pkg/helm"
-	"github.com/home-operations/flate/pkg/kustomize"
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/internal/controllers/artifactgenerator"
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/controllers/helmrelease"
+	"github.com/home-operations/flate/internal/controllers/kustomization"
+	resourcesetctrl "github.com/home-operations/flate/internal/controllers/resourceset"
+	sourcectrl "github.com/home-operations/flate/internal/controllers/source"
+	"github.com/home-operations/flate/internal/discovery"
+	"github.com/home-operations/flate/internal/helm"
+	"github.com/home-operations/flate/internal/kustomize"
+	"github.com/home-operations/flate/internal/loader"
+	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/internal/source"
+	"github.com/home-operations/flate/internal/source/bucket"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/source/external"
+	"github.com/home-operations/flate/internal/source/git"
+	"github.com/home-operations/flate/internal/source/helmchart"
+	"github.com/home-operations/flate/internal/source/oci"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/task"
+	"github.com/home-operations/flate/internal/values"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/source"
-	"github.com/home-operations/flate/pkg/source/bucket"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/external"
-	"github.com/home-operations/flate/pkg/source/git"
-	"github.com/home-operations/flate/pkg/source/helmchart"
-	"github.com/home-operations/flate/pkg/source/oci"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 //nolint:gochecknoglobals // The immutable render-kind registry is computed once before parallel rendering.
@@ -70,7 +70,7 @@ type Config struct {
 	// repo (#743). Off by default — flate normally renders TRUSTED repos that
 	// legitimately reach private/LAN hosts and use local file:// self-sources;
 	// a consumer rendering UNTRUSTED input (e.g. konflate fork mode) sets this.
-	// The egress half is process-level (see pkg/source/ssrfguard): go-git
+	// The egress half is process-level (see internal/source/ssrfguard): go-git
 	// installs its HTTPS transport process-wide, so a per-render git egress
 	// policy is impossible.
 	RestrictEgress bool

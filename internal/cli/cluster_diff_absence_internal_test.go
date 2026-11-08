@@ -11,9 +11,9 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diff"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/diff"
 )
 
 func runClusterGroupsDiffAbsenceAndFailureScenario(t *testing.T, scenario, base *string) {

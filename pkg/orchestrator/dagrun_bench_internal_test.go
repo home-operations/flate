@@ -3,14 +3,14 @@ package orchestrator
 import (
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/internal/schedule"
 
-	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/internal/controllers/base"
 
-	"github.com/home-operations/flate/pkg/controllers/resourceset"
+	"github.com/home-operations/flate/internal/controllers/resourceset"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/task"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {

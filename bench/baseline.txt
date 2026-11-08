@@ -1,6 +1,6 @@
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/loader
+pkg: github.com/home-operations/flate/internal/loader
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkLoad_LargeRepo-64                        	      12	  95694607 ns/op	13405864 B/op	  171411 allocs/op
 BenchmarkLoad_LargeRepo-64                        	      12	  93455337 ns/op	13406698 B/op	  171268 allocs/op
@@ -113,10 +113,10 @@ BenchmarkPromoteAvailable-64                                       	 7385040	   
 BenchmarkPromoteAvailable-64                                       	 6419983	       179.2 ns/op	       0 B/op	       0 allocs/op
 BenchmarkPromoteAvailable-64                                       	 6712772	       166.5 ns/op	       0 B/op	       0 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/loader	131.064s
+ok  	github.com/home-operations/flate/internal/loader	131.064s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/discovery
+pkg: github.com/home-operations/flate/internal/discovery
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkRunParentGates-64                  	     279	   4264014 ns/op	  731201 B/op	    9481 allocs/op
 BenchmarkRunParentGates-64                  	     277	   4338732 ns/op	  733519 B/op	    9475 allocs/op
@@ -154,7 +154,7 @@ BenchmarkRun_WideDirectory-64                          	       3	 439480911 ns/o
 BenchmarkRun_WideDirectory-64                          	       3	 444658604 ns/op	99997952 B/op	  914404 allocs/op
 BenchmarkRun_WideDirectory-64                          	       3	 439345045 ns/op	99996370 B/op	  914405 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/discovery	48.712s
+ok  	github.com/home-operations/flate/internal/discovery	48.712s
 goos: linux
 goarch: amd64
 pkg: github.com/home-operations/flate/pkg/orchestrator
@@ -233,7 +233,7 @@ PASS
 ok  	github.com/home-operations/flate/pkg/orchestrator	83.596s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/schedule
+pkg: github.com/home-operations/flate/internal/schedule
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkScheduler_Run-64                  	    5127	    200570 ns/op	   33831 B/op	     219 allocs/op
 BenchmarkScheduler_Run-64                  	    6117	    194923 ns/op	   33689 B/op	     219 allocs/op
@@ -371,10 +371,10 @@ BenchmarkComplete_Failed/FanIn=32/Replaced/Last-64                           	  
 BenchmarkComplete_Failed/FanIn=32/Replaced/Last-64                           	  235088	      5404 ns/op	       0 B/op	       0 allocs/op
 BenchmarkComplete_Failed/FanIn=32/Replaced/Last-64                           	  233269	      5520 ns/op	       0 B/op	       0 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/schedule	168.416s
+ok  	github.com/home-operations/flate/internal/schedule	168.416s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/controllers/base
+pkg: github.com/home-operations/flate/internal/controllers/base
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkDispatchNodeReady-64     	 1659717	       698.8 ns/op	       0 B/op	       0 allocs/op
 BenchmarkDispatchNodeReady-64     	 1877762	       674.9 ns/op	       0 B/op	       0 allocs/op
@@ -407,10 +407,10 @@ BenchmarkEmit_Children/ResourceSet-64        	   84619	     15127 ns/op	    2031
 BenchmarkEmit_Children/ResourceSet-64        	   81405	     15164 ns/op	    2031 B/op	      18 allocs/op
 BenchmarkEmit_Children/ResourceSet-64        	   78928	     14963 ns/op	    2030 B/op	      18 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/controllers/base	36.413s
+ok  	github.com/home-operations/flate/internal/controllers/base	36.413s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/controllers/helmrelease
+pkg: github.com/home-operations/flate/internal/controllers/helmrelease
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkHelmReleaseFingerprint_SourceIdentity/other_sources-64         	  163490	      6844 ns/op	    1445 B/op	      12 allocs/op
 BenchmarkHelmReleaseFingerprint_SourceIdentity/other_sources-64         	  167872	      6959 ns/op	    1445 B/op	      12 allocs/op
@@ -453,10 +453,10 @@ BenchmarkHelmReleaseEmission_Children/raw_replay-64                     	 137232
 BenchmarkHelmReleaseEmission_Children/raw_replay-64                     	 1404974	       870.5 ns/op	     104 B/op	       2 allocs/op
 BenchmarkHelmReleaseEmission_Children/raw_replay-64                     	 1330719	       910.6 ns/op	     104 B/op	       2 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/controllers/helmrelease	46.631s
+ok  	github.com/home-operations/flate/internal/controllers/helmrelease	46.631s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/controllers/kustomization
+pkg: github.com/home-operations/flate/internal/controllers/kustomization
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkCollectDeps-64                    	 4950627	       234.7 ns/op	      80 B/op	       1 allocs/op
 BenchmarkCollectDeps-64                    	 5300595	       228.0 ns/op	      80 B/op	       1 allocs/op
@@ -499,10 +499,10 @@ BenchmarkSubstituteDoc/value_reference-64                  	   15536	     78439 
 BenchmarkSubstituteDoc/value_reference-64                  	   15734	     75614 ns/op	   29506 B/op	     231 allocs/op
 BenchmarkSubstituteDoc/value_reference-64                  	   15758	     76662 ns/op	   29500 B/op	     231 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/controllers/kustomization	48.190s
+ok  	github.com/home-operations/flate/internal/controllers/kustomization	48.190s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/change
+pkg: github.com/home-operations/flate/internal/change
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkFilterResolve_LargeRepo-64    	     950	   1177416 ns/op	  756580 B/op	    1043 allocs/op
 BenchmarkFilterResolve_LargeRepo-64    	    1004	   1139998 ns/op	  756568 B/op	    1043 allocs/op
@@ -540,7 +540,7 @@ BenchmarkDetect/vendor-64              	       3	 342328156 ns/op	30072672 B/op	
 BenchmarkDetect/vendor-64              	       3	 338540006 ns/op	29886042 B/op	  300532 allocs/op
 BenchmarkDetect/vendor-64              	       3	 336283382 ns/op	29948930 B/op	  300524 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/change	61.612s
+ok  	github.com/home-operations/flate/internal/change	61.612s
 goos: linux
 goarch: amd64
 pkg: github.com/home-operations/flate/pkg/manifest
@@ -619,7 +619,7 @@ PASS
 ok  	github.com/home-operations/flate/pkg/manifest	83.287s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/store
+pkg: github.com/home-operations/flate/internal/store
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkAddObject_Cold-64                    	  996097	      2099 ns/op	     605 B/op	       0 allocs/op
 BenchmarkAddObject_Cold-64                    	 1000000	      2169 ns/op	     602 B/op	       0 allocs/op
@@ -837,10 +837,10 @@ BenchmarkGetObject_LongNames-64                                    	11780794	   
 BenchmarkGetObject_LongNames-64                                    	11402839	        96.13 ns/op	       0 B/op	       0 allocs/op
 BenchmarkGetObject_LongNames-64                                    	12896304	        96.47 ns/op	       0 B/op	       0 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/store	284.302s
+ok  	github.com/home-operations/flate/internal/store	284.302s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/kustomize
+pkg: github.com/home-operations/flate/internal/kustomize
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkRenderFlux_SmallKS-64               	      32	  37105651 ns/op	14800554 B/op	   43074 allocs/op
 BenchmarkRenderFlux_SmallKS-64               	      32	  38661720 ns/op	14760129 B/op	   42549 allocs/op
@@ -878,10 +878,10 @@ BenchmarkTreeFS_ReadDir/recorder=true-64     	  557510	      2371 ns/op	     401
 BenchmarkTreeFS_ReadDir/recorder=true-64     	  466533	      2364 ns/op	     400 B/op	       9 allocs/op
 BenchmarkTreeFS_ReadDir/recorder=true-64     	  500030	      2372 ns/op	     401 B/op	       9 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/kustomize	41.901s
+ok  	github.com/home-operations/flate/internal/kustomize	41.901s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/helm
+pkg: github.com/home-operations/flate/internal/helm
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkOCIChartVersion_DirectReference-64             	  310303	      3911 ns/op	    1143 B/op	      15 allocs/op
 BenchmarkOCIChartVersion_DirectReference-64             	  329082	      3888 ns/op	    1142 B/op	      15 allocs/op
@@ -989,10 +989,10 @@ BenchmarkChartValues_Cached-64                                     	  467763	   
 BenchmarkChartValues_Cached-64                                     	  434014	      2468 ns/op	     657 B/op	       6 allocs/op
 BenchmarkChartValues_Cached-64                                     	  526929	      2368 ns/op	     657 B/op	       6 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/helm	127.560s
+ok  	github.com/home-operations/flate/internal/helm	127.560s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/values
+pkg: github.com/home-operations/flate/internal/values
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkExpandValueReferences_SharedLargeCM-64                 	  107886	     10011 ns/op	    5045 B/op	      18 allocs/op
 BenchmarkExpandValueReferences_SharedLargeCM-64                 	  119842	      9627 ns/op	    5043 B/op	      18 allocs/op
@@ -1020,10 +1020,10 @@ BenchmarkExpandPostBuildSubstituteReference_ParseSharedCM-64    	   10000	    12
 BenchmarkExpandPostBuildSubstituteReference_ParseSharedCM-64    	    9484	    128400 ns/op	   33277 B/op	     347 allocs/op
 BenchmarkExpandPostBuildSubstituteReference_ParseSharedCM-64    	   10000	    130550 ns/op	   33282 B/op	     347 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/values	29.706s
+ok  	github.com/home-operations/flate/internal/values	29.706s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/depwait
+pkg: github.com/home-operations/flate/internal/depwait
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkClassify_Dependency/absent_CRD-64         	 9630432	       124.5 ns/op	       0 B/op	       0 allocs/op
 BenchmarkClassify_Dependency/absent_CRD-64         	 9925500	       124.2 ns/op	       0 B/op	       0 allocs/op
@@ -1046,10 +1046,10 @@ BenchmarkClassify_Dependency/pending_Kustomization-64         	 2947422	       4
 BenchmarkClassify_Dependency/pending_Kustomization-64         	 2911976	       402.7 ns/op	       0 B/op	       0 allocs/op
 BenchmarkClassify_Dependency/pending_Kustomization-64         	 2855926	       411.1 ns/op	       0 B/op	       0 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/depwait	23.514s
+ok  	github.com/home-operations/flate/internal/depwait	23.514s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/diff
+pkg: github.com/home-operations/flate/internal/diff
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkDiff_LargeTree-64    	      52	  20683215 ns/op	 7847898 B/op	   66297 allocs/op
 BenchmarkDiff_LargeTree-64    	      64	  20386243 ns/op	 7853474 B/op	   66294 allocs/op
@@ -1062,10 +1062,10 @@ BenchmarkNormalizeDocs-64     	    2035	    563368 ns/op	  311874 B/op	    1801 
 BenchmarkNormalizeDocs-64     	    1938	    552499 ns/op	  311875 B/op	    1801 allocs/op
 BenchmarkNormalizeDocs-64     	    2104	    568579 ns/op	  311875 B/op	    1801 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/diff	11.881s
+ok  	github.com/home-operations/flate/internal/diff	11.881s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/source/git
+pkg: github.com/home-operations/flate/internal/source/git
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkResolveLocal/HEAD-64             	    1953	    635826 ns/op	  114389 B/op	     604 allocs/op
 BenchmarkResolveLocal/HEAD-64             	    1965	    634869 ns/op	  113978 B/op	     603 allocs/op
@@ -1088,10 +1088,10 @@ BenchmarkResolveSemver_MatchingTags-64    	     144	   8453867 ns/op	  755538 B/
 BenchmarkResolveSemver_MatchingTags-64    	     140	   8474785 ns/op	  756224 B/op	    9183 allocs/op
 BenchmarkResolveSemver_MatchingTags-64    	     142	   8626605 ns/op	  754714 B/op	    9183 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/source/git	23.931s
+ok  	github.com/home-operations/flate/internal/source/git	23.931s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/source/gittree
+pkg: github.com/home-operations/flate/internal/source/gittree
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkView_Packed/Source-64         	      18	  62877427 ns/op	 4735119 B/op	   52571 allocs/op
 BenchmarkView_Packed/Source-64         	      18	  63539699 ns/op	 4763871 B/op	   52577 allocs/op
@@ -1114,10 +1114,10 @@ BenchmarkView_Packed/ReadAll-64        	       1	1517294114 ns/op	338706488 B/op
 BenchmarkView_Packed/ReadAll-64        	       1	1489440516 ns/op	338927360 B/op	  922081 allocs/op
 BenchmarkView_Packed/ReadAll-64        	       1	1487241036 ns/op	343751008 B/op	  923483 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/source/gittree	30.521s
+ok  	github.com/home-operations/flate/internal/source/gittree	30.521s
 goos: linux
 goarch: amd64
-pkg: github.com/home-operations/flate/pkg/source/cache
+pkg: github.com/home-operations/flate/internal/source/cache
 cpu: AMD EPYC 7452 32-Core Processor                
 BenchmarkAcquire_Warm/memory/acquire-64         	  317980	      3708 ns/op	     617 B/op	      11 allocs/op
 BenchmarkAcquire_Warm/memory/acquire-64         	  270368	      3788 ns/op	     617 B/op	      11 allocs/op
@@ -1155,4 +1155,4 @@ BenchmarkBlob_PutParallel-64                    	     129	   9294989 ns/op	3609.
 BenchmarkBlob_PutParallel-64                    	     124	   9535158 ns/op	3519.02 MB/s	         8.000 writes/op	  237477 B/op	    1371 allocs/op
 BenchmarkBlob_PutParallel-64                    	     128	   9363510 ns/op	3583.53 MB/s	         8.000 writes/op	  234556 B/op	    1369 allocs/op
 PASS
-ok  	github.com/home-operations/flate/pkg/source/cache	42.840s
+ok  	github.com/home-operations/flate/internal/source/cache	42.840s

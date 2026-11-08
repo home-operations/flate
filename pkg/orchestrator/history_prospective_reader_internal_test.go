@@ -15,18 +15,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/internal/schedule"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/helm"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/internal/values"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.

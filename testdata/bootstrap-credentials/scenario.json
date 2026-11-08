@@ -3,8 +3,8 @@
     "repository": "home-operations/flate",
     "revision": "c73c77b85ebe051d2dfa981ab02244f5404617ea",
     "paths": [
-      "pkg/controllers/base/acquisition.go",
-      "pkg/controllers/source/controller.go"
+      "internal/controllers/base/acquisition.go",
+      "internal/controllers/source/controller.go"
     ],
     "reductions": "An authored bootstrap source names its own SSH remote. Add missing authentication and verification references without changing the rendered ConfigMap. Compare complete build and diff output."
   },

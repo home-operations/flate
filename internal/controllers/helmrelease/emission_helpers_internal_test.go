@@ -1,0 +1,57 @@
+package helmrelease
+
+import (
+	"context"
+	"testing"
+
+	"github.com/home-operations/flate/internal/controllers/base"
+
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+func publishDocuments(
+	c *Controller,
+	id manifest.NamedResource,
+	docs []manifest.DocOccurrence,
+	opts manifest.ParseDocOptions,
+) ([]store.Child, []manifest.DocOccurrence) {
+	if c.Store.GetObject(id) == nil {
+		c.Store.AddObject(
+			&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
+		)
+	}
+	parseChildrenResult1 := (&base.Execution{Controller: c.Controller}).ParseChildren(c.Store.GetObject(id), docs, opts)
+	children, retained, failures := parseChildrenResult1.Children, parseChildrenResult1.Visible, parseChildrenResult1.Failures
+	_, _, next := c.Store.GetEmission(id)
+	defer next.Finish()
+	next.Children, next.Manifests, next.Failures, next.Complete = children, retained, failures, true
+	controllertest.Emit(context.TODO(), c.Controller, id, &next)
+	return children, retained
+}
+
+func parentIndexForTest(parents map[manifest.NamedResource]manifest.NamedResource) *manifest.DiscoveryIndex {
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+	for id, parent := range parents {
+		index.Records[id] = manifest.DiscoveryRecord{
+			Parent:      parent,
+			Productions: []manifest.Production{{Owner: parent}},
+		}
+	}
+	return index
+}
+
+func publishRawFixture(t *testing.T, c *Controller, obj manifest.BaseManifest) {
+	t.Helper()
+	root := &manifest.Kustomization{Name: "producer-root", Namespace: obj.Named().Namespace}
+	if c.Store.GetObject(root.Named()) == nil {
+		c.Store.AddObject(root)
+	}
+	controllertest.Emit(
+		t.Context(),
+		c.Controller,
+		root.Named(),
+		&store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true},
+	)
+}

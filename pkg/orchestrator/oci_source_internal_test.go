@@ -8,17 +8,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
-	src "github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/internal/schedule"
+	src "github.com/home-operations/flate/internal/source"
 
 	"github.com/home-operations/flate/internal/assert"
 
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/source/gitrepo"
+	"github.com/home-operations/flate/internal/source/gittree"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/gitrepo"
-	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 type generatedOCIFetcher struct {

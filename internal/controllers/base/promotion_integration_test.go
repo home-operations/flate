@@ -1,0 +1,164 @@
+package base_test
+
+import (
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/home-operations/flate/internal/selection"
+
+	"github.com/home-operations/flate/internal/controllers/base"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
+	"github.com/home-operations/flate/internal/admissiontest"
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/baseline"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/loader"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+func TestLoaderPromotion_PreservesSelectedContent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: selected, namespace: authored}
+data: {values.yaml: "greeting: selected"}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: excluded, namespace: apps}
+data: {value: excluded}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: chart, namespace: apps}
+spec: {url: https://example.test/chart.git}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: excluded-source, namespace: apps}
+spec: {url: https://example.test/excluded.git}
+`)
+	st := store.New()
+	hr := &manifest.HelmRelease{
+		Name:      "consumer",
+		Namespace: "apps",
+		Chart: manifest.HelmChart{
+			Source: manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "chart",
+			},
+		},
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "selected"}},
+			Chart: &helmv2.HelmChartTemplate{
+				Spec: helmv2.HelmChartTemplateSpec{
+					Chart: "chart",
+					SourceRef: &helmv2.CrossNamespaceObjectReference{
+						Kind:      manifest.KindGitRepository,
+						Name:      "chart",
+						Namespace: "apps",
+					},
+				},
+			},
+		},
+	}
+	st.AddObject(hr)
+	selected := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
+	excluded := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "excluded"}
+	chart := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "chart",
+	}
+	excludedSource := manifest.NamedResource{
+		Group:     "source.toolkit.fluxcd.io",
+		Kind:      manifest.KindGitRepository,
+		Namespace: "apps",
+		Name:      "excluded-source",
+	}
+	files := map[manifest.NamedResource]string{
+		hr.Named():     "consumer.yaml",
+		selected:       "bundle.yaml",
+		excluded:       "bundle.yaml",
+		chart:          "bundle.yaml",
+		excludedSource: "bundle.yaml",
+	}
+	policy := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+	for id, file := range files {
+		policy.Records[id] = manifest.DiscoveryRecord{File: file}
+	}
+	filterLoader, _ := admissiontest.New(
+		t,
+		admissiontest.Config{Changes: change.NewSet([]string{"consumer.yaml"}), Index: policy, Inventory: st, Root: ""},
+	)
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+	for id := range files {
+		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
+		if id == selected {
+			record.Authored.Namespace = "authored"
+		}
+		record.Productions = []manifest.Production{{Authored: record.Authored, Path: record.Path}}
+		index.Records[id] = record
+	}
+	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
+	assert.NoError(t, err)
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	controller := base.New(st, nil)
+	controller.Configure(base.Options{Session: filter, Loader: filterLoader, Index: index})
+	promote := func(id manifest.NamedResource) (bool, error) {
+		children, err := loader.Promote(
+			t.Context(),
+			st,
+			id,
+			loader.PromoteOptions{Record: index.Records[id].Productions[0]},
+		)
+		if err != nil {
+			return false, err
+		}
+		_, err = controller.KeepEmitted(
+			t.Context(),
+			manifest.NamedResource{},
+			selection.PrepareRequest{Generation: slices.Collect(selection.Declarations(children))},
+		)
+		return filter.Snapshot().Reconcile(id) && st.GetObject(id) != nil, err
+	}
+
+	decision := filter.Snapshot()
+	{
+		promoted, err := promote(
+			selected,
+		)
+		assert.FatalIf(t, err != nil || !promoted || st.GetObject(selected) == nil ||
+			st.GetObject(chart) == nil, "%v", "selected values and required chart source must be admitted")
+	}
+	{
+		got := st.GetObject(selected).(*manifest.ConfigMap).Data["values.yaml"]
+		assert.ErrorIf(t, got != "greeting: selected", "selected values = %v", got)
+	}
+	for _, id := range []manifest.NamedResource{excluded, excludedSource} {
+		{
+			promoted, err := promote(
+				id,
+			)
+			assert.ErrorIf(t, err != nil || promoted || st.GetObject(id) != nil ||
+				filter.Snapshot().Reconcile(id), "excluded sibling %s must remain absent", id)
+		}
+	}
+	assert.ErrorIf(t, filter.Snapshot() != decision, "%v", "ordering promotion must not expand keep")
+	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
+	{
+		promoted, err := promote(excluded)
+		assert.ErrorIf(t, err != nil || promoted, "%v", "availability must not bypass admission")
+	}
+}

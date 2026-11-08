@@ -9,14 +9,14 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/controllers/base"
+	kustomizationctrl "github.com/home-operations/flate/internal/controllers/kustomization"
+	"github.com/home-operations/flate/internal/schedule"
+	"github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	kustomizationctrl "github.com/home-operations/flate/pkg/controllers/kustomization"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:paralleltest // Orchestrator setup changes process-global source policy.

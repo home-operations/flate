@@ -14,17 +14,17 @@ import (
 
 	"github.com/spf13/pflag"
 
+	"github.com/home-operations/flate/internal/baseline"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/helm"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/internal/source"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/source/ssrfguard"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/source"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/ssrfguard"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 const (

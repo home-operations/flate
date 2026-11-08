@@ -14,18 +14,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/internal/schedule"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/change"
 	"github.com/home-operations/flate/internal/inputprojection"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.

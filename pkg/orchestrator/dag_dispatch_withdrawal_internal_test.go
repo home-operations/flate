@@ -9,13 +9,13 @@ import (
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/controllers/resourceset"
+	"github.com/home-operations/flate/internal/schedule"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/task"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/controllers/resourceset"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestDAGDispatch_NeverEmittedCoverageWithdrawal(t *testing.T) {

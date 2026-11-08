@@ -5,17 +5,17 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/internal/schedule"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/depwait"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/task"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 type recordingTB struct {

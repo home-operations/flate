@@ -7,16 +7,16 @@ import (
 	"strings"
 	"testing"
 
-	src "github.com/home-operations/flate/pkg/source"
+	src "github.com/home-operations/flate/internal/source"
 
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil"
 
-	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/internal/change"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 type fakeOCIFetcher struct{ localPath string }

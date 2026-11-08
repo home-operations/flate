@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // Side identifies an unavailable comparison side.

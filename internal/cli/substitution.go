@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/internal/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

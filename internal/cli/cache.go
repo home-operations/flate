@@ -9,8 +9,8 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/source/cache"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/cache"
 )
 
 // newCacheCmd builds the cache-maintenance subcommand tree.

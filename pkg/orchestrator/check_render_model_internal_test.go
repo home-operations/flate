@@ -18,7 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/internal/schedule"
 
 	"github.com/home-operations/flate/internal/assert"
 
@@ -27,14 +27,14 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/admissiontest"
+	"github.com/home-operations/flate/internal/baseline"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/controllers/base"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/task"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 )
 
 func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {

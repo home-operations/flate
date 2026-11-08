@@ -5,14 +5,14 @@ import (
 	"iter"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/internal/schedule"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/loader"
+	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestPrepareNeededHistory_StaticOutput(t *testing.T) {

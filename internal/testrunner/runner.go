@@ -5,9 +5,9 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // Run classifies the objects and reporting statuses prepared by orchestrator.Select.

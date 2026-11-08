@@ -4,11 +4,11 @@ package admissiontest
 import (
 	"testing"
 
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/loader"
+	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // Config describes a fixture's declaration inventory and changed inputs.

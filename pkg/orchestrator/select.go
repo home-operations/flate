@@ -1,8 +1,8 @@
 package orchestrator
 
 import (
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
 )
 
 // Select borrows completed results until their final consumer calls Close.

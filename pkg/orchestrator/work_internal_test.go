@@ -7,11 +7,11 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/helm"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func assertHeadOnlyWork(t *testing.T, rendered Rendered) {

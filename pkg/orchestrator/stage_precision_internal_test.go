@@ -9,10 +9,10 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diff"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.

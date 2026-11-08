@@ -3,8 +3,8 @@ package orchestrator
 import (
 	"testing"
 
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func assertSuppliedSourceReference(t *testing.T, o *Orchestrator, result *Result, mode string) {

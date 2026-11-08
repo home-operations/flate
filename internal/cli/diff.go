@@ -9,8 +9,8 @@ import (
 
 	"github.com/home-operations/flate/internal/diffprep"
 
+	"github.com/home-operations/flate/internal/diff"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

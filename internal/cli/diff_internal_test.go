@@ -15,12 +15,12 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diff"
 	"github.com/home-operations/flate/internal/diffprep"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestAppendSuppressionWarnings_Presentation(t *testing.T) {

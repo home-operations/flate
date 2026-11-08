@@ -10,14 +10,14 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/baseline"
+	"github.com/home-operations/flate/internal/diff"
+	"github.com/home-operations/flate/internal/selection"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
 	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 //nolint:paralleltest // RenderTrees sets the process-wide egress policy.

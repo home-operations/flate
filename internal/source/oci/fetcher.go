@@ -1,0 +1,85 @@
+// Package oci fetches verified OCI source layers through the shared acquisition cache.
+package oci
+
+import (
+	"context"
+
+	"helm.sh/helm/v4/pkg/registry"
+
+	"github.com/home-operations/flate/internal/source"
+	"github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+// Fetcher is the Fetcher implementation for KindOCIRepository.
+// RegistryConfig is the global --registry-config docker-style
+// config.json path used when no per-repo SecretRef is set. Each Fetch
+// resolves per-repository credentials through its captured inputs.
+type Fetcher struct {
+	Cache          *cache.Cache
+	RegistryConfig string
+
+	// Network is the required non-nil invocation owner, borrowed by this fetcher.
+	Network *source.Network
+}
+
+type operation struct {
+	*Fetcher
+
+	work                 manifest.AcquisitionWork
+	reads                *store.ReadSet
+	secrets              source.SecretGetter
+	mediaTypes           []string
+	allowAnonymousDenied bool
+	produce              func(context.Context, registryAcquisition, *cache.Policy) (*store.SourceArtifact, error)
+}
+
+// Fetch acquires content using one execution's captured credentials and declarations.
+func (f *Fetcher) Fetch(
+	ctx context.Context,
+	repo *manifest.OCIRepository,
+	reads *store.ReadSet,
+	policyValue *cache.Policy,
+) (source.PreparedFetch, error) {
+	policy := *policyValue
+	var mediaTypes []string
+	if mediaType := repo.LayerMediaType(); mediaType != "" {
+		mediaTypes = []string{mediaType}
+	}
+	innerOperation := operation{
+		Fetcher:    f,
+		reads:      reads,
+		secrets:    source.SecretLookup(reads),
+		mediaTypes: mediaTypes,
+	}
+	return innerOperation.fetchSource(ctx, repo, &policy)
+}
+
+// FetchChart acquires chart layers using Helm's supported media types.
+func (f *Fetcher) FetchChart(
+	ctx context.Context,
+	repo *manifest.OCIRepository,
+	reads *store.ReadSet,
+	policyValue *cache.Policy,
+) (source.PreparedFetch, error) {
+	policy := *policyValue
+	innerOperation2 := operation{
+		Fetcher: f, reads: reads, secrets: source.SecretLookup(reads),
+		mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType},
+	}
+	return innerOperation2.fetchSource(ctx, repo, &policy)
+}
+
+func (f *operation) fetchSource(
+	ctx context.Context,
+	repo *manifest.OCIRepository,
+	policyValue *cache.Policy,
+) (source.PreparedFetch, error) {
+	policy := *policyValue
+	f.produce = func(ctx context.Context, request registryAcquisition, policyValue *cache.Policy) (*store.SourceArtifact, error) {
+		acquisitionPolicy := *policyValue
+		return f.fetchLayer(ctx, repo, new(request), &acquisitionPolicy)
+	}
+	return f.acquire(ctx, new(repo.RegistryAccess()), &policy)
+}

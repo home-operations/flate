@@ -7,14 +7,14 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/controllers/kustomization"
-	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/controllers/kustomization"
+	sourcectrl "github.com/home-operations/flate/internal/controllers/source"
+	"github.com/home-operations/flate/internal/loader"
+	"github.com/home-operations/flate/internal/resourceset"
+	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/resourceset"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 type orchestratorExistence struct {

@@ -10,9 +10,9 @@ import (
 	"github.com/opencontainers/go-digest"
 
 	"github.com/home-operations/flate/internal/assert"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestFixture_CacheFailureReplay(t *testing.T) {

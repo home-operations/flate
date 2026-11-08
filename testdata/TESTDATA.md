@@ -1,6 +1,6 @@
 # Testdata
 
-This directory holds fixtures used by `pkg/` unit tests and the `test/e2e/`
+This directory holds fixtures used by `internal/` and `pkg/` unit tests and the `test/e2e/`
 integration suite. Fixtures stay here while tests run in scenario packages beneath
 `test/e2e/`, using one shared `test/e2e/internal/harness` package. Run all scenarios
 with `go test -race ./test/e2e/...`.
@@ -163,16 +163,16 @@ Source archive reuse is separate from persistent render-cache eligibility.
 Focused routine proof (race instrumentation is separate from RSS collection):
 
 ```fish
-go test -race ./pkg/orchestrator ./pkg/baseline ./pkg/source/gittree ./pkg/source/cache ./pkg/change -run 'Memory|Sparse|LazyBaseReads' -count=1 -v
+go test -race ./pkg/orchestrator ./internal/baseline ./internal/source/gittree ./internal/source/cache ./internal/change -run 'Memory|Sparse|LazyBaseReads' -count=1 -v
 ```
 
 Exact synthetic fixture correctness, one fixture at a time without reducing
 reconcile concurrency:
 
 ```fish
-env FLATE_E8_SLOW=1 go test ./pkg/baseline ./pkg/source/gittree ./pkg/orchestrator -run 'TestAutoResolve_SparseGitMemory/exact|TestSelection_SparseGitBodies/exact|TestGitView_SparseBodyReads/exact|TestRender_MemorySparseGit/sparse-git|TestRender_MemoryContained' -count=1 -v -p=1 -parallel=1
-env -u GOGC FLATE_E8_SLOW=1 GOMEMLIMIT=128MiB go test ./pkg/source/cache -run '^TestAcquire_MemoryRetirement$' -count=1 -v -parallel=1
-env -u GOGC FLATE_E8_SLOW=1 GOMEMLIMIT=256MiB go test ./pkg/source/cache -run '^TestAcquire_MemoryRetirement$' -count=1 -v -parallel=1
+env FLATE_E8_SLOW=1 go test ./internal/baseline ./internal/source/gittree ./pkg/orchestrator -run 'TestAutoResolve_SparseGitMemory/exact|TestSelection_SparseGitBodies/exact|TestGitView_SparseBodyReads/exact|TestRender_MemorySparseGit/sparse-git|TestRender_MemoryContained' -count=1 -v -p=1 -parallel=1
+env -u GOGC FLATE_E8_SLOW=1 GOMEMLIMIT=128MiB go test ./internal/source/cache -run '^TestAcquire_MemoryRetirement$' -count=1 -v -parallel=1
+env -u GOGC FLATE_E8_SLOW=1 GOMEMLIMIT=256MiB go test ./internal/source/cache -run '^TestAcquire_MemoryRetirement$' -count=1 -v -parallel=1
 ```
 
 For the corpus SDK row the collector must supply `FLATE_E8_HOME` as an absolute
@@ -242,7 +242,7 @@ depth 64 and 64-way diamond fan-in at both task bounds; an ordinary test skip
 is not a large-campaign pass. Run the large race campaign with:
 
 ```sh
-env FLATE_E8_SLOW=1 mise exec -- go test -race ./pkg/schedule ./pkg/orchestrator -run '^(TestScheduler_ScaleDAG|TestDAG_ScalePublications)$' -count=1
+env FLATE_E8_SLOW=1 mise exec -- go test -race ./internal/schedule ./pkg/orchestrator -run '^(TestScheduler_ScaleDAG|TestDAG_ScalePublications)$' -count=1
 ```
 
 E8-4 runs the routine package race proof. E8-5 owns the exact large race
@@ -463,7 +463,7 @@ Every U6 sequence runs twice with concurrency 2.
 The pinned-input case keeps separate Git stores for directory comparisons and selects both historical commits through the declared fixture transport.
 Its committed reverse diff uses a separate declared checkout in the repository that owns both historical commits.
 The emitted-generator case keeps a declared shallow boundary on the baseline repository.
-The package tests under `pkg/controllers/artifactgenerator` retain parser, archive, partial publication, and synchronized convergence proofs.
+The package tests under `internal/controllers/artifactgenerator` retain parser, archive, partial publication, and synchronized convergence proofs.
 U6 removes both ArtifactGenerator files from the migration allowlist.
 The shared CLI and fixture helpers remain for the unmigrated U1 through U5 and U7 consumers until U9 removes their last callers.
 
@@ -672,7 +672,7 @@ The U5 cases preserve substitution, supplied inputs, and dependencies. Expected 
 
 `helm-dependencies/changed-onlyhr-depends-on-unchanged-dep` preserves the shared Helm dependency consumer, merged in U3. Its unchanged dependency producer remains skipped.
 
-The supplied SSH corpus case compares both full builds and the supplied paired diff. The absent-agent branch stays in `internal/cli/TestRun_SuppliedSSHSnapshotOnBothDiffSides` with every original assertion. `pkg/source/git/TestFetcher_SSHAcquisitionsOnBothSides` also requires zero authenticated acquisitions for an absent agent. The native-agent proof uses real package-test sockets. The corpus uses only declared Git URLs and generated test keys.
+The supplied SSH corpus case compares both full builds and the supplied paired diff. The absent-agent branch stays in `internal/cli/TestRun_SuppliedSSHSnapshotOnBothDiffSides` with every original assertion. `internal/source/git/TestFetcher_SSHAcquisitionsOnBothSides` also requires zero authenticated acquisitions for an absent agent. The native-agent proof uses real package-test sockets. The corpus uses only declared Git URLs and generated test keys.
 
 The ancestor-patch cases follow `bjw-s-labs/home-ops` at `656b3515052fcdb0450ca56151809852e383200d`, `kubernetes/flux/cluster/ks.yaml`. They retain the parent patch and child ownership structure. Local ConfigMaps replace unrelated workloads. The dependency cases follow `truxnell/home-cluster` at `0f7b47a9fec9419a4c5d6b5c4a4ae219ad342c1c`, `kubernetes/hegira/apps/cert-manager/cert-manager/ks.yaml`. The readiness expressions, emitted sources, and negative variants are authored reductions.
 

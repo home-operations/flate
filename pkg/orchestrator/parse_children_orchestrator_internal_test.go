@@ -1,10 +1,10 @@
 package orchestrator
 
 import (
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 type childMaps struct {

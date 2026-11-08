@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/loader"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

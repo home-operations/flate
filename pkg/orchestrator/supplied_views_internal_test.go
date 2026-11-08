@@ -12,12 +12,12 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/baseline"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/source/gittree"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/baseline"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.

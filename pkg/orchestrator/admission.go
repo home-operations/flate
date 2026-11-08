@@ -8,12 +8,12 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/internal/change"
+	"github.com/home-operations/flate/internal/kustomize"
+	"github.com/home-operations/flate/internal/schedule"
+	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func (o *Orchestrator) prepareInvocation(ctx context.Context) error {

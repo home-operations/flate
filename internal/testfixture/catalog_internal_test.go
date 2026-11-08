@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
-	"github.com/home-operations/flate/internal/kustomize"
+	kustomize "github.com/home-operations/flate/internal/kustomizestate"
 )
 
 func TestScenario_Catalog(t *testing.T) {

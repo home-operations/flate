@@ -16,9 +16,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 
 	"github.com/home-operations/flate/internal/cli"
+	"github.com/home-operations/flate/internal/source"
 	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/source"
 )
 
 //nolint:paralleltest // The fixture replaces process-wide HTTP and Git transports.

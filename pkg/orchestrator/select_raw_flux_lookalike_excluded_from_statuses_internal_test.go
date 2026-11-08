@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/internal/selection"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/google/go-cmp/cmp"
@@ -15,10 +15,10 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/baseline"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {

@@ -1,0 +1,482 @@
+package resourceset
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+
+	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/controllers/base"
+	"github.com/home-operations/flate/internal/schedule"
+	"github.com/home-operations/flate/internal/source"
+	"github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/source/oci"
+	"github.com/home-operations/flate/internal/store"
+	"github.com/home-operations/flate/internal/task"
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/manifest"
+)
+
+func TestReconcile_ProviderAcquisitionSettlement(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"ambient", "rendered Secret", "changed completed provider"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			testReconcileProviderAcquisitionSettlementCase(
+				t,
+				&mode,
+			)
+		},
+		)
+	}
+}
+
+func TestReconcile_ProviderAcquisitionRefresh(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"digest", "defaults", "credentials"} {
+		t.Run(change, func(t *testing.T) {
+			t.Parallel()
+			testReconcileProviderAcquisitionRefreshCase(
+				t,
+				&change,
+			)
+		},
+		)
+	}
+}
+
+func testReconcileProviderAcquisitionSettlementCase(
+	t *testing.T,
+	testCaseInput *string,
+) {
+	t.Helper()
+
+	var lists, rejected atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if username, password, ok := r.BasicAuth(); !ok || username != "rendered" || password != "fixture" {
+			if ok {
+				rejected.Add(1)
+			}
+			w.Header().Set("WWW-Authenticate", `Basic realm="fixture"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/tags/list"):
+			lists.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"name":"images","tags":["pending"]}`)
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			w.Header().Set("Docker-Content-Digest", "sha256:"+strings.Repeat("a", 64))
+			w.Header().Set("Content-Length", "2")
+			fmt.Fprint(w, "{}")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	host := strings.TrimPrefix(server.URL, "https://")
+	credentials := fmt.Sprintf(`{"auths":{%q:{"username":"rendered","password":"fixture"}}}`, host)
+	registryConfig := filepath.Join(t.TempDir(), "config.json")
+	machine := credentials
+	if (*testCaseInput) != "ambient" {
+		machine = `{"auths":`
+	}
+	testutil.WriteFileAt(t, registryConfig, machine)
+	network := new(source.Network)
+	t.Cleanup(network.Close)
+	st := store.New()
+	tasks := task.NewBounded(2)
+	t.Cleanup(tasks.BlockTillDone)
+	c := New(st, tasks, nil)
+	c.Inputs = &oci.Fetcher{
+		Network:        network,
+		Cache:          cachetest.New(t, t.TempDir(), cache.New),
+		RegistryConfig: registryConfig,
+	}
+	c.Configure(base.Options{})
+	c.StartLifecycle()
+	ready := staticRSIP("a-ready", "effective", nil, map[string]string{"tag": "ready"})
+	pending := &manifest.ResourceSetInputProvider{
+		Name:      "b-pending",
+		Namespace: "effective",
+		Type:      fluxopv1.InputProviderOCIArtifactTag,
+		URL:       "oci://" + host + "/images",
+		Insecure:  true,
+		SecretRef: &manifest.LocalObjectReference{Name: "registry-auth"},
+	}
+	rs := &manifest.ResourceSet{
+		Name:              "consumer",
+		Namespace:         "effective",
+		InputsFrom:        []fluxopv1.InputProviderReference{{Name: pending.Name}, {Name: ready.Name}},
+		ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>'}\ndata: {tag: '<< inputs.tag >>'}\n",
+	}
+	st.AddObjects([]manifest.BaseManifest{ready, pending, rs})
+	before, err := json.Marshal(ready)
+	assert.NoError(t, err)
+	var publications atomic.Int32
+	defer st.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, payload any) {
+		if emission, ok := payload.(*store.Emission); id == rs.Named() && ok && emission.Complete {
+			publications.Add(1)
+		}
+	}, false)()
+	var run *base.Execution
+	tasks.Go(
+		t.Context(),
+		"acquire",
+		func(ctx context.Context) {
+			run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone, schedule.Result{})
+		},
+	)
+	tasks.BlockTillDone()
+	defer run.Close()
+	secretID := manifest.NamedResource{
+		Kind:      manifest.KindSecret,
+		Namespace: pending.Namespace,
+		Name:      pending.SecretRef.Name,
+	}
+	assert.FatalIf(
+		t,
+		run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{secretID}) ||
+			lists.Load() != 0 ||
+			publications.Load() != 0 ||
+			st.GetArtifact(rs.Named(), store.ArtifactContent) != nil,
+		"partial collection outcome=%v blocked=%v listings=%d publications=%d",
+		run.Outcome(),
+		run.Blocked,
+		lists.Load(),
+		publications.Load(),
+	)
+
+	testReconcileProviderAcquisitionSettlementCaseTail(
+		t,
+		&testReconcileProviderAcquisitionSettlementCaseTailInputs{
+			testCaseInput: &testCaseInput,
+			st:            &st,
+			secretID:      &secretID,
+			credentials:   &credentials,
+			ready:         &ready,
+			run:           &run,
+			tasks:         &tasks,
+			publications:  &publications,
+			lists:         &lists,
+			rs:            &rs,
+			c:             &c,
+			rejected:      &rejected,
+			pending:       &pending,
+			before:        &before,
+		},
+	)
+}
+
+func testReconcileProviderAcquisitionSettlementCaseTail(
+	t *testing.T,
+	tailCaseInput *testReconcileProviderAcquisitionSettlementCaseTailInputs,
+) {
+	t.Helper()
+	wantTag := "ready"
+	if (*(*tailCaseInput.testCaseInput)) != "ambient" {
+		(*tailCaseInput.st).
+			AddObject(
+				&manifest.Secret{
+					Name:       tailCaseInput.secretID.Name,
+					Namespace:  tailCaseInput.secretID.Namespace,
+					StringData: map[string]any{".dockerconfigjson": (*tailCaseInput.credentials)},
+				},
+			)
+		if (*(*tailCaseInput.testCaseInput)) == "changed completed provider" {
+			(*tailCaseInput.st).
+				AddObject(
+					staticRSIP((*tailCaseInput.ready).Name, (*tailCaseInput.ready).Namespace, nil,
+						map[string]string{"tag": "updated"},
+					),
+				)
+			wantTag = "updated"
+		}
+		assert.FatalIf(
+			t, (*tailCaseInput.run).
+				Reads.Valid(), "%v",
+			"rendered input did not invalidate the parked collection",
+		)
+	}
+	(*tailCaseInput.tasks).
+		Go(t.Context(), "settle", func(ctx context.Context) {
+			(*tailCaseInput.run).Settle(ctx, manifest.DrainCascade)
+		})
+	(*tailCaseInput.tasks).
+		BlockTillDone()
+	if (*(*tailCaseInput.testCaseInput)) != "ambient" {
+		assert.FatalIf(
+			t,
+			tailCaseInput.publications.Load() != 0 || tailCaseInput.lists.Load() != 0 || (*tailCaseInput.st).
+				GetArtifact((*tailCaseInput.rs).
+					Named(), store.ArtifactContent,
+				) != nil,
+			"%v",
+			"stale partial collection acquired or published inputs",
+		)
+		info := controllertest.DispatchToFixpoint(
+			t.Context(),
+			t,
+			controllertest.Dispatch{
+				Tasks:         (*tailCaseInput.tasks),
+				Store:         (*tailCaseInput.st),
+				ID:            (*tailCaseInput.rs).Named(),
+				ReconcileNode: (*tailCaseInput.c).ReconcileNode,
+			},
+		)
+		assert.FatalIf(
+			t,
+			info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped,
+			"rendered Secret did not take precedence over broken machine credentials: %+v",
+			info,
+		)
+	} else {
+		assert.FatalIf(
+			t,
+			(*tailCaseInput.run).Outcome() != schedule.Terminal,
+			"settled collection outcome=%v",
+			(*tailCaseInput.run).Outcome(),
+		)
+		(*tailCaseInput.tasks).
+			Go(
+				t.Context(),
+				"settle again",
+				func(ctx context.Context) {
+					(*tailCaseInput.run).Settle(ctx, manifest.DrainCascade)
+				},
+			)
+		(*tailCaseInput.tasks).
+			BlockTillDone()
+	}
+	emission, ok := (*tailCaseInput.st).GetArtifact((*tailCaseInput.rs).Named(), store.ArtifactContent).(*store.Emission)
+	assert.FatalIf(t, !ok, "%v", "completed collection did not publish its output")
+	assert.FatalIf(t, tailCaseInput.publications.Load() != 1 || tailCaseInput.lists.Load() != 1 ||
+		tailCaseInput.rejected.Load() != 0 ||
+		len(emission.Manifests) != 2 ||
+		!emission.Complete ||
+		len((*tailCaseInput.st).Warnings()) != 0,
+
+		"completed collection publications=%d listings=%d rejected=%d output=%+v warnings=%+v",
+		tailCaseInput.publications.
+			Load(),
+		tailCaseInput.lists.
+			Load(),
+		tailCaseInput.rejected.
+			Load(),
+		emission, (*tailCaseInput.st).
+			Warnings())
+
+	data := map[string]any{}
+	for _, doc := range emission.Manifests {
+		metadata := manifest.DocMetadata(doc.Document)
+		name := metadata.Name
+		data[name] = doc.Document["data"].(map[string]any)["tag"]
+	}
+	assert.Diff(t, data, map[string]any{(*tailCaseInput.ready).Name: wantTag, (*tailCaseInput.pending).Name: "pending"})
+	after, err := json.Marshal((*tailCaseInput.ready))
+	assert.NoError(t, err)
+	assert.Equal(t, string(after), string((*tailCaseInput.before)))
+}
+
+func testReconcileProviderAcquisitionRefreshCase(
+	t *testing.T,
+	testCaseInput *string,
+) {
+	t.Helper()
+
+	firstDigest := "sha256:" + strings.Repeat("a", 64)
+	secondDigest := "sha256:" + strings.Repeat("b", 64)
+	var changed atomic.Bool
+	var lists atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		password, digest := "first", firstDigest
+		if changed.Load() {
+			if (*testCaseInput) == "credentials" {
+				password = "second"
+			}
+			if (*testCaseInput) != "defaults" {
+				digest = secondDigest
+			}
+		}
+		if user, pass, ok := r.BasicAuth(); !ok || user != "fixture" || pass != password {
+			w.Header().Set("WWW-Authenticate", `Basic realm="fixture"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/tags/list"):
+			lists.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"name":"images","tags":["current"]}`)
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+			w.Header().Set("Docker-Content-Digest", digest)
+			w.Header().Set("Content-Length", "2")
+			fmt.Fprint(w, "{}")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	registryConfig := filepath.Join(t.TempDir(), "config.json")
+	testutil.WriteFileAt(t, registryConfig, `{}`)
+	network := new(source.Network)
+	t.Cleanup(network.Close)
+	st := store.New()
+	tasks := task.NewBounded(2)
+	t.Cleanup(tasks.BlockTillDone)
+	c := New(st, tasks, nil)
+	c.Inputs = &oci.Fetcher{
+		Network:        network,
+		Cache:          cachetest.New(t, t.TempDir(), cache.New),
+		RegistryConfig: registryConfig,
+	}
+	c.Configure(base.Options{})
+	c.StartLifecycle()
+	provider := &manifest.ResourceSetInputProvider{
+		Name:          "images",
+		Namespace:     "apps",
+		Type:          fluxopv1.InputProviderOCIArtifactTag,
+		URL:           "oci://" + strings.TrimPrefix(server.URL, "https://") + "/images",
+		Insecure:      true,
+		SecretRef:     &manifest.LocalObjectReference{Name: "registry-auth"},
+		DefaultValues: fluxopv1.ResourceSetInput{"color": {Raw: []byte(`"blue"`)}},
+	}
+	credentialData := func(password string) map[string]any {
+		return map[string]any{
+			".dockerconfigjson": fmt.Sprintf(
+				`{"auths":{%q:{"username":"fixture","password":%q}}}`,
+				strings.TrimPrefix(server.URL, "https://"),
+				password,
+			),
+		}
+	}
+	secret := &manifest.Secret{Name: "registry-auth", Namespace: "apps", StringData: credentialData("first")}
+	rs := &manifest.ResourceSet{
+		Name:              "consumer",
+		Namespace:         "apps",
+		InputsFrom:        []fluxopv1.InputProviderReference{{Name: provider.Name}},
+		ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: current}\ndata: {tag: '<< inputs.tag >>', digest: '<< inputs.digest >>', color: '<< inputs.color >>'}\n",
+	}
+	st.AddObjects([]manifest.BaseManifest{provider, secret, rs})
+	render := func(digest, color string) *store.Emission {
+		t.Helper()
+		var run *base.Execution
+		tasks.Go(
+			t.Context(),
+			"refresh",
+			func(ctx context.Context) {
+				run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone, schedule.Result{})
+			},
+		)
+		tasks.BlockTillDone()
+		defer run.Close()
+		assert.FatalIf(
+			t,
+			run.Outcome() != schedule.Terminal || run.Disposition == store.AssessmentReused || !run.Reads.Valid(),
+			"fresh acquisition outcome=%v reused=%t valid=%t",
+			run.Outcome(),
+			run.Disposition == store.AssessmentReused,
+			run.Reads.Valid(),
+		)
+
+		info, _ := st.GetStatus(rs.Named())
+		assert.Equal(t, info.Status, store.StatusReady)
+		emission, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+		assert.FatalIf(
+			t,
+			!ok || !emission.Complete || emission.Fingerprint == "" || len(emission.Manifests) != 1,
+			"missing complete emission: %+v",
+			emission,
+		)
+		assert.Diff(
+			t,
+			emission.Manifests[0].Document["data"],
+			map[string]any{"tag": "current", "digest": digest, "color": color},
+		)
+		return emission
+	}
+	first := render(firstDigest, "blue")
+	assert.Equal(t, lists.Load(), int32(1))
+	changed.Store(true)
+	wantDigest, wantColor := secondDigest, "blue"
+	switch *testCaseInput {
+	case "defaults":
+		updated := *provider
+		updated.DefaultValues = fluxopv1.ResourceSetInput{"color": {Raw: []byte(`"green"`)}}
+		st.AddObject(&updated)
+		wantDigest, wantColor = firstDigest, "green"
+	case "credentials":
+		updated := *secret
+		updated.StringData = credentialData("second")
+		st.AddObject(&updated)
+	}
+	current := render(wantDigest, wantColor)
+	assert.Equal(t, lists.Load(), int32(2))
+	assert.FatalIf(
+		t,
+		current.Fingerprint == first.Fingerprint,
+		"%v",
+		"changed live inputs retained the prior emission fingerprint",
+	)
+	assert.Diff(
+		t,
+		first.Manifests[0].Document["data"],
+		map[string]any{"tag": "current", "digest": firstDigest, "color": "blue"},
+	)
+	assert.Equal(t, string(provider.DefaultValues["color"].Raw), `"blue"`)
+	assert.Diff(t, secret.StringData, credentialData("first"))
+}
+
+type testReconcileProviderAcquisitionSettlementCaseTailInputs struct {
+	testCaseInput **string
+
+	st **store.
+		Store
+
+	secretID *manifest.
+			NamedResource
+
+	credentials *string
+
+	ready **manifest.
+		ResourceSetInputProvider
+
+	run **base.
+		Execution
+
+	tasks **task.
+		Service
+
+	publications *atomic.
+			Int32
+
+	lists *atomic.
+		Int32
+
+	rs **manifest.
+		ResourceSet
+
+	c **Controller
+
+	rejected *atomic.
+			Int32
+
+	pending **manifest.
+		ResourceSetInputProvider
+
+	before *[]byte
+}

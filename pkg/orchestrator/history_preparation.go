@@ -1,7 +1,7 @@
 package orchestrator
 
 import (
-	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/internal/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 

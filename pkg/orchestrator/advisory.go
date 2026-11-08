@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func clusterAdvisories(results []Rendered, stores []*store.Store) {

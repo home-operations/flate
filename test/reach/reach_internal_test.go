@@ -11,12 +11,12 @@ import (
 	"weak"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/helm"
+	sourcecache "github.com/home-operations/flate/internal/source/cache"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testfixture"
-	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 type reachOracle struct {

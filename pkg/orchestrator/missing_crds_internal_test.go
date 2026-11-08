@@ -12,9 +12,9 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 const issueResourceSet = `apiVersion: fluxcd.controlplane.io/v1

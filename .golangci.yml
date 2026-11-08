@@ -132,7 +132,7 @@ linters:
               desc: tests use the standard testing package
         tree-stdlib-only:
           list-mode: strict
-          files: ["**/pkg/tree/**", "!$test"]
+          files: ["**/internal/tree/**", "!$test"]
           allow: ["$gostd"]
         claimpath-stdlib-only:
           list-mode: strict
@@ -147,10 +147,10 @@ linters:
         leaf:
           files:
             - "**/pkg/manifest/**"
-            - "**/pkg/task/**"
-            - "**/pkg/source/safepath/**"
-            - "**/pkg/source/sourceignore/**"
-            - "**/pkg/source/ssrfguard/**"
+            - "**/internal/task/**"
+            - "**/internal/source/safepath/**"
+            - "**/internal/source/sourceignore/**"
+            - "**/internal/source/ssrfguard/**"
             - "**/internal/assert/**"
             - "**/internal/chartinput/**"
             - "**/internal/fetcherr/**"
@@ -160,86 +160,201 @@ linters:
             - "!$test"
           deny:
             - pkg: github.com/home-operations/flate/pkg
-              desc: leaf packages import nothing from pkg/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/baseline$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/baseline/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/change$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/change/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/controllers$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/controllers/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/depwait$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/depwait/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/diff$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/diff/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/discovery$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/discovery/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/helm$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/helm/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/image$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/image/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/kustomize$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/kustomize/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/loader$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/loader/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/resourceset$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/resourceset/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/schedule$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/schedule/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/selection$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/selection/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/source$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/source/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/store$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/store/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/task$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/task/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/tree$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/tree/
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/values$
+              desc: leaf packages import no higher layer
+            - pkg: github.com/home-operations/flate/internal/values/
+              desc: leaf packages import no higher layer
         selection:
           list-mode: strict
-          files: ["**/pkg/selection/**", "!$test"]
+          files: ["**/internal/selection/**", "!$test"]
           allow:
             - $gostd
             - github.com/home-operations/flate/pkg/manifest
-            - github.com/home-operations/flate/pkg/store
-            - github.com/home-operations/flate/pkg/change
+            - github.com/home-operations/flate/internal/store$
+            - github.com/home-operations/flate/internal/store/
+            - github.com/home-operations/flate/internal/change$
+            - github.com/home-operations/flate/internal/change/
         selection-foundation:
           files:
             - "**/pkg/manifest/**"
-            - "**/pkg/store/**"
-            - "**/pkg/change/**"
-            - "**/pkg/source/**"
-            - "**/pkg/values/**"
-            - "**/pkg/schedule/**"
+            - "**/internal/store/**"
+            - "**/internal/change/**"
+            - "**/internal/source/**"
+            - "**/internal/values/**"
+            - "**/internal/schedule/**"
             - "!$test"
           deny:
-            - pkg: github.com/home-operations/flate/pkg/selection
+            - pkg: github.com/home-operations/flate/internal/selection$
+              desc: facts do not depend on render selection
+            - pkg: github.com/home-operations/flate/internal/selection/
               desc: facts do not depend on render selection
         store:
-          files: ["**/pkg/store/**", "!$test"]
+          files: ["**/internal/store/**", "!$test"]
           deny:
-            - pkg: github.com/home-operations/flate/pkg/loader
+            - pkg: github.com/home-operations/flate/internal/loader$
               desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/values
+            - pkg: github.com/home-operations/flate/internal/loader/
               desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/depwait
+            - pkg: github.com/home-operations/flate/internal/values$
               desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/change
+            - pkg: github.com/home-operations/flate/internal/values/
               desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/source
+            - pkg: github.com/home-operations/flate/internal/depwait$
               desc: store sits below loader, values, depwait, change and source
-            - pkg: github.com/home-operations/flate/pkg/kustomize
+            - pkg: github.com/home-operations/flate/internal/depwait/
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/internal/change$
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/internal/change/
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/internal/source$
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/internal/source/
+              desc: store sits below loader, values, depwait, change and source
+            - pkg: github.com/home-operations/flate/internal/kustomize$
               desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/helm
+            - pkg: github.com/home-operations/flate/internal/kustomize/
               desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/discovery
+            - pkg: github.com/home-operations/flate/internal/helm$
               desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/baseline
+            - pkg: github.com/home-operations/flate/internal/helm/
               desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/resourceset
+            - pkg: github.com/home-operations/flate/internal/discovery$
               desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/diff
+            - pkg: github.com/home-operations/flate/internal/discovery/
               desc: store is below the render layer
-            - pkg: github.com/home-operations/flate/pkg/controllers
+            - pkg: github.com/home-operations/flate/internal/baseline$
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/internal/baseline/
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/internal/resourceset$
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/internal/resourceset/
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/internal/diff$
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/internal/diff/
+              desc: store is below the render layer
+            - pkg: github.com/home-operations/flate/internal/controllers$
+              desc: store is below the controllers
+            - pkg: github.com/home-operations/flate/internal/controllers/
               desc: store is below the controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: store is below the orchestrator
         schedule:
           # A leaf behind its Dispatcher seam: stdlib, manifest and task only.
           list-mode: strict
-          files: ["**/pkg/schedule/**", "!$test"]
+          files: ["**/internal/schedule/**", "!$test"]
           allow:
             - $gostd
             - github.com/home-operations/flate/pkg/manifest
-            - github.com/home-operations/flate/pkg/task
+            - github.com/home-operations/flate/internal/task$
+            - github.com/home-operations/flate/internal/task/
         middle:
           files:
-            - "**/pkg/loader/**"
-            - "**/pkg/values/**"
-            - "**/pkg/depwait/**"
-            - "**/pkg/change/**"
-            - "**/pkg/source/**"
+            - "**/internal/loader/**"
+            - "**/internal/values/**"
+            - "**/internal/depwait/**"
+            - "**/internal/change/**"
+            - "**/internal/source/**"
             - "!$test"
           deny:
-            - pkg: github.com/home-operations/flate/pkg/kustomize
+            - pkg: github.com/home-operations/flate/internal/kustomize$
               desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/helm
+            - pkg: github.com/home-operations/flate/internal/kustomize/
               desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/discovery
+            - pkg: github.com/home-operations/flate/internal/helm$
               desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/baseline
+            - pkg: github.com/home-operations/flate/internal/helm/
               desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/resourceset
+            - pkg: github.com/home-operations/flate/internal/discovery$
               desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/diff
+            - pkg: github.com/home-operations/flate/internal/discovery/
               desc: below the render layer
-            - pkg: github.com/home-operations/flate/pkg/controllers
+            - pkg: github.com/home-operations/flate/internal/baseline$
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/internal/baseline/
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/internal/resourceset$
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/internal/resourceset/
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/internal/diff$
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/internal/diff/
+              desc: below the render layer
+            - pkg: github.com/home-operations/flate/internal/controllers$
+              desc: below the controllers
+            - pkg: github.com/home-operations/flate/internal/controllers/
               desc: below the controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
@@ -249,7 +364,8 @@ linters:
           allow:
             - $gostd
             - github.com/home-operations/flate/pkg/manifest
-            - github.com/home-operations/flate/pkg/store
+            - github.com/home-operations/flate/internal/store$
+            - github.com/home-operations/flate/internal/store/
             - github.com/home-operations/flate/internal/assert
             - github.com/home-operations/flate/internal/testutil
             - github.com/gonvenience/ytbx
@@ -259,49 +375,73 @@ linters:
         output:
           files: ["**/internal/output/**", "!$test"]
           deny:
-            - pkg: github.com/home-operations/flate/pkg/diff
+            - pkg: github.com/home-operations/flate/internal/diff$
+              desc: output consumes diffprep, never the SDK boundary
+            - pkg: github.com/home-operations/flate/internal/diff/
               desc: output consumes diffprep, never the SDK boundary
             - pkg: github.com/home-operations/flate/internal/cli
               desc: output sits below CLI presentation
         render:
           files:
-            - "**/pkg/kustomize/**"
-            - "**/pkg/helm/**"
-            - "**/pkg/discovery/**"
-            - "**/pkg/baseline/**"
-            - "**/pkg/resourceset/**"
-            - "**/pkg/diff/**"
+            - "**/internal/kustomize/**"
+            - "**/internal/helm/**"
+            - "**/internal/discovery/**"
+            - "**/internal/baseline/**"
+            - "**/internal/resourceset/**"
+            - "**/internal/diff/**"
             - "!$test"
           deny:
-            - pkg: github.com/home-operations/flate/pkg/controllers
+            - pkg: github.com/home-operations/flate/internal/controllers$
+              desc: below the controllers
+            - pkg: github.com/home-operations/flate/internal/controllers/
               desc: below the controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
         controllers-base:
-          files: ["**/pkg/controllers/base/**", "!$test"]
+          files: ["**/internal/controllers/base/**", "!$test"]
           deny:
-            - pkg: github.com/home-operations/flate/pkg/controllers/helmrelease
+            - pkg: github.com/home-operations/flate/internal/controllers/helmrelease
               desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/controllers/kustomization
+            - pkg: github.com/home-operations/flate/internal/controllers/kustomization
               desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/controllers/artifactgenerator
+            - pkg: github.com/home-operations/flate/internal/controllers/artifactgenerator
               desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/controllers/resourceset
+            - pkg: github.com/home-operations/flate/internal/controllers/resourceset
               desc: base is below the kind controllers
-            - pkg: github.com/home-operations/flate/pkg/controllers/source
+            - pkg: github.com/home-operations/flate/internal/controllers/source
               desc: base is below the kind controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
         controllers:
-          files: ["**/pkg/controllers/**", "!$test"]
+          files: ["**/internal/controllers/**", "!$test"]
           deny:
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: controllers are below the orchestrator
         no-upward-to-cli:
-          files: ["**/pkg/**", "!$test"]
+          files:
+            - "**/pkg/**"
+            - "**/internal/baseline/**"
+            - "**/internal/change/**"
+            - "**/internal/controllers/**"
+            - "**/internal/depwait/**"
+            - "**/internal/diff/**"
+            - "**/internal/discovery/**"
+            - "**/internal/helm/**"
+            - "**/internal/image/**"
+            - "**/internal/kustomize/**"
+            - "**/internal/loader/**"
+            - "**/internal/resourceset/**"
+            - "**/internal/schedule/**"
+            - "**/internal/selection/**"
+            - "**/internal/source/**"
+            - "**/internal/store/**"
+            - "**/internal/task/**"
+            - "**/internal/tree/**"
+            - "**/internal/values/**"
+            - "!$test"
           deny:
             - pkg: github.com/home-operations/flate/internal/cli
-              desc: pkg/ never imports internal/cli
+              desc: implementation and public packages never import internal/cli
     embeddedstructfieldcheck:
       forbid-mutex: true
     errcheck:
@@ -432,8 +572,8 @@ linters:
         - error
         - empty
         - stdlib
-        - ^github\.com/home-operations/flate/pkg/schedule\.Dispatcher$
-        - ^github\.com/home-operations/flate/pkg/values\.Provider$
+        - ^github\.com/home-operations/flate/internal/schedule\.Dispatcher$
+        - ^github\.com/home-operations/flate/internal/values\.Provider$
     errorlint:
       errorf: true
       asserts: true
@@ -504,7 +644,7 @@ linters:
       - path: ^(internal/cli|cmd)/
         linters:
           - forbidigo
-      - path: pkg/(source/httpinput|kustomize/flux)\.go
+      - path: internal/(source/httpinput|kustomize/flux)\.go
         text: context.Background
         linters:
           - forbidigo

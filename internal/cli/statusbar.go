@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // barModel is the live, single-line progress indicator flate paints to stderr

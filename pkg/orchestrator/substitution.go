@@ -6,9 +6,9 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/internal/loader"
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func snapshotSubstitutions(cfg *Config) error {

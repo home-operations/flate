@@ -2,8 +2,8 @@
 package filtertest
 
 import (
+	"github.com/home-operations/flate/internal/store"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 // MapLister supplies immutable objects and discovery productions for filter fixtures.

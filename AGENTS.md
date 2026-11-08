@@ -4,7 +4,7 @@ flate renders Flux (Kustomization, HelmRelease, ResourceSet, sources) offline as
 binary: no cluster or kubectl; helm, kustomize, git and OCI are linked libraries. Only native
 Docker credential helpers and AWS credential processes may execute external programs.
 Output matches Flux bit-for-bit and is byte-identical run to run. Speed is the point:
-changed-only renders, a bounded parallel DAG, aggressive dedup. `pkg/` is a public SDK that
+changed-only renders, a bounded parallel DAG, aggressive dedup. `pkg/orchestrator` and `pkg/manifest` form the public SDK that
 konflate embeds.
 
 ## Working here
@@ -48,7 +48,7 @@ konflate embeds.
   discard old cache directories; upgrade notes go in the PR body.
 - **Call upstream.** Use helm, Flux, kustomize, go-git, oras and the stdlib instead of
   re-implementing them; if upstream lacks a hook, post-process its output. No compatibility shims
-  or aliases past their last caller. Approved replacements are `internal/kustomize.Build`
+  or aliases past their last caller. Approved replacements are `internal/kustomizestate.Build`
   (it keeps the builtin schema loaded across builds) and `helmchart.Fetcher.loadIndex`
   (it follows Flux source-controller's internal `IndexFromBytes` without temporary files).
 - **The SDK.** List every exported `pkg/` API or `Warning.Category` change in the PR; remove unused
@@ -58,13 +58,13 @@ konflate embeds.
 ## Layout
 
 `cmd/flate` is the entrypoint. `internal/cli` owns flags, exit codes (0 or 1), signal handling
-and `slog.SetDefault`. Everything else is `pkg/`. Dependencies flow one way and never upward;
+and `slog.SetDefault`. The public SDK lives in `pkg/orchestrator` and `pkg/manifest`; implementation packages live in `internal/`. Dependencies flow one way and never upward;
 `depguard` in `.golangci.yml` enforces this graph:
 
 ```
-manifest <- store <- {loader, values, depwait, change, source}
-manifest <- store <- change <- selection <- {loader, depwait, discovery, controllers/base, orchestrator}
-         <- {kustomize, helm, discovery} <- controllers/base <- controllers/* <- orchestrator <- internal/cli
+pkg/manifest <- internal/store <- internal/{loader, values, depwait, change, source}
+pkg/manifest <- internal/store <- internal/change <- internal/selection <- internal/{loader, depwait, discovery, controllers/base}, pkg/orchestrator
+             <- internal/{kustomize, helm, discovery} <- internal/controllers/base <- internal/controllers/* <- pkg/orchestrator <- internal/cli
 ```
 
 Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` seam, `source/{safepath,sourceignore,ssrfguard}`,
@@ -111,7 +111,7 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
   `lockAll`/`rLockAll`.
 - **The scheduler holds no store, pool or dispatcher under its mutex.** Drop `mu` before
   `tasks.Go`. Termination is a structural fixpoint plus drain, never a timeout.
-- **One global serialization point.** Every krusty build holds `internal/kustomize.BuildMutex`;
+- **One global serialization point.** Every krusty build holds `internal/kustomizestate.BuildMutex`;
   add no other on the render path.
 - **Changed-only mode.** `KeepEmitted`/`AddEmitted` before `AddObject`.
 - **Secrets.** Data flate cannot read is absent, warned once, and supplied by the user.
@@ -167,7 +167,7 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 - **Signatures.** Group larger signatures in an `Options`/`Config` struct. No functional options.
 - **Interfaces belong to the consumer.** A package declares a small unexported interface listing
   only the methods it calls; constructors return concrete types. An exported interface exists
-  only where an SDK embedder must implement it (`schedule.Dispatcher`, `values.Provider`), and
+  only where an SDK embedder must implement it, and
   the PR names that embedder.
 - **Comments.** Add a comment only for a constraint or rationale
   (MUST, never, invariant, an upstream quirk with its issue). Banned: step narration,

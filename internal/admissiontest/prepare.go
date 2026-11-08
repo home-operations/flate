@@ -5,9 +5,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/internal/loader"
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
 )
 
 // Prepare MUST preserve one preparation across physical acquisition retries.

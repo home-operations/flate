@@ -21,8 +21,11 @@ func TestAutoResolve_UnreadableCheckoutRetainsError(t *testing.T) {
 	file := filepath.Join(root, "input.yaml")
 	assert.NoError(t, os.Chmod(file, 0))
 	t.Cleanup(func() { assert.NoError(t, os.Chmod(file, 0o600)) })
-	_, err := os.ReadFile(file)
-	assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "fixture is readable: %v", err)
-	_, err = AutoResolve(t.Context(), root, base.String(), cachetest.New(t, "", sourcecache.New))
+	if _, err := os.ReadFile(file); err == nil {
+		t.Skip("file modes do not restrict this user")
+	} else {
+		assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "fixture read failed unexpectedly: %v", err)
+	}
+	_, err := AutoResolve(t.Context(), root, base.String(), cachetest.New(t, "", sourcecache.New))
 	assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "checkout read error lost: %v", err)
 }

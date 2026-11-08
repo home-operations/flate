@@ -1,8 +1,10 @@
 package loader
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -211,6 +213,13 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 			defer st.Retire(binding)
 			_, complete := l.BuiltChildren(packageRoot, owner.Named(), binding)
 			assert.FatalIf(t, !complete, "supported preparation unavailable")
+			var documentReads store.ReadSet
+			documentReads.Init(st, owner.Named(), nil)
+			defer documentReads.Close()
+			prepared, current := l.PreparedObject(children[0].Obj.Named(), &documentReads)
+			assert.Equal(t, current, true)
+			assert.Equal(t, prepared.Obj, children[0].Obj)
+			assert.Diff(t, prepared.Doc, children[0].Doc)
 			if invalidation == "owner" {
 				replaced := *owner
 				replaced.Path = "./replacement"
@@ -239,6 +248,9 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 				support.Valid() || binding.Valid(),
 				"replaced input retained preparation or proposal authority",
 			)
+			assert.Equal(t, documentReads.Valid(), false)
+			_, current = l.PreparedObject(children[0].Obj.Named(), &documentReads)
+			assert.Equal(t, current, false)
 			_, complete = l.BuiltChildren(packageRoot, owner.Named(), binding)
 			assert.FatalIf(t, complete, "invalidated batch proved child presence or absence")
 			l.RegisterBuilt(input, nil)
@@ -335,4 +347,56 @@ func TestBuiltChildren_SuppliedPrecedence(t *testing.T) {
 	assert.Equal(t, current, true)
 	assert.Equal(t, len(got), 0)
 	assert.Equal(t, reads.GetDeclaration(supplied.Named()), manifest.BaseManifest(supplied))
+}
+
+func TestRootEvidence_CapturesRequestedBuiltChild(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: [child.yaml]\n")
+	testutil.WriteFile(t, root, "parent/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./raw\n"))
+	st := store.New()
+	admitForTest(st, root)
+	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./parent"}
+	st.AddObject(owner)
+	l := New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: true})
+	packageRoot := filepath.Join(root, "parent")
+	_, err := l.Load(t.Context(), packageRoot, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	documents := make([]string, 0, 32)
+	for i := range 32 {
+		documents = append(
+			documents,
+			testutil.KustomizationYAML(fmt.Sprintf("child-%d", i), "apps", "  path: ./entry\n"),
+		)
+	}
+	children := builtObjectsForTest(t, strings.Join(documents, "---\n"))
+	support := new(store.ReadSet)
+	support.Init(st, owner.Named(), nil)
+	support.GetDeclaration(owner.Named())
+	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+	l.RegisterBuilt(
+		BuiltInput{Root: packageRoot, Owner: owner.Named(), Source: manifest.BootstrapSourceID, Support: support},
+		children,
+	)
+	var reads store.ReadSet
+	reads.Init(st, testutil.KustomizationID("apps", "binding"), nil)
+	defer reads.Retire()
+	facts := l.RootEvidence(children[0].Obj.Named(), &reads)
+	assert.Equal(t, facts.BuiltCurrent, true)
+	assert.Equal(t, facts.BuiltChild.Obj, children[0].Obj)
+	captured := slices.Collect(reads.Inputs())
+	for _, child := range children[1:] {
+		assert.Equal(t, slices.Contains(captured, child.Obj.Named()), false)
+	}
+	replacement := owner.Clone()
+	replacement.Path = "./other"
+	st.AddObject(replacement)
+	assert.Equal(t, reads.Valid(), false)
+	var fresh store.ReadSet
+	fresh.Init(st, testutil.KustomizationID("apps", "binding"), nil)
+	defer fresh.Retire()
+	assert.Equal(t, l.RootEvidence(children[0].Obj.Named(), &fresh).BuiltCurrent, false)
 }

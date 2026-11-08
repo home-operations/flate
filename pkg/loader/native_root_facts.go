@@ -12,7 +12,6 @@ import (
 func (l *Loader) captureNativeRoots(repoRoot string) error {
 	roots := make([]selection.NativeRootFacts, 0, len(l.scopes.roots))
 	claims := slices.Clone(l.scopes.claims)
-	var occurrences []selection.OccurrenceFacts
 	for _, relative := range l.scopes.roots {
 		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
 		doc := l.documents.cache[root]
@@ -34,13 +33,10 @@ func (l *Loader) captureNativeRoots(repoRoot string) error {
 			if visit.document != nil || !visit.readable || visit.deferDecode {
 				continue
 			}
-			var err error
-			occurrences, err = l.appendVisitOccurrences(occurrences[:0], visit)
-			if err != nil {
+			if err := l.visitOccurrences(visit, func(o authoredOccurrence) {
+				facts.Identities = append(facts.Identities, o.Identity)
+			}); err != nil {
 				return err
-			}
-			for i := range occurrences {
-				facts.Identities = append(facts.Identities, occurrences[i].Identity)
 			}
 		}
 		roots = append(roots, facts)

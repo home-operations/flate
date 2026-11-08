@@ -13,12 +13,14 @@ import (
 //
 //nolint:gocritic // The public predicate owns an independent evidence snapshot for current support enrichment.
 func Root(facts RootEvidence) RootResult {
-	classification := facts
-	if facts.StaticRecordKnown {
-		classification.Record = facts.StaticRecord
+	record := facts.Record
+	if facts.StaticRecord != nil {
+		facts.Record = *facts.StaticRecord
 	}
-	initial := classifyRoot(&classification)
-	result := initial
+	result := classifyRoot(&facts)
+	facts.Record = record
+	initialAdmitted, initialIndependent := result.Admitted, result.Independent
+	initialOccurrence := result.Occurrence.Declaration
 	if facts.Captured {
 		if result.Occurrence.Declaration == (OccurrenceID{}) {
 			result.Independent = result.Admitted
@@ -33,14 +35,14 @@ func Root(facts RootEvidence) RootResult {
 		supportRoot(&facts, &result, owner, accepted)
 		result.NeedsOwnerSupport = needsOwners
 	}
-	result.InitialAdmitted = facts.StaticRecordKnown && initial.Admitted
-	result.InitialIndependent = facts.StaticRecordKnown && initial.Independent
+	result.InitialAdmitted = facts.StaticRecord != nil && initialAdmitted
+	result.InitialIndependent = facts.StaticRecord != nil && initialIndependent
 	if result.Occurrence.Declaration == (OccurrenceID{}) && !facts.Needed && !facts.Supplied &&
 		!facts.Scope.NativeEntry {
 		result.Entry = false
 	}
 	result.InitialEntry = facts.Scope.NativeEntry ||
-		result.InitialIndependent && initial.Occurrence.Declaration != (OccurrenceID{})
+		result.InitialIndependent && initialOccurrence != (OccurrenceID{})
 	result.Construction = rootConstruction(facts.Native)
 	return result
 }

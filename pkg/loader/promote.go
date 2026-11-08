@@ -245,6 +245,15 @@ func (l *Loader) builtRecord(
 
 // BuiltChildren requires current construction membership and the original preparation capture.
 func (l *Loader) BuiltChildren(root string, owner manifest.NamedResource, reads *store.ReadSet) ([]store.Child, bool) {
+	return l.currentBuilt(root, owner, reads, l.documents.cache[root].built)
+}
+
+func (l *Loader) currentBuilt(
+	root string,
+	owner manifest.NamedResource,
+	reads *store.ReadSet,
+	built []store.Child,
+) ([]store.Child, bool) {
 	cached := l.documents.cache[root]
 	input := cached.builtInput
 	if l.frozen || reads == nil || input == nil || input.Root != root || input.Owner != owner ||
@@ -252,16 +261,16 @@ func (l *Loader) BuiltChildren(root string, owner manifest.NamedResource, reads 
 		return nil, false
 	}
 	builder := l.fileCoordinate(cmp.Or(cached.file, root))
-	children := make([]store.Child, 0, len(cached.built))
-	for i := range cached.built {
-		child := cached.built[i]
+	children := make([]store.Child, 0, len(built))
+	for i := range built {
+		child := built[i]
 		id := child.Obj.Named()
 		if id == owner {
 			continue
 		}
 		record, ok := l.Index.Lookup(id)
 		if !ok || record.Declaration != child.Obj || record.Builder != builder || record.BuilderOwner != owner ||
-			!selection.Root(l.roots.get(id).facts).Independent &&
+			!selection.Root(l.roots.get(id).view()).Independent &&
 				!slices.ContainsFunc(record.Productions, func(production manifest.Production) bool {
 					return production.Owner == owner && production.Source == input.Source &&
 						production.File == record.File && production.Path == "" &&
@@ -306,37 +315,43 @@ func (l *Loader) registeredRoot(id manifest.NamedResource, record *manifest.Disc
 	built := l.builtRoots[id]
 	input := built.input
 	if input == nil || input.Support == nil || !input.Support.Valid() ||
-		input.Owner != record.BuilderOwner || built.object != record.Declaration {
+		input.Owner != record.BuilderOwner {
 		return ""
 	}
 	doc := l.documents.cache[input.Root]
-	if doc.builtInput != input ||
+	if doc.builtInput != input || doc.built[built.index].Obj != record.Declaration ||
 		l.fileCoordinate(input.Root) != record.Builder && l.fileCoordinate(doc.file) != record.Builder {
 		return ""
 	}
 	return input.Root
 }
 
-func (l *Loader) preparedObject(id manifest.NamedResource) store.Child {
-	r, _ := l.Index.Lookup(id)
-	if r.Builder != "" {
-		if child := l.candidates[id]; child.Obj == r.Declaration {
-			return child
+// PreparedObject captures only the requested indexed document and its build support.
+func (l *Loader) PreparedObject(id manifest.NamedResource, reads *store.ReadSet) (store.Child, bool) {
+	record, _ := l.Index.Lookup(id)
+	if record.Builder == "" {
+		return store.Child{}, false
+	}
+	child := l.candidates[id]
+	root := l.registeredRoot(id, &record)
+	if child.Obj != record.Declaration {
+		if root == "" {
+			return store.Child{}, false
 		}
-		children := l.PromotionDocuments(id)
-		for i := range children {
-			child := &children[i]
-			if child.Obj.Named() == id {
-				return *child
-			}
+		child = l.documents.cache[root].built[l.builtRoots[id].index]
+	}
+	if root != "" && reads != nil && child.Obj != nil {
+		children, current := l.currentBuilt(root, record.BuilderOwner, reads, []store.Child{child})
+		if len(children) != 0 {
+			return children[0], current
 		}
 	}
-	return store.Child{}
+	return child, false
 }
 
 type builtRoot struct {
-	input  *BuiltInput
-	object manifest.BaseManifest
+	input *BuiltInput
+	index int
 }
 
 type builtInputs struct{ inputs, shared []string }
@@ -497,7 +512,7 @@ func (l *Loader) setBuiltProduction(
 	builder := record.Builder
 	input := *inputValue
 	record.Refs = discoveryReferences(nil, obj)
-	if selection.Root(l.roots.get(id).facts).Independent {
+	if selection.Root(l.roots.get(id).view()).Independent {
 		record.Parent = manifest.NamedResource{}
 		record.Productions = slices.DeleteFunc(record.Productions, func(production manifest.Production) bool {
 			return production.Owner != (manifest.NamedResource{}) && production.Owner != id
@@ -532,11 +547,11 @@ func (l *Loader) publishBuiltRecords(
 		child := docs[i]
 		obj := child.Obj
 		id := obj.Named()
-		l.builtRoots[id] = builtRoot{input: input, object: obj}
+		l.builtRoots[id] = builtRoot{input: input, index: i}
 		if id == input.Owner {
 			continue
 		}
-		independent := selection.Root(l.roots.get(id).facts).Independent
+		independent := selection.Root(l.roots.get(id).view()).Independent
 		if existing := l.Store.GetObject(
 			id,
 		); !independent && existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil &&

@@ -569,8 +569,8 @@ func admissionReferencePair(t *testing.T, keys []string) ([2]*store.Store, [2]*L
 		l.SourceRoot = root
 		configureSelection(t, l, selection.Request{Changed: true})
 
+		l.publishSource(manifest.BootstrapSourceID, &admissionSource{initial: artifact})
 		l.frozen, l.sideKnown, l.side = true, true, manifest.TreeSide(side)
-		l.bindings.Store(&map[manifest.NamedResource]admissionSource{manifest.BootstrapSourceID: {initial: artifact}})
 		l.Index.Records[input] = manifest.DiscoveryRecord{File: "input.yaml"}
 		l.Index.Records[consumer] = manifest.DiscoveryRecord{File: "consumer.yaml"}
 		if keys == nil {

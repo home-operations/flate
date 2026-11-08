@@ -402,6 +402,8 @@ func (r *renderInvocation) prepareSession(ctx context.Context, i int) {
 	} else if !advanced {
 		o.preparation = proposal
 	}
+	for range o.store.Sweep() {
+	}
 }
 
 func (r *renderInvocation) completeDiscovery(ctx context.Context) {
@@ -574,6 +576,10 @@ func (r *renderInvocation) installAdmission(ctx context.Context) {
 				r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}
 				o.stop()
 				r.results[i].Orchestrator = nil
+				return
+			}
+			// Initial admission MUST release retired captures before scheduler startup.
+			for range o.store.Sweep() {
 			}
 		})
 	}

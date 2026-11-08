@@ -90,9 +90,8 @@ func TestAdmission_MaterializersSkipAvailableData(t *testing.T) {
 			}}
 			c := solverClosure(t, st, facts)
 			pending := c.materializers(
-				&materializerDemand{target: input.Named(), required: true},
+				materializerDemand{target: input.Named(), required: true},
 				consumer,
-				c.materializerCandidates(false),
 			)
 			assert.Equal(t, pending, !tc.available)
 			assert.Equal(t, c.role(producer.Named()).needed, !tc.available)

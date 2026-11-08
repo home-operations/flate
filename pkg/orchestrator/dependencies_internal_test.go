@@ -397,7 +397,7 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken bool)
 			Tree: side.ID, Owner: testutil.KustomizationID("\x00", "."),
 			Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation,
 		}] = manifest.WorkCounts{
-			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 42,
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 13,
 		}
 
 		source := manifest.NamedResource{
@@ -514,8 +514,8 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 			Completed:      6,
 			OwnerPrepares:  6,
 			RawKeyPrepares: 7,
-			FileEntries:    260,
-			ReaderEdges:    68,
+			FileEntries:    246,
+			ReaderEdges:    64,
 		},
 		{Tree: side.ID, Source: alias, Phase: manifest.WorkPreparation}: {FileEntries: 20, ReaderEdges: 14},
 		{
@@ -532,7 +532,7 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 			ReaderEdges:   7,
 		},
 		{Tree: side.ID, Owner: entry, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
-			Attempts: 2, Completed: 2, OwnerPrepares: 2, RawKeyPrepares: 6, FileEntries: 42,
+			Attempts: 2, Completed: 2, OwnerPrepares: 2, RawKeyPrepares: 6, FileEntries: 13,
 		},
 		{Tree: side.ID, Owner: selectedKS, Source: alias, Phase: manifest.WorkPreparation}: {
 			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 13, ReaderEdges: 0,
@@ -546,8 +546,8 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 			Completed:      6,
 			OwnerPrepares:  6,
 			RawKeyPrepares: 7,
-			FileEntries:    442,
-			ReaderEdges:    76,
+			FileEntries:    428,
+			ReaderEdges:    72,
 		}
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: alias, Source: alias, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
 			Attempts:      4,

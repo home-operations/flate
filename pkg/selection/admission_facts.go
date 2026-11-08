@@ -1,9 +1,11 @@
 package selection
 
 import (
+	"cmp"
 	"iter"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -11,43 +13,62 @@ import (
 
 // Frozen discovery MUST keep the shared catalog witnesses immutable through the session.
 type admissionCatalog struct {
-	entries       map[manifest.NamedResource]admissionCatalogEntry
+	entries       map[manifest.NamedResource]*admissionCatalogEntry
 	materializers []manifest.NamedResource
+	candidates    []*OccurrenceFacts
+	files         []manifest.NamedResource
 }
 
 type admissionCatalogEntry struct {
-	occurrence OccurrenceFacts
-	object     manifest.BaseManifest
-	known      bool
+	occurrence     OccurrenceFacts
+	contentRoots   map[manifest.NamedResource][]string
+	object         manifest.BaseManifest
+	known          bool
+	nativeExcluded bool
 }
 
-func (s *Session) catalogSnapshot() *admissionCatalog {
+func (s *Session) catalogSnapshot(roots []NativeRootFacts) *admissionCatalog {
 	if snapshot := s.catalog.Load(); snapshot != nil {
 		return snapshot
 	}
+	nativeDisposition := make(map[manifest.NamedResource]bool, len(roots))
+	for i := range roots {
+		root := &roots[i]
+		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root.Path, manifest.NamedResource{}).Named()
+		nativeDisposition[id] = !Root(RootEvidence{Native: root}).Construction
+	}
 	snapshot := &admissionCatalog{
-		entries: make(map[manifest.NamedResource]admissionCatalogEntry, len(s.facts.SelectionIndex().Records)),
+		entries: make(map[manifest.NamedResource]*admissionCatalogEntry),
 	}
 	for id := range s.facts.SelectionIndex().Records {
-		occurrence, known := s.facts.Occurrence(id)
-		object := occurrence.Object
-		if object == nil {
-			object = occurrence.Catalog
+		record := s.facts.SelectionIndex().Records[id]
+		if record.File != "" && record.Path != "" && record.BuilderOwner == (manifest.NamedResource{}) {
+			snapshot.files = append(snapshot.files, id)
 		}
-		if object == nil {
-			object = occurrence.Record.Declaration
+		excluded, native := nativeDisposition[id]
+		entry, materializer := s.catalogEntry(id, &record, native, excluded)
+		if entry == nil {
+			continue
 		}
-		if object != nil {
-			object = manifest.CatalogObject(object, id)
+		snapshot.entries[id] = entry
+		if !materializer {
+			continue
 		}
-		snapshot.entries[id] = admissionCatalogEntry{occurrence: occurrence, object: object, known: known}
-		if occurrence.CatalogKnown &&
-			(occurrence.Policy != nil || len(occurrence.Targets) != 0 || occurrence.NeedsCandidates) ||
-			occurrence.Candidate.Obj != nil && occurrence.Record.Builder != "" {
-			snapshot.materializers = append(snapshot.materializers, id)
+		snapshot.materializers = append(snapshot.materializers, id)
+		pathSupported := !entry.occurrence.HasPath || entry.occurrence.Policy == nil || len(entry.occurrence.Roots) != 0
+		if entry.known && entry.occurrence.CatalogKnown && pathSupported {
+			snapshot.candidates = append(snapshot.candidates, &snapshot.entries[id].occurrence)
 		}
 	}
 	slices.SortFunc(snapshot.materializers, manifest.NamedResource.Compare)
+	slices.SortFunc(snapshot.candidates, func(a, b *OccurrenceFacts) int { return a.Authored.Compare(b.Authored) })
+	snapshot.candidates = slices.Clip(snapshot.candidates)
+	slices.SortFunc(snapshot.files, func(a, b manifest.NamedResource) int {
+		return cmp.Or(
+			strings.Compare(s.facts.SelectionIndex().Records[a].Path, s.facts.SelectionIndex().Records[b].Path),
+			a.Compare(b),
+		)
+	})
 	if s.catalog.CompareAndSwap(nil, snapshot) {
 		return snapshot
 	}
@@ -81,7 +102,8 @@ func (c *admissionClosure) catalogWitness(id manifest.NamedResource) manifest.Ba
 		object = facts.Catalog
 	}
 	if object == nil {
-		object = facts.Record.Declaration
+		record, _ := c.facts.SelectionIndex().Lookup(id)
+		object = record.Declaration
 	}
 	if object == nil {
 		return nil
@@ -103,37 +125,32 @@ func (c *admissionClosure) catalogObject(id manifest.NamedResource) manifest.Bas
 	return manifest.CatalogObject(object, id)
 }
 
-func (c *admissionClosure) candidate(id manifest.NamedResource) store.Child {
-	facts, _ := c.occurrenceFacts(id)
-	return facts.Candidate
-}
-
 func (c *admissionClosure) preparedObject(id manifest.NamedResource) store.Child {
 	record, _ := c.facts.SelectionIndex().Lookup(id)
 	if record.Builder == "" {
 		return store.Child{}
 	}
-	child := c.candidate(id)
+	child := c.facts.AdmissionCandidate(id)
 	if child.Obj == record.Declaration {
 		return child
 	}
-	facts := c.capturedRoot(id)
-	if facts.BuiltChild.Obj == record.Declaration {
-		return facts.BuiltChild
+	child, _ = c.facts.PreparedObject(id, c.proposal.reads)
+	if child.Obj == record.Declaration {
+		return child
 	}
 	return store.Child{}
 }
 
-func (c *admissionClosure) capturedRoot(id manifest.NamedResource) RootEvidence {
+func (c *admissionClosure) capturedRoot(id manifest.NamedResource) *RootEvidence {
 	if facts, known := c.capturedRoots[id]; known {
 		return facts
 	}
 	facts := c.facts.RootEvidence(id, c.proposal.reads)
 	if c.capturedRoots == nil {
-		c.capturedRoots = make(map[manifest.NamedResource]RootEvidence)
+		c.capturedRoots = make(map[manifest.NamedResource]*RootEvidence)
 	}
-	c.capturedRoots[id] = facts
-	return facts
+	c.capturedRoots[id] = &facts
+	return &facts
 }
 
 func (c *admissionClosure) isFileIndexed(id manifest.NamedResource) bool {
@@ -141,7 +158,7 @@ func (c *admissionClosure) isFileIndexed(id manifest.NamedResource) bool {
 		return true
 	}
 	record, _ := c.facts.SelectionIndex().Lookup(id)
-	if record.Builder != "" && c.candidate(id).Obj != nil {
+	if record.Builder != "" && c.facts.AdmissionCandidate(id).Obj != nil {
 		return true
 	}
 	if occurrence, ok := c.occurrence(id); ok && occurrence.Authored.Namespace == "" && id.Namespace != "" {
@@ -152,8 +169,7 @@ func (c *admissionClosure) isFileIndexed(id manifest.NamedResource) bool {
 }
 
 func (c *admissionClosure) fileCoordinate(file string) string {
-	if containsPath(c.context.Root, file) {
-		relative, _ := filepath.Rel(c.context.Root, file)
+	if relative, err := filepath.Rel(c.context.Root, file); err == nil && filepath.IsLocal(relative) {
 		return filepath.ToSlash(relative)
 	}
 	return filepath.ToSlash(file)
@@ -162,7 +178,7 @@ func (c *admissionClosure) fileCoordinate(file string) string {
 func (c *admissionClosure) declarationLocated(id manifest.NamedResource, objects admissionReader) bool {
 	record, _ := c.facts.SelectionIndex().Lookup(id)
 	return record.Path != "" || record.Builder != "" || objects.GetDeclaration(id) != nil ||
-		Root(c.capturedRoot(record.Parent)).InitialIndependent
+		Root(*c.capturedRoot(record.Parent)).InitialIndependent
 }
 
 func (c *admissionClosure) occurrenceMount(id manifest.NamedResource, root string) *store.SourceArtifact {
@@ -171,10 +187,6 @@ func (c *admissionClosure) occurrenceMount(id manifest.NamedResource, root strin
 		return facts.Mounted
 	}
 	return nil
-}
-
-func (c *admissionClosure) sourceView(source manifest.NamedResource, _ string) SourceFacts {
-	return c.boundSource(source)
 }
 
 //nolint:gocritic // The iterator MUST capture an immutable occurrence snapshot.
@@ -208,3 +220,43 @@ func containsPath(root, target string) bool {
 func escapedPath(relative string) bool { return !filepath.IsLocal(relative) }
 
 const sourceReferenceUse = "source"
+
+func (s *Session) catalogEntry(
+	id manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+	native, excluded bool,
+) (*admissionCatalogEntry, bool) {
+	occurrence, known := s.facts.Occurrence(id)
+	candidate := s.facts.AdmissionCandidate(id)
+	catalogMaterializer := occurrence.CatalogKnown &&
+		(occurrence.Policy != nil || len(occurrence.Targets) != 0 || occurrence.NeedsCandidates)
+	preparedMaterializer := candidate.Obj != nil && record.Builder != "" && isMaterializerObject(candidate.Obj)
+	materializer := catalogMaterializer || preparedMaterializer
+	if !materializer && !native && len(occurrence.Roots) == 0 {
+		return nil, false
+	}
+	if record.ContentRoots == nil && len(occurrence.Roots) != 0 {
+		source, _, _ := occurrence.SourcePath()
+		if source.Name == "" || source.Kind == "" {
+			source = manifest.BootstrapSourceID
+		}
+		record.ContentRoots = map[manifest.NamedResource][]string{source: occurrence.Roots}
+	}
+	object := occurrence.Object
+	if object == nil {
+		object = occurrence.Catalog
+	}
+	if object == nil {
+		object = record.Declaration
+	}
+	if object != nil {
+		object = manifest.CatalogObject(object, id)
+	}
+	return &admissionCatalogEntry{
+		occurrence:     occurrence,
+		contentRoots:   record.ContentRoots,
+		object:         object,
+		known:          known,
+		nativeExcluded: excluded,
+	}, materializer
+}

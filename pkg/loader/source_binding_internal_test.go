@@ -1,13 +1,17 @@
 package loader
 
 import (
+	"path/filepath"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -70,5 +74,123 @@ func TestSourceFacts_FrozenComparisonSide(t *testing.T) {
 			assert.Equal(t, replacement.Paired, false)
 			assert.Equal(t, replacement.Initial, input)
 		})
+	}
+}
+
+func TestSourceFacts_PerSourcePublication(t *testing.T) {
+	t.Parallel()
+	l := New(store.New())
+	l.SourceRoot = t.TempDir()
+	ids := []manifest.NamedResource{
+		{Kind: manifest.KindGitRepository, Name: "first", Namespace: "apps"},
+		{Kind: manifest.KindGitRepository, Name: "second", Namespace: "apps"},
+	}
+	for _, id := range ids {
+		l.SourceFacts(id, nil)
+	}
+	var bindings [64]*map[manifest.NamedResource]*atomic.Pointer[admissionSource]
+	for i := range l.bindings {
+		bindings[i] = l.bindings[i].Load()
+	}
+	previous := make([]*admissionSource, len(ids))
+	for i, id := range ids {
+		previous[i] = l.sourceBinding(id)
+	}
+	l.frozen = true
+	var workers sync.WaitGroup
+	for _, id := range ids {
+		workers.Go(func() {
+			input := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
+			l.Store.SetArtifact(id, input)
+			facts := l.SourceFacts(id, nil)
+			assert.Equal(t, facts.Input, input)
+			assert.Equal(t, l.SourceFacts(id, nil).Derived, false)
+		})
+	}
+	workers.Wait()
+	for i := range l.bindings {
+		assert.Equal(t, l.bindings[i].Load() == bindings[i], true)
+	}
+	for i, id := range ids {
+		assert.Equal(t, previous[i].input, (*store.SourceArtifact)(nil))
+		assert.Equal(t, l.sourceBinding(id) == previous[i], false)
+	}
+	newSource := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "runtime", Namespace: "apps"}
+	input := &store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}}
+	l.Store.SetArtifact(newSource, input)
+	assert.Equal(t, l.SourceFacts(newSource, nil).Input, input)
+	for i := range l.bindings {
+		assert.Equal(t, l.bindings[i].Load() == bindings[i], true)
+	}
+	count := 0
+	for _, bucket := range bindings {
+		if bucket != nil {
+			count += len(*bucket)
+		}
+	}
+	assert.Equal(t, count, len(ids))
+}
+
+func TestSourceFacts_ChangedFileCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, origin, file, indexed string
+		paired                      bool
+	}{
+		{name: "same_root", origin: "/workspace/selected", file: "input.txt", indexed: "input.txt", paired: true},
+		{name: "ancestor_root", origin: "/workspace", file: "selected/input.txt", indexed: "input.txt", paired: true},
+		{name: "other_root", origin: "/other", file: "input.txt", indexed: "../../other/input.txt", paired: true},
+		{name: "unpaired", origin: "/workspace", file: "selected/input.txt", indexed: "selected/input.txt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := New(store.New())
+			l.SourceRoot = "/workspace/selected"
+			toIndex, err := filepath.Rel(l.SourceRoot, tc.origin)
+			assert.NoError(t, err)
+			evidence := &admissionSource{
+				source: manifest.BootstrapSourceID, delta: change.NewSet([]string{tc.file}),
+				input:  &store.SourceArtifact{LocalPath: "/mounted", LocalRoot: tc.origin, InputAlias: true},
+				origin: tc.origin, toIndex: toIndex, paired: tc.paired,
+			}
+			facts := l.sourceViewFacts(evidence, true)
+			assert.Diff(t, facts.Files, []selection.SourceFile{{Path: tc.file, Indexed: tc.indexed}})
+			again := l.sourceViewFacts(evidence, false)
+			assert.Equal(t, &facts.Files[0], &again.Files[0])
+			assert.Diff(t, evidence.delta.Paths(), []string{tc.file})
+		})
+	}
+}
+
+func TestSourceFacts_PartitionsConstruction(t *testing.T) {
+	t.Parallel()
+	l := New(store.New())
+	l.SourceRoot = t.TempDir()
+	first := manifest.NamedResource{Kind: manifest.KindGitRepository, Name: "first", Namespace: "apps"}
+	l.SourceFacts(first, nil)
+	bucket := l.sourceBucket(first)
+	original := bucket.Load()
+	var workers sync.WaitGroup
+	for i := range 128 {
+		id := first
+		id.Name = strconv.Itoa(i)
+		if l.sourceBucket(id) == bucket {
+			continue
+		}
+		workers.Go(func() {
+			facts := l.SourceFacts(id, nil)
+			assert.Equal(t, facts.Source, id)
+			assert.Equal(t, l.SourceFacts(id, nil).Derived, false)
+		})
+	}
+	workers.Wait()
+	assert.Equal(t, bucket.Load(), original)
+	assert.Equal(t, len(*original), 1)
+	for i := range 128 {
+		id := first
+		id.Name = strconv.Itoa(i)
+		if l.sourceBucket(id) != bucket {
+			assert.Equal(t, l.sourceBinding(id).source, id)
+		}
 	}
 }

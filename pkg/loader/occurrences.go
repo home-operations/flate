@@ -189,19 +189,19 @@ func (l *Loader) OccurrenceClaims(repoRoot string, occurrences []selection.Occur
 // PathObjects returns live path witnesses, retaining occurrences until construction completes.
 func (l *Loader) PathObjects() []selection.OccurrenceFacts {
 	stored := l.Store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
-	objects := make([]selection.OccurrenceFacts, 0, len(stored))
+	objects := make([]authoredOccurrence, 0, len(stored))
 	l.eachKustomization(stored, func(child store.Child) {
 		if !l.inactiveKustomization(child.Obj.Named()) {
 			objects = append(
 				objects,
-				selection.OccurrenceFacts{Identity: child.Obj.Named(), Authored: child.Obj.Named(), Object: child.Obj},
+				authoredOccurrence{Identity: child.Obj.Named(), Authored: child.Obj.Named(), object: child.Obj},
 			)
 		}
 	})
 	if l.scopes == nil || !l.scopes.complete {
 		objects = l.appendCachedPathObjects(objects)
 	}
-	slices.SortStableFunc(objects, func(a, b selection.OccurrenceFacts) int {
+	slices.SortStableFunc(objects, func(a, b authoredOccurrence) int {
 		if c := a.Identity.Compare(b.Identity); c != 0 {
 			return c
 		}
@@ -212,7 +212,11 @@ func (l *Loader) PathObjects() []selection.OccurrenceFacts {
 		}
 		return strings.Compare(pa, pb)
 	})
-	return objects
+	result := make([]selection.OccurrenceFacts, len(objects))
+	for i := range objects {
+		result[i] = occurrenceView(&objects[i])
+	}
+	return result
 }
 
 // Packages snapshots resource graph inputs already traversed by Load.
@@ -292,7 +296,7 @@ func (l *Loader) occurrences(ctx context.Context, dir, targetNamespace string) (
 		return nil, nil
 	}
 	visits := l.scopeWalk(&visit)
-	var out []selection.OccurrenceFacts
+	var occurrences []authoredOccurrence
 	{
 		vValues := visits
 		for vIndex := range vValues {
@@ -303,14 +307,19 @@ func (l *Loader) occurrences(ctx context.Context, dir, targetNamespace string) (
 			if err := ctx.Err(); err != nil {
 				return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 			}
-			{
-				var err error
-				out, err = l.appendVisitOccurrences(out, new(v))
-				if err != nil {
-					return nil, err
-				}
+			if err := l.visitOccurrences(&v, func(o authoredOccurrence) {
+				occurrences = append(occurrences, o)
+			}); err != nil {
+				return nil, err
 			}
 		}
+	}
+	var out []selection.OccurrenceFacts
+	if len(occurrences) != 0 {
+		out = make([]selection.OccurrenceFacts, len(occurrences))
+	}
+	for i := range occurrences {
+		out[i] = occurrenceView(&occurrences[i])
 	}
 	return out, nil
 }
@@ -404,10 +413,11 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 			}
 			admission := l.rootAdmission(visit.file, visit.coordinate, false)
 			record := manifest.DiscoveryRecord{Path: visit.file, File: visit.coordinate}
+			evidence := admission.evidence(l, manifest.NamedResource{}, &record)
 			failures = append(failures, selection.EntryFailure{
 				File:       l.fileCoordinate(new(l.documents).localPath(visit.file)),
 				Coordinate: visit.coordinate,
-				Evidence:   admission.evidence(l, manifest.NamedResource{}, &record).facts,
+				Evidence:   evidence.view(),
 				Occurrence: doc.objects[index].outcome,
 			})
 		}
@@ -631,7 +641,7 @@ func (l *Loader) catalogObject(id manifest.NamedResource, record *manifest.Disco
 	return manifest.CatalogObject(obj, id)
 }
 
-func (l *Loader) appendCachedPathObjects(objects []selection.OccurrenceFacts) []selection.OccurrenceFacts {
+func (l *Loader) appendCachedPathObjects(objects []authoredOccurrence) []authoredOccurrence {
 	files := make([]string, 0, len(l.documents.cache))
 	for file := range l.documents.cache {
 		files = append(files, file)
@@ -654,9 +664,9 @@ func (l *Loader) appendCachedPathObjects(objects []selection.OccurrenceFacts) []
 }
 
 func (l *Loader) appendPathObject(
-	objects []selection.OccurrenceFacts,
+	objects []authoredOccurrence,
 	childValue *parsedObject,
-) []selection.OccurrenceFacts {
+) []authoredOccurrence {
 	child := *childValue
 	if child.outcome.Err != nil || child.Obj == nil && child.fact == nil {
 		return objects
@@ -671,13 +681,13 @@ func (l *Loader) appendPathObject(
 	if !ok || o.facts != nil && o.facts.uncertain {
 		return objects
 	}
-	if slices.ContainsFunc(objects, func(other selection.OccurrenceFacts) bool {
+	if slices.ContainsFunc(objects, func(other authoredOccurrence) bool {
 		otherSource, otherPath, _ := other.SourcePath()
 		return other.Identity == o.Identity && otherSource == source && otherPath == path
 	}) {
 		return objects
 	}
-	objects = append(objects, occurrenceView(&o))
+	objects = append(objects, o)
 	return objects
 }
 
@@ -705,28 +715,24 @@ func (l *Loader) collectUncoveredPackages(
 			new(l.documents).mountedRoot(file) != l.SourceRoot {
 			continue
 		}
-		objects, err := l.appendVisitOccurrences(nil, new(graphVisit{file: file}))
-		if err != nil {
-			return nil, err
-		}
 		dir := filepath.Dir(file)
-		for i := range objects {
-			if !covered[objects[i].Declaration] {
-				packages[dir] = append(packages[dir], objects[i])
+		if err := l.visitOccurrences(&graphVisit{file: file}, func(o authoredOccurrence) {
+			view := occurrenceView(&o)
+			if !covered[view.Declaration] {
+				packages[dir] = append(packages[dir], view)
 			}
+		}); err != nil {
+			return nil, err
 		}
 	}
 	return packages, nil
 }
 
-func (l *Loader) appendVisitOccurrences(
-	out []selection.OccurrenceFacts,
-	vValue *graphVisit,
-) ([]selection.OccurrenceFacts, error) {
+func (l *Loader) visitOccurrences(vValue *graphVisit, yield func(authoredOccurrence)) error {
 	v := *vValue
 	doc := l.documents.cache[v.file]
 	if doc.eligible == selection.RootInactive && !doc.initial {
-		return out, nil
+		return nil
 	}
 	origin := new(l.documents).localPath(v.file)
 	source := new(l.documents).mountedRoot(origin)
@@ -761,13 +767,13 @@ func (l *Loader) appendVisitOccurrences(
 			}
 			id, err := l.projectIdentity(o.Authored, new(v), child.version, namespaced)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			o.Identity = id
-			out = append(out, occurrenceView(&o))
+			yield(o)
 		}
 	}
-	return out, nil
+	return nil
 }
 
 func (l *Loader) readOccurrence(

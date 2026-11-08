@@ -11,29 +11,34 @@ import (
 // ReadSet retains the immutable inputs consumed by one execution.
 // Its storage MUST remain owned until subscriptions and retained comparisons finish.
 type ReadSet struct {
-	work           *manifest.WorkRecorder
-	warnings       []manifest.Warning
-	advisories     AdvisoryEvidence
-	produced       []admission
-	invalid        atomic.Bool
-	delivered      atomic.Bool
-	accepted       atomic.Bool
-	retired        atomic.Bool
-	store          *Store
-	id             manifest.NamedResource
-	inputs         *Input
-	last           *Input
-	local          Input
-	spare          *Input
-	capacity       int
-	localDetails   inputDetails
-	spareDetails   []inputDetails
-	byID           *[]*Input
-	originHead     *registrationHead
-	expected       [2]*acceptedAssessment
-	acceptedRecord acceptedAssessment
-	acquisition    AcquisitionState
-	hasAcquisition bool
+	work               *manifest.WorkRecorder
+	warnings           []manifest.Warning
+	advisories         AdvisoryEvidence
+	produced           []admission
+	invalid            atomic.Bool
+	delivered          atomic.Bool
+	accepted           atomic.Bool
+	retired            atomic.Bool
+	store              *Store
+	id                 manifest.NamedResource
+	inputs             *Input
+	last               *Input
+	local              Input
+	spare              *Input
+	capacity           int
+	localRegistration  registration
+	localRegistered    bool
+	spareRegistrations []registration
+	localDetails       inputDetails
+	localProductions   productionCapture
+	spareProductions   []productionCapture
+	spareDetails       []inputDetails
+	byID               *[]*Input
+	originHead         *registrationHead
+	expected           [2]*acceptedAssessment
+	acceptedRecord     acceptedAssessment
+	acquisition        AcquisitionState
+	hasAcquisition     bool
 }
 
 // Input co-owns a captured dependency and its authority registrations.
@@ -44,6 +49,8 @@ type Input struct {
 	object          registration
 	view            capture
 	details         atomic.Pointer[inputDetails]
+	production      atomic.Pointer[registration]
+	productions     atomic.Pointer[productionCapture]
 	producer        uint64
 	settled         bool
 	watchProducer   bool
@@ -61,27 +68,27 @@ type Input struct {
 type inputDetails struct {
 	inputPayload
 
-	cells            [8]registration
+	cells            [7]atomic.Pointer[registration]
 	gates            *readinessGate
 	inventory        *[shardCount]registration
 	sourceGuard      *ReadSet
+	binding          *ReadSet
 	artifactRead     ArtifactRead
 	acquisition      *acceptedAssessment
 	acquisitionState AcquisitionState
 }
 
 type inputPayload struct {
-	productions []manifest.Production
-	index       *manifest.DiscoveryIndex
-	objects     []manifest.BaseManifest
-	artifact    Artifact
-	conditions  []Condition
-	status      StatusInfo
+	objects             []manifest.BaseManifest
+	artifact            Artifact
+	artifactGenerations [3]uint64
+	conditions          []Condition
+	status              StatusInfo
 }
 
-type inputBlock struct {
-	input   Input
-	details inputDetails
+type productionCapture struct {
+	items []manifest.Production
+	index *manifest.DiscoveryIndex
 }
 
 type readinessGate struct {
@@ -107,13 +114,18 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.accepted.Store(false)
 	r.retired.Store(false)
 	r.local = Input{}
+	r.localRegistration = registration{}
+	r.localRegistered = false
+	r.spareRegistrations = nil
 	r.localDetails = inputDetails{}
+	r.localProductions = productionCapture{}
 	r.local.details.Store(&r.localDetails)
+	r.local.productions.Store(&r.localProductions)
 	clear(inputs)
 	r.store, r.id, r.capacity = s, id, len(inputs)
 	r.inputs, r.last, r.spare, r.warnings, r.produced = nil, nil, nil, nil, nil
 	r.advisories = AdvisoryEvidence{}
-	r.spareDetails, r.byID = nil, nil
+	r.spareDetails, r.spareProductions, r.byID = nil, nil, nil
 	r.originHead, r.expected = nil, [2]*acceptedAssessment{}
 	r.acceptedRecord = acceptedAssessment{}
 	r.acquisition, r.hasAcquisition = AcquisitionPending, false
@@ -122,98 +134,8 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	}
 }
 
-func (r *ReadSet) input(id manifest.NamedResource) *Input {
-	if r.last != nil && r.last.Ref.NamedResource == id {
-		return r.last
-	}
-	index := 0
-	if r.byID != nil {
-		var found bool
-		index, found = slices.BinarySearchFunc(
-			*r.byID,
-			id,
-			func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
-		)
-		if found {
-			r.last = (*r.byID)[index]
-			return r.last
-		}
-	} else {
-		for input := r.inputs; input != nil; input = input.next {
-			if input.Ref.NamedResource == id {
-				r.last = input
-				return input
-			}
-		}
-	}
-	return r.allocateInput(id, index)
-}
-
-func (r *ReadSet) details(input *Input) *inputDetails {
-	if details := input.details.Load(); details != nil {
-		return details
-	}
-	if len(r.spareDetails) == 0 {
-		r.spareDetails = make([]inputDetails, max(1, allocationGrowthFactor*cap(r.spareDetails)))
-	}
-	i := len(r.spareDetails) - 1
-	details := &r.spareDetails[i]
-	r.spareDetails = r.spareDetails[:i]
-	input.details.Store(details)
-	return details
-}
-
-func (in *Input) cell(kind facet) *registration {
-	if kind == objectFacet {
-		return &in.object
-	}
-	if details := in.details.Load(); details != nil {
-		return &details.cells[kind-conditionFacet]
-	}
-	return nil
-}
-
-func (r *ReadSet) reserve(count int) {
-	for spare := r.spare; spare != nil && count > 0; spare = spare.next {
-		count--
-	}
-	remaining, capacity, allocations := count, r.capacity, 0
-	for remaining > 0 {
-		capacity = max(1, allocationGrowthFactor*capacity)
-		remaining -= capacity
-		allocations++
-	}
-	if allocations <= 1 {
-		return
-	}
-	inputs := make([]Input, count)
-	for i := range inputs {
-		inputs[i].next, r.spare = r.spare, &inputs[i]
-	}
-	if r.byID == nil && allocations > maxLinearInputBlocks {
-		r.indexInputs(count)
-	}
-}
-
-func (r *ReadSet) indexInputs(spare int) {
-	length := 0
-	for input := r.inputs; input != nil; input = input.next {
-		length++
-	}
-	index := make([]*Input, 0, length+spare)
-	for input := r.inputs; input != nil; input = input.next {
-		index = append(index, input)
-	}
-	slices.SortStableFunc(index, func(a, b *Input) int { return a.Ref.Compare(b.Ref.NamedResource) })
-	index = slices.CompactFunc(index, func(a, b *Input) bool { return a.Ref.NamedResource == b.Ref.NamedResource })
-	r.byID = &index
-}
-
 func (r *ReadSet) observe(input *Input, kind facet, generation uint64) {
-	if kind != objectFacet {
-		r.details(input)
-	}
-	cell := input.cell(kind)
+	cell := r.registration(input, kind)
 	if cell.head != nil {
 		if kind != producerFacet && cell.generation.Load() != generation {
 			r.invalid.Store(true)
@@ -221,6 +143,9 @@ func (r *ReadSet) observe(input *Input, kind facet, generation uint64) {
 		return
 	}
 	r.activate(input, kind, generation)
+	if details := input.details.Load(); kind == producerFacet && details != nil && details.binding != nil {
+		r.bindAuthority(input, producerFacet, producerFacet)
+	}
 }
 
 func (r *ReadSet) sample(id manifest.NamedResource, slot *producerSlot, record *Emission, watch bool) {
@@ -278,7 +203,9 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 			for childIndex := range childValues {
 				child := childValues[childIndex]
 				if child.child.Obj.Named() == id {
-					input.view.child, input.view.independent, input.derived = child.child, child.independent, input.derived|capturedObject
+					input.view.child, input.view.independent, input.derived = snapshotChild(
+						&child.child,
+					), child.independent, input.derived|capturedObject
 					break
 				}
 			}
@@ -410,8 +337,10 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 			details.artifact = record.effective
 		}
 		acquisition = record.acquisitionHead.generation
-		for i, generation := range [3]uint64{record.generation, record.revisionHead.generation, record.originHead.generation} {
-			input.cell(contentFacet + facet(i)).generation.Store(generation)
+		details.artifactGenerations = [3]uint64{
+			record.generation,
+			record.revisionHead.generation,
+			record.originHead.generation,
 		}
 		sh.mu.RUnlock()
 		if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, new(input.view)) {
@@ -435,8 +364,11 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 	for i := range 3 {
 		if added&(1<<i) != 0 {
 			kind := contentFacet + facet(i)
-			r.observe(input, kind, input.cell(kind).generation.Load())
+			r.observe(input, kind, details.artifactGenerations[i])
 		}
+	}
+	if details.binding != nil && added != 0 {
+		r.bindAuthority(input, contentFacet, originFacet)
 	}
 	return details.artifact
 }
@@ -458,17 +390,17 @@ func (r *ReadSet) IncomingProductions(child Child, index *manifest.DiscoveryInde
 }
 
 func (r *ReadSet) productions(input *Input, index *manifest.DiscoveryIndex) []manifest.Production {
-	details := r.details(input)
-	if details.productions == nil {
-		details.index = index
+	captured := r.productionDetails(input)
+	if captured.items == nil {
+		captured.index = index
 		result := productionResult{reads: r, captureTarget: true, watch: true}
 		r.store.visitProductions(input.Ref.NamedResource, index, &result)
-		details.productions = result.out
-		if details.productions == nil {
-			details.productions = []manifest.Production{}
+		captured.items = result.out
+		if captured.items == nil {
+			captured.items = []manifest.Production{}
 		}
 	}
-	return details.productions
+	return captured.items
 }
 
 // Materializer selects and captures the runnable declaration supplying a production.
@@ -674,11 +606,11 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 	r.GetArtifact(source, ArtifactContent)
 	var support *Input
 	if owner != (manifest.NamedResource{}) && owner != child.Obj.Named() {
-		support = r.input(owner)
+		support = r.bindAuthority(r.input(owner), producerFacet, producerFacet)
 	}
 	update := objectUpdate{
 		obj: child.Obj, document: child.Doc, explicit: child.Doc != nil,
-		binding: r.input(source), support: support, reads: r,
+		binding: r.bindAuthority(r.input(source), contentFacet, originFacet), support: support, reads: r,
 		classified: child.SourceSupport != (manifest.NamedResource{}),
 	}
 	id := child.Obj.Named()
@@ -696,6 +628,39 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 		}
 	}
 	r.store.addObject(&update)
+}
+
+// Raw admission MUST retain authority without retaining the proposal's other inputs.
+func (r *ReadSet) bindAuthority(input *Input, first, last facet) *Input {
+	details := r.details(input)
+	if details.binding == nil {
+		details.binding = new(ReadSet)
+		details.binding.Init(r.store, r.id, nil)
+	}
+	bound := details.binding.input(input.Ref.NamedResource)
+	details.binding.details(bound)
+	if first == contentFacet && (bound.cell(contentFacet) == nil || bound.cell(contentFacet).head == nil) {
+		bound.details.Load().sourceGuard = details.sourceGuard
+	}
+	for kind := first; kind <= last; kind++ {
+		before := input.cell(kind)
+		if before == nil || before.head == nil {
+			continue
+		}
+		after := details.binding.registration(bound, kind)
+		if after.head != nil {
+			continue
+		}
+		if before.absent != nil {
+			bound.producer = input.producer
+			details.binding.activate(bound, kind, 0)
+		} else {
+			after.head = before.head
+			after.generation.Store(before.generation.Load())
+		}
+		after.retain()
+	}
+	return bound
 }
 
 // SourceAdmission captures whether accepted output still permits initial source support.
@@ -820,61 +785,6 @@ const (
 	allocationGrowthFactor = 2
 	maxLinearInputBlocks   = 2
 )
-
-func (r *ReadSet) allocateInput(id manifest.NamedResource, index int) *Input {
-	var input *Input
-	if r.local.derived == 0 {
-		input = &r.local
-	} else {
-		if r.spare == nil {
-			r.capacity = max(1, allocationGrowthFactor*r.capacity)
-			block := make([]inputBlock, r.capacity)
-			for i := range block {
-				block[i].input.details.Store(&block[i].details)
-				block[i].input.next, r.spare = r.spare, &block[i].input
-			}
-			if r.byID == nil && r.capacity >= 64 {
-				r.indexInputs(r.capacity)
-				index, _ = slices.BinarySearchFunc(
-					*r.byID,
-					id,
-					func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
-				)
-			}
-		}
-		input, r.spare = r.spare, r.spare.next
-	}
-	input.Ref.NamedResource, input.next, input.derived = id, r.inputs, initializedInput
-	r.inputs = input
-	if r.byID != nil {
-		*r.byID = slices.Insert(*r.byID, index, input)
-	}
-	r.last = input
-	return input
-}
-
-func (r *ReadSet) attachInput(input *Input) {
-	if input.derived&initializedInput != 0 {
-		return
-	}
-	if r.last != nil && r.last.Ref.NamedResource == input.Ref.NamedResource {
-		r.last = input
-	}
-	input.next, r.inputs = r.inputs, input
-	input.derived |= initializedInput
-	if r.byID != nil {
-		index, found := slices.BinarySearchFunc(
-			*r.byID,
-			input.Ref.NamedResource,
-			func(captured *Input, id manifest.NamedResource) int { return captured.Ref.Compare(id) },
-		)
-		if found {
-			(*r.byID)[index] = input
-		} else {
-			*r.byID = slices.Insert(*r.byID, index, input)
-		}
-	}
-}
 
 func (r *ReadSet) captureSourceAuthorities(view *capture) {
 	if view.binding != nil && view.binding.Ref.NamedResource != r.id {

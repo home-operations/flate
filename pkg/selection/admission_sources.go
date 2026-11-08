@@ -13,8 +13,13 @@ import (
 
 func (c *admissionClosure) sources(id manifest.NamedResource) iter.Seq[manifest.NamedResource] {
 	return func(yield func(manifest.NamedResource) bool) {
-		record := c.record(id)
-		if len(record.ContentRoots) != 0 && (c.incoming(id).Obj == nil) {
+		var record manifest.DiscoveryRecord
+		if c.incoming(id).Obj != nil {
+			record = c.record(id)
+		} else {
+			record = c.contentRecord(id)
+		}
+		if len(record.ContentRoots) != 0 && c.incoming(id).Obj == nil {
 			for source := range record.ContentRoots {
 				if !yield(source) {
 					return
@@ -32,18 +37,9 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 		if evidence.Delta == nil {
 			return
 		}
-		for _, file := range evidence.Paths {
+		for _, file := range evidence.Files {
 			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
-			if evidence.Paired {
-				file = c.coordinates(
-					new(manifest.Production{
-						Source: source,
-						File:   file,
-						Path:   filepath.Join(evidence.Input.LocalPath, filepath.FromSlash(file)),
-					}),
-				).indexed
-			}
-			if !yield(file) {
+			if !yield(file.Indexed) {
 				return
 			}
 		}
@@ -91,10 +87,9 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 		&completeChangedClaimState{
 			reader:         &reader,
 			file:           &file,
-			evidence:       &evidence,
+			evidence:       evidence,
 			delta:          &delta,
 			input:          &input,
-			record:         &record,
 			contentChanged: &contentChanged,
 		},
 	)
@@ -103,7 +98,7 @@ func (c *admissionClosure) changedClaim(readerValue *manifest.FileReader, file s
 func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResource) bool {
 	for source := range c.proposal.Request.Changes.Sources() {
 		evidence := c.boundSource(source)
-		if c.comparisonInputChanged(consumer, dependency, &evidence) {
+		if c.comparisonInputChanged(consumer, dependency, evidence) {
 			return true
 		}
 	}
@@ -116,7 +111,9 @@ func (c *admissionClosure) coordinates(pValue *manifest.Production) productionCo
 	p := *pValue
 
 	if filepath.IsAbs(p.Path) {
-		return c.absoluteCoordinates(&p)
+		evidence := c.boundSource(p.Source)
+		relative, indexed := evidence.Coordinates(c.context.Root, p.Path)
+		return productionCoordinates{relative: relative, indexed: indexed}
 	}
 	return productionCoordinates{relative: p.File, indexed: p.File}
 }
@@ -185,7 +182,6 @@ type completeChangedClaimState struct {
 	evidence       *SourceFacts
 	delta          **change.Set
 	input          **store.SourceArtifact
-	record         *manifest.DiscoveryRecord
 	contentChanged *func(reader manifest.FileReader) bool
 }
 
@@ -193,10 +189,12 @@ func (c *admissionClosure) completeChangedClaim(scope *completeChangedClaimState
 	if !(*scope.contentChanged)((*scope.reader)) {
 		return false
 	}
-	for actual := range c.facts.SelectionIndex().ReadersOfFile((*scope.file)) {
+	readers := c.facts.SelectionIndex().Readers[*scope.file]
+	for i := range readers {
+		actual := &readers[i]
 		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{ReaderEdges: 1})
 		if actual.Reader == scope.reader.Reader {
-			if !(*scope.contentChanged)(actual) {
+			if !(*scope.contentChanged)(*actual) {
 				continue
 			}
 			qualified, _, _ := c.delta(actual.Source)
@@ -205,7 +203,8 @@ func (c *admissionClosure) completeChangedClaim(scope *completeChangedClaimState
 			}
 		}
 	}
-	if roots, known := scope.record.ContentRoots[scope.reader.Source]; known {
+	record := c.contentRecord(scope.reader.Reader)
+	if roots, known := record.ContentRoots[scope.reader.Source]; known {
 		if (*scope.input) != nil {
 			relative, err := filepath.Rel(
 				scope.evidence.Origin,
@@ -339,33 +338,6 @@ func (c *admissionClosure) inputSourceMatches(id, consumer, source manifest.Name
 		}
 	}
 	return false
-}
-
-func (c *admissionClosure) absoluteCoordinates(p *manifest.Production) productionCoordinates {
-	evidence := c.boundSource(p.Source)
-	art := evidence.Input
-	root := c.context.Root
-	if art != nil {
-		root = art.LocalPath
-	}
-	rel, err := filepath.Rel(root, p.Path)
-	if err != nil {
-		return productionCoordinates{}
-	}
-	relative := filepath.ToSlash(rel)
-	indexed := relative
-	if evidence.ToIndex != "." {
-		physical := p.Path
-		if art != nil && evidence.Origin != art.LocalPath {
-			physical = filepath.Join(evidence.Origin, rel)
-		}
-		rel, err = filepath.Rel(c.context.Root, physical)
-		if err != nil {
-			return productionCoordinates{}
-		}
-		indexed = filepath.ToSlash(rel)
-	}
-	return productionCoordinates{relative: relative, indexed: indexed}
 }
 
 type comparisonInput struct {

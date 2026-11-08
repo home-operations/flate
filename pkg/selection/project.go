@@ -383,6 +383,9 @@ func (s *selectionSide) unchangedDeclaration(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
 ) manifest.BaseManifest {
+	if s.run.Store.GetObject(id) != nil {
+		return nil
+	}
 	restricted := s.run.Decision.restricted()
 	if restricted {
 		if s.run.Decision.Reconcile(id) || !s.request.Matches(id) ||
@@ -390,9 +393,6 @@ func (s *selectionSide) unchangedDeclaration(
 			return nil
 		}
 	} else if record.Declaration == nil {
-		return nil
-	}
-	if s.run.Store.GetObject(id) != nil {
 		return nil
 	}
 	if restricted {

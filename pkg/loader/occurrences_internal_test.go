@@ -504,3 +504,34 @@ func TestEntryFailure_NamedSelectionDoesNotTraverse(t *testing.T) {
 	assert.NoError(t, l.EntryFailure(t.Context(), root))
 	assert.Equal(t, traversal.Counts, before)
 }
+
+func TestOccurrenceRoots_ProjectedSource(t *testing.T) {
+	t.Parallel()
+	for _, namespace := range []string{"", "source-ns"} {
+		t.Run(namespace, func(t *testing.T) {
+			t.Parallel()
+			object := &manifest.Kustomization{Name: "owner", Path: "./app"}
+			object.SourceRef.Kind, object.SourceRef.Name, object.SourceRef.Namespace = manifest.KindGitRepository, "repo", namespace
+			occurrence := compactOccurrence(object, manifest.TemplateProjection{})
+			occurrence.Identity, occurrence.Authored = object.Named(), object.Named()
+			l := New(store.New())
+			l.locations = map[manifest.NamedResource]authoredOccurrence{object.Named(): occurrence}
+			id := object.Named()
+			id.Namespace = "projected"
+			source, roots := l.OccurrenceRoots(id)
+			want := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Name:      "repo",
+				Namespace: namespace,
+			}
+			if namespace == "" {
+				want.Namespace = id.Namespace
+			}
+			assert.Equal(t, source, want)
+			assert.Diff(t, roots, []string{"app"})
+			assert.Equal(t, &roots[0], &occurrence.facts.roots[0])
+			assert.Equal(t, l.locations[object.Named()].Identity, object.Named())
+		})
+	}
+}

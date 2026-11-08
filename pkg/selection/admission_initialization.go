@@ -212,6 +212,7 @@ func (c *admissionClosure) finishStart(
 	}
 	c.queue = c.queue[:0]
 	c.collecting = false
+	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		if !state.role.needed && c.namespaceProductionDemand(id) {
 			c.add(id, admissionRole{needed: true, ordinary: true})
@@ -430,7 +431,7 @@ func (c *admissionClosure) recordDirectState(
 		return
 	}
 	c.derive()
-	state.direct, state.directKnown = changed, true
+	state.direct, state.directKnown = changed, state.initialKnown
 	state.requested = state.requested || c.namedSelection(id)
 	state.eligible = record.Origin.Policy(id, nil).Root && c.session.request.Matches(id)
 	state.declarationChanged = state.eligible && !changed &&
@@ -626,7 +627,6 @@ func (c *admissionClosure) rescanInitialChanges(
 		identity.stableOwner, identity.stableObject = 0, nil
 	}
 	clear(c.historyProductions)
-	clear(c.rootResults)
 	//nolint:intrange // rescan MUST extend the worklist during traversal.
 	for cursor := 0; cursor < len(c.queue); cursor++ {
 		for next := c.states[c.queue[cursor]].consumer; next != 0; next = edges[next-1].next {
@@ -650,11 +650,13 @@ func (c *admissionClosure) rescanInitialChanges(
 
 func (c *admissionClosure) prepareInitialChanges(seeds admissionSeeds, edges []admissionStartEdge) {
 	c.queue = c.queue[:0]
+	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		state.changed = state.seed || state.direct
 		c.states[id] = state
 	}
 	c.activateInitialSeeds(seeds, edges)
+	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		if state.changed {
 			c.queue = append(c.queue, id)
@@ -664,6 +666,7 @@ func (c *admissionClosure) prepareInitialChanges(seeds admissionSeeds, edges []a
 
 func (c *admissionClosure) admitInitialStates(claims []admissionStartClaim) {
 	var entry manifest.NamedResource
+	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		c.recordInitialEntry(id, &entry)
 		if state.changed && !id.ReportHidden() && id.Namespace != "" {
@@ -707,7 +710,7 @@ func (c *admissionClosure) prepareInitialIdentity(
 	c.derive()
 	changed := c.affected(id, obj) || c.changedInput(id, id)
 	state = c.states[id]
-	state.initialKnown = true
+	state.initialKnown = c.proposal.Request.Changes == nil || state.affectedKnown
 	c.states[id] = state
 	return obj, record, changed
 }

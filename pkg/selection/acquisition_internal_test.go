@@ -204,3 +204,36 @@ func TestAdmission_EntryReceiptRequiresHistoricalReach(t *testing.T) {
 		})
 	}
 }
+
+func TestPreparation_RootResolutionFollowsSourceGeneration(t *testing.T) {
+	t.Parallel()
+	session := newPublicationSession(t)
+	source := (&manifest.GitRepository{Name: "source", Namespace: "apps"}).Named()
+	input := &store.SourceArtifact{Content: "before", FS: fstest.MapFS{}}
+	session.store.SetArtifact(source, input)
+	sibling := &manifest.ConfigMap{Name: "sibling", Namespace: "apps"}
+	session.store.AddObject(sibling)
+	var original, current store.ReadSet
+	original.Init(session.store, manifest.NamedResource{}, nil)
+	defer original.Retire()
+	original.GetArtifact(source, store.ArtifactContent)
+	original.GetObject(sibling.Named())
+	demand := Demand{Source: source, Root: "app/../shared", History: true, Artifact: input, Reads: &original}
+	preparation := &Preparation{}
+	preparation.acceptAcquired([]Acquisition{{Demand: demand, Root: "shared", Available: true, Reads: &original}})
+	session.store.AddObject(manifest.NewConfigMap(sibling.Named(), map[string]any{"value": "changed"}))
+	assert.Equal(t, original.Valid(), false)
+	current.Init(session.store, manifest.NamedResource{}, nil)
+	defer current.Retire()
+	assert.Equal(t, current.GetArtifact(source, store.ArtifactContent) == input, true)
+	result, known := preparation.acquisition(&demand, &current)
+	assert.Equal(t, known, true)
+	assert.Equal(t, result.Root, "shared")
+	assert.Equal(t, current.Valid(), true)
+	replacement := &store.SourceArtifact{Content: "after", FS: fstest.MapFS{}}
+	session.store.SetArtifact(source, replacement)
+	assert.Equal(t, current.Valid(), false)
+	demand.Artifact = replacement
+	_, known = preparation.acquisition(&demand, &current)
+	assert.Equal(t, known, false)
+}

@@ -91,12 +91,13 @@ func (c *admissionClosure) requestHistory(id manifest.NamedResource) {
 
 func (c *admissionClosure) requestEntryReceipt() {
 	route := c.proposal.entry
-	if route == nil || route.Application == nil || c.proposal.entrySupported() {
+	if len(c.historyOwners) == 0 || route == nil || route.Application == nil {
 		return
 	}
 	entry := route.Application
 	native := manifest.NewEntryKustomization(entry.Source, entry.Path, manifest.NamedResource{}).Named()
-	if len(c.historyOwners[native]) != 0 || len(c.historyOwners[route.Previous]) != 0 {
+	if (len(c.historyOwners[native]) != 0 || len(c.historyOwners[route.Previous]) != 0) &&
+		!c.proposal.entrySupported() {
 		c.proposal.EntryReceipt = entry
 	}
 }
@@ -119,7 +120,7 @@ func (c *admissionClosure) readHistory() {
 	}
 }
 
-func (c *admissionClosure) record(id manifest.NamedResource) manifest.DiscoveryRecord {
+func (c *admissionClosure) indexedRecord(id manifest.NamedResource) (manifest.DiscoveryRecord, bool) {
 	record, indexed := c.facts.SelectionIndex().Lookup(id)
 	if !indexed && id.Namespace != "" {
 		if occurrence, ok := c.catalogOccurrence(id); ok && occurrence.Authored.Namespace == "" {
@@ -128,25 +129,40 @@ func (c *admissionClosure) record(id manifest.NamedResource) manifest.DiscoveryR
 			record, _ = c.facts.SelectionIndex().Lookup(bare)
 		}
 	}
-	if occurrence, ok := c.catalogOccurrence(
-		id,
-	); record.ContentRoots == nil && ok &&
-		len(occurrence.Roots) != 0 {
-		source, _, _ := occurrence.SourcePath()
-		if source.Name == "" || source.Kind == "" {
-			source = manifest.BootstrapSourceID
-		}
-		record.ContentRoots = map[manifest.NamedResource][]string{source: occurrence.Roots}
+	return record, indexed
+}
+
+func (c *admissionClosure) record(id manifest.NamedResource) manifest.DiscoveryRecord {
+	record, _ := c.indexedRecord(id)
+	return c.declarationRecord(id, &record)
+}
+
+func (c *admissionClosure) contentRecord(id manifest.NamedResource) manifest.DiscoveryRecord {
+	record, indexed := c.indexedRecord(id)
+	var entry *admissionCatalogEntry
+	if c.catalog != nil {
+		entry = c.catalog.entries[id]
 	}
-	if c.incoming(id).Obj != nil {
-		record.Origin = c.incoming(id).Origin
+	c.recordRoots(id, &record, indexed, entry)
+	if c.nativeExcluded(id, entry) {
+		record.ContentRoots = nil
+	}
+	return c.declarationRecord(id, &record)
+}
+
+func (c *admissionClosure) declarationRecord(
+	id manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+) manifest.DiscoveryRecord {
+	if incoming := c.incoming(id); incoming.Obj != nil {
+		record.Origin = incoming.Origin
 	} else if !record.Origin.Policy(id, nil).Root && c.session.store.Policy(id).Root {
 		record.Origin = manifest.RepositoryDeclaration
 	}
 	if len(c.accepted) == 0 {
-		return record
+		return *record
 	}
-	return c.completeRecord(&id, &record)
+	return c.completeRecord(&id, record)
 }
 
 func (c *admissionClosure) historicalReferences(id manifest.NamedResource) iter.Seq[manifest.Reference] {
@@ -199,7 +215,7 @@ func (c *admissionClosure) resolveHistoricalRecord(owner manifest.NamedResource,
 	for source, roots := range record.ContentRoots {
 		resolved := make([]string, 0, len(roots))
 		for _, root := range roots {
-			base, ok := c.resolveRoot(source, root)
+			base, ok, _ := c.resolveRoot(source, root)
 			if !ok {
 				c.replace[owner] = false
 				base = root
@@ -228,10 +244,64 @@ func (c *admissionClosure) historicalReference(id, ref manifest.NamedResource) m
 	return reference
 }
 
-func (c *admissionClosure) resolveRoot(source manifest.NamedResource, root string) (string, bool) {
+//nolint:gocritic // Acquisition keeps the resolved path, availability, and completion separate.
+func (c *admissionClosure) resolveRoot(source manifest.NamedResource, root string) (string, bool, bool) {
 	facts := c.boundSource(source)
 	acquired, known := c.acquire(
 		Demand{Source: source, Root: root, History: true, Artifact: facts.Input, Witness: facts.Declaration},
 	)
-	return acquired.Root, known && acquired.Available
+	return acquired.Root, known && acquired.Available, known
+}
+
+// Construction coverage MUST expire when its native package leaves the construction frontier.
+func (c *admissionClosure) nativeExcluded(id manifest.NamedResource, entry *admissionCatalogEntry) bool {
+	if c.catalog != nil {
+		return entry != nil && entry.nativeExcluded
+	}
+	if !id.ReportHidden() {
+		return false
+	}
+	roots := c.context.Roots
+	if len(roots) == len(c.nativeRoots) && (len(roots) == 0 || &roots[0] == &c.nativeRoots[0]) {
+		return c.excludedNative[id]
+	}
+	c.nativeRoots = roots
+	clear(c.excludedNative)
+	for i := range roots {
+		root := &roots[i]
+		if Root(RootEvidence{Native: root}).Construction {
+			continue
+		}
+		if c.excludedNative == nil {
+			c.excludedNative = map[manifest.NamedResource]bool{}
+		}
+		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root.Path, manifest.NamedResource{}).Named()
+		c.excludedNative[owner] = true
+	}
+	return c.excludedNative[id]
+}
+
+func (c *admissionClosure) recordRoots(
+	id manifest.NamedResource,
+	record *manifest.DiscoveryRecord,
+	indexed bool,
+	entry *admissionCatalogEntry,
+) {
+	if record.ContentRoots != nil {
+		return
+	}
+	if c.catalog != nil && indexed {
+		if entry != nil && entry.occurrence.CatalogKnown && len(entry.occurrence.Roots) != 0 {
+			record.ContentRoots = entry.contentRoots
+		}
+		return
+	}
+	source, roots := c.facts.OccurrenceRoots(id)
+	if len(roots) == 0 {
+		return
+	}
+	if source.Name == "" || source.Kind == "" {
+		source = manifest.BootstrapSourceID
+	}
+	record.ContentRoots = map[manifest.NamedResource][]string{source: roots}
 }

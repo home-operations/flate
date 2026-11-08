@@ -261,20 +261,13 @@ func (p *Preparation) acquisition(demand *Demand, reads *store.ReadSet) (Acquisi
 	if !known {
 		return Acquisition{}, false
 	}
-	if !result.Reads.Valid() || !result.Demand.Reads.Valid() {
-		delete(p.acquired, key)
-		return Acquisition{}, false
-	}
-	if result.Reads != reads {
-		matched, captured := p.matched[result.Reads]
-		if !captured {
-			matched = result.Reads == nil || reads.Matches(result.Reads)
-			if p.matched == nil {
-				p.matched = make(map[*store.ReadSet]bool)
-			}
-			p.matched[result.Reads] = matched
+	// Physical root resolution depends only on the exact source generation in the key.
+	if !demand.History || demand.Root == "" {
+		if !result.Reads.Valid() || !result.Demand.Reads.Valid() {
+			delete(p.acquired, key)
+			return Acquisition{}, false
 		}
-		if !matched {
+		if !p.matchesAcquisition(reads, result.Reads) {
 			delete(p.acquired, key)
 			return Acquisition{}, false
 		}
@@ -407,4 +400,19 @@ func (c *admissionClosure) acquire(demand Demand) (Acquisition, bool) {
 	}
 	c.proposal.demands = append(c.proposal.demands, demand)
 	return Acquisition{}, false
+}
+
+func (p *Preparation) matchesAcquisition(reads, captured *store.ReadSet) bool {
+	if captured == reads {
+		return true
+	}
+	if matched, known := p.matched[captured]; known {
+		return matched
+	}
+	matched := captured == nil || reads.Matches(captured)
+	if p.matched == nil {
+		p.matched = make(map[*store.ReadSet]bool)
+	}
+	p.matched[captured] = matched
+	return matched
 }

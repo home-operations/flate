@@ -1,6 +1,8 @@
 package selection
 
 import (
+	"path/filepath"
+
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -20,6 +22,12 @@ type SourceContext struct {
 	Side                       manifest.TreeSide
 }
 
+// SourceFile preserves both source-relative and census-relative coordinates.
+type SourceFile struct {
+	Path    string
+	Indexed string
+}
+
 // SourceFacts borrows the source owner's immutable qualified comparison.
 type SourceFacts struct {
 	Comparison           *change.Set
@@ -34,7 +42,7 @@ type SourceFacts struct {
 	Origin               string
 	Path                 string
 	ToIndex              string
-	Paths                []string
+	Files                []SourceFile
 	Paired, InitialKnown bool
 	Pinned, External     bool
 	Derived              bool
@@ -50,7 +58,39 @@ type ProducerFacts struct {
 type census interface {
 	SelectionIndex() *manifest.DiscoveryIndex
 	Occurrence(manifest.NamedResource) (OccurrenceFacts, bool)
+	AdmissionCandidate(manifest.NamedResource) store.Child
+	OccurrenceRoots(manifest.NamedResource) (manifest.NamedResource, []string)
+	PreparedObject(manifest.NamedResource, *store.ReadSet) (store.Child, bool)
 	RootEvidence(manifest.NamedResource, *store.ReadSet) RootEvidence
 	ProducerFacts(manifest.BaseManifest) ProducerFacts
 	SourceFacts(manifest.NamedResource, *store.ReadSet) SourceFacts
+}
+
+// Coordinates projects an absolute path through the captured source origin.
+//
+//nolint:gocritic // Both coordinate spaces MUST remain explicit in the public result.
+func (f *SourceFacts) Coordinates(root, path string) (string, string) {
+	art := f.Input
+	sourceRoot := root
+	if art != nil {
+		sourceRoot = art.LocalPath
+	}
+	rel, err := filepath.Rel(sourceRoot, path)
+	if err != nil {
+		return "", ""
+	}
+	relative := filepath.ToSlash(rel)
+	indexed := relative
+	if f.ToIndex != "." {
+		physical := path
+		if art != nil && f.Origin != art.LocalPath {
+			physical = filepath.Join(f.Origin, rel)
+		}
+		rel, err = filepath.Rel(root, physical)
+		if err != nil {
+			return "", ""
+		}
+		indexed = filepath.ToSlash(rel)
+	}
+	return relative, indexed
 }

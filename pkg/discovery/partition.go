@@ -128,7 +128,7 @@ func pinnedRootOwners(roots []entryRoot, claimed func(entryRoot, []manifest.KSCl
 }
 
 type partitionVisit struct {
-	occurrence selection.OccurrenceFacts
+	occurrence *selection.OccurrenceFacts
 	scope      *partitionScope
 	root       string
 }
@@ -157,26 +157,26 @@ func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []selec
 	coordinates := map[selection.OccurrenceID]bool{}
 	scope := &partitionScope{occurrences: seeds}
 	for i := range seeds {
-		queue = append(queue, partitionVisit{occurrence: seeds[i], scope: scope, root: root.Path})
+		queue = append(queue, partitionVisit{occurrence: &seeds[i], scope: scope, root: root.Path})
 		coordinates[seeds[i].Declaration] = true
 	}
 	seen := map[occurrenceKey]bool{}
 	for len(queue) != 0 {
 		visit := queue[0]
 		queue = queue[1:]
-		if seen[occurrenceIdentity(&visit.occurrence)] {
+		if seen[occurrenceIdentity(visit.occurrence)] {
 			continue
 		}
-		seen[occurrenceIdentity(&visit.occurrence)] = true
-		root.Occurrences = append(root.Occurrences, visit.occurrence)
+		seen[occurrenceIdentity(visit.occurrence)] = true
+		root.Occurrences = append(root.Occurrences, *visit.occurrence)
 		if _, _, hasPath := visit.occurrence.SourcePath(); !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
 			continue
 		}
-		object := partitionObject(&visit.occurrence)
+		object := partitionObject(visit.occurrence)
 		application, _ := manifest.ApplicationFor(object)
 		references := manifest.References(object, manifest.ReferenceRelations)
 		if visit.occurrence.Witness != nil {
-			references = occurrenceReferences(&visit.occurrence)
+			references = occurrenceReferences(visit.occurrence)
 		}
 		for ref := range references {
 			if !entrySourceReference(&ref) || ref.NamedResource == application.Source {
@@ -202,7 +202,7 @@ func (p *entryPlanner) follow(
 	visit *partitionVisit,
 	seed bool,
 ) ([]partitionVisit, error) {
-	occurrence := &visit.occurrence
+	occurrence := visit.occurrence
 	object := partitionObject(occurrence)
 	application, valid := manifest.ApplicationFor(object)
 	if !valid {
@@ -256,7 +256,7 @@ func (p *entryPlanner) follow(
 	scope := &partitionScope{occurrences: children, parent: visit.scope}
 	next := make([]partitionVisit, len(children))
 	for i := range children {
-		next[i] = partitionVisit{occurrence: children[i], scope: scope, root: visit.root}
+		next[i] = partitionVisit{occurrence: &children[i], scope: scope, root: visit.root}
 	}
 	return next, nil
 }
@@ -278,7 +278,7 @@ func (p *entryPlanner) source(
 	visit *partitionVisit,
 	id manifest.NamedResource,
 ) (entryResolution, error) {
-	object := partitionObject(&visit.occurrence)
+	object := partitionObject(visit.occurrence)
 	application, _ := manifest.ApplicationFor(object)
 	selected := visit.scope.source(id)
 

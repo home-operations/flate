@@ -1,8 +1,10 @@
 package loader
 
 import (
+	"hash/maphash"
 	"maps"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -19,9 +21,9 @@ type admissionSource struct {
 	input, initial           *store.SourceArtifact
 	origin                   string
 	toIndex                  string
-	paths                    []string
+	files                    []selection.SourceFile
 	bound, paired            bool
-	pathsKnown, initialKnown bool
+	filesKnown, initialKnown bool
 	frozen, sideKnown        bool
 	side                     manifest.TreeSide
 }
@@ -47,10 +49,9 @@ func (l *Loader) SourceFacts(source manifest.NamedResource, reads *store.ReadSet
 	delta := changes
 	input, _ := objects.GetArtifact(source, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
 	declaration := objects.GetObject(source)
-	if bindings := l.bindings.Load(); bindings != nil {
-		cached := (*bindings)[source]
+	if cached := l.sourceBinding(source); cached != nil {
 		if cached.matchesComparison(l, evidence) && cached.matchesInputs(input, declaration) {
-			*evidence = cached
+			*evidence = *cached
 			return l.sourceViewFacts(evidence, false)
 		}
 		evidence.initial, evidence.initialKnown = cached.initial, cached.initialKnown
@@ -115,25 +116,35 @@ func (e *admissionSource) matchesInputs(input *store.SourceArtifact, declaration
 }
 
 func (l *Loader) publishSource(source manifest.NamedResource, evidence *admissionSource) {
+	bucket := l.sourceBucket(source)
 	for {
-		previous := l.bindings.Load()
-		next := make(map[manifest.NamedResource]admissionSource)
+		previous := bucket.Load()
+		if previous != nil {
+			if slot := (*previous)[source]; slot != nil {
+				slot.Store(new(*evidence))
+				return
+			}
+		}
+		// Runtime discoveries MUST NOT copy the catalog to cache one source.
+		if l.frozen {
+			return
+		}
+		next := make(map[manifest.NamedResource]*atomic.Pointer[admissionSource])
 		if previous != nil {
 			maps.Copy(next, *previous)
 		}
-		next[source] = *evidence
-		if l.bindings.CompareAndSwap(previous, &next) {
+		slot := new(atomic.Pointer[admissionSource])
+		slot.Store(new(*evidence))
+		next[source] = slot
+		if bucket.CompareAndSwap(previous, &next) {
 			return
 		}
 	}
 }
 
 func (l *Loader) sourceViewFacts(e *admissionSource, derived bool) selection.SourceFacts {
-	if !e.pathsKnown {
-		e.paths, e.pathsKnown = e.delta.Paths(), true
-	}
 	location := sourceView(e.source, l.SourceRoot, e.input, e.declaration)
-	return selection.SourceFacts{
+	facts := selection.SourceFacts{
 		Context:         l.selectionContext(),
 		Comparison:      l.Options.Changes,
 		ConfiguredInput: l.Options.ConfiguredInput,
@@ -148,11 +159,46 @@ func (l *Loader) sourceViewFacts(e *admissionSource, derived bool) selection.Sou
 		Origin:          e.origin,
 		Path:            location.Path,
 		ToIndex:         e.toIndex,
-		Paths:           e.paths,
+		Files:           e.files,
 		Paired:          e.paired,
 		InitialKnown:    e.initialKnown,
 		Pinned:          location.Pinned,
 		External:        location.External,
 		Derived:         derived,
 	}
+	if !e.filesKnown {
+		paths := e.delta.Paths()
+		e.files = make([]selection.SourceFile, len(paths))
+		for i, file := range paths {
+			indexed := file
+			if e.paired {
+				physical := filepath.Join(e.input.LocalPath, filepath.FromSlash(file))
+				if filepath.IsAbs(physical) {
+					_, indexed = facts.Coordinates(l.SourceRoot, physical)
+				}
+			}
+			e.files[i] = selection.SourceFile{Path: file, Indexed: indexed}
+		}
+		e.filesKnown = true
+	}
+	facts.Files = e.files
+	return facts
+}
+
+func (l *Loader) sourceBinding(source manifest.NamedResource) *admissionSource {
+	if bindings := l.sourceBucket(source).Load(); bindings != nil {
+		if slot := (*bindings)[source]; slot != nil {
+			return slot.Load()
+		}
+	}
+	return nil
+}
+
+//nolint:gochecknoglobals // Immutable process seed distributes source identities across publication buckets.
+var sourceBindingSeed = maphash.MakeSeed()
+
+func (l *Loader) sourceBucket(
+	source manifest.NamedResource,
+) *atomic.Pointer[map[manifest.NamedResource]*atomic.Pointer[admissionSource]] {
+	return &l.bindings[maphash.Comparable(sourceBindingSeed, source)%uint64(len(l.bindings))]
 }

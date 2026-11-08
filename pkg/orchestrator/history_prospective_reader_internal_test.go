@@ -511,6 +511,7 @@ spec:
 	fresh.completeBootstrap()
 	assert.NoError(t, fresh.prepareInvocation(t.Context()))
 	assert.NoError(t, fresh.installAdmission(t.Context()))
+	assert.Equal(t, fresh.admissionPreparation == nil, true)
 	assert.Equal(t, fresh.selection.Snapshot().Reconcile(child), true)
 	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), true)
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)

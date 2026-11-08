@@ -303,10 +303,9 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 				stores := [2]*store.Store{loaders[0].Store, loaders[1].Store}
 				for side, l := range loaders {
 					l.Options.Changes = changes
-					l.bindings.Store(&map[manifest.NamedResource]admissionSource{
-						manifest.BootstrapSourceID: {
-							initial: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
-						},
+					slot := (*l.sourceBucket(manifest.BootstrapSourceID).Load())[manifest.BootstrapSourceID]
+					slot.Store(&admissionSource{
+						initial: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
 					})
 					assert.Equal(t, len(stores[side].Objects()), 0)
 					proposal, err := prepareSelection(

@@ -21,7 +21,7 @@ func (r *ReadSet) MatchesContent(previous *ReadSet, id manifest.NamedResource) b
 	if required == 0 && !current.declaration || before.derived&required != required {
 		return false
 	}
-	if required&capturedObject != 0 && !reconcileEqual(current.view.child, before.view.child) {
+	if required&capturedObject != 0 && !reconcileEqual(current.view.child.input(), before.view.child.input()) {
 		return false
 	}
 	if current.declaration && (!before.declaration ||
@@ -34,14 +34,20 @@ func (r *ReadSet) MatchesContent(previous *ReadSet, id manifest.NamedResource) b
 			!artifactReadEqual(details.artifact, previousDetails.artifact, details.artifactRead)) {
 		return false
 	}
-	if required&capturedProductions != 0 &&
-		(details.index != previousDetails.index || !slices.Equal(details.productions, previousDetails.productions)) {
-		return false
+	if required&capturedProductions != 0 {
+		productions, previousProductions := current.productions.Load(), before.productions.Load()
+		if productions.index != previousProductions.index ||
+			!slices.Equal(productions.items, previousProductions.items) {
+			return false
+		}
 	}
 	return required&capturedObjects == 0 || slices.EqualFunc(details.objects, previousDetails.objects, manifest.Equal)
 }
 
 func (r *ReadSet) findInput(id manifest.NamedResource) *Input {
+	if r.last != nil && r.last.Ref.NamedResource == id {
+		return r.last
+	}
 	if r.byID != nil {
 		if i, found := slices.BinarySearchFunc(
 			*r.byID,

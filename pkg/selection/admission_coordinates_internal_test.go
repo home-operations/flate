@@ -48,7 +48,7 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 						Input:   sources[1],
 						Origin:  origin,
 						ToIndex: toIndex,
-						Paths:   changes.Paths(),
+						Files:   []SourceFile{{Path: file, Indexed: "input.txt"}},
 						Paired:  true,
 					},
 				},

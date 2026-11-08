@@ -109,7 +109,7 @@ func (s *Store) getEmission(
 			owner:      view.owner,
 			generation: view.generation,
 			revision:   view.revision,
-			binding:    view.sourceBinding(),
+			binding:    view.source,
 		},
 	}
 	if head != nil {
@@ -729,7 +729,7 @@ func (s *Store) declaredReferenceData(
 		return candidate
 	}
 	candidate.DeclaredKeys = nil
-	binding := view.sourceBinding()
+	binding := view.source
 	if (view.owner == nil || view.owner.id == p.Owner) &&
 		(p.Source == (manifest.NamedResource{}) || binding.source == (manifest.NamedResource{}) || p.Source == binding.source) {
 		for _, target := range manifest.ProducerTargets(object, id) {

@@ -24,7 +24,7 @@ func TestAdmission_OrderingEmittedPathProof_LiveOwnership(t *testing.T) {
 	if !selection.Root(rootAtForTest(l, object, record.Path)).Admitted {
 		t.Fatal("ownerless indexed declaration has no static root scope")
 	}
-	static := l.roots.get(child)
+	static := *l.roots.get(child)
 	proposal, err := prepareSelection(
 		t.Context(),
 		t,
@@ -81,7 +81,7 @@ func TestAdmission_OrderingEmittedPathProof_LiveOwnership(t *testing.T) {
 	assert.Equal(
 		t,
 		//nolint:govet // Snapshot equality must include immutable unexported facts.
-		reflect.DeepEqual(l.roots.get(child), static),
+		reflect.DeepEqual(*l.roots.get(child), static),
 		true,
 	)
 	assert.Equal(t, l.Store.GetArtifact(source.Named(), store.ArtifactContent) != nil, true)
@@ -192,12 +192,12 @@ func TestRootQuery_ReusesOwnership(t *testing.T) {
 	object := l.CatalogObject(child)
 	normal := rootQuery{loader: l}
 	l.SourceFacts(manifest.BootstrapSourceID, nil)
-	bindings := l.bindings.Load()
+	bindings := l.sourceBucket(manifest.BootstrapSourceID).Load()
 	if bindings == nil || len(*bindings) == 0 {
 		t.Fatal("source lookup did not retain comparisons in the source owner")
 	}
 	assert.Equal(t, normal.admitsRoot(object, record.Path), true)
-	assert.Equal(t, l.bindings.Load() == bindings, true)
+	assert.Equal(t, l.sourceBucket(manifest.BootstrapSourceID).Load() == bindings, true)
 	unrelated := owner.Clone()
 	unrelated.Name, unrelated.Path = "a-unrelated", "./elsewhere"
 	_, _, next := l.Store.GetEmission(factory.Named())
@@ -207,12 +207,12 @@ func TestRootQuery_ReusesOwnership(t *testing.T) {
 	reads := &rootOwnershipReads{admissionReader: l.Store}
 	query := rootQuery{loader: l, objects: reads}
 	l.SourceFacts(manifest.BootstrapSourceID, nil)
-	bindings = l.bindings.Load()
+	bindings = l.sourceBucket(manifest.BootstrapSourceID).Load()
 	if bindings == nil || len(*bindings) == 0 {
 		t.Fatal("source lookup did not retain comparisons before rejection")
 	}
 	assert.Equal(t, query.admitsRoot(object, record.Path), false)
-	assert.Equal(t, l.bindings.Load() == bindings, true)
+	assert.Equal(t, l.sourceBucket(manifest.BootstrapSourceID).Load() == bindings, true)
 	lists := reads.lists
 	if lists == 0 {
 		t.Fatal("root query did not collect current ownership")
@@ -226,7 +226,7 @@ func TestRootQuery_ReusesOwnership(t *testing.T) {
 	empty.Finish()
 	fresh := rootQuery{loader: l}
 	assert.Equal(t, fresh.admitsRoot(object, record.Path), true)
-	assert.Equal(t, l.bindings.Load() == bindings, true)
+	assert.Equal(t, l.sourceBucket(manifest.BootstrapSourceID).Load() == bindings, true)
 	l.Store.AddObject(owner)
 	pendingReads := &rootOwnershipReads{admissionReader: l.Store}
 	l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{
@@ -297,6 +297,7 @@ func TestEntryRoots_CurrentOwnership(t *testing.T) {
 	assert.Equal(t, contains(l.EntryRoots(nil, &reads)), true)
 	l.Store.RecordEmitted(factory.Named(), &store.Emission{Children: []store.Child{{Obj: owner}}, Complete: true}, nil)
 	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, len(l.EntryRoots(nil, &reads)), 0)
 	assert.Equal(t, contains(l.EntryRoots(nil, nil)), false)
 	l.Store.RecordEmitted(factory.Named(), &store.Emission{Complete: true}, nil)
 	assert.Equal(t, contains(l.EntryRoots(nil, nil)), true)
@@ -448,7 +449,7 @@ func TestEntryRoots_NativeOperand(t *testing.T) {
 			}
 			assert.Equal(
 				t,
-				selection.Root(l.roots.get(id).facts).Independent &&
+				selection.Root(l.roots.get(id).view()).Independent &&
 					l.roots.get(id).occurrence.Declaration != (occurrenceID{}),
 				!native,
 			)
@@ -459,4 +460,42 @@ func TestEntryRoots_NativeOperand(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestEntryRoots_UnavailableOutputCapturesAvailability(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	root := t.TempDir()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Content: "first"})
+	object := &manifest.ConfigMap{Name: "static", Namespace: "apps"}
+	st.AddObject(object)
+	id := object.Named()
+	l := New(st)
+	l.SourceRoot = root
+	l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: root + "/object.yaml", Declaration: object}
+	l.roots.set(id, &rootEvidence{
+		identity: id,
+		occurrence: authoredOccurrence{
+			Identity: id, Authored: id, object: object,
+			Declaration: occurrenceID{Source: root, File: "object.yaml"},
+		},
+		record: selection.RootRecord{Authored: id, Path: root + "/object.yaml"},
+		scope:  selection.RootScopeFacts{NamespaceEligible: true, Initial: true, Eligibility: selection.RootEligible},
+	})
+	var unavailable store.ReadSet
+	unavailable.Init(st, manifest.NamedResource{}, nil)
+	defer unavailable.Retire()
+	assert.Equal(t, len(l.EntryRoots(nil, &unavailable)), 0)
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Content: "second"})
+	assert.Equal(t, unavailable.Valid(), true)
+	st.RecordEmitted(id, &store.Emission{Complete: true}, nil)
+	assert.Equal(t, unavailable.Valid(), false)
+	var available store.ReadSet
+	available.Init(st, manifest.NamedResource{}, nil)
+	defer available.Retire()
+	roots := l.EntryRoots(nil, &available)
+	assert.Equal(t, len(roots), 1)
+	assert.Equal(t, roots[0].Identity, id)
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, Content: "third"})
+	assert.Equal(t, available.Valid(), false)
 }

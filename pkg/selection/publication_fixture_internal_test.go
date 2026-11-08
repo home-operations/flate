@@ -17,6 +17,19 @@ func (f *publicationFacts) Occurrence(manifest.NamedResource) (OccurrenceFacts, 
 	return OccurrenceFacts{}, false
 }
 
+func (f *publicationFacts) AdmissionCandidate(manifest.NamedResource) store.Child {
+	return store.Child{}
+}
+
+//nolint:gocritic // The fixture implements the census method exactly.
+func (f *publicationFacts) OccurrenceRoots(manifest.NamedResource) (manifest.NamedResource, []string) {
+	return manifest.NamedResource{}, nil
+}
+
+func (f *publicationFacts) PreparedObject(manifest.NamedResource, *store.ReadSet) (store.Child, bool) {
+	return store.Child{}, false
+}
+
 func (f *publicationFacts) RootEvidence(manifest.NamedResource, *store.ReadSet) RootEvidence {
 	return RootEvidence{}
 }

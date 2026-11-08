@@ -123,7 +123,7 @@ func (r *ReadSet) Lookup(id manifest.NamedResource) (manifest.BaseManifest, mani
 	input := r.input(id)
 	obj := r.Capture(input)
 	if obj == nil {
-		return nil, input.view.child.Policy(id)
+		return nil, input.view.child.input().Policy(id)
 	}
 	return obj, input.view.child.policy
 }

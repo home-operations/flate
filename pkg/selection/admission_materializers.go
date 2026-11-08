@@ -17,13 +17,21 @@ type materializerDemand struct {
 	ordering, required bool
 }
 
-func (c *admissionClosure) materializerCandidates(ordering bool) [2][]OccurrenceFacts {
+func (c *admissionClosure) materializerCandidates(ordering bool) [2][]*OccurrenceFacts {
 	mode := 0
 	if ordering {
 		mode = 1
 	}
+	if c.candidatesKnown[mode] {
+		return c.candidates[mode]
+	}
 	candidates := c.candidates[mode]
-	objects := c.session.store.Objects()
+	var objects []manifest.BaseManifest
+	for kind := range manifest.Kinds() {
+		if kind.Parent {
+			objects = append(objects, c.session.store.ListObjects(kind.Group, kind.Kind)...)
+		}
+	}
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 	project := func(object manifest.BaseManifest) OccurrenceFacts {
 		facts := c.facts.ProducerFacts(object)
@@ -35,18 +43,20 @@ func (c *admissionClosure) materializerCandidates(ordering bool) [2][]Occurrence
 	c.collectIndexedMaterializers(&candidates, project)
 	c.collectObjectMaterializers(&candidates, objects, ordering, project)
 	for i := range candidates {
-		slices.SortFunc(candidates[i], func(a, b OccurrenceFacts) int { return a.Authored.Compare(b.Authored) })
+		if i == 0 && c.catalog != nil && len(candidates[0]) == len(c.catalog.candidates) {
+			continue
+		}
+		slices.SortFunc(candidates[i], func(a, b *OccurrenceFacts) int { return a.Authored.Compare(b.Authored) })
 	}
+	c.candidates[mode], c.candidatesKnown[mode] = candidates, true
 	return candidates
 }
 
+//nolint:gocritic // The search key MUST remain independent while its consumer is assigned.
 func (c *admissionClosure) materializers(
-	demandValue *materializerDemand,
+	demand materializerDemand,
 	consumer manifest.NamedResource,
-	snapshot [2][]OccurrenceFacts,
 ) bool {
-	demand := *demandValue
-
 	demand.consumer = consumer
 	if pending, searched := c.searched[demand]; searched {
 		return pending
@@ -67,8 +77,9 @@ func (c *admissionClosure) materializers(
 		return false
 	}
 
+	available := c.materializerCandidates(demand.ordering || demand.application != "")
 	candidates := func(yield func(manifest.NamedResource, OccurrenceFacts) bool) {
-		c.yieldMaterializerCandidates(&demand, snapshot, yield)
+		c.yieldMaterializerCandidates(&demand, available, yield)
 	}
 	pending := false
 	var opaque []OccurrenceFacts
@@ -79,10 +90,10 @@ func (c *admissionClosure) materializers(
 			continue
 		}
 		match := c.materializerTargetsMatch(id, facts, &demand, matches)
+		if !match && c.opaqueMaterializerPending(&demand, id, facts, target) {
+			opaque = append(opaque, occurrence)
+		}
 		if !match {
-			if c.opaqueMaterializerPending(&demand, id, facts, target) {
-				opaque = append(opaque, occurrence)
-			}
 			continue
 		}
 		output2 := c.materializerOutputMatches(id, matches)
@@ -163,7 +174,7 @@ func (c *admissionClosure) matchingInputs(
 	return inputs, nil
 }
 
-func (c *admissionClosure) retainIndexedMaterializers(candidates *[2][]OccurrenceFacts) {
+func (c *admissionClosure) retainIndexedMaterializers(candidates *[2][]*OccurrenceFacts) {
 	retained := candidates[0][:0]
 	for i := range candidates[0] {
 		occurrence := candidates[0][i]
@@ -184,15 +195,16 @@ func (c *admissionClosure) retainIndexedMaterializers(candidates *[2][]Occurrenc
 }
 
 func (c *admissionClosure) collectIndexedMaterializers(
-	candidates *[2][]OccurrenceFacts,
+	candidates *[2][]*OccurrenceFacts,
 	project func(manifest.BaseManifest) OccurrenceFacts,
 ) {
-	c.retainIndexedMaterializers(candidates)
-	identities := maps.Keys(c.facts.SelectionIndex().Records)
 	if c.catalog != nil {
-		identities = slices.Values(c.catalog.materializers)
+		candidates[0] = c.catalog.candidates
+		c.collectPreparedMaterializers(candidates, project)
+		return
 	}
-	for id := range identities {
+	c.retainIndexedMaterializers(candidates)
+	for id := range maps.Keys(c.facts.SelectionIndex().Records) {
 		occurrence, located := c.catalogOccurrence(id)
 		if !located {
 			continue
@@ -202,18 +214,18 @@ func (c *admissionClosure) collectIndexedMaterializers(
 			facts.HasPath && facts.Policy != nil && len(facts.Roots) == 0 {
 			continue
 		}
-		if !slices.ContainsFunc(candidates[0], func(existing OccurrenceFacts) bool {
+		if !slices.ContainsFunc(candidates[0], func(existing *OccurrenceFacts) bool {
 			return existing.Declaration == occurrence.Declaration && existing.Identity == occurrence.Identity &&
 				existing.Witness == occurrence.Witness
 		}) {
-			candidates[0] = append(candidates[0], occurrence)
+			candidates[0] = append(candidates[0], &occurrence)
 		}
 	}
 	c.collectPreparedMaterializers(candidates, project)
 }
 
 func (c *admissionClosure) collectPreparedMaterializers(
-	candidates *[2][]OccurrenceFacts,
+	candidates *[2][]*OccurrenceFacts,
 	project func(manifest.BaseManifest) OccurrenceFacts,
 ) {
 	identities := maps.Keys(c.facts.SelectionIndex().Records)
@@ -221,7 +233,7 @@ func (c *admissionClosure) collectPreparedMaterializers(
 		identities = slices.Values(c.catalog.materializers)
 	}
 	for id := range identities {
-		child := c.candidate(id)
+		child := c.facts.AdmissionCandidate(id)
 		if _, located := c.catalogOccurrence(
 			id,
 		); child.Obj == nil || located ||
@@ -233,7 +245,7 @@ func (c *admissionClosure) collectPreparedMaterializers(
 		}
 		if slices.ContainsFunc(
 			candidates[0],
-			func(existing OccurrenceFacts) bool { return existing.Object == child.Obj },
+			func(existing *OccurrenceFacts) bool { return existing.Object == child.Obj },
 		) {
 			continue
 		}
@@ -242,12 +254,12 @@ func (c *admissionClosure) collectPreparedMaterializers(
 			continue
 		}
 		occurrence.Declaration.Source = c.declarationSource(id)
-		candidates[0] = append(candidates[0], occurrence)
+		candidates[0] = append(candidates[0], &occurrence)
 	}
 }
 
 func (c *admissionClosure) retainObjectMaterializers(
-	candidates *[2][]OccurrenceFacts,
+	candidates *[2][]*OccurrenceFacts,
 	objects []manifest.BaseManifest,
 	ordering bool,
 ) {
@@ -272,7 +284,7 @@ func (c *admissionClosure) retainObjectMaterializers(
 }
 
 func (c *admissionClosure) collectObjectMaterializers(
-	candidates *[2][]OccurrenceFacts,
+	candidates *[2][]*OccurrenceFacts,
 	objects []manifest.BaseManifest,
 	ordering bool,
 	project func(manifest.BaseManifest) OccurrenceFacts,
@@ -295,7 +307,7 @@ func (c *admissionClosure) collectObjectMaterializers(
 		}
 		if slices.ContainsFunc(
 			candidates[1],
-			func(existing OccurrenceFacts) bool { return existing.Object == object },
+			func(existing *OccurrenceFacts) bool { return existing.Object == object },
 		) {
 			continue
 		}
@@ -306,7 +318,7 @@ func (c *admissionClosure) collectObjectMaterializers(
 		if !occurrence.HasPath {
 			occurrence.Declaration.Source = c.declarationSource(id)
 		}
-		candidates[1] = append(candidates[1], occurrence)
+		candidates[1] = append(candidates[1], &occurrence)
 	}
 }
 
@@ -355,7 +367,7 @@ func (c *admissionClosure) materializerTargetsMatch(
 	matches materializerMatch,
 ) bool {
 	target := demand.target
-	match := c.coversDeclaration(facts.Catalog, target)
+	match := c.coversDeclaration(new(c.rootOwnerFacts(facts.Catalog)), target)
 	if demand.application != "" {
 		applies := func(object manifest.BaseManifest) bool {
 			if object.Named().Namespace == "" {
@@ -423,7 +435,7 @@ func (c *admissionClosure) materializerPending(
 
 func (c *admissionClosure) yieldMaterializerCandidates(
 	demandValue *materializerDemand,
-	snapshot [2][]OccurrenceFacts,
+	snapshot [2][]*OccurrenceFacts,
 	yield func(manifest.NamedResource, OccurrenceFacts) bool,
 ) {
 	demand := *demandValue
@@ -431,7 +443,7 @@ func (c *admissionClosure) yieldMaterializerCandidates(
 		occurrenceValues2 := snapshot[0]
 		for occurrenceIndex2 := range occurrenceValues2 {
 			occurrence := occurrenceValues2[occurrenceIndex2]
-			if !yield(occurrence.Identity, occurrence) {
+			if !yield(occurrence.Identity, *occurrence) {
 				return
 			}
 		}
@@ -498,7 +510,8 @@ func (c *admissionClosure) admitOpaqueMaterializers(
 
 func (c *admissionClosure) skipIndexedMaterializer(id manifest.NamedResource, ordering bool) bool {
 	_, indexed := c.catalogOccurrence(id)
-	return !ordering && (indexed || c.candidate(id).Obj != nil && c.facts.SelectionIndex().Records[id].Builder != "")
+	return !ordering &&
+		(indexed || c.facts.AdmissionCandidate(id).Obj != nil && c.facts.SelectionIndex().Records[id].Builder != "")
 }
 
 func (c *admissionClosure) selectorInputMatches(
@@ -508,7 +521,7 @@ func (c *admissionClosure) selectorInputMatches(
 ) bool {
 	object := c.object(id)
 	if object == nil {
-		object = c.candidate(id).Obj
+		object = c.facts.AdmissionCandidate(id).Obj
 	}
 	matched := false
 	if object != nil {
@@ -621,11 +634,10 @@ func (c *admissionClosure) candidateMaterializerFacts(
 	demandValue *materializerDemand,
 	consumer manifest.NamedResource,
 	id manifest.NamedResource,
-	occurrenceValue *OccurrenceFacts,
+	occurrence *OccurrenceFacts,
 ) *OccurrenceFacts {
 	demand := *demandValue
 	target := demand.target
-	occurrence := *occurrenceValue
 	if id == consumer || id == target || demand.source != "" && demand.source != occurrence.Declaration.Source {
 		return nil
 	}
@@ -635,16 +647,16 @@ func (c *admissionClosure) candidateMaterializerFacts(
 		}) {
 		return nil
 	}
-	facts := &occurrence
+	facts := occurrence
 	if facts.Witness == nil && facts.Catalog == nil {
 		return nil
 	}
-	if !c.materializerSourceMatches(&demand, consumer, id, &occurrence) {
+	if !c.materializerSourceMatches(&demand, consumer, id, occurrence) {
 		return nil
 	}
 	unconstrained := target.Kind == "" || demand.application != ""
 	fixedPath := facts.HasPath && !slices.ContainsFunc(facts.Roots, manifest.HasEnvsubstReference)
-	if unconstrained && fixedPath && !c.coversDeclaration(c.object(id), consumer) {
+	if unconstrained && fixedPath && !c.coversDeclaration(new(c.rootOwnerFacts(c.object(id))), consumer) {
 		return nil
 	}
 	return facts
@@ -707,14 +719,14 @@ func (c *admissionClosure) materializerOwners(
 
 func (c *admissionClosure) yieldObjectMaterializerCandidates(
 	demand *materializerDemand,
-	occurrences []OccurrenceFacts,
+	occurrences []*OccurrenceFacts,
 	yield func(manifest.NamedResource, OccurrenceFacts) bool,
 ) {
 	target := demand.target
 	{
 		occurrenceValues3 := occurrences
 		for occurrenceIndex3 := range occurrenceValues3 {
-			occurrence := occurrenceValues3[occurrenceIndex3]
+			occurrence := *occurrenceValues3[occurrenceIndex3]
 			id := occurrence.Identity
 			if c.skipIndexedMaterializer(id, demand.ordering) {
 				continue

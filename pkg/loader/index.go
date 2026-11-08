@@ -96,11 +96,11 @@ func (l *Loader) seedSourceAuthority() {
 	l.side, l.sideKnown = l.comparisonSide()
 	seed := func(source manifest.NamedResource) {
 		l.SourceFacts(source, nil)
-		previous := l.bindings.Load()
+		previous := l.sourceBinding(source)
 		if previous == nil {
 			return
 		}
-		evidence := (*previous)[source]
+		evidence := *previous
 		if !evidence.initialKnown {
 			evidence.initial, _ = l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 			evidence.initialKnown = true
@@ -141,7 +141,9 @@ func (l *Loader) Retire() {
 		l.facts, l.scopes, l.Options.ParsedInputs, l.snapshot = nil, nil, nil, nil
 		l.candidates, l.admitted, l.locations = nil, nil, nil
 		l.roots = rootInventory{}
-		l.bindings.Store(nil)
+		for i := range l.bindings {
+			l.bindings[i].Store(nil)
+		}
 		l.projections.Clear()
 		return
 	}
@@ -171,15 +173,7 @@ func (l *Loader) sweepProducerFacts() {
 			continue
 		}
 		for object := range *facts {
-			id := object.Named()
-			if l.Store.GetDeclaration(id) == object {
-				continue
-			}
-			record, indexed := l.Index.Lookup(id)
-			if indexed && record.Declaration == object && (record.Builder == "" || l.preparedObject(id).Obj == object) {
-				continue
-			}
-			if candidate := l.candidates[id]; candidate.Obj == object && record.Builder == "" {
+			if l.producerFactCurrent(object) {
 				continue
 			}
 			delete(*facts, object)
@@ -188,17 +182,21 @@ func (l *Loader) sweepProducerFacts() {
 }
 
 func (l *Loader) sweepSourceBindings() {
-	if bindings := l.bindings.Load(); bindings != nil {
+	for i := range l.bindings {
+		bindings := l.bindings[i].Load()
+		if bindings == nil {
+			continue
+		}
 		for id := range *bindings {
-			evidence := (*bindings)[id]
+			evidence := *(*bindings)[id].Load()
 			input, _ := l.Store.GetArtifact(id, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
 			if evidence.matchesInputs(input, l.Store.GetObject(id)) {
 				continue
 			}
-			evidence.bound, evidence.paired, evidence.pathsKnown = false, false, false
-			evidence.input, evidence.declaration, evidence.paths = nil, nil, nil
+			evidence.bound, evidence.paired, evidence.filesKnown = false, false, false
+			evidence.input, evidence.declaration, evidence.files = nil, nil, nil
 			evidence.delta = nil
-			(*bindings)[id] = evidence
+			(*bindings)[id].Store(&evidence)
 		}
 	}
 }
@@ -230,7 +228,9 @@ func (l *Loader) Close() {
 	l.Options.Cache, l.inputCaches = nil, nil
 	l.facts, l.scopes, l.admitted, l.snapshot = nil, nil, nil, nil
 	l.inputReaders, l.inputObjects, l.templateProjections = nil, nil, nil
-	l.bindings.Store(nil)
+	for i := range l.bindings {
+		l.bindings[i].Store(nil)
+	}
 	for i := range l.producerFacts {
 		l.producerFacts[i].Store(nil)
 	}
@@ -329,7 +329,7 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 			rel, _ := filepath.Rel(repoRoot, origin)
 			r.File = filepath.ToSlash(rel)
 		}
-		if selection.Root(l.roots.get(id).facts).Independent {
+		if selection.Root(l.roots.get(id).view()).Independent {
 			r.Parent = manifest.NamedResource{}
 		} else if kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
 			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
@@ -455,4 +455,22 @@ func (l *Loader) recordInputReferences(
 		refs = occurrence.references()
 	}
 	return refs
+}
+
+func (l *Loader) producerFactCurrent(object manifest.BaseManifest) bool {
+	id := object.Named()
+	if l.Store.GetDeclaration(id) == object {
+		return true
+	}
+	record, indexed := l.Index.Lookup(id)
+	if indexed && record.Declaration == object {
+		prepared, _ := l.PreparedObject(id, nil)
+		if record.Builder == "" || prepared.Obj == object {
+			return true
+		}
+	}
+	if candidate := l.candidates[id]; candidate.Obj == object && record.Builder == "" {
+		return true
+	}
+	return false
 }

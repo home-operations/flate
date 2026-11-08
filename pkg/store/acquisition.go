@@ -224,7 +224,8 @@ func sameInputEvidence(current, before *Input) bool {
 		}
 	}
 	a, b := current.details.Load(), before.details.Load()
-	if a != nil && b != nil && (a.artifactRead != b.artifactRead || a.acquisition != b.acquisition) {
+	if a != nil && b != nil &&
+		(a.artifactRead != b.artifactRead || a.artifactGenerations != b.artifactGenerations || a.acquisition != b.acquisition) {
 		return false
 	}
 	return true
@@ -242,23 +243,24 @@ func (r *ReadSet) freezeEvidence() *ReadSet {
 		snapshot.acquisitionRead = input.acquisitionRead
 		if details := input.details.Load(); details != nil {
 			target := frozen.details(snapshot)
-			target.productions = slices.Clone(details.productions)
 			target.objects = slices.Clone(details.objects)
 			target.artifact, target.artifactRead = details.artifact, details.artifactRead
+			target.artifactGenerations = details.artifactGenerations
 			target.sourceGuard = details.sourceGuard
 			target.conditions = slices.Clone(details.conditions)
 			target.status = details.status
 			target.acquisition, target.acquisitionState = details.acquisition, details.acquisitionState
+		}
+		if productions := input.productions.Load(); productions != nil {
+			target := frozen.productionDetails(snapshot)
+			target.items = slices.Clone(productions.items)
 		}
 		for kind := objectFacet; kind <= reconciliationFacet; kind++ {
 			cell := input.cell(kind)
 			if cell == nil {
 				continue
 			}
-			target := snapshot.cell(kind)
-			if target == nil {
-				continue
-			}
+			target := frozen.registration(snapshot, kind)
 			target.head = cell.head
 			target.generation.Store(cell.generation.Load())
 			if cell.absent != nil {

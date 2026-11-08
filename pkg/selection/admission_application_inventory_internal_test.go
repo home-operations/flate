@@ -203,14 +203,13 @@ func testApplicationInventoryCase(t *testing.T, tc *applicationInventoryCase) {
 		t.Fatal("application fixture requires physical source bytes")
 	}
 	closure.materializers(
-		&materializerDemand{
+		materializerDemand{
 			target:      source.Named(),
 			source:      root,
 			application: filepath.Join(root, "entry"),
 			required:    true,
 		},
 		manifest.NamedResource{},
-		closure.materializerCandidates(false),
 	)
 	assert.Equal(t, closure.role(producer.Named()).needed, tc.wantProducer)
 	assert.Equal(t, closure.role(producer.Named()).selected, false)

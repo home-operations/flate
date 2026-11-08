@@ -42,9 +42,9 @@ func TestAdmission_ApplicationProducerEvidence(t *testing.T) {
 			}
 			closure := solverClosure(t, st, facts)
 			closure.context = facts.context
-			closure.materializers(&materializerDemand{
+			closure.materializers(materializerDemand{
 				target: source.Named(), source: root, application: filepath.Join(root, "flux"), required: true,
-			}, manifest.NamedResource{}, closure.materializerCandidates(false))
+			}, manifest.NamedResource{})
 			assert.Equal(t, closure.role(owner.Named()).needed, true)
 		})
 	}
@@ -77,9 +77,9 @@ spec:
 				}, occurrences: map[manifest.NamedResource]OccurrenceFacts{owner: occurrence}}
 				closure := solverClosure(t, st, facts)
 				closure.context = facts.context
-				pending := closure.materializers(&materializerDemand{
+				pending := closure.materializers(materializerDemand{
 					target: source.Named(), source: root, application: filepath.Join(root, "flux"), required: true,
-				}, manifest.NamedResource{}, closure.materializerCandidates(false))
+				}, manifest.NamedResource{})
 				assert.Equal(t, pending, true)
 				assert.Equal(t, closure.role(owner).needed, true)
 				owner.Namespace = ""

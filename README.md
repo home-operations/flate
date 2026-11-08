@@ -152,9 +152,12 @@ Encrypted keys stay absent, and repository plaintext keys take precedence.
 Supply changes reference data only. It does not fill encrypted keys in emitted objects.
 
 A `substituteFrom` Secret that exists only on the cluster leaves its variables unavailable.
-flate warns `UnresolvedSubstitution` for those unavailable variables.
+A non-optional `substituteFrom` Secret with no readable keys produces an `UnresolvedSubstitution` warning.
+Encrypted SOPS keys are absent, so their variables are unavailable.
+`SOPSUnreadable` names the removed encrypted keys.
 Flux substitution runs when a variable is readable or inline, or when the strategy is `Always`.
-Active substitution applies defaults or replaces unavailable `${VAR}` references with empty strings.
+Active substitution applies defaults with or without `--strict-substitutions`.
+Without `--strict-substitutions`, it replaces other unavailable `${VAR}` references with empty strings.
 If no variables are readable under the default strategy, `${VAR}` remains literal.
 Give those variables defaults (`${VAR:=value}`) or supply a dummy Secret with the keys.
 A missing required `substituteFrom` ConfigMap still fails.
@@ -250,9 +253,11 @@ Commit pins that also specify a branch fetch full history.
 | GitRepository, OCIRepository, HelmRepository, HelmChart, Bucket | Fetch referenced content                                             |
 | ArtifactGenerator, ExternalArtifact                             | Generated artifacts                                                  |
 | ResourceSet                                                     | Inline inputs and referenced input providers                         |
-| ResourceSetInputProvider                                        | Defaults and exported inputs                                         |
+| ResourceSetInputProvider                                        | Defaults, exported inputs and OCI registry tags                      |
 
-Dynamic ResourceSet input providers with no offline inputs contribute no inputs and produce an `OfflineInputProvider` warning.
+Unsupported dynamic ResourceSet input provider types with no offline inputs contribute no inputs and produce an `OfflineInputProvider` warning.
+`OCIArtifactTag` can fetch registry tags without supplied `status.exportedInputs`.
+Registry access still needs network access and any required credentials.
 
 The bootstrap Git source is the repository with cluster manifests.
 The working tree can serve as this source.
@@ -300,27 +305,27 @@ An explicit `--skip-kinds` list wins over inclusion. Dependencies remain availab
 
 ## Flags
 
-| Shared flag                       | Description                                                                |
-| --------------------------------- | -------------------------------------------------------------------------- |
-| `-p, --path`                      | Read Flux manifests from this directory                                    |
-| `-P, --path-orig`                 | Compare with a baseline directory (exclusive with --base)                  |
-| `--base`                          | Compare with a Git revision (exclusive with --path-orig)                   |
-| `-n, --namespace`                 | Select resources in this namespace                                         |
-| `--supply`                        | Supply reference-only objects from YAML (repeatable flag) |
+| Shared flag                       | Description                                               |
+| --------------------------------- | --------------------------------------------------------- |
+| `-p, --path`                      | Read Flux manifests from this directory                   |
+| `-P, --path-orig`                 | Compare with a baseline directory (exclusive with --base) |
+| `--base`                          | Compare with a Git revision (exclusive with --path-orig)  |
+| `-n, --namespace`                 | Select resources in this namespace                        |
+| `--supply`                        | Read reference-only YAML objects (repeatable flag)        |
 | `--allow-missing-kinds`           | Tolerate missing input kinds (comma-separated values)     |
-| `--strict-substitutions`          | Reject undefined substitutions without defaults                    |
-| `--skip-kinds`                    | Exclude output kinds (comma-separated values)                            |
-| `--registry-config`               | Read OCI credentials from a native Docker or Helm store              |
-| `--cache-dir`                     | Store fetched sources and renders in this directory                        |
-| `--concurrency`                   | Limit parallel reconciles (0 means unbounded)                              |
-| `--git-depth`                     | Set Git fetch depth (0 means full history)                                 |
-| `--restrict-egress`               | Block private-address fetches and local Git transports                     |
-| `--kube-version`                  | Set the cluster Kubernetes version for Helm                                |
-| `-a, --api-versions`              | Set Helm cluster APIs (comma-separated values)                       |
-| `--enable-dns`                    | Enable DNS lookups in Helm templates                                      |
-| `--disable-chart-digest-tracking` | Omit digest suffixes from OCI chart versions                           |
-| `--log-level`                     | Set log level: debug,info,warn,error                                       |
-| `--no-progress`                   | Hide live progress on stderr                                               |
+| `--strict-substitutions`          | Reject undefined substitutions without defaults           |
+| `--skip-kinds`                    | Exclude output kinds (comma-separated values)             |
+| `--registry-config`               | Read OCI credentials from a native Docker or Helm store   |
+| `--cache-dir`                     | Store fetched sources and renders in this directory       |
+| `--concurrency`                   | Limit parallel reconciles (0 means unbounded)             |
+| `--git-depth`                     | Set Git fetch depth (0 means full history)                |
+| `--restrict-egress`               | Block private-address fetches and local Git transports    |
+| `--kube-version`                  | Set the cluster Kubernetes version for Helm               |
+| `-a, --api-versions`              | Set Helm cluster APIs (comma-separated values)            |
+| `--enable-dns`                    | Enable DNS lookups in Helm templates                      |
+| `--disable-chart-digest-tracking` | Omit digest suffixes from OCI chart versions              |
+| `--log-level`                     | Set log level: debug,info,warn,error                      |
+| `--no-progress`                   | Hide live progress on stderr                              |
 
 See `flate <command> --help` for defaults, environment variables, output formats and flags for each command.
 

@@ -778,12 +778,14 @@ func (l *Loader) readOccurrence(
 ) ([]store.Child, error) {
 	var children []store.Child
 	var payload *inputPayload
+	var warnings []manifest.Warning
 	if matching {
 		objects := l.documents.cache[file].objects
 		for i := range objects {
 			object := &objects[i]
 			if object.outcome.Ordinal == reader.coordinate.Document && object.item == reader.coordinate.item {
 				payload = object.payload
+				warnings = object.Warnings
 				break
 			}
 		}
@@ -800,6 +802,7 @@ func (l *Loader) readOccurrence(
 		return nil, err
 	}
 	for _, doc := range docs {
+		doc.Warnings = warnings
 		parsed, outcome, _ := Prepare(doc, manifest.ParseDocOptions{})
 		if outcome.Err != nil {
 			return children, outcome.Err

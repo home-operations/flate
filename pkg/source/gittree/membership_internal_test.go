@@ -114,7 +114,7 @@ func TestFS_ExcludedDirectoryMembership(t *testing.T) {
 						assert.NoError(t, readErr)
 						assert.Equal(t, string(data), name)
 					}
-					observed, observeErr := view.FreshInputs(t.Context())
+					observed, observeErr := view.FreshInputs(t.Context(), nil)
 					assert.NoError(t, observeErr)
 					assert.Equal(t, len(observed.Files), 3)
 				}

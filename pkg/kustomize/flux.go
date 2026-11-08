@@ -105,6 +105,8 @@ func Render(
 
 // Preparation MUST remain owned by one logical render consumer until transfer or retirement.
 type Preparation struct {
+	decoded        *decodedRender
+	shaping        *preparedShaping
 	cache          *TreeCache
 	spec           *manifest.Kustomization
 	source         *store.SourceArtifact
@@ -343,18 +345,9 @@ func (r *renderRequest) validate(
 	generation fs.FS,
 ) (bool, error) {
 	result.receipt = nil
-	raw, readFileErr := fs.ReadFile(generation, "content")
-	if readFileErr != nil {
-		return false, manifest.NewError(
-			manifest.ErrFlux,
-			fmt.Errorf("read kustomize render cache: %w", readFileErr),
-			"",
-		)
-	}
-	frame, readFileErr := decodeFrame(raw)
-	if readFileErr != nil || frame.header.Key != r.key {
-		slog.Debug("kustomize: decode render frame", "err", readFileErr)
-		return false, nil
+	frame, decoded, readFileErr := r.request.Preparation.readFrame(generation)
+	if readFileErr != nil || !decoded || frame.header.Key != r.key {
+		return false, readFileErr
 	}
 	valid, readFileErr := frame.header.Reads.stillValid(
 		ctx,

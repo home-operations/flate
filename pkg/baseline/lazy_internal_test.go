@@ -561,14 +561,14 @@ func testAutoResolveLazyBaseReadsCase(t *testing.T, testCaseInput *struct {
 		assert.NoError(t, localErr)
 		input, localErr := admitLocation(t.Context(), location, manifest.WorkScope{})
 		assert.NoError(t, localErr)
-		entries, localErr := treeEntries(t.Context(), tree)
+		entries, comparison, localErr := treeEntries(t.Context(), tree)
 		assert.NoError(t, localErr)
 		s := selection{
 			repo:    repo,
 			current: input.FS.(*gittree.FS),
 			base:    &resolution{Repo: &git.Repository{Storer: memory.NewStorage()}},
 		}
-		candidates, _, localErr := s.candidates(t.Context(), tree, entries)
+		candidates, _, localErr := s.candidates(t.Context(), entries, comparison)
 		assert.NoError(t, localErr)
 		dirty, present := candidates["file"]
 		assert.Equal(t, present, true)

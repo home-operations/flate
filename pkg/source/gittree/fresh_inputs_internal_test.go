@@ -40,7 +40,7 @@ func TestFreshInputs_CurrentBytesAndMembership(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = ContentFingerprint(t.Context(), selected)
 			assert.NoError(t, err)
-			before, err := selected.FreshInputs(t.Context())
+			before, err := selected.FreshInputs(t.Context(), nil)
 			assert.NoError(t, err)
 			_, err = selected.Stat("new")
 			assert.Equal(t, os.IsNotExist(err), true)
@@ -49,7 +49,7 @@ func TestFreshInputs_CurrentBytesAndMembership(t *testing.T) {
 			testutil.WriteFile(t, root, "new", "added")
 			assert.NoError(t, os.Mkdir(filepath.Join(root, "empty"), 0o700))
 			testutil.WriteFile(t, root, ".sourceignore", "")
-			after, err := selected.FreshInputs(t.Context())
+			after, err := selected.FreshInputs(t.Context(), nil)
 			assert.NoError(t, err)
 			assert.Equal(
 				t,
@@ -62,7 +62,7 @@ func TestFreshInputs_CurrentBytesAndMembership(t *testing.T) {
 			assert.Equal(t, after.Types["empty"]&fs.ModeDir != 0, mode == Direct)
 			assert.NoError(t, os.Remove(filepath.Join(root, "file")))
 			assert.NoError(t, os.Mkdir(filepath.Join(root, "file"), 0o700))
-			replaced, err := selected.FreshInputs(t.Context())
+			replaced, err := selected.FreshInputs(t.Context(), nil)
 			assert.NoError(t, err)
 			assert.Equal(t, replaced.Files["file"], "")
 			assert.Equal(t, replaced.Types["file"]&fs.ModeDir != 0, mode == Direct)
@@ -74,27 +74,32 @@ func TestFreshInputs_ReusesObservedRegularKind(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "file", "alpha")
+	testutil.WriteFile(t, root, "unrelated", "untouched")
 	input, err := admitLocal(t, root)
 	assert.NoError(t, err)
 	original := input.FS.(*FS)
 	observed := &observedRegularView{view: original.view}
 	original.view = observed
-	first, err := original.FreshInputs(t.Context())
+	first, err := original.FreshInputs(t.Context(), nil)
 	assert.NoError(t, err)
 	assert.Equal(t, observed.regularReads, 1)
 	assert.Equal(t, observed.unclassifiedReads, 0)
 	testutil.WriteFile(t, root, "file", "bravo")
-	second, err := original.FreshInputs(t.Context())
+	second, err := original.FreshInputs(t.Context(), []string{"file"})
 	assert.NoError(t, err)
 	assert.Equal(t, observed.regularReads, 2)
 	assert.Equal(t, observed.unclassifiedReads, 0)
 	assert.Equal(t, first.Files["file"] != second.Files["file"], true)
+	assert.Equal(t, second.Files["unrelated"], "")
+	_, observedKind := second.Types["unrelated"]
+	assert.Equal(t, observedKind, true)
+	assert.Equal(t, observed.unrelatedReads, 1)
 }
 
 type observedRegularView struct {
 	view
 
-	regularReads, unclassifiedReads int
+	regularReads, unclassifiedReads, unrelatedReads int
 }
 
 func (v *observedRegularView) ReadFile(name string) ([]byte, error) {
@@ -105,6 +110,9 @@ func (v *observedRegularView) ReadFile(name string) ([]byte, error) {
 }
 
 func (v *observedRegularView) OpenRegular(name string) (fs.File, error) {
+	if name == "unrelated" {
+		v.unrelatedReads++
+	}
 	if name == "file" {
 		v.regularReads++
 	}

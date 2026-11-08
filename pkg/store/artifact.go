@@ -227,10 +227,12 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 		sh.mu.RUnlock()
 		return nil
 	}
-	var view capture
-	sh.captureLocked(id, new(sh.cells[id]), &view)
 	artifact := sh.artifacts[id].effective
 	e, emitted := artifact.(*Emission)
+	var view capture
+	if emitted {
+		sh.captureLocked(id, new(sh.cells[id]), &view)
+	}
 	sh.mu.RUnlock()
 	if emitted && !emissionCurrent(e, new(view)) {
 		return nil

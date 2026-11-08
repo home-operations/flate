@@ -12,7 +12,6 @@ import (
 	"io/fs"
 	"iter"
 	"maps"
-	"math"
 	"path"
 	"path/filepath"
 	"slices"
@@ -141,13 +140,17 @@ func (l *Loader) restoreCachedInputs(ctx context.Context) error {
 	return nil
 }
 
-func (l *Loader) restoreCachedFile(root string, state *inputCache, file *cachedInput, archive *inputArchive) error {
-	absolute := filepath.Join(root, filepath.FromSlash(file.Name))
-	if file.Builder != "" {
-		return l.restoreCachedBuilder(root, state, file, absolute)
+//nolint:gocritic // Readers share the map while deferred records remain immutable.
+func (r documentReader) restoreCachedFile(absolute string) {
+	doc := r.cache[absolute]
+	file := doc.deferred
+	if file == nil {
+		return
 	}
-	origin := new(l.documents).localPath(absolute)
-	source := new(l.documents).mountedRoot(origin)
+	doc.deferred, doc.parsed = nil, nil
+	defer func() { r.cache[absolute] = doc }()
+	origin := new(r).localPath(absolute)
+	source := new(r).mountedRoot(origin)
 	coordinate, _ := filepath.Rel(source, origin)
 	var objects []parsedObject
 	if file.Parsed {
@@ -155,12 +158,10 @@ func (l *Loader) restoreCachedFile(root string, state *inputCache, file *cachedI
 	}
 	for i := range file.Objects {
 		saved := &file.Objects[i]
-		if saved.Size != 0 {
-			saved.payload = &inputPayload{archive: archive, offset: saved.Offset, size: saved.Size}
-		}
 		catalog, err := manifest.DecodeCatalog(saved.Catalog)
 		if err != nil {
-			return err
+			doc.decodeErr = err
+			return
 		}
 		f := &saved.Facts
 		facts := &occurrenceFacts{
@@ -192,16 +193,8 @@ func (l *Loader) restoreCachedFile(root string, state *inputCache, file *cachedI
 			item:    saved.Item, fact: occurrence, version: saved.Version, payload: saved.payload,
 		})
 	}
-	doc := l.documents.cache[absolute]
 	doc.objects, doc.coverage, doc.possible = objects, file.Coverage, file.Possible
 	doc.parsed = nil
-	doc.sourceRoot = root
-	if projection := file.Projection; projection != nil {
-		projection.payload = &inputPayload{archive: archive, offset: projection.Offset, size: projection.Size}
-		doc.projection = &projectionInputs{Known: projection.Known, payload: projection.payload}
-	}
-	l.documents.cache[absolute] = doc
-	return nil
 }
 
 // PersistInputs publishes only content-certified authored facts through the cache owner.
@@ -264,6 +257,14 @@ func (l *Loader) PersistInputs(ctx context.Context) error {
 }
 
 func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
+	if doc.deferred != nil {
+		saved := *doc.deferred
+		saved.Objects = slices.Clone(saved.Objects)
+		if saved.Projection != nil {
+			saved.Projection = new(*saved.Projection)
+		}
+		return saved, true, nil
+	}
 	saved := cachedInput{
 		Name:     name,
 		Digest:   digest,
@@ -322,7 +323,7 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 }
 
 func (l *Loader) restoreSourceInputs(ctx context.Context, input *store.SourceArtifact, view *gittree.FS) error {
-	observation, err := view.FreshInputs(ctx)
+	observation, err := view.FreshInputs(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -380,8 +381,19 @@ func (l *Loader) restoreFrameFiles(state *inputCache, frame *inputFrame) error {
 		if new(l.documents).mountedRoot(absolute) != state.input.LocalPath {
 			continue
 		}
-		if err := l.restoreCachedFile(state.input.LocalPath, state, file, frame.archive); err != nil {
-			return err
+		if file.Builder != "" {
+			if err := l.restoreCachedBuilder(state.input.LocalPath, state, file, absolute); err != nil {
+				return err
+			}
+		} else {
+			doc := l.documents.cache[absolute]
+			// A deferred file MUST NOT retain consumed records through the frame's backing array.
+			doc.deferred, doc.sourceRoot = new(*file), state.input.LocalPath
+			doc.coverage, doc.possible = file.Coverage, file.Possible
+			if projection := file.Projection; projection != nil {
+				doc.projection = &projectionInputs{Known: projection.Known, payload: projection.payload}
+			}
+			l.documents.cache[absolute] = doc
 		}
 		state.files[inputCoordinate{name: file.Name, builder: file.Builder != ""}] = inputEvidence{
 			digest:     file.Digest,
@@ -416,7 +428,10 @@ func (l *Loader) restoreFrameTraversal(state *inputCache, frame *inputFrame) err
 		}
 		if load.matches(changed) {
 			key := load.context(state.input.LocalPath)
-			restored := load.restore(state.input.LocalPath)
+			restored := loadFacts{
+				cached: load, cachedRoot: state.input.LocalPath,
+				complete: true, imported: true, coverage: load.Coverage,
+			}
 			l.restoreLoadDirectories(state, load)
 			facts.loads.values[key] = restored
 			state.loads[key] = load.Coverage
@@ -519,16 +534,17 @@ func readInputFrame(generation fs.FS) (*inputFrame, error) {
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read discovery index: %w", err), "")
 	}
 	encodedSize := binary.BigEndian.Uint64(header[:])
-	if encodedSize > math.MaxInt64 {
+	//nolint:gosec // The short-circuit guard makes the subtraction nonnegative.
+	if info.Size() < int64(len(header)) || encodedSize > uint64(info.Size()-int64(len(header))) {
 		return nil, manifest.NewError(manifest.ErrFlux, nil, "discovery index exceeds its generation")
 	}
-	size := int64(encodedSize)
-	if info.Size() < 8 || size > info.Size()-8 {
-		return nil, manifest.NewError(manifest.ErrFlux, nil, "discovery index exceeds its generation")
+	size := int64(encodedSize) //nolint:gosec // The file-size bound keeps encodedSize within int64.
+	data := make([]byte, size)
+	if _, err := io.ReadFull(input, data); err != nil {
+		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read discovery index: %w", err), "")
 	}
 	var frame inputFrame
-
-	if err := jsonv2.UnmarshalRead(io.LimitReader(input, size), &frame, json.DefaultOptionsV1()); err != nil {
+	if err := jsonv2.Unmarshal(data, &frame, json.DefaultOptionsV1()); err != nil {
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("decode discovery inputs: %w", err), "")
 	}
 	if frame.Schema != 1 {
@@ -537,16 +553,28 @@ func readInputFrame(generation fs.FS) (*inputFrame, error) {
 	for i := range frame.Walks {
 		walk := &frame.Walks[i]
 		walk.dictionary = frame.Visits
-		for _, id := range walk.VisitIDs {
-			if id < 0 || id >= len(frame.Visits) {
-				return nil, manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: invalid visit reference")
-			}
+		if slices.ContainsFunc(walk.VisitIDs, func(id int) bool { return id < 0 || id >= len(frame.Visits) }) {
+			return nil, manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: invalid visit reference")
 		}
 	}
 	frame.archive = &inputArchive{
 		generation: generation,
 		offset:     int64(len(header)) + size,
 		size:       info.Size() - int64(len(header)) - size,
+	}
+	for i := range frame.Files {
+		file := &frame.Files[i]
+		for j := range file.Objects {
+			saved := &file.Objects[j]
+			if saved.Size != 0 {
+				saved.payload = &inputPayload{archive: frame.archive, offset: saved.Offset, size: saved.Size}
+			}
+		}
+		if projection := file.Projection; projection != nil {
+			projection.payload = &inputPayload{
+				archive: frame.archive, offset: projection.Offset, size: projection.Size,
+			}
+		}
 	}
 	return &frame, nil
 }

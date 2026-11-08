@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	yaml "go.yaml.in/yaml/v4"
 	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -14,53 +15,157 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// Shape applies producer metadata and effective substitutions to private decoded documents.
-func Shape(_ context.Context, ks *manifest.Kustomization, docs []manifest.DocOccurrence, options ShapeOptions) error {
+// Shaping owns private documents and temporary YAML for one render attempt.
+type Shaping struct {
+	preparation *Preparation
+	spec        *manifest.Kustomization
+	docs        []manifest.DocOccurrence
+	inputs      []substitutionDocument
+	active      bool
+	content     renderContent
+}
+
+type substitutionDocument struct {
+	data []byte
+	err  error
+}
+
+type preparedShaping struct {
+	output string
+	active bool
+	inputs []substitutionDocument
+	names  map[string]struct{}
+}
+
+// PrepareShape MUST retain raw identity separately from sanitized application content.
+func PrepareShape(request *RenderRequest, docs []manifest.DocOccurrence) *Shaping {
+	ks := request.Spec
 	ks.EmissionPolicy().Stamp(docs)
-	for i := range docs {
-		docs[i], _ = manifest.SanitizeDocument(docs[i])
+	var vars map[string]string
+	if ks.PostBuild != nil {
+		vars = ks.PostBuild.Substitute
 	}
-	if (ks.PostBuild == nil || len(ks.PostBuild.Substitute) == 0) &&
-		ks.SubstituteStrategy() != kustomizev1.SubstituteStrategyAlways {
+	p := &Shaping{
+		spec: ks, docs: docs, preparation: request.Preparation,
+		active: len(vars) > 0 ||
+			ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways,
+	}
+	output := manifest.Fingerprint(docs)
+	var prepared *preparedShaping
+	if request.Preparation != nil {
+		prepared = request.Preparation.shaping
+	}
+	var names map[string]struct{}
+	if prepared != nil && output != "" && prepared.output == output && prepared.active == p.active {
+		p.inputs, names = slices.Clone(prepared.inputs), prepared.names
+	} else {
+		names = p.prepareInputs()
+		if request.Preparation != nil && output != "" {
+			request.Preparation.shaping = &preparedShaping{
+				output: output,
+				active: p.active,
+				inputs: p.inputs,
+				names:  names,
+			}
+			p.inputs = slices.Clone(p.inputs)
+		}
+	}
+	if names == nil {
+		names = make(map[string]struct{})
+		for name := range vars {
+			names[name] = struct{}{}
+		}
+	}
+	source := struct {
+		Input       store.ArtifactInput `json:"Input"`
+		ApplyIgnore bool                `json:"ApplyIgnore"`
+		Output      string              `json:"Output"`
+		Strict      bool                `json:"Strict"`
+		Skip        []string            `json:"Skip"`
+	}{
+		request.Source.Input(store.ArtifactContent), request.ApplyIgnore, output,
+		request.StrictSubstitutions, request.SkipKinds,
+	}
+	p.content = renderContent{ks.Content(source, names, p.active), request.DependencySubstitutions}
+	return p
+}
+
+func (p *Shaping) prepareInputs() map[string]struct{} {
+	names := map[string]struct{}{}
+	if !p.active {
+		return names
+	}
+	p.inputs = make([]substitutionDocument, len(p.docs))
+	for i := range p.docs {
+		input := &p.inputs[i]
+		input.data, input.err = values.SubstitutionDocument(p.docs[i], true)
+		if names == nil || input.data == nil && input.err == nil {
+			continue
+		}
+		current := values.SubstitutionNames(input.data)
+		if input.err != nil || current == nil {
+			names = nil
+		} else {
+			maps.Copy(names, current)
+		}
+	}
+	return names
+}
+
+// Content preserves the raw identity after Apply mutates the private documents.
+func (p *Shaping) Content() any { return p.content }
+
+// Retire releases prepared YAML after application or a deduplicated attempt.
+func (p *Shaping) Retire() {
+	if p.preparation != nil {
+		p.preparation.shaping = nil
+	}
+	p.inputs, p.docs, p.spec, p.preparation = nil, nil, nil, nil
+}
+
+// Apply consumes the attempt's prepared YAML and releases it on every return.
+func (p *Shaping) Apply(_ context.Context, options ShapeOptions) error {
+	defer p.Retire()
+	for i := range p.docs {
+		var changed bool
+		p.docs[i], changed = manifest.SanitizeDocument(p.docs[i])
+		if p.active && changed {
+			p.inputs[i].data, p.inputs[i].err = values.SubstitutionDocument(p.docs[i], true)
+		}
+	}
+	if !p.active {
 		return nil
 	}
 	var vars map[string]string
-	work := options.Work
-	if ks.PostBuild != nil {
-		vars = manifest.VarsMap(ks.PostBuild.Substitute)
+	if p.spec.PostBuild != nil {
+		vars = manifest.VarsMap(p.spec.PostBuild.Substitute)
 	}
-	for i, occurrence := range docs {
-		doc := occurrence.Document
-		if occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) {
-			continue
-		}
-		substituted, err := substituteDoc(doc, vars, options.Strict, work)
+	for i := range p.docs {
+		input := &p.inputs[i]
+		substituted, err := input.apply(p.docs[i].Document, vars, options.Strict, options.Work)
 		if err != nil {
 			return manifest.NewError(manifest.ErrInvalidSubstituteReference, err, "")
 		}
-		docs[i].Document = substituted
+		p.docs[i].Document = substituted
 	}
 	return nil
 }
 
-// Only expansion/escape text and scalars changed by JSON decoding need a
-// round trip. Both map keys and values must be inspected.
-func substituteDoc(
+func (p *substitutionDocument) apply(
 	doc map[string]any,
 	vars map[string]string,
 	strict bool,
 	work *manifest.WorkRecord,
 ) (map[string]any, error) {
-	if !values.NeedsSubstitution(doc) {
+	if p.data == nil && p.err == nil {
 		return doc, nil
 	}
 	work.Add(&manifest.WorkCounts{Attempts: 1})
-	raw, err := yaml.Marshal(doc)
-	if err != nil {
-		work.Finish(err)
-		return nil, fmt.Errorf("substitute: marshal doc: %w", err)
+	if p.err != nil {
+		work.Finish(p.err)
+		return nil, fmt.Errorf("substitute: marshal doc: %w", p.err)
 	}
-	out, err := Substitute(raw, vars, strict)
+	out, err := Substitute(p.data, vars, strict)
 	if err != nil {
 		work.Finish(err)
 		return nil, err
@@ -83,34 +188,6 @@ func substituteDoc(
 type renderContent struct {
 	Manifest     any                            `json:"Manifest"`
 	Dependencies values.DependencySubstitutions `json:"Dependencies"`
-}
-
-// Content projects validated raw documents and effective variables into immutable final inputs.
-//
-//nolint:gocritic // Preserve the public value receiver and its render-input snapshot.
-func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
-	ks := r.Spec
-	ks.EmissionPolicy().Stamp(docs)
-	active := ks.PostBuild != nil && len(ks.PostBuild.Substitute) > 0 ||
-		ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
-	names := values.SubstitutionNames(docs, active)
-	if names == nil {
-		names = make(map[string]struct{}, len(ks.PostBuild.Substitute))
-		for name := range ks.PostBuild.Substitute {
-			names[name] = struct{}{}
-		}
-	}
-	source := struct {
-		Input       store.ArtifactInput `json:"Input"`
-		ApplyIgnore bool                `json:"ApplyIgnore"`
-		Output      string              `json:"Output"`
-		Strict      bool                `json:"Strict"`
-		Skip        []string            `json:"Skip"`
-	}{
-		r.Source.Input(store.ArtifactContent), r.ApplyIgnore, manifest.Fingerprint(docs),
-		r.StrictSubstitutions, r.SkipKinds,
-	}
-	return renderContent{ks.Content(source, names, active), r.DependencySubstitutions}
 }
 
 // ShapeOptions supplies substitution policy and its physical work counter.

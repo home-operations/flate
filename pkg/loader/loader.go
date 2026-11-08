@@ -311,7 +311,7 @@ func (l *Loader) Load(
 	reader := l.documents
 	purpose := l.constructionPurpose.Load()
 	ordinary := purpose != nil && slices.Contains(*purpose, owner)
-	evidence := l.RootEvidence(owner, nil)
+	evidence := l.rootFacts(owner)
 	ordinary = ordinary ||
 		!l.frozen && selection.Root(evidence).Independent &&
 			evidence.Occurrence.Declaration != (selection.OccurrenceID{})
@@ -376,7 +376,7 @@ func (l *Loader) loadRoot(ctx context.Context, root string, w *traversal) bool {
 		}
 	}()
 	facts, _ := factsSource.load(key)
-	l.scopes.complete = l.scopes.complete && !l.loadChangesScopes(root, facts, w.documents.intent)
+	l.scopes.complete = l.scopes.complete && !l.loadChangesScopes(root, &facts, w.documents.intent)
 	ignore, skip, err := l.loadRootIgnore(ctx, root)
 	if skip || err != nil {
 		w.err = err

@@ -131,7 +131,7 @@ func (g *FS) selectNodes(
 		if !selected {
 			continue
 		}
-		for parent := name; parent != "."; parent = path.Dir(parent) {
+		for parent := name; parent != "." && !kept[parent]; parent = path.Dir(parent) {
 			kept[parent] = true
 		}
 	}

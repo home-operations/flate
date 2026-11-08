@@ -3,6 +3,7 @@ package loader
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"path/filepath"
@@ -173,9 +174,22 @@ func (f *inputCacheFixture) run(t *testing.T, want int) {
 	l.mountSources()
 	assert.NoError(t, l.restoreCachedInputs(t.Context()))
 	if want == 0 {
+		for name := range files {
+			doc := l.documents.cache[filepath.Join(root, name)]
+			assert.Equal(t, doc.deferred != nil, true)
+			assert.Equal(t, len(doc.objects), 0)
+		}
 		source := l.sourceFacts(root)
-		load, _ := source.load(loadContext{path: root})
+		key := loadContext{path: root}
+		pending, known, _ := source.loads.get(key)
+		assert.Equal(t, known, true)
+		assert.Equal(t, pending.cached != nil, true)
+		assert.Equal(t, len(pending.files), 0)
+		load, _ := source.load(key)
 		assert.Equal(t, load.complete, true)
+		assert.Equal(t, len(load.files), count)
+		again, _ := source.load(key)
+		assert.Equal(t, &load.files[0] == &again.files[0], true)
 	}
 	for _, read := range reads {
 		read.Store(0)
@@ -770,4 +784,24 @@ func testInputCacheNewMountMatchesCold(t *testing.T, testCase mountedInputCase) 
 		assert.Equal(t, warm.documents.cache[nested].pathState, pathDirectory)
 		assert.Equal(t, warm.documents.cache[nested].sourceRoot, nested)
 	}
+}
+
+func TestInputCache_DeferredPublicationPreservesOffsets(t *testing.T) {
+	t.Parallel()
+	body, err := manifest.EncodeRender([]manifest.DocOccurrence{{Document: map[string]any{"kind": "ConfigMap"}}})
+	assert.NoError(t, err)
+	original := &cachedInput{
+		Name: "object.yaml", Digest: "observed",
+		Objects:    []cachedOccurrence{{Offset: 23, Size: len(body), payload: &inputPayload{data: body}}},
+		Projection: &cachedProjection{Offset: 17, Size: 2, payload: &inputPayload{data: []byte("{}")}},
+	}
+	saved, known, err := cacheInput(original.Name, original.Digest, &document{deferred: original})
+	assert.NoError(t, err)
+	assert.Equal(t, known, true)
+	frame := inputFrame{Schema: 1, Files: []cachedInput{saved}}
+	assert.NoError(t, frame.write(io.Discard))
+	assert.Equal(t, frame.Files[0].Projection.Offset, int64(0))
+	assert.Equal(t, frame.Files[0].Objects[0].Offset, int64(2))
+	assert.Equal(t, original.Projection.Offset, int64(17))
+	assert.Equal(t, original.Objects[0].Offset, int64(23))
 }

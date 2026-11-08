@@ -150,9 +150,7 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	prepared, err := Prepare(entry, nil)
 	assert.FatalIf(t, err != nil, "%v", err)
 	documents := []manifest.DocOccurrence{{Document: map[string]any{"data": map[string]any{"value": "${MISSING}"}}}}
-	err = Shape(t.Context(),
-
-		prepared, documents, ShapeOptions{Strict: true})
+	err = PrepareShape(&RenderRequest{Spec: prepared}, documents).Apply(t.Context(), ShapeOptions{Strict: true})
 	assert.FatalIf(
 		t,
 		!errors.Is(err, manifest.ErrInvalidSubstituteReference) || strings.Contains(err.Error(), owner.String()) ||

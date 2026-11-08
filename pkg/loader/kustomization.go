@@ -20,6 +20,7 @@ import (
 // document caches a directory document or parsed file objects by source-view path.
 // Consumers MUST never mutate its objects. Pointer fields precede flags to keep map values inline.
 type document struct {
+	deferred      *cachedInput
 	projection    *projectionInputs
 	parsed        *parsedDocument
 	body          *types.Kustomization
@@ -140,9 +141,8 @@ func (r *documentReader) mountSources(
 		}
 	}
 	for _, index := range candidates {
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, record := range index.Records {
-			if id.KindInfo().SourceArtifact && record.File != "" {
+		for id := range index.Records {
+			if id.KindInfo().SourceArtifact && index.Records[id].File != "" {
 				mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
 			}
 		}

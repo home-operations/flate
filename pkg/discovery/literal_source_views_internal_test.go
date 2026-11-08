@@ -214,7 +214,10 @@ func (f *literalSourceViewsFixture) publish(t *testing.T, index int) {
 		cache.RetryConfig{},
 	)
 	assert.NoError(t, err)
-	assert.NoError(t, kustomize.Shape(t.Context(), spec, docs, kustomize.ShapeOptions{}))
+	assert.NoError(
+		t,
+		kustomize.PrepareShape(&kustomize.RenderRequest{Spec: spec}, docs).Apply(t.Context(), kustomize.ShapeOptions{}),
+	)
 	parsed := loader.ParseChildren(spec, docs, manifest.ParseDocOptions{}, nil)
 	assert.NoError(t, manifest.DocumentFailure(parsed.Failures))
 	var reads store.ReadSet

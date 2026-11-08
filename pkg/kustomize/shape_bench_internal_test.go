@@ -2,6 +2,9 @@ package kustomize
 
 import (
 	"testing"
+
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func BenchmarkSubstituteDoc(b *testing.B) {
@@ -26,7 +29,9 @@ func BenchmarkSubstituteDoc(b *testing.B) {
 			vars := map[string]string{"VAR": "example"}
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := substituteDoc(doc, vars, false, nil); err != nil {
+				data, err := values.SubstitutionDocument(manifest.DocOccurrence{Document: doc}, true)
+				input := substitutionDocument{data: data, err: err}
+				if _, err := input.apply(doc, vars, false, nil); err != nil {
 					b.Fatal(err)
 				}
 			}

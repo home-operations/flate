@@ -119,7 +119,7 @@ func packageHistory(
 ) map[manifest.NamedResource]manifest.DiscoveryRecord {
 	t.Helper()
 	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
-	records, complete := trees.RenderHistory(owner, receipt, req.Content(docs))
+	records, complete := trees.RenderHistory(owner, receipt, kustomize.PrepareShape(req, docs).Content())
 	assert.FatalIf(t, !available || !complete || records == nil, "package %q has no complete accepted history",
 		req.SubPath,
 	)
@@ -771,7 +771,7 @@ func previousPackageHistory(
 ) kustomize.EntryEvidence {
 	t.Helper()
 	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
-	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, req.Content(docs))
+	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, kustomize.PrepareShape(req, docs).Content())
 	if !available || !complete {
 		return kustomize.EntryEvidence{}
 	}

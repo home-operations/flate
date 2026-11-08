@@ -3,7 +3,6 @@ package kustomize
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"io/fs"
 	"maps"
@@ -65,10 +64,10 @@ func (p *acceptedHistoryPublication) storedKey(t *testing.T) string {
 	stored, err := decodeFrame(data)
 	assert.NoError(t, err)
 	content := descriptor.Annotations["flate.accepted-render"]
-	assert.FatalIf(t, content == "" ||
-		content != manifest.Fingerprint(
-			data[12+int(binary.BigEndian.Uint32(data[8:12]))+stored.header.Size:],
-		), "%s", "stored accepted-frame key does not identify the actual accepted frame")
+	assert.FatalIf(t,
+		content == "" || content != manifest.Fingerprint(stored.accepted),
+		"%s", "stored accepted-frame key does not identify the actual accepted frame",
+	)
 	return content
 }
 

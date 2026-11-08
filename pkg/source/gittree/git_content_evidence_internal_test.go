@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -174,6 +175,21 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 	_, (*captures.err) = ContentFingerprint(t.Context(), selected)
 	assert.NoError(t, (*captures.err))
 	assert.Equal(t, (*captures.reader).reads.Load(), reads)
+	if (*(*captures.mode)) == "immutable" || (*(*captures.mode)) == "direct_immutable" {
+		var group sync.WaitGroup
+		for _, requested := range [][]string{nil, {(*captures.name)}} {
+			group.Go(func() {
+				observed, err := selected.FreshInputs(t.Context(), requested)
+				assert.NoError(t, err)
+				assert.Equal(t, observed.Files[(*captures.name)], selected.FileDigests()[(*captures.name)])
+				assert.Equal(t, observed.Types["dir"].IsDir(), true)
+				kind, present := observed.Types[(*captures.name)]
+				assert.Equal(t, present && kind.IsRegular(), true)
+			})
+		}
+		group.Wait()
+		assert.Equal(t, (*captures.objects).reads.Load(), int64(0))
+	}
 }
 
 type testFSGitContentEvidenceCaseCompletionInputs struct {

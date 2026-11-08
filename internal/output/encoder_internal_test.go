@@ -15,6 +15,12 @@ import (
 
 func TestEncoder_Documents_Bytes(t *testing.T) {
 	t.Parallel()
+	many := make([]map[string]any, 3*yamlWorkers+1)
+	var manyWant strings.Builder
+	for i := range many {
+		many[i] = map[string]any{"index": i}
+		fmt.Fprintf(&manyWant, "---\nindex: %d\n", i)
+	}
 	cases := []struct {
 		name   string
 		format Format
@@ -26,6 +32,7 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 			docs: []map[string]any{{"kind": "B"}, {"kind": "A"}, {}},
 			want: "---\nkind: B\n---\nkind: A\n---\n{}\n",
 		},
+		{name: "yaml_order_past_workers", docs: many, want: manyWant.String()},
 		{name: "yaml_empty_stream", format: FormatYAML},
 		{name: "json_nil", format: FormatJSON, want: "null\n"},
 		{name: "json_empty", format: FormatJSON, docs: []map[string]any{}, want: "[]\n"},
@@ -43,6 +50,20 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 			assert.Diff(t, b.String(), tc.want)
 		})
 	}
+}
+
+func TestEncoder_Documents_FirstMarshalErrorWins(t *testing.T) {
+	t.Parallel()
+	docs := make([]map[string]any, 2*yamlWorkers)
+	for i := range docs {
+		docs[i] = map[string]any{"index": i}
+	}
+	docs[1]["bad"] = func() {}
+	docs[len(docs)-1]["bad"] = make(chan int)
+	var b bytes.Buffer
+	err := (Encoder{Writer: &b, Format: FormatYAML}).Documents(docs)
+	assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "func()"), "error: %v", err)
+	assert.Diff(t, b.String(), "---\nindex: 0\n")
 }
 
 func TestEncoder_Images_Bytes(t *testing.T) {

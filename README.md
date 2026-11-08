@@ -53,6 +53,8 @@ repos:
       - id: flate
 ```
 
+CI logs are usually pipes, so flate prints plain text there. Set `CLICOLOR_FORCE=1` to keep colors, or `NO_COLOR=1` to turn them off on a terminal.
+
 ## Common tasks
 
 ### Diff a pull request

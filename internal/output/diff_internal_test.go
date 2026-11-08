@@ -120,3 +120,32 @@ func TestPrepareLines_NormalizeOnce(t *testing.T) {
 	assert.Diff(t, second, first)
 	assert.Diff(t, []map[string]any{left[0].Manifest, right[0].Manifest}, before)
 }
+
+func TestEncoderNative_ColorFollowsEnvironment(t *testing.T) {
+	cm := func(data string) diffprep.Doc {
+		return diffprep.Doc{Manifest: map[string]any{
+			"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]any{"name": "x", "namespace": "default"}, "data": map[string]any{"k": data},
+		}}
+	}
+	report, err := diffprep.Prepare([]diffprep.Doc{cm("old")}, []diffprep.Doc{cm("new")}, &diffprep.Options{}).Native()
+	assert.NoError(t, err)
+	for _, tc := range []struct {
+		name  string
+		env   map[string]string
+		color bool
+	}{
+		{name: "pipe", color: false},
+		{name: "forced", env: map[string]string{"CLICOLOR_FORCE": "1"}, color: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CLICOLOR_FORCE", "")
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			var out bytes.Buffer
+			assert.NoError(t, (Encoder{Writer: &out, Format: FormatHuman}).Native(&report))
+			assert.Equal(t, strings.Contains(out.String(), "\x1b["), tc.color)
+		})
+	}
+}

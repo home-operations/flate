@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/gonvenience/bunt"
 	"github.com/homeport/dyff/pkg/dyff"
 	"github.com/pmezard/go-difflib/difflib"
 	"sigs.k8s.io/yaml"
@@ -187,6 +188,11 @@ func (e Encoder) Native(report *dyff.Report) error {
 	if len(report.Diffs) == 0 {
 		return nil
 	}
+	color := bunt.OFF
+	if ColorEnabled(e.Writer) {
+		color = bunt.ON
+	}
+	bunt.SetColorSettings(color, bunt.AUTO)
 	// dyff reuses this buffer but ignores its final Flush error.
 	writer := bufio.NewWriter(e.Writer)
 	err := nativeStyle(e.Format, report).WriteReport(writer)

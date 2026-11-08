@@ -431,7 +431,7 @@ func TestWarnings_RetiredCredentialOrigin(t *testing.T) {
 			origin.GetObject(source.Named())
 			origin.GetObject(credential.Named())
 			assert.Equal(t, origin.input(credential.Named()).cell(conditionFacet), (*registration)(nil))
-			assert.Equal(t, origin.input(source.Named()).cell(conditionFacet).head, (*registrationHead)(nil))
+			assert.Equal(t, origin.input(source.Named()).cell(conditionFacet), (*registration)(nil))
 			warning := manifest.Warning{
 				Resource: source.Named(), Subject: manifest.DiagnosticFor(source.Named(), source),
 				Category: manifest.WarnSourceCredentialsUnavailable, Count: 1,

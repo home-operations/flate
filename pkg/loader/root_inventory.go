@@ -14,54 +14,53 @@ type rootCoordinate struct {
 }
 
 type rootInventory struct {
-	occurrences map[rootCoordinate]rootEvidence
-	identities  map[manifest.NamedResource]rootCoordinate
-	packages    map[string]rootCoordinate
+	occurrences map[rootCoordinate]*rootEvidence
+	identities  map[manifest.NamedResource]*rootEvidence
 	currentOnly manifest.DiscoveryIndex
 }
 
-func (r *rootInventory) lookup(id manifest.NamedResource) (rootEvidence, bool) {
-	coordinate, known := r.identities[id]
-	if !known {
-		return rootEvidence{}, false
-	}
-	evidence, known := r.occurrences[coordinate]
+func (r *rootInventory) lookup(id manifest.NamedResource) (*rootEvidence, bool) {
+	evidence, known := r.identities[id]
 	return evidence, known
 }
 
-func (r *rootInventory) get(id manifest.NamedResource) rootEvidence {
-	evidence, _ := r.lookup(id)
-	return evidence
-}
-
-func (r *rootInventory) remember(occurrence *authoredOccurrence, context string) rootCoordinate {
-	if r.occurrences == nil {
-		r.occurrences = map[rootCoordinate]rootEvidence{}
-		r.identities = map[manifest.NamedResource]rootCoordinate{}
-	}
-	coordinate := rootCoordinate{declaration: occurrence.Declaration, identity: occurrence.Identity, context: context}
-	evidence := r.occurrences[coordinate]
-	evidence.occurrence = *occurrence
-	evidence.facts.Identity, evidence.facts.Occurrence = occurrence.Identity, occurrenceView(occurrence)
-	r.occurrences[coordinate] = evidence
-	return coordinate
+func (r *rootInventory) get(id manifest.NamedResource) *rootEvidence {
+	return r.identities[id]
 }
 
 func (r *rootInventory) set(id manifest.NamedResource, evidence *rootEvidence) {
 	occurrence := evidence.occurrence
-	occurrence.Identity = id
-	evidence.facts.Identity, evidence.facts.Occurrence.Identity = id, id
-	coordinate := r.remember(&occurrence, filepath.ToSlash(filepath.Dir(occurrence.Declaration.File)))
-	r.occurrences[coordinate] = *evidence
-	r.identities[id] = coordinate
+	if evidence.current != nil && evidence.current.Identity != id {
+		evidence.current = new(*evidence.current)
+	}
+	evidence.identity, evidence.currentOccurrence().Identity = id, id
+	if r.occurrences == nil {
+		r.occurrences = map[rootCoordinate]*rootEvidence{}
+		r.identities = map[manifest.NamedResource]*rootEvidence{}
+	}
+	coordinate := rootCoordinate{
+		declaration: occurrence.Declaration,
+		identity:    id,
+		context:     filepath.ToSlash(filepath.Dir(occurrence.Declaration.File)),
+	}
+	snapshot := new(*evidence)
+	r.replace(&coordinate, snapshot)
+	r.identities[id] = snapshot
+}
+
+func (r *rootInventory) replace(coordinate *rootCoordinate, evidence *rootEvidence) {
+	if previous := r.occurrences[*coordinate]; previous != nil && r.identities[coordinate.identity] == previous {
+		r.identities[coordinate.identity] = evidence
+	}
+	r.occurrences[*coordinate] = evidence
 }
 
 func (r *rootInventory) retainIndependent() {
 	for coordinate := range r.occurrences {
 		evidence := r.occurrences[coordinate]
-		if !selection.Root(evidence.facts).Independent {
+		if !selection.Root(evidence.view()).Independent {
 			delete(r.occurrences, coordinate)
-			if r.identities[coordinate.identity] == coordinate {
+			if r.identities[coordinate.identity] == evidence {
 				delete(r.identities, coordinate.identity)
 			}
 		}
@@ -73,10 +72,9 @@ func (r *rootInventory) removeSource(source string) {
 		evidence := r.occurrences[coordinate]
 		if coordinate.declaration.Source == source || evidence.packageRoot {
 			delete(r.occurrences, coordinate)
-			if r.identities[coordinate.identity] == coordinate {
+			if r.identities[coordinate.identity] == evidence {
 				delete(r.identities, coordinate.identity)
 			}
 		}
 	}
-	clear(r.packages)
 }

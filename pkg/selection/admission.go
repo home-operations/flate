@@ -22,6 +22,7 @@ type (
 		eligible, declarationChanged, staticOwner bool
 		comparingDeclaration                      bool
 		initialKnown, directKnown                 bool
+		captured                                  bool
 		affected, affectedKnown                   bool
 	}
 )
@@ -32,17 +33,13 @@ type admissionIdentity struct {
 	stableObject manifest.BaseManifest
 }
 
-type admissionRoot struct {
-	result      RootResult
-	needsDemand bool
-}
-
 type admissionClosure struct {
 	changes            *change.Set
 	configuredInput    *store.SourceArtifact
-	sourceFacts        map[manifest.NamedResource]SourceFacts
+	sourceFacts        map[manifest.NamedResource]*SourceFacts
 	sourceReads        *store.ReadSet
-	candidates         [2][2][]OccurrenceFacts
+	candidates         [2][2][]*OccurrenceFacts
+	candidatesKnown    [2]bool
 	deriving           bool
 	frozen, sideKnown  bool
 	side               manifest.TreeSide
@@ -50,11 +47,14 @@ type admissionClosure struct {
 	session            *Session
 	decision           *Decision
 	facts              census
+	nativeRoots        []NativeRootFacts
+	excludedNative     map[manifest.NamedResource]bool
 	catalog            *admissionCatalog
 	context            SourceContext
 	historyOwners      map[manifest.NamedResource][]manifest.SourceEvidence
 	allowMissingKinds  []string
 	objects            admissionReader
+	nextGeneration     map[manifest.NamedResource]int
 	generation         []store.Child
 	owner              manifest.NamedResource
 	proposal           *Admission
@@ -63,8 +63,7 @@ type admissionClosure struct {
 	collecting         bool
 	ownerCandidates    []RootCoveringOwner
 	ownersKnown        bool
-	capturedRoots      map[manifest.NamedResource]RootEvidence
-	rootResults        map[manifest.NamedResource]admissionRoot
+	capturedRoots      map[manifest.NamedResource]*RootEvidence
 	children           map[manifest.NamedResource]store.Child
 	queue              []manifest.NamedResource
 	roots              []string
@@ -111,7 +110,7 @@ func (l *Session) Prepare(
 	}
 	closure.context = currentSource.Context
 	if closure.context.Frozen {
-		closure.catalog = l.catalogSnapshot()
+		closure.catalog = l.catalogSnapshot(closure.context.Roots)
 	}
 	proposal := &Admission{
 		Request: request, preparation: preparation, entry: entry, producerOwner: preparation.producerOwner,
@@ -133,12 +132,18 @@ func (l *Session) Prepare(
 		proposal.reads.SetWork(request.Reads.Work())
 	}
 	closure.proposal, closure.objects, closure.deriving = proposal, proposal.reads, false
+	defer func() {
+		closure.capturedRoots = nil
+		closure.ownerCandidates = nil
+		closure.candidates = [2][2][]*OccurrenceFacts{}
+	}()
 	closure.decision = l.Snapshot()
 	if !l.guardCurrent(proposal) {
 		proposal.stale = true
 		return proposal, nil
 	}
 
+	closure.captureGeneration(&request)
 	preparation.acceptAcquired(request.Acquired)
 	if err := closure.refreshPrerequisites(ctx, preparation.evidence, &request); err != nil {
 		proposal.Retire()
@@ -146,7 +151,7 @@ func (l *Session) Prepare(
 	}
 	defer l.store.Retire(preparation.evidence)
 	preparation.evidence = proposal.reads
-	closure.resetDemand(&request)
+	closure.resetDemand()
 	closure.generation, closure.owner, closure.history = request.Generation, request.Owner, request.History
 	closure.historyOwners, closure.allowMissingKinds = request.HistoryOwners, request.AllowMissingKinds
 	closure.changes = request.Changes
@@ -163,6 +168,12 @@ func (l *Session) Prepare(
 	if err != nil {
 		proposal.Retire()
 		return nil, err
+	}
+	//nolint:gocritic // Acquisition values MUST remain immutable while this preparation borrows them.
+	for key, result := range preparation.acquired {
+		if result.Reads != proposal.reads {
+			delete(preparation.acquired, key)
+		}
 	}
 	proposal.captureSources()
 	return proposal, nil
@@ -234,26 +245,34 @@ func (c *admissionClosure) refreshPrerequisites(
 	c.ownerCandidates, c.ownersKnown = c.ownerCandidates[:0], false
 	clear(c.capturedRoots)
 	if previous == nil {
+		//nolint:gocritic // Map values MUST remain independent snapshots until publication.
+		for id, state := range c.states {
+			state.captured = false
+			c.states[id] = state
+		}
 		return nil
 	}
 	interpretation := c.frozen == c.context.Frozen && c.sideKnown == c.context.SideKnown && c.side == c.context.Side
-	if interpretation && c.context.Frozen && c.changes == request.Changes && request.Owner == c.owner &&
-		len(request.Acquired) == 0 && len(request.Generation) == len(c.generation) &&
-		(len(c.generation) == 0 || &request.Generation[0] == &c.generation[0]) &&
-		previous.Valid() && c.proposal.reads.Matches(previous) {
+	if c.matchesPreparation(previous, request, interpretation) {
+		//nolint:gocritic // Map values MUST remain independent snapshots until publication.
+		for id, state := range c.states {
+			state.captured = true
+			c.states[id] = state
+		}
 		return nil
 	}
-	if err := c.capturePrerequisites(ctx); err != nil {
-		return err
-	}
+	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		if err := ctx.Err(); err != nil {
 			return err //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
 		}
 		if !state.initialKnown && !state.productionsKnown {
+			state.captured = false
+			c.states[id] = state
 			continue
 		}
 		matched := c.matchesPrerequisites(id, &state, previous, request)
+		state.captured = matched && interpretation
 		if !matched || !interpretation {
 			state.initialKnown, state.directKnown, state.productionsKnown = false, false, false
 			state.seed, state.affectedKnown = false, false
@@ -317,7 +336,8 @@ func (c *admissionClosure) matchesDeclarationContent(
 				slices.Equal(state.productions, productions)
 		}
 	}
-	if incoming := request.incoming(id); incoming.Obj != nil {
+	if index := c.nextGeneration[id]; index != 0 {
+		incoming := request.Generation[index-1]
 		if previousChild := c.incoming(id); previousChild.Obj != nil {
 			if request.Owner != c.owner ||
 				!slices.Equal(c.generation[state.incoming-1].Productions, incoming.Productions) {
@@ -337,11 +357,12 @@ func (c *admissionClosure) matchesDeclarationContent(
 }
 
 func (c *admissionClosure) capturePrerequisites(ctx context.Context) error {
+	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		if err := ctx.Err(); err != nil {
 			return err //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
 		}
-		if !state.initialKnown && !state.productionsKnown {
+		if state.captured || !state.initialKnown && !state.productionsKnown {
 			continue
 		}
 		c.currentProductions(id)
@@ -361,31 +382,16 @@ func (c *admissionClosure) capturePrerequisites(ctx context.Context) error {
 	return nil
 }
 
-func (c *admissionClosure) resetDemand(request *PrepareRequest) {
-	if !request.Invocation && len(c.identities) == 0 {
-		for i := range c.generation {
-			child := &c.generation[i]
-			if child.Obj == nil || request.incoming(child.Obj.Named()).Obj != nil {
-				continue
-			}
-			id := child.Obj.Named()
-			delete(c.states, id)
-			delete(c.children, id)
-			for key := range c.proposal.preparation.acquired {
-				if key.identity == id {
-					delete(c.proposal.preparation.acquired, key)
-				}
-			}
-		}
-	}
-	clear(c.rootResults)
+func (c *admissionClosure) resetDemand() {
 	c.counts = [4]int{}
 	c.collecting = false
+	c.candidatesKnown = [2]bool{}
 	c.queue, c.roots = c.queue[:0], c.roots[:0]
 	clear(c.searched)
 	clear(c.historyProductions)
 	clear(c.accepted)
 	clear(c.replace)
+	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		state.role, state.walked = admissionRole{}, admissionRole{}
 		state.consumer, state.restoration, state.claim, state.incoming = 0, 0, 0, 0
@@ -456,16 +462,6 @@ func (c *admissionClosure) incoming(id manifest.NamedResource) store.Child {
 	return store.Child{}
 }
 
-func (r *PrepareRequest) incoming(id manifest.NamedResource) store.Child {
-	for i := range r.Generation {
-		child := r.Generation[i]
-		if child.Obj != nil && child.Obj.Named() == id {
-			return child
-		}
-	}
-	return store.Child{}
-}
-
 func (c *admissionClosure) seedConstruction() {
 	if c.context.Frozen {
 		return
@@ -508,22 +504,11 @@ func (c *admissionClosure) evaluate(ctx context.Context, request *PrepareRequest
 	if len(c.history) != 0 {
 		c.readHistory()
 	}
-	var candidatesKnown [2]bool
-	materializers := func(demand materializerDemand, consumer manifest.NamedResource) bool {
-		mode := 0
-		if demand.ordering || demand.application != "" {
-			mode = 1
-		}
-		if !candidatesKnown[mode] {
-			c.candidates[mode] = c.materializerCandidates(mode == 1)
-			candidatesKnown[mode] = true
-		}
-		return c.materializers(new(demand), consumer, c.candidates[mode])
-	}
-	if err := c.seedAdmission(ctx, request, materializers); err != nil {
+
+	if err := c.seedAdmission(ctx, request, c.materializers); err != nil {
 		return nil, err
 	}
-	return c.finishAdmission(ctx, materializers)
+	return c.finishAdmission(ctx, c.materializers)
 }
 
 func (c *admissionClosure) role(id manifest.NamedResource) admissionRole {
@@ -559,9 +544,8 @@ func (c *admissionClosure) add(id manifest.NamedResource, role admissionRole) {
 		(!c.proposal.Request.Invocation || len(c.generation) != 0) &&
 		(c.incoming(id).Obj == nil) {
 		record := c.record(id)
-		if !Root(c.capturedRoot(id)).InitialAdmitted && record.Path == "" &&
-			c.candidate(id).Obj == nil ||
-			c.objects.GetObject(id) != nil {
+		if record.Path == "" && c.facts.AdmissionCandidate(id).Obj == nil &&
+			!Root(*c.capturedRoot(id)).InitialAdmitted || c.objects.GetObject(id) != nil {
 			return
 		}
 	}
@@ -674,6 +658,7 @@ func (c *admissionClosure) finishAdmission(
 		c.proposal.Ordinary = roles[c.counts[0]+c.counts[1]+c.counts[2] : c.counts[0]+c.counts[1]+c.counts[2]]
 	}
 	c.proposal.Objects = slices.Grow(c.proposal.Objects, len(c.children))
+	//nolint:gocritic // Map values MUST remain independent snapshots until publication.
 	for id, state := range c.states {
 		if state.role.needed && len(c.historyOwners[id]) != 0 {
 			c.requestHistory(id)
@@ -716,4 +701,45 @@ func (c *admissionClosure) finishAdmission(
 		c.acquire(Demand{Identity: owner, Source: manifest.BootstrapSourceID, Root: root})
 	}
 	return c.proposal, ctx.Err() //nolint:wrapcheck // Admission cancellation preserves the original context error identity.
+}
+
+func (c *admissionClosure) captureGeneration(request *PrepareRequest) {
+	if request.Owner != c.owner || len(request.Generation) != len(c.generation) ||
+		len(request.Generation) != 0 && &request.Generation[0] != &c.generation[0] {
+		clear(c.nextGeneration)
+		if len(request.Generation) != 0 && c.nextGeneration == nil {
+			c.nextGeneration = make(map[manifest.NamedResource]int, len(request.Generation))
+		}
+		for i := range request.Generation {
+			if object := request.Generation[i].Obj; object != nil {
+				c.nextGeneration[object.Named()] = i + 1
+			}
+		}
+		replaced := len(request.Generation) != len(c.generation) ||
+			slices.ContainsFunc(request.Generation, func(child store.Child) bool {
+				return child.Obj != nil && c.incoming(child.Obj.Named()).Obj != child.Obj
+			})
+		if !request.Invocation && len(c.identities) == 0 && len(c.generation) != 0 && replaced {
+			clear(c.states)
+			clear(c.children)
+		}
+	}
+}
+
+func (c *admissionClosure) matchesPreparation(
+	previous *store.ReadSet,
+	request *PrepareRequest,
+	interpretation bool,
+) bool {
+	sameInterpretation := interpretation && c.context.Frozen && c.changes == request.Changes && request.Owner == c.owner
+	if !sameInterpretation {
+		return false
+	}
+	historyOnly := !slices.ContainsFunc(
+		request.Acquired,
+		func(a Acquisition) bool { return !a.Demand.History || a.Demand.Root == "" },
+	)
+	sameGeneration := len(request.Generation) == len(c.generation) &&
+		(len(c.generation) == 0 || &request.Generation[0] == &c.generation[0])
+	return historyOnly && sameGeneration && c.proposal.reads.Matches(previous)
 }

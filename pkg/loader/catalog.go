@@ -16,7 +16,6 @@ type Catalog struct {
 	projections [64]*map[manifest.BaseManifest]producerFact
 	nativeEntry *manifest.Kustomization
 	sourceRoot  string
-	entryPath   string
 	entry       entryKind
 	compact     bool
 }
@@ -27,7 +26,7 @@ func (l *Loader) DetachCatalog() *Catalog {
 		l.catalog = &Catalog{
 			index: l.Index, locations: l.locations, roots: l.roots, files: l.documents.cache,
 			candidates: l.candidates, nativeEntry: l.nativeEntry,
-			sourceRoot: l.SourceRoot, entryPath: l.entryPath, entry: l.entry, compact: l.documents.compact,
+			sourceRoot: l.SourceRoot, entry: l.entry, compact: l.documents.compact,
 		}
 		for i := range l.producerFacts {
 			l.catalog.projections[i] = l.producerFacts[i].Load()
@@ -88,23 +87,21 @@ func (c *Catalog) RootEvidence(id manifest.NamedResource, reads *store.ReadSet) 
 	}
 	record, indexed := c.index.Lookup(id)
 	root := id
-	if occurrence, known := catalogOccurrence(
-		c.locations,
-		id,
-	); known && occurrence.Authored.Namespace == "" &&
-		!indexed {
-		root.Namespace = ""
-		record, indexed = c.index.Lookup(root)
+	if !indexed && id.Namespace != "" {
+		if occurrence, known := catalogOccurrence(c.locations, id); known && occurrence.Authored.Namespace == "" {
+			root.Namespace = ""
+			record, indexed = c.index.Lookup(root)
+		}
 	}
 	var evidence selection.RootEvidence
 	if cached, known := c.roots.lookup(root); known {
-		evidence = cached.facts
-		evidence.StaticRecord, evidence.StaticRecordKnown = evidence.Record, true
+		evidence = cached.view()
+		evidence.StaticRecord = &cached.record
 	} else if indexed {
 		doc := c.files[record.Path]
 		occurrence, _ := catalogOccurrence(c.locations, id)
 		evidence = selection.RootEvidence{
-			Identity: id, Record: record, Occurrence: occurrenceView(&occurrence),
+			Identity: id, Record: selection.RootRecordFrom(&record), Occurrence: occurrenceView(&occurrence),
 			Scope: selection.RootScopeFacts{
 				Path:           record.Path,
 				Eligibility:    doc.eligible,
@@ -119,18 +116,18 @@ func (c *Catalog) RootEvidence(id manifest.NamedResource, reads *store.ReadSet) 
 				NativeOperand:  doc.rootNative,
 				Compact:        c.compact,
 				EntryKustomize: c.entry == entryKustomize,
-				EntryPlain:     c.entry == entryPlain,
 				Candidate:      c.candidates[id].Obj != nil || record.Declaration != nil,
 			},
 		}
 	}
-	evidence.Identity, evidence.Record = id, record
+	evidence.Identity, evidence.Record = id, selection.RootRecordFrom(&record)
 	evidence.Scope.Records = c.index.Records
 	object := c.CatalogObject(id)
 	evidence.Scope.NamespaceEligible = object != nil && manifest.AdmitsRoot(object)
 	if reads != nil {
 		rootSupport(&evidence, reads, c.index, &c.roots.currentOnly, c.sourceRoot)
-		completeRootSupport(&evidence, reads, c.index, c.sourceRoot)
+		completeRootSupport(&evidence, reads, c.index)
+		evidence.Stale = !reads.Valid()
 	}
 	return evidence
 }

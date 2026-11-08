@@ -17,6 +17,7 @@ type solverFacts struct {
 	context      SourceContext
 	changes      *change.Set
 	index        manifest.DiscoveryIndex
+	candidates   map[manifest.NamedResource]store.Child
 	occurrences  map[manifest.NamedResource]OccurrenceFacts
 	roots        map[manifest.NamedResource]RootEvidence
 	producers    map[manifest.BaseManifest]ProducerFacts
@@ -29,6 +30,24 @@ func (f *solverFacts) SelectionIndex() *manifest.DiscoveryIndex { return &f.inde
 func (f *solverFacts) Occurrence(id manifest.NamedResource) (OccurrenceFacts, bool) {
 	occurrence, ok := f.occurrences[id]
 	return occurrence, ok
+}
+
+func (f *solverFacts) AdmissionCandidate(id manifest.NamedResource) store.Child {
+	return f.candidates[id]
+}
+
+//nolint:gocritic // The fixture implements the census method exactly.
+func (f *solverFacts) OccurrenceRoots(id manifest.NamedResource) (manifest.NamedResource, []string) {
+	occurrence, known := f.occurrences[id]
+	if !known || !occurrence.CatalogKnown || len(occurrence.Roots) == 0 {
+		return manifest.NamedResource{}, nil
+	}
+	source, _, _ := occurrence.SourcePath()
+	return source, occurrence.Roots
+}
+
+func (f *solverFacts) PreparedObject(id manifest.NamedResource, _ *store.ReadSet) (store.Child, bool) {
+	return f.roots[id].BuiltChild, f.roots[id].BuiltCurrent
 }
 
 func (f *solverFacts) RootEvidence(id manifest.NamedResource, _ *store.ReadSet) RootEvidence {
@@ -62,7 +81,7 @@ func (f *solverFacts) SourceFacts(id manifest.NamedResource, reads *store.ReadSe
 	}
 	facts.Context, facts.Source = f.context, id
 	facts.Changes, facts.Snapshots, facts.Declarations = f.changes.ForSource(id)
-	facts.Delta, facts.Paths = facts.Changes, facts.Changes.Paths()
+	facts.Delta, facts.Files = facts.Changes, sourceFilesForTest(facts.Changes.Paths())
 	facts.Origin, facts.ToIndex = f.context.Root, "."
 	var objects interface {
 		GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
@@ -201,7 +220,7 @@ func evaluateSolver(t *testing.T, c *admissionClosure, request *PrepareRequest) 
 		c.decision = c.session.Snapshot()
 		c.proposal = &Admission{Request: *request, reads: &reads, preparation: preparation}
 		c.proposal.Revision = c.session.Snapshot().version()
-		c.resetDemand(request)
+		c.resetDemand()
 		proposal, err := c.evaluate(t.Context(), request)
 		if err != nil || len(proposal.demands) == 0 {
 			return proposal, err
@@ -209,7 +228,7 @@ func evaluateSolver(t *testing.T, c *admissionClosure, request *PrepareRequest) 
 		acquired := make([]Acquisition, 0, len(proposal.demands))
 		for i := range proposal.demands {
 			demand := proposal.demands[i]
-			child := facts.occurrences[demand.Identity].Candidate
+			child := facts.candidates[demand.Identity]
 			if child.Obj == nil {
 				child.Obj = c.session.store.GetDeclaration(demand.Identity)
 			}
@@ -225,7 +244,15 @@ func evaluateSolver(t *testing.T, c *admissionClosure, request *PrepareRequest) 
 func solverChild(session *Session, id manifest.NamedResource) store.Child {
 	child := store.Child{Obj: session.store.GetDeclaration(id)}
 	if child.Obj == nil {
-		child = session.facts.(*solverFacts).occurrences[id].Candidate
+		child = session.facts.(*solverFacts).candidates[id]
 	}
 	return child
+}
+
+func sourceFilesForTest(paths []string) []SourceFile {
+	files := make([]SourceFile, len(paths))
+	for i, file := range paths {
+		files[i] = SourceFile{Path: file, Indexed: file}
+	}
+	return files
 }

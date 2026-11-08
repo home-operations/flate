@@ -6,25 +6,11 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 //nolint:revive // Capture keeps the reader and both indexed/current production views explicit.
 func rootSupport(
-	evidence *selection.RootEvidence,
-	objects admissionReader,
-	index, currentOnly *manifest.DiscoveryIndex,
-	sourceRoot string,
-) {
-	captureRootSupport(evidence, objects, index, currentOnly, sourceRoot)
-	if capture, ok := objects.(*store.ReadSet); ok {
-		evidence.Stale = !capture.Valid()
-	}
-}
-
-//nolint:revive // Capture keeps the reader and both indexed/current production views explicit.
-func captureRootSupport(
 	evidence *selection.RootEvidence,
 	objects admissionReader,
 	index, currentOnly *manifest.DiscoveryIndex,
@@ -66,40 +52,21 @@ func completeRootSupport(
 	evidence *selection.RootEvidence,
 	objects admissionReader,
 	index *manifest.DiscoveryIndex,
-	sourceRoot string,
 ) {
 	if !selection.Root(*evidence).NeedsOwnerSupport {
 		return
 	}
+	var owners *rootOwnerInventory
 	if evidence.Record.Path != "" {
-		evidence.CoveringOwners = rootCoveringFacts(objects, index, sourceRoot)
+		owners = rootCoveringFacts(objects, index)
 	}
-	captureRootOwners(evidence, objects, index)
-}
-
-func rootCoveringFacts(
-	objects admissionReader,
-	index *manifest.DiscoveryIndex,
-	sourceRoot string,
-) []selection.RootCoveringOwner {
-	var owners []selection.RootCoveringOwner
-	for info := range manifest.Kinds() {
-		if !info.Structural {
-			continue
-		}
-		for _, object := range objects.ListProductionCandidates(info.Group, info.Kind, index, nil) {
-			owners = append(owners, coveringFact(object.Named(), object, objects, sourceRoot))
-		}
-	}
-	slices.SortFunc(owners, func(a, b selection.RootCoveringOwner) int { return a.Identity.Compare(b.Identity) })
-	return owners
+	captureRootOwners(evidence, objects, index, owners)
 }
 
 func coveringFact(
 	id manifest.NamedResource,
 	object manifest.BaseManifest,
 	objects admissionReader,
-	sourceRoot string,
 ) selection.RootCoveringOwner {
 	fact := selection.RootCoveringOwner{Identity: id, Object: object}
 	if object == nil {
@@ -113,10 +80,6 @@ func coveringFact(
 		source = manifest.BootstrapSourceID
 	}
 	fact.Source = source
-	location := SourceView(objects, source, sourceRoot)
-	fact.Pinned, fact.External = location.Pinned, location.External
-	claim, _ := filepath.Rel(sourceRoot, filepath.Join(location.Path, manifest.NormalizeClaimBase(path)))
-	fact.Claim = filepath.ToSlash(claim) + "/"
 	input, _ := objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 	if input != nil {
 		fact.Input = input
@@ -130,33 +93,17 @@ func captureRootOwners(
 	evidence *selection.RootEvidence,
 	objects admissionReader,
 	index *manifest.DiscoveryIndex,
+	owners *rootOwnerInventory,
 ) {
-	captureRootOwnerFacts(evidence, objects, index)
-	if capture, ok := objects.(*store.ReadSet); ok {
-		evidence.Stale = !capture.Valid()
-	}
-}
-
-func captureRootOwnerFacts(
-	evidence *selection.RootEvidence,
-	objects admissionReader,
-	index *manifest.DiscoveryIndex,
-) {
-	pending := rootOwnerCandidates(evidence)
+	pending := owners.candidates(evidence)
 	for cursor := 0; cursor < len(pending); cursor++ {
 		owner := pending[cursor]
-		indexOf := slices.IndexFunc(
-			evidence.CoveringOwners,
-			func(f selection.RootCoveringOwner) bool { return f.Identity == owner },
-		)
-		if indexOf < 0 {
-			evidence.CoveringOwners = append(
-				evidence.CoveringOwners,
-				selection.RootCoveringOwner{Identity: owner},
-			)
-			indexOf = len(evidence.CoveringOwners) - 1
+		fact := selection.RootCoveringOwner{Identity: owner}
+		if owners != nil {
+			if known, ok := owners.identities[owner]; ok {
+				fact = known
+			}
 		}
-		fact := &evidence.CoveringOwners[indexOf]
 		if evidence.Identity.KindInfo().Parent || fact.Object != nil {
 			fact.Productions = objects.Productions(owner, index)
 		}
@@ -164,6 +111,7 @@ func captureRootOwnerFacts(
 			slices.ContainsFunc(evidence.Productions, func(p manifest.Production) bool { return p.Owner == owner }) {
 			fact.Output, _ = objects.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
 		}
+		evidence.CoveringOwners = append(evidence.CoveringOwners, fact)
 		if !evidence.Identity.KindInfo().Parent {
 			continue
 		}
@@ -176,37 +124,10 @@ func captureRootOwnerFacts(
 			}
 		}
 	}
-}
-
-func rootOwnerCandidates(evidence *selection.RootEvidence) []manifest.NamedResource {
-	var pending []manifest.NamedResource
-	for i := range evidence.Productions {
-		production := &evidence.Productions[i]
-		if owner := production.Materializer(
-			evidence.Identity,
-		); owner != (manifest.NamedResource{}) && owner != evidence.Identity &&
-			!slices.Contains(pending, owner) {
-			pending = append(pending, owner)
-		}
-	}
-	source := evidence.Occurrence.Declaration.Source
-	if source == "" {
-		source = evidence.Sources[0].Origin
-	}
-	for i := range evidence.CoveringOwners {
-		candidate := &evidence.CoveringOwners[i]
-		if candidate.Input == nil || source != candidate.Input.LocalPath && source != candidate.Root {
-			continue
-		}
-		file := candidate.Input.OriginPath(evidence.Record.Path)
-		if !safepath.Contains(candidate.Root, candidate.Path) || !safepath.Contains(candidate.Path, file) {
-			continue
-		}
-		if !slices.Contains(pending, candidate.Identity) {
-			pending = append(pending, candidate.Identity)
-		}
-	}
-	return pending
+	slices.SortFunc(
+		evidence.CoveringOwners,
+		func(a, b selection.RootCoveringOwner) int { return a.Identity.Compare(b.Identity) },
+	)
 }
 
 func captureRootSources(evidence *selection.RootEvidence, objects admissionReader) {
@@ -227,6 +148,10 @@ func captureRootSources(evidence *selection.RootEvidence, objects admissionReade
 		break
 	}
 	for i, candidate := range [2]manifest.NamedResource{source, manifest.BootstrapSourceID} {
+		if i != 0 && candidate == evidence.Sources[0].Source {
+			evidence.Sources[i] = evidence.Sources[0]
+			continue
+		}
 		artifact, _ := objects.GetArtifact(candidate, store.ArtifactContent).(*store.SourceArtifact)
 		support := selection.RootSourceSupport{
 			Source: candidate, Allowed: objects.SourceAdmission(id, candidate), Available: artifact != nil,

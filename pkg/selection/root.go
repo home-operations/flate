@@ -57,7 +57,7 @@ func classifyAuthoredRoot(evidence *RootEvidence) RootResult {
 	if evidence.InitialScope != nil {
 		initial := *evidence
 		initial.Scope, initial.InitialScope = *evidence.InitialScope, nil
-		initial.Occurrence = evidence.InitialOccurrence
+		initial.Occurrence = *evidence.InitialOccurrence
 		if previous := classifyRoot(&initial); previous.Independent {
 			result.Occurrence, result.Independent = previous.Occurrence, true
 		}

@@ -11,11 +11,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
+	"weak"
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -115,20 +116,21 @@ type view interface {
 	OpenRegular(string) (fs.File, error)
 }
 
-// Backing MUST remain immutable while readers exist; pooled storers are exclusive
+// Backing MUST remain immutable while readers exist. Borrowed storers are exclusive
 // to an operation and retain no expanded objects.
 type gitView struct {
-	storers  sync.Pool
-	worktree billy.Filesystem
-	nodes    map[string]*gitNode
-	denied   map[string]bool
-	backing  billy.Filesystem
-	current  fs.FS
-	changes  map[string]bool
-	refresh  *ViewOptions
-	commit   plumbing.Hash
-	identity string
-	mode     ViewMode
+	storer    atomic.Pointer[weak.Pointer[borrowedStorer]]
+	newStorer func() storer.EncodedObjectStorer
+	worktree  billy.Filesystem
+	nodes     map[string]*gitNode
+	denied    map[string]bool
+	backing   billy.Filesystem
+	current   fs.FS
+	changes   map[string]bool
+	refresh   *ViewOptions
+	commit    plumbing.Hash
+	identity  string
+	mode      ViewMode
 }
 
 type gitNode struct {
@@ -248,7 +250,7 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	combined.view = input
 	combined.location = opts.Location
 	combined.excluded = opts.excluded
-	input.storers.New = func() any {
+	input.newStorer = func() storer.EncodedObjectStorer {
 		upper := filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
 		if native && current.backing != nil {
 			lower := filesystem.NewStorageWithOptions(current.backing, cache.NewObjectLRU(0), filesystem.Options{})
@@ -279,12 +281,35 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	return &combined.FS, nil
 }
 
+type borrowedStorer struct {
+	storage storer.EncodedObjectStorer
+	idle    *weak.Pointer[borrowedStorer]
+}
+
+// Concurrent borrowers MUST own separate mutable indexes. Idle indexes are reclaimable.
+func (g *gitView) borrowStorer() *borrowedStorer {
+	if cached := g.storer.Swap(nil); cached != nil {
+		if borrowed := cached.Value(); borrowed != nil {
+			return borrowed
+		}
+	}
+	borrowed := &borrowedStorer{storage: g.newStorer()}
+	borrowed.idle = new(weak.Make(borrowed))
+	return borrowed
+}
+
+func (g *gitView) releaseStorer(borrowed *borrowedStorer) {
+	g.storer.CompareAndSwap(nil, borrowed.idle)
+	runtime.KeepAlive(borrowed)
+}
+
 func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) ([]manifest.Warning, error) {
 	if g.worktree != nil && g.current == nil {
 		return nil, g.walkWorktree(ctx, ".")
 	}
-	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(objectStore)
+	borrowed := g.borrowStorer()
+	defer g.releaseStorer(borrowed)
+	objectStore := borrowed.storage
 	c, err := object.GetCommit(objectStore, commit)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
@@ -417,8 +442,9 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 	if info := node.info.Load(); info != nil {
 		return info, nil
 	}
-	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(objectStore)
+	borrowed := g.borrowStorer()
+	defer g.releaseStorer(borrowed)
+	objectStore := borrowed.storage
 	var size int64
 	var err error
 	if g.current != nil && !g.changes[name] && node.mode.IsRegular() {
@@ -490,8 +516,9 @@ func (g *gitView) Open(name string) (fs.File, error) {
 
 func (g *gitView) openBlob(hash plumbing.Hash) (io.ReadCloser, error) {
 	// Upstream's streaming delta reader does not reset its position on backward copies.
-	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(objectStore)
+	borrowed := g.borrowStorer()
+	defer g.releaseStorer(borrowed)
+	objectStore := borrowed.storage
 	blob, err := object.GetBlob(objectStore, hash)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
@@ -724,7 +751,7 @@ func (g *FS) finishGitView(
 
 func (g *gitView) populateCurrent(ctx context.Context, current *gitView, native bool) error {
 	if native {
-		g.storers.New = current.storers.New
+		g.newStorer = current.newStorer
 		g.backing = current.backing
 		g.worktree = current.worktree
 	}

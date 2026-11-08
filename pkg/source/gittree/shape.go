@@ -77,7 +77,7 @@ func visible(_ []string, name string, _ fs.FileMode, _ *sourceignore.Matcher) bo
 
 func (g *gitView) resolveLinks(names []string) (*tree.Builder, error) {
 	raw := &gitView{nodes: g.nodes, backing: g.backing, current: g.current, changes: g.changes}
-	raw.storers.New = g.storers.New
+	raw.newStorer = g.newStorer
 	links := tree.NewBuilder(raw)
 	for _, name := range names {
 		if g.nodes[name].mode&fs.ModeSymlink == 0 {

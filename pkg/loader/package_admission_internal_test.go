@@ -385,7 +385,7 @@ func TestOccurrenceObject_SourceReplacement(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, len(l.roots.identities), 0)
 			for _, evidence := range l.roots.occurrences {
-				assert.Equal(t, selection.Root(evidence.facts).Independent, false)
+				assert.Equal(t, selection.Root(evidence.view()).Independent, false)
 			}
 			child, err = l.OccurrenceObject(t.Context(), &occurrence, second)
 			assert.NoError(t, err)

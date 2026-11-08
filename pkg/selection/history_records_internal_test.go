@@ -59,7 +59,7 @@ func TestRefineHistory_OrderingClosure(t *testing.T) {
 		},
 		nil,
 	)
-	assert.Equal(t, f.closure.record(consumer.Named()).ContentRoots != nil, true)
+	assert.Equal(t, f.closure.contentRecord(consumer.Named()).ContentRoots != nil, true)
 	assert.Diff(t, f.closure.record(consumer.Named()).Refs, []manifest.NamedResource{source})
 	assert.Diff(
 		t,
@@ -119,7 +119,7 @@ func TestRefineHistory_OrderingReferences(t *testing.T) {
 				},
 				nil,
 			)
-			assert.Equal(t, f.closure.record(consumer.Named()).ContentRoots != nil, true)
+			assert.Equal(t, f.closure.contentRecord(consumer.Named()).ContentRoots != nil, true)
 			assert.Diff(t, f.closure.record(consumer.Named()).Refs, []manifest.NamedResource{source, target.Named()})
 			want := map[manifest.NamedResource]uint8{}
 			if changed == "consumer.yaml" {
@@ -212,7 +212,9 @@ func newHistoryEvaluation(t *testing.T, cfg historyEvaluationConfig) *historyEva
 		input, _ := cfg.inventory.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		location, supplied := cfg.sources[id]
 		if !supplied {
-			location.Changes, location.Delta, location.Paths = cfg.changes, cfg.changes, cfg.changes.Paths()
+			location.Changes, location.Delta, location.Files = cfg.changes, cfg.changes, sourceFilesForTest(
+				cfg.changes.Paths(),
+			)
 		}
 		location.Context, location.Source, location.Input, location.Initial, location.InitialKnown, location.Origin, location.ToIndex = facts.context, id, input, input, true, cfg.root, "."
 		location.Declaration = cfg.inventory.GetDeclaration(id)
@@ -321,7 +323,7 @@ func TestHistory_SourceRootReplacement(t *testing.T) {
 				slices.ContainsFunc(remaining, func(p manifest.Production) bool { return p.Owner == owner }),
 				!tc.available,
 			)
-			assert.Diff(t, c.record(child).ContentRoots[source], []string{"apps/red"})
+			assert.Diff(t, c.contentRecord(child).ContentRoots[source], []string{"apps/red"})
 		})
 	}
 }
@@ -362,6 +364,6 @@ func TestHistory_PeerContentRoots(t *testing.T) {
 	c.replace = map[manifest.NamedResource]bool{owner: true}
 	for _, source := range []manifest.NamedResource{changed, unchanged} {
 		id := testutil.KustomizationID("apps", "projected-"+source.Name)
-		assert.Diff(t, c.record(id).ContentRoots[source], []string{"apps/red"})
+		assert.Diff(t, c.contentRecord(id).ContentRoots[source], []string{"apps/red"})
 	}
 }

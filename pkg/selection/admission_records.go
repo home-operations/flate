@@ -111,7 +111,16 @@ func (c *admissionClosure) bootstrapPrerequisite(
 	if record.Path == "" && record.Builder == "" || !c.directBootstrap(id) {
 		return false
 	}
-	required := func(owner manifest.BaseManifest) bool { return c.bootstrapInputRequired(owner, id, &record) }
+	required := func(object manifest.BaseManifest) bool {
+		owner := RootCoveringOwner{Object: object}
+		if object != nil {
+			owner.Identity = object.Named()
+			if owner.Identity != record.Parent {
+				owner = c.rootOwnerFacts(object)
+			}
+		}
+		return c.bootstrapInputRequired(&owner, id, &record)
+	}
 	if required(c.object(record.Parent)) || c.incoming(id).Obj != nil && required(c.incoming(id).Obj) {
 		return true
 	}
@@ -122,7 +131,7 @@ func (c *admissionClosure) bootstrapPrerequisite(
 			return true
 		}
 	}
-	return c.hasOwner(required)
+	return c.hasOwner(func(owner *RootCoveringOwner) bool { return c.bootstrapInputRequired(owner, id, &record) })
 }
 
 func (c *admissionClosure) directBootstrap(id manifest.NamedResource) bool {
@@ -134,14 +143,14 @@ func (c *admissionClosure) directBootstrap(id manifest.NamedResource) bool {
 }
 
 func (c *admissionClosure) bootstrapInputRequired(
-	owner manifest.BaseManifest,
+	owner *RootCoveringOwner,
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,
 ) bool {
-	if owner == nil || record.Parent != owner.Named() && !c.coversDeclaration(owner, id) {
+	if owner.Object == nil || record.Parent != owner.Identity && !c.coversDeclaration(owner, id) {
 		return false
 	}
-	for ref := range manifest.References(owner, manifest.ReferenceRelations) {
+	for ref := range manifest.References(owner.Object, manifest.ReferenceRelations) {
 		if !ref.Ordering && !ref.ContentInput() {
 			continue
 		}
@@ -165,7 +174,7 @@ func (c *admissionClosure) bootstrapInputRequired(
 }
 
 func (c *admissionClosure) bootstrapProductionCurrent(id manifest.NamedResource, production *manifest.Production) bool {
-	location := c.sourceView(production.Source, c.context.Root)
+	location := c.boundSource(production.Source)
 	if location.Pinned || location.External || escapedPath(production.File) {
 		return false
 	}
@@ -178,21 +187,17 @@ func (c *admissionClosure) bootstrapProductionCurrent(id manifest.NamedResource,
 		slices.ContainsFunc(output.Children, func(child store.Child) bool { return child.Obj.Named() == id })
 }
 
-func (c *admissionClosure) coversDeclaration(owner manifest.BaseManifest, id manifest.NamedResource) bool {
-	if owner == nil {
+func (c *admissionClosure) coversDeclaration(owner *RootCoveringOwner, id manifest.NamedResource) bool {
+	if owner.Object == nil || owner.Input == nil {
 		return false
 	}
-	source, dir, applies := owner.SourcePath()
-	producer, ok := owner.(interface {
+	producer, ok := owner.Object.(interface {
 		EmissionPolicy() manifest.EmissionPolicy
 	})
-	if !applies || !ok || !producer.EmissionPolicy().MatchesNamespace(id) {
+	if !ok || !producer.EmissionPolicy().MatchesNamespace(id) {
 		return false
 	}
-	if source.Name == "" {
-		source = manifest.BootstrapSourceID
-	}
-	return c.completeCoversDeclaration(&id, &source, &dir)
+	return c.completeCoversDeclaration(id, owner)
 }
 
 func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource, object manifest.BaseManifest) bool {
@@ -240,35 +245,29 @@ func (c *admissionClosure) declarationUnchanged(id, owner manifest.NamedResource
 		manifest.Equal(record.Declaration, object)
 }
 
-func (c *admissionClosure) completeCoversDeclaration(
-	id *manifest.NamedResource,
-	source *manifest.NamedResource,
-	dir *string,
-) bool {
-	_, input, _ := c.delta((*source))
-	file := c.record((*id)).Path
-	origin := c.declarationSource((*id))
-	if input != nil && file == "" {
-		delta, _, _ := c.delta((*source))
-		root := input.OriginPath(filepath.Join(input.LocalPath, (*dir)))
-		for dependency, changed := range delta.Inputs((*id)) {
+func (c *admissionClosure) completeCoversDeclaration(id manifest.NamedResource, owner *RootCoveringOwner) bool {
+	if owner.Path == "" {
+		return false
+	}
+	record, _ := c.indexedRecord(id)
+	file := record.Path
+	if file == "" {
+		delta, _, _ := c.delta(owner.Source)
+		for dependency, changed := range delta.Inputs(id) {
 			if dependency.Group != id.Group || dependency.Kind != id.Kind || dependency.Name != id.Name ||
 				dependency.Namespace != "" && id.Namespace != "" && dependency.Namespace != id.Namespace {
 				continue
 			}
 			for _, declaration := range changed.Declarations {
-				path := input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(declaration)))
-				if containsPath(input.OriginPath(input.LocalPath), root) && containsPath(root, path) {
+				path := owner.Input.OriginPath(filepath.Join(owner.Input.LocalPath, filepath.FromSlash(declaration)))
+				if containsPath(owner.Path, path) {
 					return true
 				}
 			}
 		}
-	}
-	if input == nil || file == "" || origin != input.OriginPath(input.LocalPath) {
 		return false
 	}
-	root := input.OriginPath(filepath.Join(input.LocalPath, (*dir)))
-	return containsPath(input.OriginPath(input.LocalPath), root) && containsPath(root, file)
+	return containsPath(owner.Path, file) && c.declarationSource(id) == owner.Root
 }
 
 func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yield func(manifest.Reference) bool) {
@@ -280,7 +279,7 @@ func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yie
 		}
 		return
 	}
-	if child := c.candidate(id); child.Obj != nil && c.facts.SelectionIndex().Records[id].Builder != "" {
+	if child := c.facts.AdmissionCandidate(id); child.Obj != nil && c.facts.SelectionIndex().Records[id].Builder != "" {
 		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
 			if !yield(ref) {
 				return
@@ -655,7 +654,7 @@ func (c *admissionClosure) qualifyProductionSource(production *manifest.Producti
 	if !applies || source == production.Source {
 		return
 	}
-	location := c.sourceView(source, c.context.Root)
+	location := c.boundSource(source)
 	if location.Pinned || location.External {
 		production.Source = source
 	}

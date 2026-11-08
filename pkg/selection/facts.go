@@ -20,7 +20,6 @@ type OccurrenceFacts struct {
 	Authored        manifest.NamedResource
 	Object          manifest.BaseManifest
 	Catalog         manifest.BaseManifest
-	Record          manifest.DiscoveryRecord
 	Source          manifest.NamedResource
 	Path            string
 	HasPath         bool
@@ -33,7 +32,6 @@ type OccurrenceFacts struct {
 	Labels          map[string]string
 	Labeled         bool
 	Traversed       bool
-	Candidate       store.Child
 	Mounted         *store.SourceArtifact
 	Witness         any
 	Located         bool
@@ -46,8 +44,6 @@ type OccurrenceFacts struct {
 	Targets         []manifest.ProducerTarget
 	AuthoredTargets []manifest.ProducerTarget
 	Policy          *manifest.EmissionPolicy
-	NativeOwner     manifest.NamedResource
-	PreparedRoot    string
 }
 
 // SourcePath resolves references in the occurrence's effective namespace.
@@ -102,7 +98,6 @@ type RootScopeFacts struct {
 	NativeOperand     bool
 	NativeEntry       bool
 	EntryKustomize    bool
-	EntryPlain        bool
 	Application       bool
 	LocalApplication  bool
 	SameEntryOrigin   bool
@@ -119,10 +114,9 @@ type RootScopeFacts struct {
 	NativePackage     bool
 }
 
-// RootOwnerFacts preserves a scope owner's authored coordinate.
+// RootOwnerFacts borrows a scope owner's indexed path.
 type RootOwnerFacts struct {
 	Identity manifest.NamedResource
-	Authored manifest.NamedResource
 	Path     string
 	Indexed  bool
 	Initial  bool
@@ -139,33 +133,45 @@ type RootSourceSupport struct {
 
 // RootCoveringOwner borrows producer ancestry and captured output authority.
 type RootCoveringOwner struct {
-	Identity        manifest.NamedResource
-	Object          manifest.BaseManifest
-	Productions     []manifest.Production
-	Source          manifest.NamedResource
-	Path            string
-	Root            string
-	DeclarationPath string
-	Claim           string
-	Pinned          bool
-	External        bool
-	Applications    map[manifest.NamedResource]manifest.DiscoveryRecord
-	Replaced        bool
-	Output          *store.Emission
-	Input           *store.SourceArtifact
+	Identity     manifest.NamedResource
+	Object       manifest.BaseManifest
+	Productions  []manifest.Production
+	Source       manifest.NamedResource
+	Path         string
+	Root         string
+	Applications map[manifest.NamedResource]manifest.DiscoveryRecord
+	Replaced     bool
+	Output       *store.Emission
+	Input        *store.SourceArtifact
+}
+
+// RootRecord retains only the coordinates used for root classification and support.
+type RootRecord struct {
+	Builder      string
+	Authored     manifest.NamedResource
+	Path         string
+	Parent       manifest.NamedResource
+	BuilderOwner manifest.NamedResource
+}
+
+// RootRecordFrom excludes declaration payloads from retained root evidence.
+func RootRecordFrom(record *manifest.DiscoveryRecord) RootRecord {
+	return RootRecord{
+		Authored: record.Authored, Path: record.Path, Parent: record.Parent,
+		Builder: record.Builder, BuilderOwner: record.BuilderOwner,
+	}
 }
 
 // RootEvidence combines immutable discovery facts with captured current support.
 type RootEvidence struct {
 	Native            *NativeRootFacts
 	Identity          manifest.NamedResource
-	Record            manifest.DiscoveryRecord
-	StaticRecord      manifest.DiscoveryRecord
-	StaticRecordKnown bool
+	Record            RootRecord
+	StaticRecord      *RootRecord
 	Occurrence        OccurrenceFacts
 	Scope             RootScopeFacts
 	InitialScope      *RootScopeFacts
-	InitialOccurrence OccurrenceFacts
+	InitialOccurrence *OccurrenceFacts
 	Productions       []manifest.Production
 	LiveProductions   []manifest.Production
 	Declaration       manifest.BaseManifest

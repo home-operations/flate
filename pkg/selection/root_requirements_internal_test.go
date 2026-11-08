@@ -20,7 +20,7 @@ func TestSession_PendingRootsCaptureMissingDeclaration(t *testing.T) {
 	facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{id: record}
 	facts.roots = map[manifest.NamedResource]RootEvidence{id: {
 		Identity: id,
-		Record:   record,
+		Record:   RootRecordFrom(&record),
 		Scope:    RootScopeFacts{Eligibility: RootEligible, NamespaceEligible: true},
 	}}
 	_, retry := publishDecision(t, session, new(Admission{

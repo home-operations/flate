@@ -91,23 +91,33 @@ func (l *Loader) comparedFileChanged(evidence *selection.SourceFacts, file strin
 func (l *Loader) Occurrence(id manifest.NamedResource) (selection.OccurrenceFacts, bool) {
 	record, indexed := l.Index.Lookup(id)
 	occurrence, catalog := l.catalogOccurrence(id)
-	_, located := l.occurrence(id)
+	located := catalog && !occurrence.requiresBuild && occurrence.Identity.Name == occurrence.Authored.Name
 	facts := occurrenceView(&occurrence)
-	facts.Identity, facts.Record = id, record
+	facts.Identity = id
 	facts.Located, facts.CatalogKnown = located, catalog
-	facts.Candidate = l.candidates[id]
 	facts.Mounted = l.documents.artifacts[occurrence.Declaration.Source]
 	facts.Traversed = l.documents.cache[record.Path].traversed
-	if record.Builder != "" {
-		facts.PreparedRoot = l.registeredRoot(id, &record)
-	}
-	if record.BuilderOwner.ReportHidden() {
-		facts.NativeOwner = record.BuilderOwner
-	}
 	if facts.Catalog == nil {
 		facts.Catalog = l.catalogObject(id, &record)
 	}
 	return facts, indexed || catalog
+}
+
+// AdmissionCandidate borrows the immutable declaration prepared during construction.
+func (l *Loader) AdmissionCandidate(id manifest.NamedResource) store.Child {
+	return l.candidates[id]
+}
+
+// OccurrenceRoots borrows the parsed render paths in the effective source namespace.
+//
+//nolint:gocritic // The census method returns a source and its immutable paths.
+func (l *Loader) OccurrenceRoots(id manifest.NamedResource) (manifest.NamedResource, []string) {
+	occurrence, known := l.catalogOccurrence(id)
+	if !known || occurrence.facts == nil || len(occurrence.facts.roots) == 0 {
+		return manifest.NamedResource{}, nil
+	}
+	source, _, _ := occurrence.SourcePath()
+	return source, occurrence.facts.roots
 }
 
 func occurrenceView(occurrence *authoredOccurrence) selection.OccurrenceFacts {
@@ -140,8 +150,8 @@ func occurrenceView(occurrence *authoredOccurrence) selection.OccurrenceFacts {
 // RootEvidence captures physical support without consulting selection membership.
 func (l *Loader) RootEvidence(id manifest.NamedResource, reads *store.ReadSet) selection.RootEvidence {
 	evidence := l.rootFacts(id)
-	evidence.BuiltChild = l.preparedObject(id)
 	if reads == nil && !l.frozen {
+		evidence.BuiltChild, _ = l.PreparedObject(id, nil)
 		return evidence
 	}
 	var objects admissionReader = l.Store
@@ -150,16 +160,11 @@ func (l *Loader) RootEvidence(id manifest.NamedResource, reads *store.ReadSet) s
 	}
 	rootSupport(&evidence, objects, l.Index, &l.roots.currentOnly, l.SourceRoot)
 	if reads == nil {
-		completeRootSupport(&evidence, objects, l.Index, l.SourceRoot)
+		completeRootSupport(&evidence, objects, l.Index)
 	}
-	if evidence.PreparedRoot != "" && reads != nil {
-		children, current := l.BuiltChildren(evidence.PreparedRoot, evidence.Record.BuilderOwner, reads)
-		for i := range children {
-			if children[i].Obj.Named() == id {
-				evidence.BuiltChild, evidence.BuiltCurrent = children[i], current
-				break
-			}
-		}
+	evidence.BuiltChild, evidence.BuiltCurrent = l.PreparedObject(id, reads)
+	if reads != nil {
+		evidence.Stale = !reads.Valid()
 	}
 	return evidence
 }
@@ -167,21 +172,33 @@ func (l *Loader) RootEvidence(id manifest.NamedResource, reads *store.ReadSet) s
 func (l *Loader) rootFacts(id manifest.NamedResource) selection.RootEvidence {
 	record, indexed := l.Index.Lookup(id)
 	root := id
-	if occurrence, known := l.occurrence(id); known && occurrence.Authored.Namespace == "" && !indexed {
-		root.Namespace = ""
-		record, indexed = l.Index.Lookup(root)
+	if !indexed && id.Namespace != "" {
+		if occurrence, known := l.occurrence(id); known && occurrence.Authored.Namespace == "" {
+			root.Namespace = ""
+			record, indexed = l.Index.Lookup(root)
+		}
 	}
 	var evidence selection.RootEvidence
 	if cached, known := l.roots.lookup(root); known {
-		evidence = cached.facts
-		evidence.StaticRecord, evidence.StaticRecordKnown = evidence.Record, true
+		evidence = cached.view()
+		evidence.StaticRecord = &cached.record
 	} else if indexed {
-		evidence = l.rootAdmission(record.Path, record.File, id.KindInfo().Structural).evidence(l, root, &record).facts
+		doc := l.documents.cache[record.Path]
+		scope := rootAdmission{owners: doc.rootOwners, peers: doc.rootPeers}
+		if !doc.rootKnown || id.KindInfo().Discovery {
+			scope = l.rootAdmission(record.Path, record.File, id.KindInfo().Structural)
+		}
+		snapshot := scope.evidence(l, root, &record)
+		evidence = snapshot.view()
 	} else {
 		occurrence, _ := l.Occurrence(id)
-		evidence = selection.RootEvidence{Identity: id, Record: record, Occurrence: occurrence}
+		evidence = selection.RootEvidence{
+			Identity:   id,
+			Record:     selection.RootRecordFrom(&record),
+			Occurrence: occurrence,
+		}
 	}
-	evidence.Identity, evidence.Record = id, record
+	evidence.Identity, evidence.Record = id, selection.RootRecordFrom(&record)
 	evidence.PreparedRoot = ""
 	if record.Builder != "" {
 		evidence.PreparedRoot = l.registeredRoot(id, &record)
@@ -214,7 +231,6 @@ func (l *Loader) rootScopeFacts(
 		NativeOperand:     l.nativeOperand(record.Path),
 		NativeEntry:       l.nativeEntry != nil && l.nativeEntry.Named() == id,
 		EntryKustomize:    l.entry == entryKustomize,
-		EntryPlain:        l.entry == entryPlain,
 		Prepared:          record.Builder != "" && l.registeredRoot(id, record) != "",
 		Candidate:         l.candidates[id].Obj != nil,
 		Compact:           l.documents.compact,

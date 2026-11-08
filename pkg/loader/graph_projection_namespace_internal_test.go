@@ -339,9 +339,65 @@ func TestRecordNamespaces_IndexedOwner(t *testing.T) {
 }
 
 func setScopeVisitsForTest(l *Loader, file string, visits []graphVisit) {
-	for visitIndex := range visits {
-		visit := visits[visitIndex]
+	delete(l.scopes.visits, file)
+	for i := range visits {
+		visit := visits[i]
 		visit.file = file
 		l.recordScopeVisits(&visit, []graphVisit{visit}, visit.membershipOnly, false)
+	}
+}
+
+func TestProjectAuthoredVisits_PhysicalCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		active     bool
+		membership bool
+		role       kustomizeinput.Role
+		want       bool
+	}{
+		{name: "resource", active: true, role: kustomizeinput.Resource, want: true},
+		{name: "inactive", role: kustomizeinput.Resource},
+		{name: "membership", active: true, membership: true, role: kustomizeinput.Resource},
+		{name: "control", active: true, role: kustomizeinput.File},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := New(store.New())
+			l.SourceRoot = t.TempDir()
+			l.ensureScopes()
+			owner := testutil.KustomizationID("apps", "owner")
+			root := graphVisit{root: l.SourceRoot, dir: "mounted", owner: owner, source: manifest.BootstrapSourceID}
+			file := filepath.Join(l.SourceRoot, "mounted", "input.yaml")
+			origin := filepath.Join(l.SourceRoot, "original", "input.yaml")
+			l.recordScopeVisits(&root, []graphVisit{{
+				file: file, origin: origin, coordinate: "input.yaml", localBase: "mounted",
+				namespace: "apps", role: tc.role,
+			}}, tc.membership, false)
+			l.scopes.contributions[0].active = tc.active
+			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input"}
+			occurrence := authoredOccurrence{Authored: id, Identity: id, facts: &occurrenceFacts{namespaced: true}}
+			for _, path := range []string{file, origin} {
+				var identities []manifest.NamedResource
+				record := manifest.DiscoveryRecord{Path: path, Authored: id}
+				projected := l.projectAuthoredVisits(
+					&record,
+					&occurrence,
+					"v1",
+					func(o authoredOccurrence, p manifest.Production) {
+						identities = append(identities, o.Identity)
+						assert.Equal(t, p.Owner, owner)
+						assert.Equal(t, p.Source, manifest.BootstrapSourceID)
+						assert.Equal(t, p.Path, path)
+					},
+				)
+				assert.Equal(t, projected, tc.want)
+				var want []manifest.NamedResource
+				if tc.want {
+					want = []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}}
+				}
+				assert.Diff(t, identities, want)
+			}
+		})
 	}
 }

@@ -115,9 +115,15 @@ func TestRootAdmission_ReaderOwnership(t *testing.T) {
 			t.Parallel()
 			l := New(store.New())
 			l.Index.Readers = map[string][]manifest.FileReader{"child.yaml": {tc.reader}}
+			l.Index.Claims = map[string][]manifest.NamedResource{
+				"other/":     {owner, testutil.KustomizationID("apps", "peer")},
+				"unrelated/": {testutil.KustomizationID("apps", "unrelated")},
+			}
 			record := manifest.DiscoveryRecord{Path: "child.yaml", File: "child.yaml", Authored: id}
 			scope := l.rootAdmission(record.Path, record.File, true)
-			assert.Equal(t, selection.Root(scope.evidence(l, id, &record).facts).Admitted, tc.admitted)
+			assert.Equal(t, len(scope.peers), len(scope.owners))
+			evidence := scope.evidence(l, id, &record)
+			assert.Equal(t, selection.Root(evidence.view()).Admitted, tc.admitted)
 		})
 	}
 }

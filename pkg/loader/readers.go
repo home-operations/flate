@@ -284,7 +284,8 @@ func (rf *readerFinalizer) admitRecord(id manifest.NamedResource, r *manifest.Di
 	}
 	scope := rf.loader.rootAdmission(r.Path, r.File, false)
 	doc.rootOwners, doc.rootPeers, doc.rootNative = scope.owners, scope.peers, rf.loader.nativeOperand(r.Path)
-	doc.rootAdmitted = selection.Root(scope.evidence(rf.loader, id, r).facts).Admitted
+	evidence := scope.evidence(rf.loader, id, r)
+	doc.rootAdmitted = selection.Root(evidence.view()).Admitted
 	doc.rootKnown = true
 	rf.loader.documents.cache[r.Path] = doc
 }
@@ -295,13 +296,13 @@ func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifes
 	}
 	kind := id.KindInfo()
 	if parents := rf.emittedFiles[r.File]; kind.Structural &&
-		!selection.Root(rf.loader.roots.get(id).facts).Independent &&
+		!selection.Root(rf.loader.roots.get(id).view()).Independent &&
 		r.Parent == (manifest.NamedResource{}) &&
 		len(parents) == 1 &&
 		parents[0] != id {
 		r.Parent = parents[0]
 	}
-	if selection.Root(rf.loader.roots.get(id).facts).Independent {
+	if selection.Root(rf.loader.roots.get(id).view()).Independent {
 		input := rf.loader.documents.artifacts[new(rf.loader.documents).mountedRoot(r.Path)]
 		for i := range r.Productions {
 			p := &r.Productions[i]
@@ -371,7 +372,7 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 
 func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
 	kind := id.KindInfo()
-	if rf.loader.documents.compact && kind.Parent && !selection.Root(rf.loader.roots.get(id).facts).Independent &&
+	if rf.loader.documents.compact && kind.Parent && !selection.Root(rf.loader.roots.get(id).view()).Independent &&
 		r.Parent == (manifest.NamedResource{}) &&
 		!selection.Root(rf.loader.RootEvidence(id, nil)).Admitted {
 		var owner manifest.NamedResource

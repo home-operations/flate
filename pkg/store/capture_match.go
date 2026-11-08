@@ -10,7 +10,7 @@ func (r *ReadSet) matchesInput(input *Input, exact bool) bool {
 	id := input.Ref.NamedResource
 	details := input.details.Load()
 	if input.derived&capturedObject != 0 &&
-		!reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
+		!reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child.input()) {
 		return false
 	}
 	if input.ordinaryDemand && r.OrdinaryDemand(id) != input.view.ordinary {
@@ -68,11 +68,12 @@ func (r *ReadSet) matchesInputDetails(input *Input, details *inputDetails) bool 
 		!artifactReadEqual(details.artifact, r.GetArtifact(id, details.artifactRead), details.artifactRead) {
 		return false
 	}
+	productions := input.productions.Load()
 	if input.derived&capturedProductions != 0 {
-		if !slices.Equal(details.productions, r.Productions(id, details.index)) {
+		if !slices.Equal(productions.items, r.Productions(id, productions.index)) {
 			return false
 		}
-	} else if details != nil && details.productions != nil {
+	} else if productions != nil && productions.items != nil {
 		r.UnsettledProducers(id)
 	}
 	if input.derived&capturedObjects != 0 &&

@@ -70,8 +70,9 @@ func (l *Loader) anchorRoot(repoRoot, dir string) bool {
 	}
 	var visits []graphVisit
 	owned := false
+	coordinate := dir + "/"
 	for _, claim := range l.scopes.claims {
-		if !strings.HasPrefix(dir+"/", claim.Prefix) {
+		if !strings.HasPrefix(coordinate, claim.Prefix) {
 			continue
 		}
 		if !owned {

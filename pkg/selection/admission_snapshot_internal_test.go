@@ -21,6 +21,7 @@ type countedAdmissionFacts struct {
 	roots       map[manifest.NamedResource]int
 	occurrences map[manifest.NamedResource]int
 	sources     map[manifest.NamedResource]int
+	rootPaths   map[manifest.NamedResource]int
 	onRoot      func()
 }
 
@@ -319,7 +320,7 @@ func TestAdmission_FrozenCatalogSharedAcrossEmits(t *testing.T) {
 		record := manifest.DiscoveryRecord{Declaration: obj}
 		evidence.index.Records[obj.Named()] = record
 		evidence.occurrences[obj.Named()] = OccurrenceFacts{
-			Identity: obj.Named(), Authored: obj.Named(), Catalog: obj, Record: record, CatalogKnown: true,
+			Identity: obj.Named(), Authored: obj.Named(), Catalog: obj, CatalogKnown: true,
 		}
 	}
 	facts := &countedAdmissionFacts{
@@ -347,7 +348,9 @@ func TestAdmission_FrozenCatalogSharedAcrossEmits(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
 	}
+	closure := admissionClosure{session: session, facts: facts, catalog: session.catalog.Load()}
 	for id := range evidence.index.Records {
+		assert.Equal(t, len(closure.contentRecord(id).ContentRoots), 0)
 		assert.Equal(t, facts.occurrences[id], 1)
 	}
 }
@@ -474,12 +477,99 @@ func TestAdmission_EntrySourceRefreshPrecedesMaterialization(t *testing.T) {
 				Application: &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "entry"},
 				Producer:    producer.Named(), Reads: &guard,
 			}
-			closure.materializers(&materializerDemand{
+			closure.materializers(materializerDemand{
 				target: source.Named(), source: root, application: filepath.Join(root, "entry"), required: true,
-			}, manifest.NamedResource{}, closure.materializerCandidates(false))
+			}, manifest.NamedResource{})
 			assert.Equal(t, closure.role(producer.Named()).needed, state == "changed" || state == "failed")
 			assert.Equal(t, closure.role(source.Named()).needed, state == "pending")
 			assert.Equal(t, closure.role(source.Named()).ordinary, state == "pending")
 		})
 	}
+}
+
+func TestAdmission_DocumentComparisonSkipsMembershipCapture(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	session := newSolverSession(t, st, nil, Request{Changed: true})
+	facts := session.facts.(*solverFacts)
+	object := &manifest.ConfigMap{Name: "built", Namespace: "apps"}
+	child := store.Child{Obj: object, Doc: map[string]any{"data": map[string]any{"value": "built"}}}
+	facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{
+		object.Named(): {Builder: "parent/kustomization.yaml", Declaration: object},
+	}
+	facts.roots = map[manifest.NamedResource]RootEvidence{object.Named(): {BuiltChild: child, BuiltCurrent: true}}
+	counted := &countedAdmissionFacts{census: facts, roots: map[manifest.NamedResource]int{}}
+	closure := solverClosure(t, st, facts)
+	closure.facts = counted
+	prepared := closure.preparedObject(object.Named())
+	assert.Equal(t, prepared.Obj, child.Obj)
+	assert.Diff(t, prepared.Doc, child.Doc)
+	assert.Equal(t, len(counted.roots), 0)
+}
+
+func TestAdmission_CatalogUsesIndexedRecord(t *testing.T) {
+	t.Parallel()
+	for _, indexedRoots := range []bool{false, true} {
+		t.Run(fmt.Sprintf("indexed_roots_%t", indexedRoots), func(t *testing.T) {
+			t.Parallel()
+			session := newSolverSession(t, store.New(), nil, Request{Changed: true})
+			facts := session.facts.(*solverFacts)
+			object := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./derived"}
+			id := object.Named()
+			record := manifest.DiscoveryRecord{Declaration: object, Builder: "package"}
+			want := map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"derived"}}
+			if indexedRoots {
+				want = map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"indexed"}}
+				record.ContentRoots = want
+			}
+			facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{id: record}
+			facts.occurrences = map[manifest.NamedResource]OccurrenceFacts{id: {
+				Identity: id, Authored: id, CatalogKnown: true, Roots: []string{"derived"},
+			}}
+			facts.candidates = map[manifest.NamedResource]store.Child{id: {Obj: object}}
+			counted := &countedAdmissionFacts{census: facts, occurrences: map[manifest.NamedResource]int{}}
+			closure := admissionClosure{session: session, facts: counted}
+			assert.Diff(t, closure.contentRecord(id).ContentRoots, want)
+			assert.Equal(t, counted.occurrences[id], 0)
+			assert.Equal(t, closure.preparedObject(id).Obj, manifest.BaseManifest(object))
+			assert.Equal(t, counted.occurrences[id], 0)
+			assert.Equal(t, closure.catalogWitness(id), manifest.BaseManifest(object))
+			closure.catalog = session.catalogSnapshot(nil)
+			assert.Equal(t, closure.catalogObject(id), manifest.BaseManifest(object))
+			assert.Diff(t, closure.contentRecord(id).ContentRoots, want)
+		})
+	}
+}
+
+//nolint:gocritic // The fixture implements the census method exactly.
+func (f *countedAdmissionFacts) OccurrenceRoots(id manifest.NamedResource) (manifest.NamedResource, []string) {
+	if f.rootPaths != nil {
+		f.rootPaths[id]++
+	}
+	return f.census.OccurrenceRoots(id)
+}
+
+func TestAdmission_RecordProjectsOnlyConsumedContentRoots(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	id := (&manifest.Kustomization{Name: "child", Namespace: "apps"}).Named()
+	parent := (&manifest.Kustomization{Name: "parent", Namespace: "apps"}).Named()
+	source := manifest.BootstrapSourceID
+	facts := &solverFacts{store: st, occurrences: map[manifest.NamedResource]OccurrenceFacts{
+		id: {Identity: id, Authored: id, CatalogKnown: true, Source: source, Roots: []string{"apps/red"}},
+	}}
+	facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Parent: parent}}
+	c := solverClosure(t, st, facts)
+	counted := &countedAdmissionFacts{census: facts, rootPaths: map[manifest.NamedResource]int{}}
+	c.facts = counted
+	assert.Equal(t, c.record(id).Parent, parent)
+	assert.Equal(t, counted.rootPaths[id], 0)
+	record := c.contentRecord(id)
+	assert.Equal(t, record.Parent, parent)
+	assert.Diff(t, record.ContentRoots[source], []string{"apps/red"})
+	assert.Equal(t, counted.rootPaths[id], 1)
+	c.generation = []store.Child{{Obj: &manifest.Kustomization{Name: "child", Namespace: "apps"}}}
+	c.states[id] = admissionState{incoming: 1}
+	assert.Diff(t, slices.Collect(c.sources(id)), []manifest.NamedResource{source})
+	assert.Equal(t, counted.rootPaths[id], 1)
 }

@@ -9,38 +9,20 @@ import (
 )
 
 func (c *admissionClosure) rootEvidence(id manifest.NamedResource) RootResult {
-	snapshot, known := c.rootResults[id]
-	if !known {
-		facts := c.rootSupport(id)
-		facts.Needed = true
-		snapshot = admissionRoot{
-			result: Root(facts),
-			needsDemand: facts.Captured && !facts.Supplied && !facts.Scope.NativeEntry &&
-				facts.Occurrence.Declaration == (OccurrenceID{}),
-		}
-		if c.rootResults == nil {
-			c.rootResults = make(map[manifest.NamedResource]admissionRoot)
-		}
-		c.rootResults[id] = snapshot
-	}
-	result := snapshot.result
-	if snapshot.needsDemand && !c.role(id).needed {
-		result.Entry = false
-	}
-	return result
+	facts := c.rootSupport(id)
+	facts.Needed = c.role(id).needed
+	return Root(facts)
 }
 
 func (c *admissionClosure) rootSupport(id manifest.NamedResource) RootEvidence {
-	facts := c.capturedRoot(id)
+	facts := *c.capturedRoot(id)
 	if !facts.Captured {
 		return facts
 	}
-	facts.Record = c.record(id)
-	facts.Productions = c.productions(id)
-	facts.LiveProductions = c.objects.Productions(id, &currentRootIndex)
+	record := c.record(id)
+	facts.Record = RootRecordFrom(&record)
 	facts.Declaration = c.objects.GetDeclaration(id)
 	facts.Incoming = c.incoming(id).Obj != nil
-	facts.StaticOwner = c.states[id].staticOwner
 	object, policy := c.objects.Lookup(id)
 	facts.Supplied = !facts.Incoming && object != nil && policy.Origin == manifest.SuppliedDeclaration &&
 		facts.Declaration == object &&
@@ -49,6 +31,12 @@ func (c *admissionClosure) rootSupport(id manifest.NamedResource) RootEvidence {
 		facts.Stale = facts.Stale || !c.proposal.reads.Valid()
 		return facts
 	}
+	if !Root(facts).NeedsOwnerSupport && !facts.Scope.NativeEntry {
+		return facts
+	}
+	facts.Productions = c.productions(id)
+	facts.LiveProductions = c.objects.Productions(id, &currentRootIndex)
+	facts.StaticOwner = c.states[id].staticOwner
 	facts.DeclarationSource = c.declarationSource(id)
 	for i, source := range [...]manifest.NamedResource{c.source(id), manifest.BootstrapSourceID} {
 		_, input, _ := c.delta(source)
@@ -65,7 +53,7 @@ func (c *admissionClosure) rootSupport(id manifest.NamedResource) RootEvidence {
 	if application, valid := manifest.ApplicationFor(c.catalogObject(id)); valid {
 		facts.Scope.Application = true
 		facts.Scope.ApplicationSource, facts.Scope.ApplicationPath = application.Source, application.Path
-		location := c.sourceView(application.Source, c.context.Root)
+		location := c.boundSource(application.Source)
 		facts.Scope.LocalApplication = !location.Pinned && !location.External
 		facts.Scope.Claim = c.fileCoordinate(filepath.Join(location.Origin, application.Path)) + "/"
 	}
@@ -134,11 +122,12 @@ func (c *admissionClosure) pendingRootOwners(facts *RootEvidence) []manifest.Nam
 //nolint:gochecknoglobals // Empty immutable index requests current store productions without indexed ancestry.
 var currentRootIndex manifest.DiscoveryIndex
 
-func (c *admissionClosure) rootOwnerFacts(id manifest.NamedResource, object manifest.BaseManifest) RootCoveringOwner {
-	facts := RootCoveringOwner{Identity: id, Object: object}
+func (c *admissionClosure) rootOwnerFacts(object manifest.BaseManifest) RootCoveringOwner {
+	facts := RootCoveringOwner{Object: object}
 	if object == nil {
 		return facts
 	}
+	facts.Identity = object.Named()
 	source, path, applies := object.SourcePath()
 	if !applies {
 		return facts
@@ -147,29 +136,29 @@ func (c *admissionClosure) rootOwnerFacts(id manifest.NamedResource, object mani
 		source = manifest.BootstrapSourceID
 	}
 	facts.Source = source
-	location := c.sourceView(source, c.context.Root)
-	facts.Pinned, facts.External = location.Pinned, location.External
-	facts.Claim = c.fileCoordinate(filepath.Join(location.Origin, path)) + "/"
 	_, input, _ := c.delta(source)
 	if input != nil {
 		facts.Input = input
 		facts.Root = input.OriginPath(input.LocalPath)
 		facts.Path = input.OriginPath(filepath.Join(input.LocalPath, path))
+		if !containsPath(facts.Root, facts.Path) {
+			facts.Path = ""
+		}
 	}
 	return facts
 }
 
-func (c *admissionClosure) hasOwner(matches func(manifest.BaseManifest) bool) bool {
+func (c *admissionClosure) hasOwner(matches func(*RootCoveringOwner) bool) bool {
 	if !c.ownersKnown {
 		c.collectOwners()
 	}
 	for i := range c.ownerCandidates {
-		owner := c.ownerCandidates[i].Object
-		if owner == nil || !manifest.KindOf(owner).Structural {
+		owner := &c.ownerCandidates[i]
+		if owner.Object == nil || !manifest.KindOf(owner.Object).Structural {
 			continue
 		}
-		if matches(owner) && slices.ContainsFunc(c.productions(owner.Named()), func(p manifest.Production) bool {
-			return p.Owner != (manifest.NamedResource{}) && p.Owner != owner.Named()
+		if matches(owner) && slices.ContainsFunc(c.productions(owner.Identity), func(p manifest.Production) bool {
+			return p.Owner != (manifest.NamedResource{}) && p.Owner != owner.Identity
 		}) {
 			return true
 		}
@@ -207,7 +196,7 @@ func (c *admissionClosure) collectOwners() {
 		}
 		candidates := c.objects.ListProductionCandidates(info.Group, info.Kind, c.facts.SelectionIndex(), prospective)
 		for _, object := range candidates {
-			c.ownerCandidates = append(c.ownerCandidates, c.rootOwnerFacts(object.Named(), object))
+			c.ownerCandidates = append(c.ownerCandidates, c.rootOwnerFacts(object))
 		}
 	}
 	c.ownersKnown = true

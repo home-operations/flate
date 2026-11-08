@@ -78,7 +78,7 @@ type Loader struct {
 	scopeRoots            []selection.NativeRootFacts
 	catalog               *Catalog
 	locations             map[manifest.NamedResource]authoredOccurrence
-	bindings              atomic.Pointer[map[manifest.NamedResource]admissionSource]
+	bindings              [64]atomic.Pointer[map[manifest.NamedResource]*atomic.Pointer[admissionSource]]
 	inputReaders          map[manifest.NamedResource][]manifest.NamedResource
 	inputObjects          map[manifest.NamedResource][]manifest.NamedResource
 	templateProjections   map[manifest.NamedResource]manifest.TemplateProjection
@@ -627,7 +627,6 @@ func (l *Loader) recordLoadedObjects(path string, objs []parsedObject) int {
 		for childIndex := range childValues {
 			child := childValues[childIndex]
 			if child.fact != nil {
-				l.roots.remember(child.fact, filepath.ToSlash(filepath.Dir(child.fact.Declaration.File)))
 				l.recordOccurrence(path, child.fact)
 				if !child.fact.facts.uncertain && child.fact.Identity.KindInfo().Discovery {
 					count++
@@ -638,14 +637,6 @@ func (l *Loader) recordLoadedObjects(path string, objs []parsedObject) int {
 			if obj == nil || child.outcome.Err != nil {
 				continue
 			}
-			origin := new(l.documents).localPath(path)
-			sourceRoot := new(l.documents).mountedRoot(origin)
-			file, _ := filepath.Rel(sourceRoot, origin)
-			occurrence := compactOccurrence(obj, manifest.TemplateProjection{})
-			occurrence.Declaration = occurrenceID{
-				Source: sourceRoot, File: filepath.ToSlash(file), Document: child.outcome.Ordinal, item: child.item,
-			}
-			l.roots.remember(&occurrence, filepath.ToSlash(filepath.Dir(file)))
 			info := manifest.KindOf(obj)
 			if !info.Tracked {
 				_, _, hasPath := obj.SourcePath()
@@ -696,7 +687,7 @@ func (l *Loader) yieldSource(
 	r := *rValue
 	obj := l.IndexedObject(id, r)
 	if r.Builder != "" {
-		obj = l.preparedObject(id)
+		obj, _ = l.PreparedObject(id, nil)
 	}
 	if l.documents.compact {
 		var err error
@@ -874,5 +865,5 @@ func (l *Loader) setEntry(abs, builder string) {
 func (l *Loader) declarationLocated(id manifest.NamedResource, objects admissionReader) bool {
 	record, _ := l.Index.Lookup(id)
 	return record.Path != "" || record.Builder != "" || objects.GetDeclaration(id) != nil ||
-		selection.Root(l.roots.get(record.Parent).facts).Independent
+		selection.Root(l.roots.get(record.Parent).view()).Independent
 }

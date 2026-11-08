@@ -360,10 +360,8 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 	l.roots.set(
 		provider,
 		&rootEvidence{
-			facts: selection.RootEvidence{
-				Identity: provider,
-				Scope:    selection.RootScopeFacts{NamespaceEligible: true, Candidate: true},
-			},
+			identity: provider,
+			scope:    selection.RootScopeFacts{NamespaceEligible: true, Candidate: true},
 		},
 	)
 	st.AddObjects(

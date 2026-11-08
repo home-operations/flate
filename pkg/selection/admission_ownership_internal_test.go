@@ -37,9 +37,7 @@ func TestAdmission_OwnershipReadCapture(t *testing.T) {
 		Authored:     child,
 		Object:       declaration,
 		Catalog:      declaration,
-		Record:       record,
 		Declaration:  OccurrenceID{Source: root, File: record.File},
-		Candidate:    store.Child{Obj: declaration},
 		Mounted:      input,
 		Located:      true,
 		CatalogKnown: true,
@@ -52,11 +50,12 @@ func TestAdmission_OwnershipReadCapture(t *testing.T) {
 		index: manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child: record},
 		},
+		candidates:  map[manifest.NamedResource]store.Child{child: {Obj: declaration}},
 		occurrences: map[manifest.NamedResource]OccurrenceFacts{child: occurrence},
 		roots: map[manifest.NamedResource]RootEvidence{
 			child: {
 				Identity:   child,
-				Record:     record,
+				Record:     RootRecordFrom(&record),
 				Occurrence: occurrence,
 				Captured:   true,
 				Scope: RootScopeFacts{

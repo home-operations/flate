@@ -16,7 +16,7 @@ func (l *Loader) applyAdmittedObjects(
 ) bool {
 	changed := false
 	for _, id := range slices.SortedFunc(maps.Keys(l.admitted), manifest.NamedResource.Compare) {
-		if _, survives := next[id]; !survives || !selection.Root(allowed.get(id).facts).Admitted {
+		if _, survives := next[id]; !survives || !selection.Root(allowed.get(id).view()).Admitted {
 			if l.Store.GetObject(id) == l.admitted[id] && l.Store.GetArtifact(id, store.ArtifactContent) == nil {
 				l.Store.DeleteObject(id)
 				changed = true
@@ -30,7 +30,7 @@ func (l *Loader) applyAdmittedObjects(
 	for _, id := range slices.SortedFunc(maps.Keys(objects), manifest.NamedResource.Compare) {
 		child := objects[id]
 		obj := child.Obj
-		if !selection.Root(allowed.get(id).facts).Admitted || !manifest.KindOf(obj).Discovery ||
+		if !selection.Root(allowed.get(id).view()).Admitted || !manifest.KindOf(obj).Discovery ||
 			l.documents.compact && next[id].Path != "" {
 			continue
 		}
@@ -66,9 +66,9 @@ func (l *Loader) allowAuthoredObjects(
 		child := objects[id]
 		r := next[id]
 		evidence := scopes[r.Path].evidence(l, id, &r)
-		evidence.facts.Scope.Records = next
-		evidence.facts.Scope.NamespaceEligible = manifest.AdmitsRoot(child.Obj)
-		evidence.facts.Scope.Candidate = true
+		evidence.scope.Records = next
+		evidence.scope.NamespaceEligible = manifest.AdmitsRoot(child.Obj)
+		evidence.scope.Candidate = true
 		allowed.set(id, &evidence)
 	}
 }
@@ -89,9 +89,9 @@ func (l *Loader) allowAuthoredRecords(
 			scope = l.rootAdmission(record.Path, record.File, id.KindInfo().Structural)
 		}
 		evidence := scope.evidence(l, id, &record)
-		evidence.facts.Scope.Records = next
+		evidence.scope.Records = next
 		object := l.catalogObject(id, &record)
-		evidence.facts.Scope.NamespaceEligible = object != nil && manifest.AdmitsRoot(object)
+		evidence.scope.NamespaceEligible = object != nil && manifest.AdmitsRoot(object)
 		allowed.set(id, &evidence)
 	}
 }

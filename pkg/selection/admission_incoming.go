@@ -1,7 +1,10 @@
 package selection
 
 import (
+	"iter"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -94,7 +97,8 @@ func (c *admissionClosure) reverseInputRole(
 }
 
 func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionRole) admissionRole {
-	if _, _, applies := c.incoming(id).Obj.SourcePath(); !applies || role.needed {
+	source, path, applies := c.incoming(id).Obj.SourcePath()
+	if !applies || role.needed {
 		return role
 	}
 	if output, ok := c.objects.GetArtifact(id, store.ArtifactContent).(*store.Emission); ok && output.Complete &&
@@ -108,11 +112,11 @@ func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionR
 		role.needed, role.ordinary = true, true
 	}
 	//nolint:gocritic // The iterator supplies immutable value snapshots.
-	for target, record := range c.facts.SelectionIndex().Files() {
+	for target, record := range c.coveredDeclarations(source, path) {
 		c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
 		needed := c.role(target).needed
 		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
-			!c.coversDeclaration(c.incoming(id).Obj, target) {
+			!c.coversDeclaration(new(c.rootOwnerFacts(c.incoming(id).Obj)), target) {
 			continue
 		}
 		evidence := c.declarationEvidence(target)
@@ -198,6 +202,11 @@ func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) 
 }
 
 func (c *admissionClosure) namespaceProductionDemand(id manifest.NamedResource) bool {
+	if !slices.ContainsFunc(c.session.request.Roots, func(root manifest.NamedResource) bool {
+		return root.Name == "" && root.Namespace != ""
+	}) {
+		return false
+	}
 	object := c.object(id)
 	if object == nil {
 		return false
@@ -217,4 +226,69 @@ func (c *admissionClosure) namespaceProductionDemand(id manifest.NamedResource) 
 		return true
 	}
 	return false
+}
+
+func (c *admissionClosure) coveredDeclarations(
+	source manifest.NamedResource,
+	path string,
+) iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] {
+	if c.catalog == nil {
+		return c.facts.SelectionIndex().Files()
+	}
+	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+		if source.Name == "" {
+			source = manifest.BootstrapSourceID
+		}
+		delta, input, _ := c.delta(source)
+		if input == nil {
+			return
+		}
+		root := input.OriginPath(filepath.Join(input.LocalPath, path))
+		if !containsPath(input.OriginPath(input.LocalPath), root) {
+			return
+		}
+		records := c.facts.SelectionIndex().Records
+		if !c.catalog.yieldCoveredFiles(records, root, yield) {
+			return
+		}
+		for id := range delta.Inputs(manifest.NamedResource{}) {
+			record := records[id]
+			if record.File != "" && record.Path == "" && record.BuilderOwner == (manifest.NamedResource{}) &&
+				!yield(id, record) {
+				return
+			}
+		}
+	}
+}
+
+func (c *admissionCatalog) yieldCoveredFiles(
+	records map[manifest.NamedResource]manifest.DiscoveryRecord,
+	root string,
+	yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool,
+) bool {
+	compare := func(id manifest.NamedResource, path string) int {
+		return strings.Compare(records[id].Path, path)
+	}
+	first, _ := slices.BinarySearchFunc(c.files, root, compare)
+	for _, id := range c.files[first:] {
+		record := records[id]
+		if record.Path != root {
+			break
+		}
+		if !yield(id, record) {
+			return false
+		}
+	}
+	prefix := strings.TrimSuffix(root, string(filepath.Separator)) + string(filepath.Separator)
+	first, _ = slices.BinarySearchFunc(c.files, prefix, compare)
+	for _, id := range c.files[first:] {
+		record := records[id]
+		if !strings.HasPrefix(record.Path, prefix) {
+			break
+		}
+		if !yield(id, record) {
+			return false
+		}
+	}
+	return true
 }

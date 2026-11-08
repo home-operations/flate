@@ -134,10 +134,8 @@ func testAdmissionPreparedDeclarationUsesFullDocumentCase(
 	l.SourceRoot = inputs[0].LocalPath
 	configureSelection(t, l, selection.Request{Changed: true})
 	l.Options.Changes = changes
+	l.publishSource(manifest.BootstrapSourceID, &admissionSource{initial: inputs[0]})
 	l.frozen, l.sideKnown, l.side = true, true, manifest.TreeBase
-	l.bindings.Store(
-		&map[manifest.NamedResource]admissionSource{manifest.BootstrapSourceID: {initial: inputs[0]}},
-	)
 	l.candidates = prepared[0]
 	l.Index.Records[id] = manifest.DiscoveryRecord{
 		Builder:     "kustomization.yaml",
@@ -232,10 +230,8 @@ func testAdmissionUnmaterializedOwnerCase(t *testing.T, testCaseInput *struct {
 	l.roots.set(
 		child,
 		&rootEvidence{
-			facts: selection.RootEvidence{
-				Identity: child,
-				Scope:    selection.RootScopeFacts{NamespaceEligible: true, Candidate: testCaseInput.independent},
-			},
+			identity: child,
+			scope:    selection.RootScopeFacts{NamespaceEligible: true, Candidate: testCaseInput.independent},
 		},
 	)
 	if testCaseInput.knownOwner {

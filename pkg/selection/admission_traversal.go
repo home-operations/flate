@@ -42,8 +42,8 @@ type completeHydrateState struct {
 func (c *admissionClosure) completeHydrate(
 	scope *completeHydrateState,
 ) (manifest.BaseManifest, error) {
-	if child := c.candidate(*scope.id); child.Obj != nil && scope.record.Path == "" &&
-		!Root(c.capturedRoot(*scope.id)).InitialIndependent {
+	if child := c.facts.AdmissionCandidate(*scope.id); child.Obj != nil && scope.record.Path == "" &&
+		!Root(*c.capturedRoot(*scope.id)).InitialIndependent {
 		if c.children == nil {
 			c.children = map[manifest.NamedResource]store.Child{}
 		}
@@ -260,7 +260,7 @@ func (c *admissionClosure) walkObject(
 	evidence := c.declarationEvidence(id)
 	evidence.independent = root.Independent || c.bootstrapPrerequisite(id)
 	evidence.qualification = !role.ordinary
-	bootstrap := evidence.independent && Root(c.capturedRoot(id)).InitialIndependent
+	bootstrap := evidence.independent && Root(*c.capturedRoot(id)).InitialIndependent
 	parent := record.Parent
 	if !evidence.known() {
 		parent = cmp.Or(root.Owner, parent)
@@ -423,7 +423,7 @@ func (c *admissionClosure) selectProductionReaders(
 			if !c.readerEmissionAllowed(id, reader.Reader) {
 				continue
 			}
-			location := c.sourceView(p.Source, c.context.Root)
+			location := c.boundSource(p.Source)
 			if reader.Source != p.Source && (location.Pinned || location.External) {
 				continue
 			}
@@ -440,7 +440,7 @@ func (c *admissionClosure) selectProductions(
 ) bool {
 	materialized := record.Parent != (manifest.NamedResource{}) && record.Parent != id ||
 		record.BuilderOwner != (manifest.NamedResource{}) && record.BuilderOwner != id
-	bootstrap := evidence.independent && Root(c.capturedRoot(id)).InitialIndependent
+	bootstrap := evidence.independent && Root(*c.capturedRoot(id)).InitialIndependent
 	productions := c.productions(id)
 	for i := range productions {
 		production := &productions[i]
@@ -527,7 +527,7 @@ func (c *admissionClosure) hydrateDeclaration(
 func (c *admissionClosure) hydrateBuilt(id manifest.NamedResource, child *store.Child) bool {
 	role := c.role(id)
 	preparation := role.needed && role.ordinary && !role.selected && id.KindInfo().Structural
-	if !Root(c.capturedRoot(id)).InitialIndependent && !c.states[id].requested &&
+	if !Root(*c.capturedRoot(id)).InitialIndependent && !c.states[id].requested &&
 		!preparation &&
 		(role.ordinary || !role.needed) {
 		return false
@@ -559,7 +559,7 @@ func (c *admissionClosure) materializeEntryApplication(
 		!containsPath(c.context.EntryPath, record.Path) {
 		return false
 	}
-	location := c.sourceView(applicationSource, c.context.Root)
+	location := c.boundSource(applicationSource)
 	if location.Pinned || location.External {
 		return false
 	}

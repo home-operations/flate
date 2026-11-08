@@ -14,10 +14,9 @@ import (
 )
 
 type rootQuery struct {
-	loader        *Loader
-	objects       admissionReader
-	covering      []selection.RootCoveringOwner
-	coveringKnown bool
+	loader   *Loader
+	objects  admissionReader
+	covering *rootOwnerInventory
 }
 
 type rootAdmission struct {
@@ -26,26 +25,52 @@ type rootAdmission struct {
 }
 
 type rootEvidence struct {
-	occurrence  authoredOccurrence
-	facts       selection.RootEvidence
-	packageRoot bool
+	identity          manifest.NamedResource
+	occurrence        authoredOccurrence
+	current           *authoredOccurrence
+	record            selection.RootRecord
+	scope             selection.RootScopeFacts
+	initialScope      *selection.RootScopeFacts
+	initialOccurrence *selection.OccurrenceFacts
+	packageRoot       bool
+}
+
+func (e *rootEvidence) currentOccurrence() *authoredOccurrence {
+	if e.current != nil {
+		return e.current
+	}
+	return &e.occurrence
+}
+
+func (e *rootEvidence) view() selection.RootEvidence {
+	if e == nil {
+		return selection.RootEvidence{}
+	}
+	return selection.RootEvidence{
+		Identity: e.identity, Record: e.record, Occurrence: occurrenceView(e.currentOccurrence()),
+		Scope: e.scope, InitialScope: e.initialScope, InitialOccurrence: e.initialOccurrence,
+	}
 }
 
 func (a rootAdmission) evidence(l *Loader, id manifest.NamedResource, record *manifest.DiscoveryRecord) rootEvidence {
 	if record.Builder != "" && l.registeredRoot(id, record) != "" {
 		if previous, known := l.roots.lookup(id); known {
-			return previous
+			return *previous
 		}
 	}
 	occurrence := l.initialOccurrence(id, record)
-	evidence := rootEvidence{occurrence: occurrence, facts: selection.RootEvidence{
-		Identity: id, Record: *record, Occurrence: occurrenceView(&occurrence), Scope: l.rootScopeFacts(id, record, &a),
-	}}
+	evidence := rootEvidence{
+		identity:   id,
+		occurrence: occurrence,
+		record:     selection.RootRecordFrom(record),
+		scope:      l.rootScopeFacts(id, record, &a),
+	}
 	if !l.documents.cache[record.Path].initial {
 		if previous, known := l.roots.lookup(id); known {
-			evidence.facts.InitialScope = &previous.facts.Scope
-			evidence.facts.InitialOccurrence = previous.facts.Occurrence
-			if selection.Root(previous.facts).Independent {
+			evidence.initialScope = new(previous.scope)
+			evidence.initialOccurrence = new(occurrenceView(previous.currentOccurrence()))
+			if selection.Root(previous.view()).Independent {
+				evidence.current = new(evidence.occurrence)
 				evidence.occurrence = previous.occurrence
 			}
 		}
@@ -121,10 +146,10 @@ func (l *Loader) EntryRoots(
 	seen := map[rootCoordinate]bool{}
 	queried := map[manifest.NamedResource]bool{}
 	add := func(id manifest.NamedResource, original *rootEvidence) {
+		if original == nil && queried[id] {
+			return
+		}
 		if original == nil {
-			if queried[id] {
-				return
-			}
 			queried[id] = true
 		}
 		occurrence, available := query.entryRoot(id, original)
@@ -141,11 +166,11 @@ func (l *Loader) EntryRoots(
 	for id := range l.roots.identities {
 		add(id, nil)
 	}
-	for coordinate := range l.roots.occurrences {
-		evidence := l.roots.occurrences[coordinate]
-		if coordinate.declaration != (occurrenceID{}) {
-			add(coordinate.identity, &evidence)
+	for coordinate, evidence := range l.roots.occurrences {
+		if l.roots.identities[coordinate.identity] == evidence || coordinate.declaration == (occurrenceID{}) {
+			continue
 		}
+		add(coordinate.identity, evidence)
 	}
 	if published != nil {
 		for object := range published {
@@ -168,7 +193,7 @@ func (l *Loader) EntryRoots(
 		add(l.nativeEntry.Named(), nil)
 	}
 	// The complete query MUST be discarded if any captured dependency changes.
-	if reads != nil && !reads.Valid() {
+	if !reads.Valid() {
 		return nil
 	}
 	return roots
@@ -181,27 +206,20 @@ func (q *rootQuery) entryRoot(
 	l, objects := q.loader, q.objects
 	evidence := l.rootFacts(id)
 	if original != nil {
-		evidence.Scope, evidence.Occurrence = original.facts.Scope, original.facts.Occurrence
-		evidence.InitialScope, evidence.InitialOccurrence = original.facts.InitialScope, original.facts.InitialOccurrence
+		evidence.Scope, evidence.Occurrence = original.scope, occurrenceView(original.currentOccurrence())
+		evidence.InitialScope, evidence.InitialOccurrence = original.initialScope, original.initialOccurrence
 	}
 	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
 		evidence.Occurrence = selection.OccurrenceFacts{Identity: id, Object: l.nativeEntry, Catalog: l.nativeEntry}
 		evidence.Scope.NativeEntry, evidence.Scope.NamespaceEligible = true, true
 	}
-	captureRootSupport(&evidence, objects, l.Index, &l.roots.currentOnly, l.SourceRoot)
-	evidence.Needed = l.Options.Session.Snapshot().Reconcile(id)
-	if selection.Root(evidence).NeedsOwnerSupport {
-		if evidence.Record.Path != "" {
-			evidence.CoveringOwners = q.coveringFacts()
-		}
-		captureRootOwnerFacts(&evidence, objects, l.Index)
+	classification := evidence
+	classification.Captured = false
+	occurrence := selection.Root(classification).Occurrence
+	var object manifest.BaseManifest
+	if !evidence.Scope.NativeEntry {
+		object = objects.GetDeclaration(id)
 	}
-	result := selection.Root(evidence)
-	if !result.Entry {
-		return selection.OccurrenceFacts{}, false
-	}
-	occurrence := result.Occurrence
-	object := evidence.Declaration
 	if object == nil {
 		object = occurrence.Object
 	}
@@ -211,6 +229,20 @@ func (q *rootQuery) entryRoot(
 	if !l.entryRootAvailable(id, object, objects) {
 		return selection.OccurrenceFacts{}, false
 	}
+	rootSupport(&evidence, objects, l.Index, &l.roots.currentOnly, l.SourceRoot)
+	evidence.Needed = l.Options.Session.Snapshot().Reconcile(id)
+	if selection.Root(evidence).NeedsOwnerSupport {
+		var owners *rootOwnerInventory
+		if evidence.Record.Path != "" {
+			owners = q.coveringFacts()
+		}
+		captureRootOwners(&evidence, objects, l.Index, owners)
+	}
+	result := selection.Root(evidence)
+	if !result.Entry {
+		return selection.OccurrenceFacts{}, false
+	}
+	occurrence = result.Occurrence
 	occurrence.Identity = id
 	if occurrence.Authored == (manifest.NamedResource{}) {
 		occurrence.Authored = evidence.Record.Authored
@@ -256,15 +288,22 @@ func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdm
 		record, indexed := l.Index.Lookup(owner)
 		scope.owners = append(scope.owners, selection.RootOwnerFacts{
 			Identity: owner,
-			Authored: record.Authored,
 			Path:     record.Path,
 			Indexed:  indexed,
 			Initial:  l.documents.cache[record.Path].initial,
 		})
 		return true
 	})
-	if structural {
+	if structural && len(scope.owners) != 0 {
 		for _, group := range l.Index.Claims {
+			if !slices.ContainsFunc(group, func(peer manifest.NamedResource) bool {
+				return slices.ContainsFunc(
+					scope.owners,
+					func(owner selection.RootOwnerFacts) bool { return owner.Identity == peer },
+				)
+			}) {
+				continue
+			}
 			if !l.documents.cache[file].bootstrap ||
 				slices.ContainsFunc(group, func(owner manifest.NamedResource) bool {
 					record, _ := l.Index.Lookup(owner)
@@ -325,32 +364,38 @@ func (q *rootQuery) admitsRoot(obj manifest.BaseManifest, file string) bool {
 	rootSupport(&evidence, objects, q.loader.Index, &q.loader.roots.currentOnly, q.loader.SourceRoot)
 	evidence.Supplied = false
 	if selection.Root(evidence).NeedsOwnerSupport {
+		var owners *rootOwnerInventory
 		if evidence.Record.Path != "" {
-			evidence.CoveringOwners = q.coveringFacts()
+			owners = q.coveringFacts()
 		}
-		captureRootOwners(&evidence, objects, q.loader.Index)
+		captureRootOwners(&evidence, objects, q.loader.Index, owners)
+	}
+	if reads, ok := objects.(*store.ReadSet); ok {
+		evidence.Stale = !reads.Valid()
 	}
 	return selection.Root(evidence).Admitted
 }
 
-func (q *rootQuery) coveringFacts() []selection.RootCoveringOwner {
-	if !q.coveringKnown {
+func (q *rootQuery) coveringFacts() *rootOwnerInventory {
+	if q.covering == nil {
 		objects := q.objects
 		if objects == nil {
 			objects = q.loader.Store
 		}
-		q.covering = rootCoveringFacts(objects, q.loader.Index, q.loader.SourceRoot)
-		q.coveringKnown = true
+		q.covering = rootCoveringFacts(objects, q.loader.Index)
 	}
 	return q.covering
 }
 
 func (l *Loader) classifyPackages(packages []PackageEvidence) {
+	if l.roots.occurrences == nil {
+		l.roots.occurrences = map[rootCoordinate]*rootEvidence{}
+		l.roots.identities = map[manifest.NamedResource]*rootEvidence{}
+	}
 	owners := l.packageOwners(packages)
 	paths := make([]string, len(packages))
 	eligible := make([]bool, len(packages))
 	runnable := make([]bool, len(packages))
-	l.roots.packages = make(map[string]rootCoordinate, len(packages))
 	for i := range packages {
 		p := &packages[i]
 		paths[i] = p.Path
@@ -362,7 +407,6 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 			_, _, application := occurrence.SourcePath()
 			eligible[i] = eligible[i] || active
 			runnable[i] = runnable[i] || active && (occurrence.Identity.KindInfo().Runnable || application)
-			l.roots.remember(new(physicalOccurrence(occurrence)), p.Path)
 		}
 		if builder != "" {
 			eligible[i] = l.documents.cache[builder].eligible != selection.RootInactive
@@ -382,24 +426,29 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 			PackageEligible:   eligible[i],
 			PackageRunnable:   runnable[i],
 		}
-		coordinate := l.roots.remember(&authoredOccurrence{Identity: id}, p.Path)
-		l.roots.occurrences[coordinate] = rootEvidence{
+		coordinate := rootCoordinate{identity: id, context: p.Path}
+		l.roots.replace(&coordinate, &rootEvidence{
 			packageRoot: true,
-			facts:       selection.RootEvidence{Identity: id, Scope: scope},
-		}
-		l.roots.packages[p.Path] = coordinate
+			identity:    id,
+			scope:       scope,
+		})
 		for index := range p.Occurrences {
 			occurrence := &p.Occurrences[index]
-			coordinate := l.roots.remember(new(physicalOccurrence(occurrence)), p.Path)
+			coordinate := rootCoordinate{
+				declaration: physicalOccurrence(occurrence).Declaration,
+				identity:    occurrence.Identity,
+				context:     p.Path,
+			}
 			file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
 			record := manifest.DiscoveryRecord{Authored: occurrence.Authored, Path: file, File: l.fileCoordinate(file)}
 			evidence := l.rootAdmission(file, record.File, occurrence.Identity.KindInfo().Structural).
 				evidence(l, occurrence.Identity, &record)
-			evidence.occurrence, evidence.facts.Occurrence = physicalOccurrence(occurrence), *occurrence
-			evidence.facts.Scope.PackageKnown, evidence.facts.Scope.PackagePaths = true, paths
-			evidence.facts.Scope.PackageOwners, evidence.facts.Scope.PackageIndex = owners, i
-			evidence.facts.Scope.PackageEligible, evidence.facts.Scope.NativePackage = eligible[i], native
-			l.roots.occurrences[coordinate] = evidence
+			evidence.occurrence = physicalOccurrence(occurrence)
+			evidence.current = nil
+			evidence.scope.PackageKnown, evidence.scope.PackagePaths = true, paths
+			evidence.scope.PackageOwners, evidence.scope.PackageIndex = owners, i
+			evidence.scope.PackageEligible, evidence.scope.NativePackage = eligible[i], native
+			l.roots.replace(&coordinate, &evidence)
 		}
 		p.Independent = selection.Root(selection.RootEvidence{Identity: id, Scope: scope}).Admitted
 	}

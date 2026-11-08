@@ -16,7 +16,7 @@ func (c *admissionClosure) delta(source manifest.NamedResource) (*change.Set, *s
 	return evidence.Delta, evidence.Input, evidence.Paired
 }
 
-func (c *admissionClosure) boundSource(source manifest.NamedResource) SourceFacts {
+func (c *admissionClosure) boundSource(source manifest.NamedResource) *SourceFacts {
 	if source == (manifest.NamedResource{}) {
 		source = manifest.BootstrapSourceID
 	}
@@ -30,19 +30,19 @@ func (c *admissionClosure) boundSource(source manifest.NamedResource) SourceFact
 	facts := c.facts.SourceFacts(source, c.proposal.reads)
 	if c.proposal.reads != nil {
 		if c.sourceFacts == nil {
-			c.sourceFacts = make(map[manifest.NamedResource]SourceFacts)
+			c.sourceFacts = make(map[manifest.NamedResource]*SourceFacts)
 		}
-		c.sourceFacts[source] = facts
+		c.sourceFacts[source] = &facts
 	}
 	if facts.Derived {
 		c.derive()
 	}
-	return facts
+	return &facts
 }
 
 func (c *admissionClosure) fileChanged(source manifest.NamedResource, file string) bool {
 	evidence := c.boundSource(source)
-	return sourceFileChanged(c.context.Root, &evidence, file)
+	return sourceFileChanged(c.context.Root, evidence, file)
 }
 
 func sourceFileChanged(root string, evidence *SourceFacts, file string) bool {
@@ -160,7 +160,7 @@ func (c *admissionClosure) deriveAffected(id manifest.NamedResource, obj manifes
 	if c.proposal.Request.Changes == nil {
 		return affectedResult{settled: true}
 	}
-	record := c.record(id)
+	record := c.contentRecord(id)
 	impact := c.affectedProductions(id, &record)
 	if !impact.fileOwned {
 		delta, _, _ := c.delta(manifest.BootstrapSourceID)
@@ -222,12 +222,12 @@ func (c *admissionClosure) affectedProductions(
 }
 
 type affectedLocation struct {
-	prefix, indexed string
-	known           bool
+	base, prefix string
+	known        bool
 }
 
 func (c *admissionClosure) affectedCoordinates(
-	root, file string,
+	root string,
 	input *store.SourceArtifact,
 	paired bool,
 ) affectedLocation {
@@ -242,10 +242,7 @@ func (c *admissionClosure) affectedCoordinates(
 		}
 		base = filepath.ToSlash(relative)
 	}
-	if base != "." && file != base && !strings.HasPrefix(file, strings.TrimSuffix(base, "/")+"/") {
-		return affectedLocation{}
-	}
-	prefix, indexed := base, file
+	prefix := base
 	if paired && input != nil {
 		physical := input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(root)))
 		relative, err := filepath.Rel(c.context.Root, physical)
@@ -253,17 +250,11 @@ func (c *admissionClosure) affectedCoordinates(
 			return affectedLocation{}
 		}
 		prefix = filepath.ToSlash(relative)
-		physical = input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(file)))
-		relative, err = filepath.Rel(c.context.Root, physical)
-		if err != nil {
-			return affectedLocation{}
-		}
-		indexed = filepath.ToSlash(relative)
 	}
 	if prefix == "." {
 		prefix = ""
 	}
-	return affectedLocation{prefix: prefix, indexed: indexed, known: true}
+	return affectedLocation{base: base, prefix: prefix, known: true}
 }
 
 func (c *admissionClosure) populateContentRoots(
@@ -322,19 +313,30 @@ func (c *admissionClosure) affectedSourceRoots(
 	if delta == nil || len(roots) == 0 || record.Pinned && !paired {
 		return affectedResult{settled: true}
 	}
-	files := c.boundSource(source).Paths
+	files := c.boundSource(source).Files
 	settled := true
 	for _, root := range roots {
 		resolved, known := c.affectedRoot(source, root)
 		root = resolved
-		settled = settled && known
+		if !known {
+			settled = false
+			continue
+		}
+		location := c.affectedCoordinates(root, input, paired)
+		if !location.known {
+			continue
+		}
+		base := strings.TrimSuffix(location.base, "/")
 		for _, file := range files {
 			c.objects.WorkScope().Admission().Add(&manifest.WorkCounts{FileEntries: 1})
-			location := c.affectedCoordinates(root, file, input, paired)
-			if !location.known {
+			suffix, contains := strings.CutPrefix(file.Path, base)
+			descendant := contains && strings.HasPrefix(suffix, "/")
+			withinRoot := location.base == "." || file.Path == location.base || descendant
+			missingCoordinates := paired && input != nil && file.Indexed == ""
+			if !withinRoot || missingCoordinates {
 				continue
 			}
-			if c.affectedClaim(id, location.prefix, location.indexed) {
+			if c.affectedClaim(id, location.prefix, file.Indexed) {
 				return affectedResult{changed: true, settled: settled}
 			}
 		}
@@ -344,10 +346,14 @@ func (c *admissionClosure) affectedSourceRoots(
 
 func (c *admissionClosure) affectedRoot(source manifest.NamedResource, root string) (string, bool) {
 	if strings.Contains(root, "/../") || strings.HasSuffix(root, "/..") {
-		if resolved, ok := c.resolveRoot(source, root); ok {
+		resolved, available, known := c.resolveRoot(source, root)
+		if !known {
+			return "", false
+		}
+		if available {
 			root = resolved
 		} else {
-			return ".", false
+			root = "."
 		}
 	}
 	return root, true

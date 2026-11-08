@@ -140,7 +140,7 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				14,
+				0,
 				0,
 				3,
 			),
@@ -172,7 +172,7 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				7,
+				0,
 				0,
 				3,
 			),
@@ -284,7 +284,7 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				14,
+				0,
 				0,
 				3,
 			),
@@ -328,7 +328,7 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				14,
+				0,
 				0,
 				3,
 			),
@@ -372,7 +372,7 @@ func coldSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCo
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				14,
+				0,
 				0,
 				3,
 			),
@@ -492,7 +492,7 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				14,
+				0,
 				0,
 				6,
 			),
@@ -524,7 +524,7 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				7,
+				0,
 				0,
 				6,
 			),
@@ -636,7 +636,7 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				14,
+				0,
 				0,
 				6,
 			),
@@ -680,7 +680,7 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				14,
+				0,
 				0,
 				6,
 			),
@@ -724,7 +724,7 @@ func hotSelectionPreparations() map[string]map[manifest.WorkKey]manifest.WorkCou
 			),
 			selectionPreparationKey(entry, manifest.BootstrapSourceID): preparationCounts(
 				2,
-				14,
+				0,
 				0,
 				6,
 			),

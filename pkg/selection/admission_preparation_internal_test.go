@@ -63,19 +63,18 @@ func TestAdmission_ConsumedSourceReplacementInvalidatesPreparation(t *testing.T)
 		Authored:     consumer,
 		Object:       declaration,
 		Catalog:      declaration,
-		Record:       record,
 		Declaration:  OccurrenceID{Source: root, File: record.File},
-		Candidate:    store.Child{Obj: declaration},
 		Mounted:      input,
 		Located:      true,
 		CatalogKnown: true,
 	}
 	facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{consumer: record}
+	facts.candidates = map[manifest.NamedResource]store.Child{consumer: {Obj: declaration}}
 	facts.occurrences = map[manifest.NamedResource]OccurrenceFacts{consumer: occurrence}
 	facts.roots = map[manifest.NamedResource]RootEvidence{
 		consumer: {
 			Identity:   consumer,
-			Record:     record,
+			Record:     RootRecordFrom(&record),
 			Occurrence: occurrence,
 			Scope: RootScopeFacts{
 				Path:              record.Path,

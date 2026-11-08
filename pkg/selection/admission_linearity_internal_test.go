@@ -2,6 +2,7 @@ package selection
 
 import (
 	"fmt"
+	"iter"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -57,7 +58,6 @@ func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
 					Authored:     id,
 					Object:       object,
 					Catalog:      object,
-					Record:       facts.index.Records[id],
 					Declaration:  OccurrenceID{Source: root, File: file},
 					Located:      true,
 					CatalogKnown: true,
@@ -78,6 +78,70 @@ func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
 					reads.calls,
 					128*count+128,
 				)
+			}
+		})
+	}
+}
+
+func TestAdmission_EmittedSourceVisitsItsPath(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		count   int
+		history bool
+	}{{32, false}, {128, false}, {32, true}, {128, true}} {
+		t.Run(fmt.Sprintf("%d/history-%t", tc.count, tc.history), func(t *testing.T) {
+			count := tc.count
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			session := newSolverSession(t, st, change.NewSet(nil), Request{Changed: true})
+			facts := session.facts.(*solverFacts)
+			facts.context.Frozen = true
+			facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{}
+			for i := range count {
+				id := manifest.NamedResource{
+					Kind:      manifest.KindConfigMap,
+					Namespace: "apps",
+					Name:      fmt.Sprintf("unrelated-%d", i),
+				}
+				file := fmt.Sprintf("owned-other/%d.yaml", i)
+				facts.index.Records[id] = manifest.DiscoveryRecord{File: file, Path: filepath.Join(root, file)}
+			}
+			target := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "needed"}
+			facts.index.Records[target] = manifest.DiscoveryRecord{
+				File: "owned/child.yaml",
+				Path: filepath.Join(root, "owned", "child.yaml"),
+			}
+			publishDecision(t, session, &Admission{Needed: []manifest.NamedResource{target}}, 0)
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "owned"}
+			var preparation *Preparation
+			defer func() { preparation.Retire() }()
+			var reads store.ReadSet
+			reads.Init(st, owner.Named(), nil)
+			defer reads.Close()
+			var work manifest.WorkRecorder
+			reads.SetWork(&work)
+			request := PrepareRequest{Generation: []store.Child{{Obj: owner}}, Reads: &reads, Preparation: &preparation}
+			if tc.history {
+				request.History = map[manifest.NamedResource]struct {
+					Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+					Complete bool
+				}{owner.Named(): {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+					yield(target, manifest.DiscoveryRecord{Origin: manifest.RepositoryDeclaration})
+				}, Complete: true}}
+			}
+			proposal, err := session.Prepare(t.Context(), request)
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), true)
+			assert.Equal(t, work.Scope().Admission().Counts.FileEntries, uint64(1))
+			for id := range facts.index.Records {
+				if id == target {
+					continue
+				}
+				_, retained := preparation.closure.states[id]
+				assert.Equal(t, retained, false)
 			}
 		})
 	}
@@ -172,6 +236,7 @@ func publishedAdmissionDeclarations(t *testing.T, count int) *Session {
 		store:       st,
 		changes:     change.NewSet(paths),
 		index:       manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
+		candidates:  map[manifest.NamedResource]store.Child{},
 		occurrences: map[manifest.NamedResource]OccurrenceFacts{},
 		roots:       map[manifest.NamedResource]RootEvidence{},
 	}
@@ -182,7 +247,7 @@ func publishedAdmissionDeclarations(t *testing.T, count int) *Session {
 		facts.index.Records[obj.Named()] = record
 		facts.roots[obj.Named()] = RootEvidence{
 			Identity: obj.Named(),
-			Record:   record,
+			Record:   RootRecordFrom(&record),
 			Captured: true,
 			Scope:    RootScopeFacts{Candidate: true, NamespaceEligible: true, Initial: true},
 		}
@@ -191,13 +256,12 @@ func publishedAdmissionDeclarations(t *testing.T, count int) *Session {
 			Authored:     obj.Named(),
 			Object:       obj,
 			Catalog:      obj,
-			Record:       record,
 			Located:      true,
 			CatalogKnown: true,
 			Mounted:      st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
 			Declaration:  OccurrenceID{Source: root, File: file},
-			Candidate:    store.Child{Obj: obj},
 		}
+		facts.candidates[obj.Named()] = store.Child{Obj: obj}
 		rootFacts := facts.roots[obj.Named()]
 		rootFacts.Occurrence = facts.occurrences[obj.Named()]
 		facts.roots[obj.Named()] = rootFacts

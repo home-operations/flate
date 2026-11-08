@@ -15,12 +15,18 @@ func (r *ReadSet) ReleaseCapture() {
 	for _, first := range [3]*Input{r.inputs, r.spare, &r.local} {
 		for input := first; input != nil; input = input.next {
 			input.view.capturePayload = capturePayload{}
+			if productions := input.productions.Load(); productions != nil {
+				*productions = productionCapture{}
+			}
 			if details := input.details.Load(); details != nil {
 				details.inputPayload = inputPayload{}
+				details.binding.ReleaseCapture()
 			}
 		}
 	}
 	r.localDetails.inputPayload = inputPayload{}
+	r.localProductions = productionCapture{}
+	clear(r.spareProductions[:cap(r.spareProductions)])
 	for i := range r.spareDetails[:cap(r.spareDetails)] {
 		r.spareDetails[:cap(r.spareDetails)][i].inputPayload = inputPayload{}
 	}

@@ -356,6 +356,8 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 func (o *Orchestrator) recordAdmission(proposal *selection.Admission) {
 	o.changeNamespaces = proposal.Namespaces
 	o.preparation = nil
+	o.admissionPreparation.Retire()
+	o.admissionPreparation = nil
 	if len(o.admission.EntryProducers()) == 0 {
 		o.history = nil
 	}

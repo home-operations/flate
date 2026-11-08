@@ -319,8 +319,8 @@ func artifactValueEqual(prev, next Artifact) bool {
 
 func emissionCurrent(e *Emission, viewValue *capture) bool {
 	view := *viewValue
-	input := view.child
-	binding := view.sourceBinding()
+	input := view.child.input()
+	binding := view.source
 	equal := reconcileInputEqual(e.input, e.inputDoc, input.Doc).equal
 	if !equal || !e.inputHead.binding.equal(&binding) {
 		return false

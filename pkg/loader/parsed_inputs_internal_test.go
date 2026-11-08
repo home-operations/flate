@@ -56,8 +56,8 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 		_, err := planner.Load(t.Context(), filepath.Join(root, side), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
-	assert.Equal(t, len(planner.facts.sources[root].loads), 2)
-	for _, load := range planner.facts.sources[root].loads {
+	assert.Equal(t, len(planner.facts.sources[root].loads.values), 2)
+	for _, load := range planner.facts.sources[root].loads.values {
 		assert.Equal(t, load.complete, true)
 	}
 	assert.NoError(t, planner.FinalizeIndex(t.Context(), root, false))
@@ -96,7 +96,7 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 				newLoader: &newLoader,
 				inputs:    &inputs,
 				file:      &file,
-				snapshot:  &snapshot,
+				snapshot:  snapshot,
 			},
 		)
 	},
@@ -558,5 +558,113 @@ func testParsedInputsContentAndAdmissionIsolationIndependentEntries(
 				failure,
 			)
 		})
+	}
+}
+
+func TestParsedInputs_SharesUnchangedDocuments(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"one.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: one}\n")},
+		"two.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: two}\n")},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	first := l.ParsedInputs()
+	assert.Equal(t, len(l.facts.sources[root].loads.values), 0)
+	assert.Equal(t, len(l.facts.sources[root].walks.values), 0)
+	second := l.ParsedInputs()
+	assert.Equal(t, len(second.sources[root].documents), 0)
+	source := second.sources[root]
+	file := filepath.Join(root, "one.yaml")
+	cached := l.documents.cache[file]
+	cached.plugins = new([]pluginInputs)
+	l.documents.cache[file] = cached
+	third := l.ParsedInputs()
+	updated := third.sources[root].documents[file]
+	assert.Equal(t, updated != nil, true)
+	assert.Equal(t, &updated.objects[0] == &source.lookup(file).objects[0], true)
+	assert.Equal(t, source.lookup(file).plugins == nil, true)
+	for file, doc := range first.sources[root].documents {
+		assert.Equal(t, source.lookup(file) == doc, true)
+	}
+	replay := New(st)
+	replay.SourceRoot, replay.Options.ParsedInputs = root, second
+	_, err = replay.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	occurrences, err := replay.Occurrences(t.Context(), root, "")
+	assert.NoError(t, err)
+	assert.Equal(t, len(occurrences), 2)
+}
+
+func TestParsedInputs_LoadInvalidatesOnlyNewScopeFacts(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"apps/nested/object.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: first, namespace: default}\n"),
+		},
+		"other/object.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: second, namespace: default}\n"),
+		},
+	}
+	planning := cachedFixtureLoader(t, root, files, nil)
+	defer planning.Close()
+	_, err := planning.Load(t.Context(), filepath.Join(root, "apps", "nested"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, planning.documents.artifacts[root])
+	l := New(st)
+	defer l.Close()
+	l.SourceRoot, l.Options.ParsedInputs = root, planning.ParsedInputs()
+	configureSelection(t, l, selection.Request{Changed: true})
+	_, err = l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	l.Admit(root)
+	assert.Equal(t, l.scopes.complete, true)
+	_, err = l.Load(t.Context(), filepath.Join(root, "apps", "nested"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, l.scopes.complete, true)
+	_, err = l.Load(t.Context(), filepath.Join(root, "other"), manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, l.scopes.complete, false)
+	l.Admit(root)
+	assert.Equal(t, l.scopes.complete, true)
+	_, known := l.Index.Lookup(
+		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "second"},
+	)
+	assert.Equal(t, known, true)
+}
+
+func TestParsedInputs_FactSnapshotIsolation(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"left/object.yaml":  {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: left}\n")},
+		"right/object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: right}\n")},
+	}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
+	l := New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: true})
+	left, right := filepath.Join(root, "left"), filepath.Join(root, "right")
+	_, err := l.Load(t.Context(), left, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	first := l.ParsedInputs()
+	_, err = l.Load(t.Context(), right, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	second := l.ParsedInputs()
+	before, after := first.sources[root], second.sources[root]
+	_, existed := before.load(loadContext{path: right})
+	assert.Equal(t, existed, false)
+	for _, path := range []string{left, right} {
+		load, known := after.load(loadContext{path: path})
+		assert.Equal(t, known, true)
+		assert.Equal(t, load.complete, true)
 	}
 }

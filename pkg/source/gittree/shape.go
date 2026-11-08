@@ -47,7 +47,7 @@ func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) 
 	if err != nil {
 		return err
 	}
-	kept, err := g.selectNodes(names, &opts, matcher, links)
+	kept, err := input.selectNodes(names, &opts, matcher, links)
 	if err != nil {
 		return err
 	}
@@ -97,12 +97,13 @@ func (g *gitView) resolveLinks(names []string) (*tree.Builder, error) {
 	return links, nil
 }
 
-func (g *gitView) selectNodes(
+func (g *FS) selectNodes(
 	names []string,
 	opts *ViewOptions,
 	matcher *sourceignore.Matcher,
 	links *tree.Builder,
 ) (map[string]bool, error) {
+	v := g.view.(*gitView) //nolint:errcheck // Only native Git views select their own nodes.
 	selectVisible := visible
 	switch opts.Mode {
 	case Direct:
@@ -113,17 +114,17 @@ func (g *gitView) selectNodes(
 	}
 	kept := map[string]bool{".": true}
 	for _, name := range names {
-		node := g.nodes[name]
+		node := v.nodes[name]
 		if node.mode&fs.ModeSymlink != 0 && opts.Mode != RemoteBase {
-			if g.denied == nil {
-				g.denied = make(map[string]bool)
+			if v.denied == nil {
+				v.denied = make(map[string]bool)
 			}
-			g.denied[name] = true
+			v.denied[name] = true
 		}
-		if node.mode.IsDir() || !selectVisible(opts.Sparse, name, node.mode, matcher) {
+		if g.excludes(name) || node.mode.IsDir() || !selectVisible(opts.Sparse, name, node.mode, matcher) {
 			continue
 		}
-		selected, err := g.resolveSelectedNode(name, node, links)
+		selected, err := v.resolveSelectedNode(name, node, links)
 		if err != nil {
 			return nil, err
 		}

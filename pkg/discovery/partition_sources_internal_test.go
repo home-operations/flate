@@ -6,6 +6,11 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/go-git/go-git/v5/plumbing"
+
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gittree"
+
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -41,8 +46,15 @@ func TestPlan_SourceOccurrenceIsolation(t *testing.T) {
 					),
 				}
 			}
-			input := &store.SourceArtifact{LocalPath: root, FS: files}
+			view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: files})
+			assert.NoError(t, err)
+			owner, err := cache.New(t.Context(), t.TempDir())
+			assert.NoError(t, err)
+			defer func() { assert.NoError(t, owner.Close()) }()
+			input := &store.SourceArtifact{LocalPath: root, FS: view}
 			cfg := Config{
+				Cache:     owner,
 				Input:     input,
 				Path:      root,
 				SelfURLs:  []string{"https://example.invalid/left"},
@@ -51,8 +63,14 @@ func TestPlan_SourceOccurrenceIsolation(t *testing.T) {
 			entries, err := Plan(t.Context(), cfg)
 			assert.NoError(t, err)
 			assert.Equal(t, len(entries), 2)
+			restored, err := Plan(t.Context(), cfg)
+			assert.NoError(t, err)
+			assert.Equal(t, len(restored), len(entries))
+
 			for i, side := range []string{"left", "right"} {
-				entry := &entries[i]
+				entry := &restored[i]
+				assert.Equal(t, entry.ID, entries[i].ID)
+				assert.Equal(t, entry.Path, entries[i].Path)
 				assert.Equal(t, entry.Path, filepath.Join(root, side))
 				cfg.Path, cfg.Entry, cfg.Store = entry.Path, entry, store.New()
 				session, err := Begin(t.Context(), cfg)

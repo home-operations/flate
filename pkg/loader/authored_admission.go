@@ -105,6 +105,7 @@ func (l *Loader) prepareAuthoredFile(
 	if l.terminalInput(file) {
 		doc := l.documents.cache[file]
 		doc.objects, doc.lookup, doc.pathInputs, doc.loaded = nil, nil, nil, false
+		doc.parsed = nil
 		l.documents.cache[file] = doc
 		return false
 	}

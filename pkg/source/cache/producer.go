@@ -324,7 +324,7 @@ func (p blobProducer) produce(
 			identity: digest.FromBytes(data).String(),
 			size:     int64(len(data)),
 			open: func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(data)), nil
+				return memoryBlob{bytes.NewReader(data)}, nil
 			},
 		}
 	}

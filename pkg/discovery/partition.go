@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"iter"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -128,15 +129,35 @@ func pinnedRootOwners(roots []entryRoot, claimed func(entryRoot, []manifest.KSCl
 
 type partitionVisit struct {
 	occurrence selection.OccurrenceFacts
-	scope      []selection.OccurrenceFacts
+	scope      *partitionScope
 	root       string
+}
+
+type partitionScope struct {
+	occurrences []selection.OccurrenceFacts
+	parent      *partitionScope
+}
+
+func occurrenceReferences(occurrence *selection.OccurrenceFacts) iter.Seq[manifest.Reference] {
+	return func(yield func(manifest.Reference) bool) {
+		for i := range occurrence.Refs {
+			ref := occurrence.Refs[i]
+			if ref.NamespaceDefault {
+				ref.Namespace = occurrence.Identity.Namespace
+			}
+			if !yield(ref) {
+				return
+			}
+		}
+	}
 }
 
 func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []selection.OccurrenceFacts) error {
 	queue := make([]partitionVisit, 0, len(seeds))
 	coordinates := map[selection.OccurrenceID]bool{}
+	scope := &partitionScope{occurrences: seeds}
 	for i := range seeds {
-		queue = append(queue, partitionVisit{occurrence: seeds[i], scope: seeds, root: root.Path})
+		queue = append(queue, partitionVisit{occurrence: seeds[i], scope: scope, root: root.Path})
 		coordinates[seeds[i].Declaration] = true
 	}
 	seen := map[occurrenceKey]bool{}
@@ -151,12 +172,13 @@ func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []selec
 		if _, _, hasPath := visit.occurrence.SourcePath(); !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
 			continue
 		}
-		child, err := p.object(ctx, &visit.occurrence)
-		if err != nil {
-			return err
+		object := partitionObject(&visit.occurrence)
+		application, _ := manifest.ApplicationFor(object)
+		references := manifest.References(object, manifest.ReferenceRelations)
+		if visit.occurrence.Witness != nil {
+			references = occurrenceReferences(&visit.occurrence)
 		}
-		application, _ := manifest.ApplicationFor(child.Obj)
-		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
+		for ref := range references {
 			if !entrySourceReference(&ref) || ref.NamedResource == application.Source {
 				continue
 			}
@@ -181,7 +203,7 @@ func (p *entryPlanner) follow(
 	seed bool,
 ) ([]partitionVisit, error) {
 	occurrence := &visit.occurrence
-	object := p.objects[occurrenceIdentity(occurrence)].Obj
+	object := partitionObject(occurrence)
 	application, valid := manifest.ApplicationFor(object)
 	if !valid {
 		return nil, nil
@@ -231,7 +253,7 @@ func (p *entryPlanner) follow(
 	}) && !slices.Contains(root.Anchors, target) {
 		root.Anchors = append(root.Anchors, target)
 	}
-	scope := append(slices.Clone(children), visit.scope...)
+	scope := &partitionScope{occurrences: children, parent: visit.scope}
 	next := make([]partitionVisit, len(children))
 	for i := range children {
 		next[i] = partitionVisit{occurrence: children[i], scope: scope, root: visit.root}
@@ -256,14 +278,9 @@ func (p *entryPlanner) source(
 	visit *partitionVisit,
 	id manifest.NamedResource,
 ) (entryResolution, error) {
-	application, _ := manifest.ApplicationFor(p.objects[occurrenceIdentity(&visit.occurrence)].Obj)
-	var selected *selection.OccurrenceFacts
-	for i := range visit.scope {
-		candidate := &visit.scope[i]
-		if candidate.Identity == id {
-			selected = candidate
-		}
-	}
+	object := partitionObject(&visit.occurrence)
+	application, _ := manifest.ApplicationFor(object)
+	selected := visit.scope.source(id)
 
 	coordinate := sourceCoordinate{identity: id, root: visit.root}
 	group := entrySourceGroup{scoped: true, required: true}
@@ -322,4 +339,30 @@ func occurrenceIdentity(occurrence *selection.OccurrenceFacts) occurrenceKey {
 		occurrence.Witness,
 		occurrence.RequiresBuild,
 	}
+}
+
+//nolint:ireturn // Planning borrows the manifest catalog contract across kinds.
+func partitionObject(occurrence *selection.OccurrenceFacts) manifest.BaseManifest {
+	object := occurrence.Object
+	if object == nil {
+		object = occurrence.Catalog
+	}
+	if object != nil && object.Named().Namespace != occurrence.Identity.Namespace {
+		object = object.WithNamespace(occurrence.Identity.Namespace)
+	}
+	return object
+}
+
+func (s *partitionScope) source(id manifest.NamedResource) *selection.OccurrenceFacts {
+	var selected *selection.OccurrenceFacts
+	for scope := s; scope != nil; scope = scope.parent {
+		for i := range scope.occurrences {
+			candidate := &scope.occurrences[i]
+			if candidate.Identity == id {
+				selected = candidate
+			}
+		}
+	}
+
+	return selected
 }

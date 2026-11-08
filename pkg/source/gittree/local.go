@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -197,8 +198,8 @@ func (g *localView) mounted(name string) (string, error) {
 	if !fs.ValidPath(name) {
 		return "", &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrInvalid}
 	}
-	for parent := name; parent != "."; parent = path.Dir(parent) {
-		if path.Base(parent) == gitDirectory {
+	for component := range strings.SplitSeq(name, "/") {
+		if component == gitDirectory {
 			return "", &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 		}
 	}

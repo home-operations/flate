@@ -515,10 +515,7 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 	assert.Diff(t, l.recordNamespaces(new(r), ""), testCaseInput.namespaces)
 	assert.Equal(t, l.documents.cache[r.Path].eligible, testCaseInput.eligibility)
 	if testCaseInput.name == "external" {
-		visits := l.scopes.visits[r.Path]
-		for i := range visits {
-			v := visits[i]
-
+		for v := range l.scopes.fileVisits(r.Path) {
 			assert.FatalIf(
 				t,
 				v.source.Name == "external",

@@ -16,6 +16,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/selection"
 
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -40,13 +41,15 @@ type Result struct {
 
 // Config is the input contract for Run. Store is mandatory.
 type Config struct {
-	Work manifest.WorkScope
+	Cache *cache.Cache
+	Work  manifest.WorkScope
 	// Projections shares source-free facts across concurrent Plan calls.
 	Projections *manifest.ProducerProjections
 	// Declarations contains immutable invocation references admitted before discovery.
 	Declarations []store.Declaration
 	// Selection controls restricted declaration construction.
 	Selection selection.Request
+	Changes   *change.Set
 	// Loader borrows the invocation's sole declaration loader.
 	Loader     *loader.Loader
 	session    *Session
@@ -334,6 +337,10 @@ func newDiscoverer(config *Config) *Session {
 		l.Options.Projections = cfg.Projections
 	}
 	l.Options.Work = cfg.Work
+	l.Options.Cache = cfg.Cache
+	if cfg.Changes != nil {
+		l.Options.Changes = cfg.Changes
+	}
 	d := &Session{
 		cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{},
 		ownsLoader: cfg.ownsLoader || cfg.Loader == nil,

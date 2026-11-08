@@ -61,6 +61,26 @@ func TestPackages_RootAdmission(t *testing.T) {
 			want: map[string]bool{"one": true, "two": false},
 		},
 		{
+			name: "nested claims preserve sibling prefixes",
+			files: map[string]string{
+				"one/owner.yaml":          testutil.KustomizationYAML("one", "apps", "  path: ./two\n"),
+				"two/source.yaml":         source,
+				"two/nested/source.yaml":  source,
+				"two-sibling/source.yaml": source,
+			},
+			want: map[string]bool{"one": true, "two": false, "two/nested": false, "two-sibling": true},
+		},
+		{
+			name: "native and application claims agree",
+			files: map[string]string{
+				"one/kustomization.yaml": "resources: [owner.yaml, ../two]\n",
+				"one/owner.yaml":         testutil.KustomizationYAML("one", "apps", "  path: ./two\n"),
+				"two/kustomization.yaml": "resources: [source.yaml]\n",
+				"two/source.yaml":        source,
+			},
+			want: map[string]bool{"one": true, "two": false},
+		},
+		{
 			name: "mutual application ownership",
 			files: map[string]string{
 				"one/owner.yaml": testutil.KustomizationYAML("one", "apps", "  path: ./two\n"),

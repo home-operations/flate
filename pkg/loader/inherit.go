@@ -251,36 +251,34 @@ func (l *Loader) projectAuthoredVisits(
 	publish func(authoredOccurrence, manifest.Production),
 ) bool {
 	projected := false
-	for i := range l.scopes.contributions {
-		contribution := &l.scopes.contributions[i]
+	for _, ref := range l.scopes.visits[record.Path] {
+		contribution := &l.scopes.contributions[ref.contribution]
 		if !contribution.active || contribution.membershipOnly {
 			continue
 		}
-		for j := range contribution.visits {
-			visit := &contribution.visits[j]
-			if visit.role != kustomizeinput.Resource || visit.file != record.Path && visit.origin != record.Path {
-				continue
-			}
-			occurrence := *structured
-			identity, err := l.projectIdentity(occurrence.Authored, visit, version, occurrence.facts.namespaced)
-			if err != nil {
-				// Production finalization reports invalid upstream identity projections.
-				return true
-			}
-			occurrence.Identity = identity
-			occurrence.requiresBuild = visit.requiresBuild && contribution.owner == (manifest.NamedResource{})
-			production := manifest.Production{
-				Owner: contribution.owner, Source: contribution.source,
-				Authored: record.Authored, Path: record.Path, File: record.File,
-			}
-			if production.Owner == (manifest.NamedResource{}) &&
-				(occurrence.requiresBuild || identity.Name != occurrence.Authored.Name) {
-				production.Owner = manifest.NewEntryKustomization(production.Source, contribution.context.dir, manifest.NamedResource{}).
-					Named()
-			}
-			publish(occurrence, production)
-			projected = true
+		visit := &contribution.visits[ref.visit]
+		if visit.role != kustomizeinput.Resource || visit.file != record.Path && visit.origin != record.Path {
+			continue
 		}
+		occurrence := *structured
+		identity, err := l.projectIdentity(occurrence.Authored, visit, version, occurrence.facts.namespaced)
+		if err != nil {
+			// Production finalization reports invalid upstream identity projections.
+			return true
+		}
+		occurrence.Identity = identity
+		occurrence.requiresBuild = visit.requiresBuild && contribution.owner == (manifest.NamedResource{})
+		production := manifest.Production{
+			Owner: contribution.owner, Source: contribution.source,
+			Authored: record.Authored, Path: record.Path, File: record.File,
+		}
+		if production.Owner == (manifest.NamedResource{}) &&
+			(occurrence.requiresBuild || identity.Name != occurrence.Authored.Name) {
+			production.Owner = manifest.NewEntryKustomization(production.Source, contribution.context.dir, manifest.NamedResource{}).
+				Named()
+		}
+		publish(occurrence, production)
+		projected = true
 	}
 	return projected
 }
@@ -378,16 +376,13 @@ func (l *Loader) terminalInput(file string) bool {
 		return l.documents.cache[file].terminal
 	}
 	terminal := false
-	{
-		vValues3 := l.scopes.visits[file]
-		for vIndex3 := range vValues3 {
-			v := vValues3[vIndex3]
-			if v.role == kustomizeinput.Resource && v.readable {
-				return false
-			}
-			terminal = terminal || v.role != kustomizeinput.Resource
+	for v := range l.scopes.fileVisits(file) {
+		if v.role == kustomizeinput.Resource && v.readable {
+			return false
 		}
+		terminal = terminal || v.role != kustomizeinput.Resource
 	}
+
 	return terminal
 }
 

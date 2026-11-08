@@ -20,8 +20,11 @@ import (
 // document caches a directory document or parsed file objects by source-view path.
 // Consumers MUST never mutate its objects. Pointer fields precede flags to keep map values inline.
 type document struct {
+	projection    *projectionInputs
+	parsed        *parsedDocument
 	body          *types.Kustomization
 	file          string
+	sourceRoot    string
 	coverage      manifest.DocumentRole
 	possible      bool
 	objects       []parsedObject
@@ -55,6 +58,8 @@ type document struct {
 type parsedObject struct {
 	store.Child
 
+	payload *inputPayload
+
 	outcome  manifest.DocOccurrence
 	item     int
 	fact     *authoredOccurrence
@@ -79,16 +84,17 @@ type documentReader struct {
 	projections *manifest.ProducerProjections
 	cache       map[string]document
 	// Views MUST stay shared when discovery copies a reader.
-	views      map[string]fs.FS
-	artifacts  map[string]*store.SourceArtifact
-	parsed     *ParsedInputs
-	compact    bool
-	intent     manifest.DocumentRole
-	coordinate *occurrenceID
-	regular    bool
-	changed    []string
-	bootstrap  string
-	edgesDirty bool
+	views        map[string]fs.FS
+	artifacts    map[string]*store.SourceArtifact
+	parsed       *ParsedInputs
+	compact      bool
+	recordInputs bool
+	intent       manifest.DocumentRole
+	coordinate   *occurrenceID
+	regular      bool
+	changed      []string
+	bootstrap    string
+	edgesDirty   bool
 }
 
 func (r *documentReader) scanExcluded(file string) bool {
@@ -298,17 +304,24 @@ func (r *documentReader) input(file string) fileInput {
 
 func (r *documentReader) mountedRoot(file string) string {
 	dr := *r
+	doc := dr.cache[file]
+	if doc.sourceRoot != "" {
+		return doc.sourceRoot
+	}
 	if len(dr.views) == 0 {
 		return ""
 	}
-	for root := file; ; root = filepath.Dir(root) {
-		if _, exists := dr.views[root]; exists {
-			return root
+	file = filepath.Clean(file)
+	selected := ""
+	for root := range dr.views {
+		if len(root) <= len(selected) || !strings.HasPrefix(file, root) {
+			continue
 		}
-		if root == filepath.Dir(root) {
-			return ""
+		if len(file) == len(root) || root == string(filepath.Separator) || file[len(root)] == filepath.Separator {
+			selected = root
 		}
 	}
+	return selected
 }
 
 type builderDocument struct {
@@ -398,6 +411,7 @@ func normalizeKustomization(k *types.Kustomization) {
 func (r *documentReader) rememberStat(file string, info fs.FileInfo, err error) document {
 	dr := *r
 	cached := dr.cache[file]
+	cached.sourceRoot = new(dr).mountedRoot(file)
 	switch {
 	case err == nil && info.IsDir():
 		cached.pathState = pathDirectory

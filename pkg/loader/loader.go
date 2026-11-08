@@ -27,7 +27,8 @@ import (
 )
 
 type options struct {
-	Work manifest.WorkScope
+	Cache *cache.Cache
+	Work  manifest.WorkScope
 	// Projections shares source-free producer facts during paired planning.
 	Projections *manifest.ProducerProjections
 	// Changes supplies frozen source-qualified comparison facts.
@@ -64,6 +65,8 @@ type Loader struct {
 	InputContent          map[manifest.NamedResource]inputprojection.Projection
 	documents             documentReader
 	facts                 *ParsedInputs
+	snapshot              *ParsedInputs
+	inputCaches           map[string]*inputCache
 	scopes                *scopeConstruction
 	entry                 entryKind
 	nativeEntry           *manifest.Kustomization
@@ -283,6 +286,7 @@ func (l *Loader) Load(
 		work.Finish(resultErr)
 	}()
 	l.documents.compact = l.Options.Session != nil
+	l.documents.recordInputs = l.documents.compact && l.Options.Cache != nil && l.Options.Cache.CanPersistRenders()
 	l.mountSources()
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -300,6 +304,9 @@ func (l *Loader) Load(
 		}
 	}
 	l.documents.bootstrap = cmp.Or(l.documents.bootstrap, inputRoot)
+	if err := l.restoreCachedInputs(ctx); err != nil {
+		return 0, err
+	}
 	l.ensureScopes()
 	reader := l.documents
 	purpose := l.constructionPurpose.Load()
@@ -357,18 +364,19 @@ func (l *Loader) loadRoot(ctx context.Context, root string, w *traversal) bool {
 	}
 	factsSource := l.sourceFacts(root)
 	key := loadContext{path: root, ignore: l.IgnoreFile}
-	if facts := factsSource.loads[key]; facts.err != nil && ctx.Err() == nil {
+	if facts, _ := factsSource.load(key); facts.err != nil && ctx.Err() == nil {
 		w.work, w.err = nil, facts.err
 		return false
 	}
 	defer func() {
 		if w.err != nil && ctx.Err() == nil {
-			facts := factsSource.loads[key]
+			facts, _ := factsSource.load(key)
 			facts.err = w.err
-			factsSource.loads[key] = facts
+			factsSource.loads.values[key] = facts
 		}
 	}()
-	l.scopes.complete = false
+	facts, _ := factsSource.load(key)
+	l.scopes.complete = l.scopes.complete && !l.loadChangesScopes(root, facts, w.documents.intent)
 	ignore, skip, err := l.loadRootIgnore(ctx, root)
 	if skip || err != nil {
 		w.err = err
@@ -714,15 +722,12 @@ func (l *Loader) yieldSource(
 }
 
 func (l *Loader) yieldVisitedOwners(file string, yield func(manifest.NamedResource) bool) bool {
-	{
-		vValues := l.scopes.visits[file]
-		for vIndex := range vValues {
-			v := vValues[vIndex]
-			if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource && !yield(v.owner) {
-				return false
-			}
+	for v := range l.scopes.fileVisits(file) {
+		if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource && !yield(v.owner) {
+			return false
 		}
 	}
+
 	return true
 }
 
@@ -789,7 +794,7 @@ func (l *Loader) loadRootIgnore(ctx context.Context, abs string) (*ignoreSet, bo
 func (l *Loader) loadCached(ctx context.Context, abs string, w *traversal) {
 	sourceState := l.sourceFacts(abs)
 	key := loadContext{path: abs, ignore: l.IgnoreFile}
-	facts, replay := sourceState.loads[key]
+	facts, replay := sourceState.load(key)
 	if replay && facts.complete {
 		w.work = nil
 		l.replayLoad(ctx, &facts, w)
@@ -811,7 +816,7 @@ func (l *Loader) loadCached(ctx context.Context, abs string, w *traversal) {
 	}
 	facts.coverage = w.documents.intent
 	facts.observed = facts.observed || w.documents.intent != manifest.ApplicationDocuments
-	sourceState.loads[key] = facts
+	sourceState.loads.values[key] = facts
 }
 
 func (l *Loader) replayLoad(ctx context.Context, facts *loadFacts, w *traversal) {

@@ -2,7 +2,7 @@ package loader
 
 import (
 	"cmp"
-	"maps"
+	"iter"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -22,29 +22,47 @@ type ParsedInputs struct {
 }
 
 type parsedSource struct {
-	input     any
-	documents map[string]parsedDocument
-	binding   *store.ArtifactInput
-	walks     map[physicalContext]physicalWalk
-	loads     map[loadContext]loadFacts
-	hydrated  map[occurrenceID]store.Child
+	parsedDocuments
+
+	cache    *inputCache
+	borrowed bool
+
+	input    any
+	binding  *store.ArtifactInput
+	walks    factMap[physicalContext, physicalWalk]
+	loads    factMap[loadContext, loadFacts]
+	hydrated factMap[occurrenceID, store.Child]
+}
+
+// Document history MUST NOT retain prior walk or hydration snapshots.
+type parsedDocuments struct {
+	documents map[string]*parsedDocument
+	previous  *parsedDocuments
 }
 
 type parsedDocument struct {
-	coverage  manifest.DocumentRole
-	possible  bool
-	body      *types.Kustomization
-	file      string
-	objects   []parsedObject
-	state     pathState
-	searched  bool
-	plugins   *[]pluginInputs
-	decodeErr error
+	projection *projectionInputs
+	coverage   manifest.DocumentRole
+	possible   bool
+	body       *types.Kustomization
+	file       string
+	objects    []parsedObject
+	state      pathState
+	searched   bool
+	plugins    *[]pluginInputs
+	decodeErr  error
 }
 
 type physicalWalk struct {
+	cached   *cachedWalk
 	visits   []graphVisit
+	inputs   []walkInput
 	imported bool
+}
+
+type walkInput struct {
+	path   string
+	listed bool
 }
 
 type physicalContext struct {
@@ -101,22 +119,16 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 	source := parsedSource{
 		input:    identity,
 		binding:  &sourceBinding,
-		walks:    map[physicalContext]physicalWalk{},
-		loads:    map[loadContext]loadFacts{},
-		hydrated: map[occurrenceID]store.Child{},
+		walks:    factMap[physicalContext, physicalWalk]{values: map[physicalContext]physicalWalk{}},
+		loads:    factMap[loadContext, loadFacts]{values: map[loadContext]loadFacts{}},
+		hydrated: factMap[occurrenceID, store.Child]{values: map[occurrenceID]store.Child{}},
 	}
 	if prepared := l.documents.parsed; prepared != nil && prepared.compact == l.documents.compact {
 		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
-			source.walks, source.loads = maps.Clone(prior.walks), maps.Clone(prior.loads)
-			source.hydrated = maps.Clone(prior.hydrated)
-			for key, load := range source.loads {
-				load.observed, load.err, load.imported = false, nil, true
-				source.loads[key] = load
-			}
-			for key, walk := range source.walks {
-				walk.imported = true
-				source.walks[key] = walk
-			}
+			source.walks.previous, source.walks.imported = new(prior.walks), true
+			source.borrowed = true
+			source.loads.previous, source.loads.imported = new(prior.loads), true
+			source.hydrated.previous = new(prior.hydrated)
 		}
 	}
 	l.facts.sources[root] = source
@@ -130,31 +142,43 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 		compact: l.documents.compact,
 	}
 	for root := range l.documents.artifacts {
-		source := l.sourceFacts(root)
-		source.walks, source.loads = maps.Clone(source.walks), maps.Clone(source.loads)
-		if !l.documents.compact && root == l.documents.bootstrap {
-			maps.DeleteFunc(source.walks, func(_ physicalContext, walk physicalWalk) bool { return walk.imported })
-			maps.DeleteFunc(source.loads, func(_ loadContext, load loadFacts) bool { return load.imported })
-		}
-		source.hydrated = maps.Clone(source.hydrated)
-		source.documents = map[string]parsedDocument{}
+		source := l.snapshotSource(root)
 		inputs.sources[root] = source
 	}
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for file, doc := range l.documents.cache {
-		if doc.body == nil && doc.objects == nil &&
-			(!doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
+		if !doc.hasParsedFacts() && !doc.hasObservations() {
 			continue
 		}
-		if source, ok := inputs.sources[new(l.documents).mountedRoot(file)]; ok {
-			source.documents[file] = parsedDocument{
-				body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
-				coverage: doc.coverage, possible: doc.possible,
-				state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
-			}
+		source, ok := inputs.sources[new(l.documents).mountedRoot(file)]
+		if !ok {
+			continue
+		}
+		doc.snapshot()
+		l.documents.cache[file] = doc
+		if source.previous.lookup(file) != doc.parsed {
+			source.documents[file] = doc.parsed
 		}
 	}
+	l.snapshot = inputs
 	return inputs
+}
+
+func (d *document) hasParsedFacts() bool {
+	return d.projection != nil || d.body != nil || d.objects != nil
+}
+
+func (d *document) hasObservations() bool {
+	return d.searched || d.pathState != pathUnknown || d.decodeErr != nil
+}
+
+func (s *parsedDocuments) lookup(file string) *parsedDocument {
+	for source := s; source != nil; source = source.previous {
+		if doc := source.documents[file]; doc != nil {
+			return doc
+		}
+	}
+	return nil
 }
 
 // Matches reports whether input owns a source view retained by these parsed facts.
@@ -190,13 +214,14 @@ func (r documentReader) restore(file string) {
 		r.compact && artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *source.binding {
 		return
 	}
-	if doc, ok := source.documents[file]; ok {
-		cached.body, cached.file = doc.body, doc.file
+	if doc := source.lookup(file); doc != nil {
+		cached.body, cached.file, cached.sourceRoot = doc.body, doc.file, root
 		if cached.objects == nil || covers(doc.coverage, cached.coverage) {
 			cached.objects = cloneInputObjects(doc.objects)
 			cached.coverage, cached.possible = doc.coverage, doc.possible
 		}
 		cached.pathState, cached.searched, cached.plugins, cached.decodeErr = doc.state, doc.searched, doc.plugins, doc.decodeErr
+		cached.parsed, cached.projection = doc, doc.projection
 		r.cache[file] = cached
 	}
 }
@@ -215,6 +240,7 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 		return nil
 	}
 	var observations []manifest.InputVisibility
+	//nolint:gocritic // The source map supplies immutable value snapshots.
 	for root, facts := range l.facts.sources {
 		artifact := l.documents.artifacts[root]
 		var identity any
@@ -238,7 +264,7 @@ func (l *Loader) inputVisibility() []manifest.InputVisibility {
 				sources = append(sources, scope.id)
 			}
 		}
-		for domain, load := range facts.loads {
+		for domain, load := range facts.loadInputs() {
 			if !load.observed {
 				continue
 			}
@@ -351,4 +377,165 @@ func appendSourceVisibilities(
 		observations = append(observations, observation)
 	}
 	return observations
+}
+
+func (d *document) snapshot() {
+	sameParse := d.parsed != nil && d.parsed.coverage == d.coverage && d.parsed.possible == d.possible
+	sameBuilder := sameParse && d.parsed.body == d.body && d.parsed.file == d.file
+	if sameBuilder && d.parsed.matchesObservation(d) {
+		return
+	}
+	var objects []parsedObject
+	if sameParse {
+		objects = d.parsed.objects
+	} else {
+		objects = cloneInputObjects(d.objects)
+	}
+	d.parsed = &parsedDocument{
+		body: d.body, file: d.file, objects: objects, projection: d.projection,
+		coverage: d.coverage, possible: d.possible,
+		state: d.pathState, searched: d.searched, plugins: d.plugins, decodeErr: d.decodeErr,
+	}
+}
+
+func (p *parsedDocument) matchesObservation(doc *document) bool {
+	return p.state == doc.pathState && p.searched == doc.searched &&
+		p.plugins == doc.plugins && p.projection == doc.projection
+}
+
+// Frozen map layers MUST remain immutable while independent roots borrow them.
+type factMap[K comparable, V any] struct {
+	values   map[K]V
+	previous *factMap[K, V]
+	imported bool
+}
+
+type factValue[V any] struct {
+	value    V
+	imported bool
+}
+
+//nolint:gocritic,ireturn // Generic values retain separate key-presence and imported-ownership flags.
+func (m *factMap[K, V]) get(key K) (V, bool, bool) {
+	imported := false
+	for layer := m; layer != nil; layer = layer.previous {
+		if value, ok := layer.values[key]; ok {
+			return value, true, imported
+		}
+		imported = imported || layer.imported
+	}
+	var zero V
+	return zero, false, false
+}
+
+func (m *factMap[K, V]) freeze() factMap[K, V] {
+	if len(m.values) == 0 {
+		if !m.imported && m.previous != nil {
+			return *m.previous
+		}
+		frozen := *m
+		frozen.values = nil
+		return frozen
+	}
+	frozen := *m
+	*m = factMap[K, V]{values: map[K]V{}, previous: &frozen}
+	return frozen
+}
+
+func (m *factMap[K, V]) entries() iter.Seq2[K, factValue[V]] {
+	if m.previous == nil {
+		return func(yield func(K, factValue[V]) bool) {
+			for key, value := range m.values {
+				if !yield(key, factValue[V]{value: value}) {
+					return
+				}
+			}
+		}
+	}
+	return m.uniqueEntries
+}
+
+func (m *factMap[K, V]) uniqueEntries(yield func(K, factValue[V]) bool) {
+	seen := map[K]bool{}
+	imported := false
+	for layer := m; layer != nil; layer = layer.previous {
+		for key, value := range layer.values {
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if !yield(key, factValue[V]{value: value, imported: imported}) {
+				return
+			}
+		}
+		imported = imported || layer.imported
+	}
+}
+
+func (s *parsedSource) walk(key *physicalContext) (physicalWalk, bool) {
+	walk, known, imported := s.walks.get(*key)
+	walk.imported = walk.imported || imported
+	return walk, known
+}
+
+func (s *parsedSource) load(key loadContext) (loadFacts, bool) {
+	load, known, imported := s.loads.get(key)
+	if imported {
+		load.observed, load.err, load.imported = false, nil, true
+	}
+	return load, known
+}
+
+func (s *parsedSource) loadInputs() iter.Seq2[loadContext, loadFacts] {
+	return func(yield func(loadContext, loadFacts) bool) {
+		for key, entry := range s.loads.entries() {
+			load := entry.value
+			if entry.imported {
+				load.observed, load.err, load.imported = false, nil, true
+			}
+			if !yield(key, load) {
+				return
+			}
+		}
+	}
+}
+
+func (l *Loader) snapshotSource(root string) parsedSource {
+	source := l.sourceFacts(root)
+	if state := l.inputCaches[root]; state != nil {
+		source.cache = new(*state)
+	}
+	if l.snapshot != nil && l.snapshot.compact == l.documents.compact {
+		if prior, ok := l.snapshot.sources[root]; ok && prior.input == source.input &&
+			*prior.binding == *source.binding {
+			source.previous = new(prior.parsedDocuments)
+			for source.previous != nil && len(source.previous.documents) == 0 {
+				source.previous = source.previous.previous
+			}
+		}
+	}
+	next := l.facts.sources[root]
+	source.walks, source.loads, source.hydrated = next.walks.freeze(), next.loads.freeze(), next.hydrated.freeze()
+	l.facts.sources[root] = next
+	if source.borrowed && !l.documents.compact && root == l.documents.bootstrap {
+		source.retainNativeFacts()
+	}
+	source.documents = map[string]*parsedDocument{}
+	return source
+}
+
+func (s *parsedSource) retainNativeFacts() {
+	walks := factMap[physicalContext, physicalWalk]{values: map[physicalContext]physicalWalk{}}
+	for key, entry := range s.walks.entries() {
+		if !entry.imported && !entry.value.imported {
+			walks.values[key] = entry.value
+		}
+	}
+	loads := factMap[loadContext, loadFacts]{values: map[loadContext]loadFacts{}}
+	for key, value := range s.loadInputs() {
+		if !value.imported {
+			loads.values[key] = value
+		}
+	}
+	s.walks, s.loads = walks, loads
 }

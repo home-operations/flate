@@ -17,29 +17,25 @@ func (n *inheritedNamespaces) collectVisits(
 ) {
 	authoritative := false
 	inactive := l.scopes.inactive
-	{
-		vValues2 := l.scopes.visits[path]
-		for vIndex2 := range vValues2 {
-			v := vValues2[vIndex2]
-			if inactive && v.input != 0 && !l.scopes.inputs[v.input-1].active {
+	for v := range l.scopes.fileVisits(path) {
+		if inactive && v.input != 0 && !l.scopes.inputs[v.input-1].active {
+			continue
+		}
+		if v.deferMaterialization || v.role != kustomizeinput.Resource || l.selfClaim(v.owner, authored) {
+			continue
+		}
+		if v.membershipOnly {
+			if authoritative {
 				continue
 			}
-			if v.deferMaterialization || v.role != kustomizeinput.Resource || l.selfClaim(v.owner, authored) {
-				continue
-			}
-			if v.membershipOnly {
-				if authoritative {
-					continue
-				}
-			} else if !authoritative {
-				*n = (*n)[:0]
-				authoritative = true
-			}
-			fallback := l.namespaceFallback(v.fallback, v.namespace, authored, owners)
-			ns := manifest.Resolve(authored, v.namespace, fallback).Namespace
-			if !slices.Contains(*n, ns) {
-				*n = append(*n, ns)
-			}
+		} else if !authoritative {
+			*n = (*n)[:0]
+			authoritative = true
+		}
+		fallback := l.namespaceFallback(v.fallback, v.namespace, authored, owners)
+		ns := manifest.Resolve(authored, v.namespace, fallback).Namespace
+		if !slices.Contains(*n, ns) {
+			*n = append(*n, ns)
 		}
 	}
 }

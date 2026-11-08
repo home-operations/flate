@@ -100,7 +100,7 @@ func (r *documentReader) resolveOverlayInjectedNamespace(
 
 func (r *documentReader) resolveInjectedTargetNamespace(repoRoot, overlayDir string) nsResolution {
 	dr := *r
-	if r := new(dr).transformerInjectedNamespace(repoRoot, overlayDir); r.ok {
+	if r := new(dr).transformerInjectedNamespace(repoRoot, overlayDir, nil); r.ok {
 		return r
 	}
 	return new(dr).replacementInjectedNamespace(repoRoot, overlayDir)
@@ -111,7 +111,7 @@ func (r *documentReader) resolveInjectedTargetNamespace(repoRoot, overlayDir str
 // `namespace:` directive and resolves to a builtin NamespaceTransformer that
 // sets Kustomization spec/targetNamespace, the directive value is the namespace
 // that transformer injects.
-func (r *documentReader) transformerInjectedNamespace(repoRoot, overlayDir string) nsResolution {
+func (r *documentReader) transformerInjectedNamespace(repoRoot, overlayDir string, inputs *[]walkInput) nsResolution {
 	dr := *r
 	spec := dr.read(filepath.Join(repoRoot, overlayDir)).body
 	for ref := range kustomizeinput.Kustomization(spec) {
@@ -122,11 +122,14 @@ func (r *documentReader) transformerInjectedNamespace(repoRoot, overlayDir strin
 		if !ok {
 			continue
 		}
+		if inputs != nil {
+			*inputs = append(*inputs, walkInput{path: filepath.Join(repoRoot, transformerDir)})
+		}
 		td := dr.read(filepath.Join(repoRoot, transformerDir)).body
 		if td == nil || td.Namespace == "" {
 			continue
 		}
-		if new(dr).subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}) {
+		if new(dr).subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}, inputs) {
 			return nsResolution{ns: td.Namespace, ok: true, transformer: true}
 		}
 	}
@@ -156,9 +159,13 @@ func (r *documentReader) replacementInjectedNamespace(repoRoot, overlayDir strin
 	return nsResolution{}
 }
 
-func (r *documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]struct{}) bool {
+func (r *documentReader) subtreeHasNamespaceTransformer(
+	repoRoot, dir string,
+	visited map[string]struct{},
+	inputs *[]walkInput,
+) bool {
 	dr := *r
-	w := traversal{documents: dr, policy: traversalProof, directories: visited}
+	w := traversal{documents: dr, policy: traversalProof, directories: visited, scopeInputs: inputs}
 	return !w.walk(context.TODO(), graphVisit{root: repoRoot, dir: dir}, nil)
 }
 

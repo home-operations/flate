@@ -228,7 +228,7 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 	covered := map[selection.OccurrenceID]bool{}
 	byPath := map[string]PackageEvidence{}
 	for _, dir := range slices.Sorted(maps.Keys(packages)) {
-		objects, err := l.Occurrences(ctx, dir, "")
+		objects, err := l.occurrences(ctx, dir, "")
 		if err != nil {
 			return nil, err
 		}
@@ -267,6 +267,10 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 func (l *Loader) Occurrences(ctx context.Context, dir, targetNamespace string) ([]selection.OccurrenceFacts, error) {
 	l.mountSources()
 	l.ensureScopes()
+	return l.occurrences(ctx, dir, targetNamespace)
+}
+
+func (l *Loader) occurrences(ctx context.Context, dir, targetNamespace string) ([]selection.OccurrenceFacts, error) {
 	root := new(l.documents).mountedRoot(dir)
 	if root == "" {
 		return nil, nil
@@ -478,13 +482,13 @@ func (l *Loader) OccurrenceObject(
 	var facts parsedSource
 	if reader.compact && matching && !l.frozen {
 		facts = l.sourceFacts(occurrence.Declaration.Source)
-		child = facts.hydrated[coordinate]
+		child, _, _ = facts.hydrated.get(coordinate)
 	}
-	children := []store.Child{child}
 	var parseErr error
+	children := []store.Child{child}
 	if child.Obj == nil {
 		file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
-		children, parseErr = reader.parseFile(ctx, file, manifest.ParseDocOptions{})
+		children, parseErr = l.readOccurrence(ctx, &reader, file, matching)
 	}
 	if err := ctx.Err(); err != nil {
 		return store.Child{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
@@ -503,8 +507,8 @@ func (l *Loader) OccurrenceObject(
 	if child.Obj == nil || child.Obj.Named() != occurrence.Authored {
 		return store.Child{}, nil
 	}
-	if facts.hydrated != nil {
-		facts.hydrated[coordinate] = child
+	if facts.hydrated.values != nil {
+		facts.hydrated.values[coordinate] = child
 	}
 	child.Doc = manifest.DeepCopyMap(child.Doc)
 	child.Warnings = slices.Clone(child.Warnings)
@@ -764,4 +768,43 @@ func (l *Loader) appendVisitOccurrences(
 		}
 	}
 	return out, nil
+}
+
+func (l *Loader) readOccurrence(
+	ctx context.Context,
+	reader *documentReader,
+	file string,
+	matching bool,
+) ([]store.Child, error) {
+	var children []store.Child
+	var payload *inputPayload
+	if matching {
+		objects := l.documents.cache[file].objects
+		for i := range objects {
+			object := &objects[i]
+			if object.outcome.Ordinal == reader.coordinate.Document && object.item == reader.coordinate.item {
+				payload = object.payload
+				break
+			}
+		}
+	}
+	if payload == nil {
+		return reader.parseFile(ctx, file, manifest.ParseDocOptions{})
+	}
+	data, err := payload.read()
+	if err != nil {
+		return nil, err
+	}
+	docs, err := manifest.DecodeRender(data)
+	if err != nil {
+		return nil, err
+	}
+	for _, doc := range docs {
+		parsed, outcome, _ := Prepare(doc, manifest.ParseDocOptions{})
+		if outcome.Err != nil {
+			return children, outcome.Err
+		}
+		children = append(children, parsed)
+	}
+	return children, nil
 }

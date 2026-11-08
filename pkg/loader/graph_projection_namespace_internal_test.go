@@ -80,9 +80,9 @@ func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
 			l.ensureScopes()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system"}
 			l.Store.AddObject(owner)
-			l.scopes.visits["child.yaml"] = []graphVisit{{
+			setScopeVisitsForTest(l, "child.yaml", []graphVisit{{
 				namespace: "inner", deferMaterialization: tc.deferred, role: tc.role, owner: owner.Named(),
-			}}
+			}})
 			r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.HelmReleaseID("authored", "child")}
 			assert.Diff(t, l.recordNamespaces(new(r), ""), []string{tc.want})
 		})
@@ -127,7 +127,7 @@ func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
 			l.ensureScopes()
 			l.scopes.inactive = true
 			l.scopes.inputs = []scopeInput{{active: false}, {active: true}}
-			l.scopes.visits["child.yaml"] = tc.visits
+			setScopeVisitsForTest(l, "child.yaml", tc.visits)
 			r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.KustomizationID("", "child")}
 			assert.Diff(t, l.recordNamespaces(new(r), ""), tc.want)
 		})
@@ -331,9 +331,17 @@ func TestRecordNamespaces_IndexedOwner(t *testing.T) {
 				File: "app/source.yaml",
 			}
 			if name == "visit" {
-				l.scopes.visits[record.Path] = []graphVisit{{role: kustomizeinput.Resource}}
+				setScopeVisitsForTest(l, record.Path, []graphVisit{{role: kustomizeinput.Resource}})
 			}
 			assert.Diff(t, l.recordNamespaces(new(record), ""), []string{"apps"})
 		})
+	}
+}
+
+func setScopeVisitsForTest(l *Loader, file string, visits []graphVisit) {
+	for visitIndex := range visits {
+		visit := visits[visitIndex]
+		visit.file = file
+		l.recordScopeVisits(&visit, []graphVisit{visit}, visit.membershipOnly, false)
 	}
 }

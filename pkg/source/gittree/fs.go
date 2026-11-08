@@ -2,6 +2,7 @@
 package gittree
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -44,7 +45,8 @@ const (
 
 // ViewOptions shapes a commit view without changing its object backing.
 type ViewOptions struct {
-	policy *localPolicy
+	policy   *localPolicy
+	excluded string
 	// Content carries source coordinates without filesystem or routing state.
 	Content  any
 	Location *gitrepo.Location
@@ -85,6 +87,7 @@ type FS struct {
 	location *gitrepo.Location
 	policy   *sourceignore.Matcher
 	snapshot *localPolicy
+	excluded string
 	content  atomic.Pointer[contentFingerprint]
 }
 
@@ -96,6 +99,7 @@ func (g *FS) OperationView() *FS {
 	if local, ok := g.view.(*localView); ok {
 		input := newLocal(local.root, true, g.snapshot)
 		input.location = g.location
+		input.excluded = g.excluded
 		input.Warnings = g.Warnings
 		return input
 	}
@@ -186,6 +190,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}{directView: directView{FS: opts.Current}}
 		input.view = &input.directView
 		input.location = opts.Location
+		input.excluded = opts.excluded
 		input.snapshot = &input.policyState
 		return &input.FS, "", nil
 	}
@@ -196,6 +201,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}
 		input := newLocal(root, false, &localPolicy{})
 		input.location = opts.Location
+		input.excluded = opts.excluded
 		return input, "", nil
 	}
 	input, err := newTree(ctx, backing, commit, new(opts))
@@ -241,6 +247,7 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	}
 	combined.view = input
 	combined.location = opts.Location
+	combined.excluded = opts.excluded
 	input.storers.New = func() any {
 		upper := filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
 		if native && current.backing != nil {
@@ -639,6 +646,7 @@ func (o *ViewOptions) refreshCurrent(
 		return nil, matcher, reuse, nil
 	}
 
+	o.excluded = cmp.Or(o.excluded, current.excluded)
 	if o.Location == nil {
 		o.Location = current.location
 	}
@@ -648,7 +656,9 @@ func (o *ViewOptions) refreshCurrent(
 		current.location = o.Location
 	case *gitView:
 		if v.refresh != nil {
-			refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)
+			refresh := *v.refresh
+			refresh.excluded = o.excluded
+			refreshed, _, err := New(ctx, v.backing, v.commit, refresh)
 			if err != nil {
 				return refreshed, nil, false, err
 			}
@@ -694,7 +704,8 @@ func (g *FS) finishGitView(
 			Mode            ViewMode
 			Sparse          []string `json:",omitempty"`
 			Ignore          string
-		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
+			Excluded        string `json:",omitempty"`
+		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore, opts.excluded})
 		if v.identity == "" {
 			return warningOnly(
 					g,

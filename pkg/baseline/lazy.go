@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
+	gitindex "github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
@@ -35,11 +36,11 @@ type selection struct {
 }
 
 func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, string, []manifest.Warning, error) {
-	baseTree, entries, err := s.baseEntries(ctx)
+	entries, comparison, err := s.baseEntries(ctx)
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
-	candidates, warnings, err := s.candidates(ctx, baseTree, entries)
+	candidates, warnings, err := s.candidates(ctx, entries, comparison)
 	if err != nil {
 		return nil, nil, "", warnings, err
 	}
@@ -55,7 +56,6 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	if s.base.backing != nil {
 		backing = s.base.backing
 	}
-	s.repo.Storer.(*filesystem.Storage).Reindex() //nolint:errcheck // The repository uses filesystem storage.
 	// go-git initializes its pack index without synchronization, before readers share it.
 	if localErr := s.current.Location().Repository.Storer.HasEncodedObject(
 		plumbing.ZeroHash,
@@ -85,16 +85,17 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	return baseline, changes, identity, warnings, nil
 }
 
-func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]object.TreeEntry, error) {
+func (s selection) baseEntries(ctx context.Context) (map[string]object.TreeEntry, *gitindex.Index, error) {
 	var baseTree *object.Tree
 	var entries map[string]object.TreeEntry
+	var comparison *gitindex.Index
 	for {
 		before, err := s.base.Repo.CommitObject(s.base.Hash)
 		if err == nil {
 			baseTree, err = before.Tree()
 		}
 		if err == nil {
-			entries, err = treeEntries(ctx, baseTree)
+			entries, comparison, err = treeEntries(ctx, baseTree)
 		}
 		if err == nil {
 			break
@@ -106,24 +107,33 @@ func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]ob
 			return nil, nil, err
 		}
 	}
-	return baseTree, entries, nil
+	return entries, comparison, nil
 }
 
 func (s selection) candidates(
 	ctx context.Context,
-	baseTree *object.Tree,
 	entries map[string]object.TreeEntry,
+	comparison *gitindex.Index,
 ) (map[string]bool, []manifest.Warning, error) {
 	candidates := make(map[string]bool)
-	headEntries, err := s.headCandidates(ctx, baseTree, entries, candidates)
-	if err != nil {
-		return nil, nil, err
+	head, err := s.repo.Head()
+	if err != nil && !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, nil, fmt.Errorf("head: %w", err)
+	}
+	if err == nil {
+		commit, commitErr := s.repo.CommitObject(head.Hash())
+		if commitErr != nil {
+			return nil, nil, fmt.Errorf("commitobject: %w", commitErr)
+		}
+		if _, treeErr := commit.Tree(); treeErr != nil {
+			return nil, nil, fmt.Errorf("tree: %w", treeErr)
+		}
 	}
 	worktree, err := s.repo.Worktree()
 	if err != nil {
 		return nil, nil, fmt.Errorf("worktree: %w", err)
 	}
-	status, statusErr := worktree.Status()
+	status, statusErr := s.worktreeChanges(ctx, worktree, comparison)
 	var warnings []manifest.Warning
 	if statusErr != nil {
 		warnings = []manifest.Warning{
@@ -138,66 +148,26 @@ func (s selection) candidates(
 	if localErr := ctx.Err(); localErr != nil {
 		return nil, warnings, fmt.Errorf("context: %w", localErr)
 	}
-	for name, st := range status {
-		if st.Staging != git.Unmodified || st.Worktree != git.Unmodified {
-			candidates[name] = true
+	for _, change := range status {
+		if name := change.From.String(); name != "" {
+			candidates[name] = false
 		}
-	}
-	err = walkCurrent(ctx, s.current, ".", func(name string) {
-		if _, ok := headEntries[name]; !ok {
-			candidates[name] = true
+		if name := change.To.String(); name != "" {
+			// Upstream uses a zero content hash when checkout reads fail.
+			// Such observations MUST retain the ordinary comparison's I/O error.
+			uncertain := bytes.Equal(change.To.Hash()[:len(plumbing.ZeroHash)], plumbing.ZeroHash[:])
+			candidates[name] = uncertain
 		}
-	})
-	if err != nil {
-		return nil, warnings, err
 	}
 	if statusErr != nil {
 		for name := range entries {
 			candidates[name] = true
 		}
+		if err := walkCurrent(ctx, s.current, ".", func(name string) { candidates[name] = true }); err != nil {
+			return nil, warnings, err
+		}
 	}
 	return candidates, warnings, nil
-}
-
-func (s selection) headCandidates(ctx context.Context, baseTree *object.Tree,
-	entries map[string]object.TreeEntry, candidates map[string]bool,
-) (map[string]object.TreeEntry, error) {
-	headEntries := map[string]object.TreeEntry{}
-	head, err := s.repo.Head()
-	if errors.Is(err, plumbing.ErrReferenceNotFound) {
-		for name := range entries {
-			candidates[name] = true
-		}
-		return headEntries, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("head: %w", err)
-	}
-	commit, localErr := s.repo.CommitObject(head.Hash())
-	if localErr != nil {
-		return nil, fmt.Errorf("commitobject: %w", localErr)
-	}
-	headTree, localErr := commit.Tree()
-	if localErr != nil {
-		return nil, fmt.Errorf("tree: %w", localErr)
-	}
-	headEntries, localErr = treeEntries(ctx, headTree)
-	if localErr != nil {
-		return nil, localErr
-	}
-	diff, localErr := object.DiffTree(baseTree, headTree)
-	if localErr != nil {
-		return nil, fmt.Errorf("difftree: %w", localErr)
-	}
-	for _, c := range diff {
-		if c.From.Name != "" {
-			candidates[c.From.Name] = false
-		}
-		if c.To.Name != "" {
-			candidates[c.To.Name] = false
-		}
-	}
-	return headEntries, nil
 }
 
 func (s selection) acquireBodies(
@@ -460,20 +430,27 @@ func (s selection) acquireBase(ctx context.Context) error {
 	return nil
 }
 
-func treeEntries(ctx context.Context, root *object.Tree) (map[string]object.TreeEntry, error) {
+func treeEntries(ctx context.Context, root *object.Tree) (map[string]object.TreeEntry, *gitindex.Index, error) {
+	comparison := &gitindex.Index{}
 	out := make(map[string]object.TreeEntry)
 	walker := object.NewTreeWalker(root, true, nil)
 	defer walker.Close()
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("context: %w", err)
+			return nil, nil, fmt.Errorf("context: %w", err)
 		}
 		name, entry, err := walker.Next()
 		if errors.Is(err, io.EOF) {
-			return out, nil
+			return out, comparison, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("next: %w", err)
+			return nil, nil, fmt.Errorf("next: %w", err)
+		}
+		if entry.Mode.IsFile() {
+			comparison.Entries = append(
+				comparison.Entries,
+				&gitindex.Entry{Name: name, Hash: entry.Hash, Mode: entry.Mode},
+			)
 		}
 		if entry.Mode.IsFile() && entry.Mode != filemode.Symlink {
 			out[name] = entry

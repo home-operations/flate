@@ -79,6 +79,9 @@ func (l *Loader) cacheLoads(state *inputCache, force bool) ([]cachedLoad, bool) 
 }
 
 func cacheLoad(state *inputCache, key loadContext, facts *loadFacts, names []string) (cachedLoad, bool) {
+	if facts.cached != nil {
+		return *facts.cached, true
+	}
 	root := state.input.LocalPath
 	name, valid := inputRelative(root, key.path)
 	load := cachedLoad{Path: name, Coverage: facts.coverage}
@@ -239,7 +242,7 @@ func (l *cachedLoad) restore(root string) loadFacts {
 	return facts
 }
 
-func (l *Loader) loadChangesScopes(root string, facts loadFacts, coverage manifest.DocumentRole) bool {
+func (l *Loader) loadChangesScopes(root string, facts *loadFacts, coverage manifest.DocumentRole) bool {
 	if !facts.complete {
 		return true
 	}

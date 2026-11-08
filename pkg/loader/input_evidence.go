@@ -3,7 +3,9 @@ package loader
 import (
 	"context"
 	"io/fs"
+	"maps"
 	"path"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -16,8 +18,12 @@ type inputEvidence struct {
 }
 
 func (s *inputCache) certify(ctx context.Context, frame *inputFrame) error {
+	requested := slices.Collect(maps.Keys(frame.Digests))
+	for _, file := range frame.Files {
+		requested = append(requested, file.Name)
+	}
 	//nolint:errcheck // Only native source owners create input cache state.
-	current, err := s.input.FS.(*gittree.FS).FreshInputs(ctx)
+	current, err := s.input.FS.(*gittree.FS).FreshInputs(ctx, requested)
 	if err != nil {
 		return err
 	}

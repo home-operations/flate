@@ -71,10 +71,6 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 			),
 		)
 	}
-	repo, err = git.PlainOpenWithOptions(location.RepositoryRoot, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
-	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: open working tree: %w", err), "")
-	}
 	root := location.ContentRoot
 	input, err := admitLocation(ctx, location, manifest.WorkScope{})
 	if err != nil {
@@ -82,7 +78,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	}
 	input = gittree.ExcludeDirectory(input, owner.Directory())
 	current, _ := input.FS.(*gittree.FS)
-	s := selection{repo: repo, current: current, owner: owner}
+	s := selection{repo: repo, current: current.OperationView(), owner: owner}
 	r, err := s.resolve(ctx, location, base)
 	if err != nil {
 		return nil, err

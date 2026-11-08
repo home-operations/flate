@@ -47,25 +47,22 @@ func hasSubstitution(s string) bool {
 	}
 }
 
-// SubstitutionNames derives effective names from Flux syntax, or nil for unproved syntax.
-func SubstitutionNames(docs []manifest.DocOccurrence, active bool) map[string]struct{} {
-	names := make(map[string]struct{})
-	if !active {
-		return names
+// SubstitutionDocument keeps YAML framing and document exclusions identical across callers.
+func SubstitutionDocument(occurrence manifest.DocOccurrence, active bool) ([]byte, error) {
+	doc := occurrence.Document
+	if !active || occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) || !NeedsSubstitution(doc) {
+		return nil, nil //nolint:nilerr // Parse failures retain their existing outcome and never enter substitution.
 	}
-	for _, occurrence := range docs {
-		doc := occurrence.Document
-		if occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) || !NeedsSubstitution(doc) {
-			continue
-		}
-		raw, err := yaml.Marshal(doc)
-		if err != nil {
-			return nil
-		}
-		tree, err := parse.Parse(string(raw))
-		if err != nil || !collectSubstitutionNames(tree.Root, names) {
-			return nil
-		}
+	//nolint:wrapcheck // Shaping wraps this deferred error.
+	return yaml.Marshal(doc)
+}
+
+// SubstitutionNames derives effective names from Flux syntax, or nil for unproved syntax.
+func SubstitutionNames(data []byte) map[string]struct{} {
+	names := make(map[string]struct{})
+	tree, err := parse.Parse(string(data))
+	if err != nil || !collectSubstitutionNames(tree.Root, names) {
+		return nil
 	}
 	return names
 }

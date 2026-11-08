@@ -184,8 +184,11 @@ func TestRenderKey_DependsOnProjection(t *testing.T) {
 			next, err := cache.prepareRender(t.Context(), &changed)
 			assert.NoError(t, err)
 			assert.FatalIf(t, manifest.ValueEqual(
-				req.Content([]manifest.DocOccurrence{{Document: map[string]any{"value": "${VALUE}"}}}),
-				changed.Content([]manifest.DocOccurrence{{Document: map[string]any{"value": "${VALUE}"}}}),
+				PrepareShape(&req, []manifest.DocOccurrence{{Document: map[string]any{"value": "${VALUE}"}}}).Content(),
+				PrepareShape(
+					&changed,
+					[]manifest.DocOccurrence{{Document: map[string]any{"value": "${VALUE}"}}},
+				).Content(),
 			), "%s", "accepted render change retained identity")
 			assert.Equal(t, next.key == before.key, change.name == "inline")
 		})
@@ -330,7 +333,14 @@ func TestRender_AcceptedMutableInputPreparation(t *testing.T) {
 	input := &preparationReadFS{FS: os.DirFS(root)}
 	cacheDir := t.TempDir()
 	c := newTestTreeCache(t, cacheDir)
-	req := RenderRequest{Source: &store.SourceArtifact{LocalPath: root, FS: input}, SubPath: ".", Spec: demoSpec}
+	var preparation Preparation
+	t.Cleanup(preparation.Retire)
+	req := RenderRequest{
+		Preparation: &preparation,
+		Source:      &store.SourceArtifact{LocalPath: root, FS: input},
+		SubPath:     ".",
+		Spec:        demoSpec,
+	}
 	docs, receipt, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
 	assert.FatalIf(

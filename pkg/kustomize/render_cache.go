@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"log/slog"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -77,6 +78,33 @@ type renderFrame struct {
 	output, encoded []byte
 	accepted        *acceptedRender
 	acceptedKey     string
+}
+
+type decodedRender struct {
+	identity string
+	frame    renderFrame
+}
+
+func (p *Preparation) readFrame(generation fs.FS) (renderFrame, bool, error) {
+	identity := sourcecache.AcquisitionIdentity(generation)
+	if p != nil && p.decoded != nil && identity != "" && p.decoded.identity == identity {
+		return p.decoded.frame, true, nil
+	}
+	data, err := fs.ReadFile(generation, "content")
+	if err != nil {
+		return renderFrame{}, false, manifest.NewError(
+			manifest.ErrFlux, fmt.Errorf("read kustomize render cache: %w", err), "",
+		)
+	}
+	frame, err := decodeFrame(data)
+	if err != nil {
+		slog.Debug("kustomize: decode render frame", "err", err)
+		return renderFrame{}, false, nil
+	}
+	if p != nil && identity != "" {
+		p.decoded = &decodedRender{identity: identity, frame: frame}
+	}
+	return frame, true, nil
 }
 
 func equalRenderFrame(a, b any) bool {
@@ -214,12 +242,7 @@ func decodeFrame(data []byte) (renderFrame, error) {
 		return frame, nil
 	}
 
-	canonical, err := json.Marshal(accepted)
-	if err != nil {
-		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
-		return frame, nil
-	}
-	frame.accepted, frame.acceptedKey = &accepted, manifest.Fingerprint(canonical)
+	frame.accepted, frame.acceptedKey = &accepted, manifest.Fingerprint(accepted)
 	return frame, nil
 }
 
@@ -329,12 +352,8 @@ func (c *TreeCache) PreviousRender(
 	if err != nil {
 		return nil, nil, false
 	}
-	data, err := fs.ReadFile(reader, "content")
-	if err != nil {
-		return nil, nil, false
-	}
-	frame, err := decodeFrame(data)
-	validBinding := err == nil && frame.header.Key == prepared.key &&
+	frame, decoded, err := req.Preparation.readFrame(reader)
+	validBinding := err == nil && decoded && frame.header.Key == prepared.key &&
 		frame.header.Binding == manifest.Fingerprint(prepared.binding)
 	if !validBinding || len(frame.header.Reads.Remotes) != 0 {
 		return nil, nil, false
@@ -546,7 +565,7 @@ func prepareRenderPublication(
 					"",
 				)
 			}
-			content = manifest.Fingerprint(data)
+			content = manifest.Fingerprint(accepted)
 		}
 	}
 	return renderPublication{frame: *f, accepted: accepted, data: data}, content, nil

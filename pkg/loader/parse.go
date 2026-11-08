@@ -95,6 +95,9 @@ func (r documentReader) parseFile(
 //nolint:gocritic // Immutable reader values retain their original snapshot semantics.
 func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
 	r.restore(path)
+	if err := r.cache[path].decodeErr; err != nil {
+		return nil, err
+	}
 	out := r.cache[path].objects
 	if out == nil || !covers(r.cache[path].coverage, r.intent) {
 		out = []parsedObject{}

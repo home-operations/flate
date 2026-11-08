@@ -429,8 +429,8 @@ func (r *readerRoute) collect() {
 	pending := []manifest.NamedResource{r.id}
 	seen := map[manifest.NamedResource]bool{}
 	for len(pending) != 0 {
-		owner := pending[0]
-		pending = pending[1:]
+		owner := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
 		if seen[owner] {
 			continue
 		}

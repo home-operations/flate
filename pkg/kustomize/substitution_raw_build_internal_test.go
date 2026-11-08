@@ -67,7 +67,7 @@ func testRenderSubstitutionRetainsRawBuildCase(
 		for i := range private {
 			private[i].Document = manifest.DeepCopyMap(private[i].Document)
 		}
-		return request.Content(private)
+		return PrepareShape(&request, private).Content()
 	}
 	docs, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 	assert.NoError(t, err)

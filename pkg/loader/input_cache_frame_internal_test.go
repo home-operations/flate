@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"testing/fstest"
+	"weak"
 
 	kustomizetypes "sigs.k8s.io/kustomize/api/types"
 
@@ -17,6 +20,35 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 )
+
+func TestRestoreFrameFiles_IndependentLifetime(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	l := cachedFixtureLoader(t, root, fstest.MapFS{}, nil)
+	defer l.Close()
+	state := &inputCache{
+		input:   l.documents.artifacts[root],
+		digests: map[string]string{"first.yaml": "first", "second.yaml": "second"},
+		types:   map[string]fs.FileMode{"first.yaml": 0, "second.yaml": 0},
+		files:   map[inputCoordinate]inputEvidence{},
+	}
+	backing := func() weak.Pointer[cachedInput] {
+		frame := inputFrame{Files: []cachedInput{
+			{Name: "first.yaml", Digest: "first", Objects: []cachedOccurrence{{Ordinal: 3}}},
+			{Name: "second.yaml", Digest: "second", Objects: []cachedOccurrence{{Ordinal: 7}}},
+		}}
+		pointer := weak.Make(&frame.Files[0])
+		assert.NoError(t, l.restoreFrameFiles(state, &frame))
+		return pointer
+	}()
+	runtime.GC()
+	assert.Equal(t, backing.Value() == nil, true)
+	first := l.documents.cache[filepath.Join(root, "first.yaml")].deferred
+	second := l.documents.cache[filepath.Join(root, "second.yaml")].deferred
+	assert.Equal(t, first.Objects[0].Ordinal, 3)
+	assert.Equal(t, second.Objects[0].Ordinal, 7)
+	runtime.KeepAlive(l)
+}
 
 func TestInputFrame_LazyPayload(t *testing.T) {
 	t.Parallel()

@@ -43,7 +43,7 @@ func TestRender_SOPSDiagnosticsOnReplay(t *testing.T) {
 			"raw replay frame lost admission input",
 		)
 
-		assert.NoError(t, Shape(t.Context(), spec, docs, ShapeOptions{}))
+		assert.NoError(t, PrepareShape(&RenderRequest{Spec: spec}, docs).Apply(t.Context(), ShapeOptions{}))
 		assert.Equal(t, len(docs[0].Warnings), 1)
 		assert.Diff(t, docs[0].Warnings[0].Detail, []string{"VALUE"})
 		assert.Diff(t, docs[0].Document["stringData"], map[string]any{"PLAIN": "readable"})

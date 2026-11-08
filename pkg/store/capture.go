@@ -22,6 +22,7 @@ type ReadSet struct {
 	store              *Store
 	id                 manifest.NamedResource
 	inputs             *Input
+	pendingProducers   *Input
 	last               *Input
 	local              Input
 	spare              *Input
@@ -33,7 +34,7 @@ type ReadSet struct {
 	localProductions   productionCapture
 	spareProductions   []productionCapture
 	spareDetails       []inputDetails
-	byID               *[]*Input
+	byID               map[manifest.NamedResource]*Input
 	originHead         *registrationHead
 	expected           [2]*acceptedAssessment
 	acceptedRecord     acceptedAssessment
@@ -46,6 +47,7 @@ type ReadSet struct {
 type Input struct {
 	Ref             manifest.DependencyRef
 	next            *Input
+	pendingProducer *Input
 	object          registration
 	view            capture
 	details         atomic.Pointer[inputDetails]
@@ -124,6 +126,7 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	clear(inputs)
 	r.store, r.id, r.capacity = s, id, len(inputs)
 	r.inputs, r.last, r.spare, r.warnings, r.produced = nil, nil, nil, nil, nil
+	r.pendingProducers = nil
 	r.advisories = AdvisoryEvidence{}
 	r.spareDetails, r.spareProductions, r.byID = nil, nil, nil
 	r.originHead, r.expected = nil, [2]*acceptedAssessment{}
@@ -153,6 +156,14 @@ func (r *ReadSet) sample(id manifest.NamedResource, slot *producerSlot, record *
 		return
 	}
 	input := r.input(slot.id)
+	if input.pendingProducer == nil {
+		input.pendingProducer = r.pendingProducers
+		if input.pendingProducer == nil {
+			// A self-link marks the tail and prevents duplicate registration work.
+			input.pendingProducer = input
+		}
+		r.pendingProducers = input
+	}
 	input.watchProducer = input.watchProducer || watch
 	if input.derived&capturedSettlement != 0 {
 		if (!input.settled || watch) && input.producer != record.publication() {
@@ -166,7 +177,12 @@ func (r *ReadSet) sample(id manifest.NamedResource, slot *producerSlot, record *
 }
 
 func (r *ReadSet) activateProducers() {
-	for input := r.inputs; input != nil; input = input.next {
+	for r.pendingProducers != nil {
+		input := r.pendingProducers
+		r.pendingProducers, input.pendingProducer = input.pendingProducer, nil
+		if r.pendingProducers == input {
+			r.pendingProducers = nil
+		}
 		if input.derived&capturedSettlement != 0 && (!input.settled || input.watchProducer) &&
 			(input.cell(producerFacet) == nil || input.cell(producerFacet).head == nil) {
 			r.observe(input, producerFacet, 0)

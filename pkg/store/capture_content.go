@@ -49,14 +49,7 @@ func (r *ReadSet) findInput(id manifest.NamedResource) *Input {
 		return r.last
 	}
 	if r.byID != nil {
-		if i, found := slices.BinarySearchFunc(
-			*r.byID,
-			id,
-			func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
-		); found {
-			return (*r.byID)[i]
-		}
-		return nil
+		return r.byID[id]
 	}
 	for input := r.inputs; input != nil; input = input.next {
 		if input.Ref.NamedResource == id {

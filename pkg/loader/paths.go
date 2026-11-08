@@ -285,7 +285,10 @@ func (l *Loader) projectionNames(
 	known := err == nil && child.NamePrefix == "" && child.NameSuffix == "" && len(child.Images) == 0
 	declared, decoded := projectionPatches(declared)
 	known = known && decoded
-	names := values.SubstitutionNames([]manifest.DocOccurrence{{Document: map[string]any{"input": declared}}}, active)
+	names := projectionSubstitutionNames(
+		[]manifest.DocOccurrence{{Document: map[string]any{"input": declared}}},
+		active,
+	)
 	for source, files := range roots {
 		known = known && len(files) != 0
 		input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
@@ -547,7 +550,7 @@ func (p *projectionInputs) readProjection(
 		}
 		inputs := &projectionInputs{
 			payload:    p.payload,
-			Names:      values.SubstitutionNames(docs, active),
+			Names:      projectionSubstitutionNames(docs, active),
 			Known:      p.Known,
 			NamesKnown: active,
 		}
@@ -569,7 +572,7 @@ func (p *projectionInputs) readProjection(
 	}
 	inputs := &projectionInputs{
 		payload:    payload,
-		Names:      values.SubstitutionNames(docs, active),
+		Names:      projectionSubstitutionNames(docs, active),
 		Known:      decoded,
 		NamesKnown: active,
 	}
@@ -586,6 +589,25 @@ func mergeProjectionNames(names map[string]struct{}, inputs *projectionInputs, a
 	}
 	if names != nil {
 		maps.Copy(names, input)
+	}
+	return names
+}
+
+func projectionSubstitutionNames(docs []manifest.DocOccurrence, active bool) map[string]struct{} {
+	names := map[string]struct{}{}
+	for i := range docs {
+		data, err := values.SubstitutionDocument(docs[i], active)
+		if err != nil {
+			return nil
+		}
+		if data == nil {
+			continue
+		}
+		current := values.SubstitutionNames(data)
+		if current == nil {
+			return nil
+		}
+		maps.Copy(names, current)
 	}
 	return names
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
+	gitindex "github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -228,7 +229,7 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 				base:    &resolution{Repo: &observed, Hash: fixture.Base},
 				current: input.FS.(*gittree.FS),
 			}
-			baseTree, entries, err := s.baseEntries(t.Context())
+			entries, comparison, err := s.baseEntries(t.Context())
 			assert.NoError(t, err)
 			if reads.Metadata.Load() == 0 || reads.Bodies.Load() != 0 {
 				t.Fatal("metadata traversal opened a blob Reader")
@@ -240,7 +241,7 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 				reads.Large.Load(),
 			)
 			reads.Reset()
-			candidates, warnings, err := s.candidates(t.Context(), baseTree, entries)
+			candidates, warnings, err := s.candidates(t.Context(), entries, comparison)
 			assert.NoError(t, err)
 			assert.Equal(t, len(warnings), 0)
 			assert.Diff(t, candidates, map[string]bool{"app/input.yaml": false})
@@ -275,6 +276,61 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 				reads.Bodies.Load(),
 				reads.Large.Load(),
 			)
+		})
+	}
+}
+
+func TestAutoResolve_CheckoutInventory(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"unchanged_symlink", "ignored_file", "submodule_file"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			initRepoWithFile(t, root, "input.yaml", "before")
+			repo := openHelper(t, root)
+			worktree, err := repo.Worktree()
+			assert.NoError(t, err)
+			var want []string
+			switch kind {
+			case "unchanged_symlink":
+				assert.NoError(t, os.Symlink("input.yaml", filepath.Join(root, "link.yaml")))
+				_, err = worktree.Add("link.yaml")
+				assert.NoError(t, err)
+			case "ignored_file":
+				testutil.WriteFile(t, root, ".gitignore", "ignored/\n")
+				_, err = worktree.Add(".gitignore")
+				assert.NoError(t, err)
+				testutil.WriteFile(t, root, "ignored/input.yaml", "new")
+				want = []string{"ignored/input.yaml"}
+			case "submodule_file":
+				module := filepath.Join(root, "module")
+				assert.NoError(t, os.Mkdir(module, 0o755))
+				hash := initRepoWithFile(t, module, "input.yaml", "new")
+				testutil.WriteFile(
+					t,
+					root,
+					".gitmodules",
+					"[submodule \"module\"]\n\tpath = module\n\turl = ./module\n",
+				)
+				_, err = worktree.Add(".gitmodules")
+				assert.NoError(t, err)
+				index, indexErr := repo.Storer.Index()
+				assert.NoError(t, indexErr)
+				index.Entries = append(
+					index.Entries,
+					&gitindex.Entry{Name: "module", Hash: hash, Mode: filemode.Submodule},
+				)
+				assert.NoError(t, repo.Storer.SetIndex(index))
+				want = []string{"module/input.yaml"}
+			}
+			pin, err := worktree.Commit(
+				"checkout inventory",
+				&git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.invalid"}},
+			)
+			assert.NoError(t, err)
+			result, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
+			assert.NoError(t, err)
+			assert.Diff(t, result.Changes.Paths(), want)
 		})
 	}
 }

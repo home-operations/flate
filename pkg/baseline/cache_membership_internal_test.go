@@ -50,7 +50,7 @@ func TestAutoResolve_CacheMembership(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, string(data), want)
 			}
-			observed, observeErr := selected.FreshInputs(t.Context())
+			observed, observeErr := selected.FreshInputs(t.Context(), nil)
 			assert.NoError(t, observeErr)
 			assert.Equal(t, len(observed.Files), 2)
 		})

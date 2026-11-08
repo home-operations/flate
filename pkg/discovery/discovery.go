@@ -712,11 +712,10 @@ func (d *Session) prepareDocuments(
 			return frame, err
 		}
 	}
-	content := request.Content(docs)
-	if err := kustomize.Shape(
+	shaping := kustomize.PrepareShape(&request, docs)
+	content := shaping.Content()
+	if err := shaping.Apply(
 		ctx,
-		prepared,
-		docs,
 		kustomize.ShapeOptions{
 			Strict: d.cfg.StrictSubstitutions,
 			Work:   request.Work.Substitution(),

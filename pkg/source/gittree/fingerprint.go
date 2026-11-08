@@ -50,7 +50,7 @@ func ContentFingerprint(ctx context.Context, input fs.FS) (string, error) {
 		run := false
 		content.once.Do(func() {
 			run = true
-			content.initialize(ctx, g, false)
+			content.initialize(ctx, g, false, nil)
 		})
 		if errors.Is(content.err, context.Canceled) || errors.Is(content.err, context.DeadlineExceeded) {
 			g.content.CompareAndSwap(content, nil)
@@ -164,14 +164,14 @@ func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
 	return g.snapshot.load(g)
 }
 
-func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool) {
+func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, requested []string) {
 	policy, err := g.SourcePolicy(ctx)
 	if err != nil {
 		c.err = err
 		return
 	}
 	v, native := g.view.(*gitView)
-	inventory, err := g.fingerprintFiles(ctx, v, native, fresh)
+	inventory, err := g.fingerprintFiles(ctx, v, native, fresh || native && v.identity != "")
 
 	c.err = err
 	if c.err != nil {
@@ -179,6 +179,15 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool) 
 	}
 
 	selectedPolicy := selectedSourcePolicy(policy, v, native, inventory.files)
+	if requested != nil {
+		selected := make(map[string]string, len(requested))
+		for _, name := range requested {
+			if _, known := inventory.files[name]; known {
+				selected[name] = ""
+			}
+		}
+		inventory.files = selected
+	}
 	if !selectedPolicy {
 		sourceignore.Select(policy, inventory.files, inventory.ignores)
 	}
@@ -186,12 +195,13 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool) 
 		return
 	}
 	if !fresh {
-		c.key = manifest.Fingerprint(inventory.files)
 		if v, ok := g.view.(*gitView); ok && v.identity != "" {
 			c.key = v.identity
 			if g.excluded != "" {
 				c.key = manifest.Fingerprint(struct{ Content, Excluded string }{v.identity, g.excluded})
 			}
+		} else {
+			c.key = manifest.Fingerprint(inventory.files)
 		}
 	}
 	files := inventory.files
@@ -333,20 +343,31 @@ type InputObservations struct {
 }
 
 // FreshInputs MUST observe mutable bytes and membership without prior operation memos or Git stat evidence.
-func (g *FS) FreshInputs(ctx context.Context) (InputObservations, error) {
+// A nil request observes every file. An explicit request reads only those bodies while retaining complete node membership.
+func (g *FS) FreshInputs(ctx context.Context, requested []string) (InputObservations, error) {
 	if view, ok := g.view.(*gitView); ok && view.identity != "" {
 		if _, err := ContentFingerprint(ctx, g); err != nil {
 			return InputObservations{}, err
 		}
-		inventory, err := g.fingerprintFiles(ctx, view, true, true)
-		return InputObservations{Files: g.FileDigests(), Types: inventory.types}, err
+		evidence := g.content.Load()
+		files := g.FileDigests()
+		if requested != nil {
+			selected := make(map[string]string, len(requested))
+			for _, name := range requested {
+				if digest, known := files[name]; known {
+					selected[name] = digest
+				}
+			}
+			files = selected
+		}
+		return InputObservations{Files: files, Types: evidence.types}, nil
 	}
 	input, err := g.freshInput(ctx)
 	if err != nil {
 		return InputObservations{}, err
 	}
 	var evidence contentFingerprint
-	evidence.initialize(ctx, input, true)
+	evidence.initialize(ctx, input, true, requested)
 	if evidence.err != nil {
 		return InputObservations{}, evidence.err
 	}

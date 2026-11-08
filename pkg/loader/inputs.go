@@ -41,6 +41,7 @@ type parsedDocuments struct {
 }
 
 type parsedDocument struct {
+	deferred   *cachedInput
 	projection *projectionInputs
 	coverage   manifest.DocumentRole
 	possible   bool
@@ -75,6 +76,8 @@ type (
 	loadContext   struct{ path, ignore string }
 	loadDirectory struct{ adHoc, traversed bool }
 	loadFacts     struct {
+		cached             *cachedLoad
+		cachedRoot         string
 		err                error
 		coverage           manifest.DocumentRole
 		complete, observed bool
@@ -165,7 +168,7 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 }
 
 func (d *document) hasParsedFacts() bool {
-	return d.projection != nil || d.body != nil || d.objects != nil
+	return d.deferred != nil || d.projection != nil || d.body != nil || d.objects != nil
 }
 
 func (d *document) hasObservations() bool {
@@ -197,6 +200,7 @@ func parsedInputIdentity(input *store.SourceArtifact) any {
 
 //nolint:gocritic // Immutable reader values retain their original snapshot semantics.
 func (r documentReader) restore(file string) {
+	defer r.restoreCachedFile(file)
 	if r.parsed == nil || r.parsed.compact != r.compact {
 		return
 	}
@@ -221,7 +225,7 @@ func (r documentReader) restore(file string) {
 			cached.coverage, cached.possible = doc.coverage, doc.possible
 		}
 		cached.pathState, cached.searched, cached.plugins, cached.decodeErr = doc.state, doc.searched, doc.plugins, doc.decodeErr
-		cached.parsed, cached.projection = doc, doc.projection
+		cached.parsed, cached.projection, cached.deferred = doc, doc.projection, doc.deferred
 		r.cache[file] = cached
 	}
 }
@@ -380,7 +384,8 @@ func appendSourceVisibilities(
 }
 
 func (d *document) snapshot() {
-	sameParse := d.parsed != nil && d.parsed.coverage == d.coverage && d.parsed.possible == d.possible
+	sameParse := d.parsed != nil && d.parsed.coverage == d.coverage &&
+		d.parsed.possible == d.possible && d.parsed.deferred == d.deferred
 	sameBuilder := sameParse && d.parsed.body == d.body && d.parsed.file == d.file
 	if sameBuilder && d.parsed.matchesObservation(d) {
 		return
@@ -392,7 +397,7 @@ func (d *document) snapshot() {
 		objects = cloneInputObjects(d.objects)
 	}
 	d.parsed = &parsedDocument{
-		body: d.body, file: d.file, objects: objects, projection: d.projection,
+		body: d.body, file: d.file, objects: objects, projection: d.projection, deferred: d.deferred,
 		coverage: d.coverage, possible: d.possible,
 		state: d.pathState, searched: d.searched, plugins: d.plugins, decodeErr: d.decodeErr,
 	}
@@ -480,6 +485,10 @@ func (s *parsedSource) walk(key *physicalContext) (physicalWalk, bool) {
 
 func (s *parsedSource) load(key loadContext) (loadFacts, bool) {
 	load, known, imported := s.loads.get(key)
+	if load.cached != nil {
+		load = load.cached.restore(load.cachedRoot)
+		s.loads.values[key] = load
+	}
 	if imported {
 		load.observed, load.err, load.imported = false, nil, true
 	}

@@ -1,36 +1,13 @@
 package store
 
-import (
-	"slices"
-
-	"github.com/home-operations/flate/pkg/manifest"
-)
+import "github.com/home-operations/flate/pkg/manifest"
 
 func (r *ReadSet) input(id manifest.NamedResource) *Input {
-	if r.last != nil && r.last.Ref.NamedResource == id {
-		return r.last
+	if input := r.findInput(id); input != nil {
+		r.last = input
+		return input
 	}
-	index := 0
-	if r.byID != nil {
-		var found bool
-		index, found = slices.BinarySearchFunc(
-			*r.byID,
-			id,
-			func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
-		)
-		if found {
-			r.last = (*r.byID)[index]
-			return r.last
-		}
-	} else {
-		for input := r.inputs; input != nil; input = input.next {
-			if input.Ref.NamedResource == id {
-				r.last = input
-				return input
-			}
-		}
-	}
-	return r.allocateInput(id, index)
+	return r.allocateInput(id)
 }
 
 func (r *ReadSet) details(input *Input) *inputDetails {
@@ -132,16 +109,16 @@ func (r *ReadSet) indexInputs(spare int) {
 	for input := r.inputs; input != nil; input = input.next {
 		length++
 	}
-	index := make([]*Input, 0, length+spare)
+	index := make(map[manifest.NamedResource]*Input, length+spare)
 	for input := r.inputs; input != nil; input = input.next {
-		index = append(index, input)
+		if index[input.Ref.NamedResource] == nil {
+			index[input.Ref.NamedResource] = input
+		}
 	}
-	slices.SortStableFunc(index, func(a, b *Input) int { return a.Ref.Compare(b.Ref.NamedResource) })
-	index = slices.CompactFunc(index, func(a, b *Input) bool { return a.Ref.NamedResource == b.Ref.NamedResource })
-	r.byID = &index
+	r.byID = index
 }
 
-func (r *ReadSet) allocateInput(id manifest.NamedResource, index int) *Input {
+func (r *ReadSet) allocateInput(id manifest.NamedResource) *Input {
 	var input *Input
 	if r.local.derived == 0 {
 		input = &r.local
@@ -154,11 +131,6 @@ func (r *ReadSet) allocateInput(id manifest.NamedResource, index int) *Input {
 			}
 			if r.byID == nil && r.capacity >= 64 {
 				r.indexInputs(r.capacity)
-				index, _ = slices.BinarySearchFunc(
-					*r.byID,
-					id,
-					func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) },
-				)
 			}
 		}
 		input, r.spare = r.spare, r.spare.next
@@ -166,7 +138,7 @@ func (r *ReadSet) allocateInput(id manifest.NamedResource, index int) *Input {
 	input.Ref.NamedResource, input.next, input.derived = id, r.inputs, initializedInput
 	r.inputs = input
 	if r.byID != nil {
-		*r.byID = slices.Insert(*r.byID, index, input)
+		r.byID[id] = input
 	}
 	r.last = input
 	return input
@@ -182,15 +154,6 @@ func (r *ReadSet) attachInput(input *Input) {
 	input.next, r.inputs = r.inputs, input
 	input.derived |= initializedInput
 	if r.byID != nil {
-		index, found := slices.BinarySearchFunc(
-			*r.byID,
-			input.Ref.NamedResource,
-			func(captured *Input, id manifest.NamedResource) int { return captured.Ref.Compare(id) },
-		)
-		if found {
-			(*r.byID)[index] = input
-		} else {
-			*r.byID = slices.Insert(*r.byID, index, input)
-		}
+		r.byID[input.Ref.NamedResource] = input
 	}
 }

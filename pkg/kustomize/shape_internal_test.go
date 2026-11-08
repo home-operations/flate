@@ -154,7 +154,7 @@ func TestSubstitutionNames_EvaluatorReads(t *testing.T) {
 			{
 				diff := cmp.Diff(
 					want,
-					values.SubstitutionNames([]manifest.DocOccurrence{{Document: doc}}, true),
+					values.SubstitutionNames(raw),
 				)
 				assert.ErrorIf(t, diff != "", "names (-want +got):\n%s", diff)
 			}
@@ -185,7 +185,9 @@ func TestSubstitutionNames_ExcludedAndUnproved(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			names := values.SubstitutionNames([]manifest.DocOccurrence{{Document: tc.doc}}, tc.active)
+			raw, err := values.SubstitutionDocument(manifest.DocOccurrence{Document: tc.doc}, tc.active)
+			assert.NoError(t, err)
+			names := values.SubstitutionNames(raw)
 			assert.FatalIf(
 				t,
 				(names != nil) != tc.proven || len(names) != 0,
@@ -236,7 +238,9 @@ func testSubstituteDocPrecheckEquivalenceCase(
 ) {
 	t.Helper()
 
-	got, gotErr := substituteDoc(testCaseInput.doc, testCaseInput.vars, testCaseInput.strict, nil)
+	data, prepareErr := values.SubstitutionDocument(manifest.DocOccurrence{Document: testCaseInput.doc}, true)
+	input := substitutionDocument{data: data, err: prepareErr}
+	got, gotErr := input.apply(testCaseInput.doc, testCaseInput.vars, testCaseInput.strict, nil)
 	if testCaseInput.want != nil {
 		assert.FatalIf(t, gotErr != nil, "substituteDoc: %v", gotErr)
 		{
@@ -303,8 +307,11 @@ func testRenderRequestContentUnprovedAlwaysCase(
 			},
 		},
 	}
-	req := RenderRequest{Spec: ks, Source: &store.SourceArtifact{}}
-	content := req.Content(docs)
+	var preparation Preparation
+	t.Cleanup(preparation.Retire)
+	req := RenderRequest{Spec: ks, Source: &store.SourceArtifact{}, Preparation: &preparation}
+	shaping := PrepareShape(&req, docs)
+	content := shaping.Content()
 	before := manifest.Fingerprint(content)
 	if testCaseInput.postBuild != nil && len(testCaseInput.postBuild.Substitute) != 0 {
 		next := ks.Clone()
@@ -312,12 +319,12 @@ func testRenderRequestContentUnprovedAlwaysCase(
 		req.Spec = next
 		assert.FatalIf(
 			t,
-			manifest.Fingerprint(req.Content(docs)) == before,
+			manifest.Fingerprint(PrepareShape(&req, docs).Content()) == before,
 			"%s",
 			"unproved syntax omitted the conservative whole bag",
 		)
 	}
-	err := Shape(t.Context(), ks, docs, ShapeOptions{Strict: false})
+	err := shaping.Apply(t.Context(), ShapeOptions{Strict: false})
 	assert.FatalIf(
 		t,
 		errors.Is(err, manifest.ErrInvalidSubstituteReference) != testCaseInput.invalid,
@@ -326,4 +333,61 @@ func testRenderRequestContentUnprovedAlwaysCase(
 		testCaseInput.invalid,
 	)
 	assert.FatalIf(t, manifest.Fingerprint(content) != before, "%s", "Shape mutated the captured content")
+	assert.Equal(t, shaping.inputs == nil && shaping.docs == nil && shaping.spec == nil, true)
+}
+
+func TestShaping_ReusesPreparedDocuments(t *testing.T) {
+	t.Parallel()
+	for _, sanitize := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unchanged", true: "sanitized"}[sanitize], func(t *testing.T) {
+			t.Parallel()
+			encodings := 0
+			doc := map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"metadata": map[string]any{"name": "input"},
+				"data":     map[string]any{"value": "${VALUE}", "counted": countedYAML{count: &encodings}},
+			}
+			if sanitize {
+				doc["sops"] = map[string]any{"mac": "unreadable"}
+			}
+			docs := []manifest.DocOccurrence{{Document: doc}}
+			ks := &manifest.Kustomization{
+				PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "readable"}},
+			}
+			var preparation Preparation
+			t.Cleanup(preparation.Retire)
+			request := RenderRequest{Spec: ks, Preparation: &preparation}
+			shaping := PrepareShape(&request, docs)
+			before := manifest.Fingerprint(shaping.Content())
+			assert.Equal(t, encodings, 1)
+			shaping = PrepareShape(&request, docs)
+			assert.Equal(t, encodings, 1)
+			raw := string(shaping.inputs[0].data)
+			prepared := preparation.shaping
+			assert.NoError(t, shaping.Apply(t.Context(), ShapeOptions{Strict: true}))
+			assert.Equal(t, preparation.shaping == nil, true)
+			assert.Equal(t, string(prepared.inputs[0].data), raw)
+			want := 1
+			if sanitize {
+				want++
+			}
+			assert.Equal(t, encodings, want)
+			assert.Diff(t, docs[0].Document["data"], map[string]any{"value": "readable", "counted": "readable"})
+			assert.Equal(t, docs[0].Document["sops"] == nil, true)
+			assert.Equal(t, manifest.Fingerprint(shaping.Content()), before)
+			assert.Equal(t, shaping.inputs == nil && shaping.docs == nil && shaping.spec == nil, true)
+			again := PrepareShape(&request, []manifest.DocOccurrence{{Document: doc}})
+			assert.Equal(t, encodings, want+1)
+			assert.Equal(t, string(again.inputs[0].data), raw)
+			again.Retire()
+			assert.Equal(t, preparation.shaping == nil && again.preparation == nil, true)
+		})
+	}
+}
+
+type countedYAML struct{ count *int }
+
+func (c countedYAML) MarshalYAML() (any, error) {
+	*c.count++
+	return "${VALUE}", nil
 }

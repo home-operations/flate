@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/home-operations/flate/compare/v0.7.2...v0.7.3) (2026-11-09)
+
+
+### Bug Fixes
+
+* **testdata:** keep fixture paths valid in Go module zips ([#1494](https://github.com/home-operations/flate/issues/1494)) ([9d9056f](https://github.com/home-operations/flate/commit/9d9056f3be07651159d2ad665ac64cdd7ca9f74e))
+
 ## [0.7.2](https://github.com/home-operations/flate/compare/v0.7.1...v0.7.2) (2026-11-09)
 
 

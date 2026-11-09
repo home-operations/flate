@@ -339,7 +339,8 @@ func (c *admissionClosure) matchesDeclarationContent(
 	if index := c.nextGeneration[id]; index != 0 {
 		incoming := request.Generation[index-1]
 		if previousChild := c.incoming(id); previousChild.Obj != nil {
-			if request.Owner != c.owner ||
+			usesPromotions := request.Owner == (manifest.NamedResource{}) && len(incoming.Productions) == 0
+			if usesPromotions || request.Owner != c.owner ||
 				!slices.Equal(c.generation[state.incoming-1].Productions, incoming.Productions) {
 				incoming.Productions = c.incomingProductions(&incoming, request.Owner, request.Reads)
 				productions = c.objects.IncomingProductions(incoming, c.facts.SelectionIndex())

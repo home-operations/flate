@@ -204,32 +204,8 @@ func assertExcludedOrderingWork(t *testing.T, side Rendered, broken bool) {
 
 func testExcludedOrderingAndPromotion(t *testing.T, broken bool) {
 	t.Helper()
-	baseDir, headDir := t.TempDir(), t.TempDir()
-	testutil.WriteFilteredOrderingCluster(t, baseDir, "v1", broken)
-	testutil.WriteFilteredOrderingCluster(t, headDir, "v2", broken)
-	for _, dir := range []string{baseDir, headDir} {
-		testutil.WriteFile(
-			t,
-			dir,
-			"apps/monitor-b/kustomization.yaml",
-			"resources: [missing.yaml, hr.yaml, invalid.yaml]\n",
-		)
-		testutil.WriteFile(
-			t,
-			dir,
-			"apps/monitor-b/invalid.yaml",
-			"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name"+
-				": invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: exa"+
-				"mple.test/, kind: Widget, name: missing}]\n",
-		)
-	}
-	renderedTrees1, err := renderTreesForTest(t.Context(), t,
-		[]Tree{
-			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
-			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
-		},
-		Config{RecordWork: true, Concurrency: 4, CacheDir: t.TempDir()},
-	)
+	baseDir, headDir := excludedOrderingFixture(t, broken)
+	renderedTrees1, err := renderOrderingTreesForTest(t, baseDir, headDir)
 	base, head := renderedTrees1[0], renderedTrees1[1]
 	assert.FatalIf(t, (err != nil) != broken, "RenderTrees error=%v, want failure=%v", err, broken)
 	sourceID := manifest.NamedResource{

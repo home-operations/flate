@@ -197,8 +197,8 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, 
 	if !fresh {
 		if v, ok := g.view.(*gitView); ok && v.identity != "" {
 			c.key = v.identity
-			if g.excluded != "" {
-				c.key = manifest.Fingerprint(struct{ Content, Excluded string }{v.identity, g.excluded})
+			if g.membership.directory != "" {
+				c.key = manifest.Fingerprint(struct{ Content, Excluded string }{v.identity, g.membership.directory})
 			}
 		} else {
 			c.key = manifest.Fingerprint(inventory.files)
@@ -377,9 +377,14 @@ func (g *FS) FreshInputs(ctx context.Context, requested []string) (InputObservat
 func (g *FS) freshInput(ctx context.Context) (*FS, error) {
 	switch v := g.view.(type) {
 	case *localView:
+		captured, err := captureMembership(ctx, g.location)
+		if err != nil {
+			return nil, err
+		}
+		captured.directory = g.membership.directory
 		input := newLocal(v.root, true, &localPolicy{})
 		input.location = g.location
-		input.excluded = g.excluded
+		input.membership = captured
 		return input, nil
 	case *scopedView:
 		parent, err := v.parent.freshInput(ctx)
@@ -396,7 +401,8 @@ func (g *FS) freshInput(ctx context.Context) (*FS, error) {
 			return g, nil
 		}
 		opts := *v.refresh
-		opts.excluded = g.excluded
+		opts.membership = g.membership
+		opts.membership.captured = false
 		opts.policy = nil
 		if current, ok := opts.Current.(*FS); ok {
 			var err error
@@ -408,6 +414,6 @@ func (g *FS) freshInput(ctx context.Context) (*FS, error) {
 		input, _, err := New(ctx, v.backing, v.commit, opts)
 		return input, err
 	default:
-		return &FS{view: g.view, location: g.location, excluded: g.excluded, snapshot: &localPolicy{}}, nil
+		return &FS{view: g.view, location: g.location, membership: g.membership, snapshot: &localPolicy{}}, nil
 	}
 }

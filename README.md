@@ -302,6 +302,7 @@ Registry access still needs network access and any required credentials.
 
 The bootstrap Git source is the repository with cluster manifests.
 The working tree can be this source.
+flate excludes untracked files that Git ignores because Flux only receives committed files.
 If a GitRepository URL matches a checkout remote, flate uses the local files when:
 
 - No ref is set.

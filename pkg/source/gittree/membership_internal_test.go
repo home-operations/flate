@@ -7,7 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -75,9 +77,19 @@ func (f *cacheMembershipGateFS) Open(name string) (fs.File, error) {
 func TestFS_ExcludedDirectoryMembership(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
 	for _, name := range []string{".cache/payload", ".cache-sibling/kept", ".hidden/kept", "nested/kept"} {
 		testutil.WriteFile(t, root, name, name)
 	}
+	testutil.GitCommitAll(
+		t,
+		repo,
+		"cache fixture",
+		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e"}},
+	)
+	testutil.WriteFile(t, root, ".gitignore", "noise\n")
+	testutil.WriteFile(t, root, "noise", "ignored")
+	testutil.WriteFile(t, root, "nested/noise", "ignored")
 	artifact, err := admitLocal(t, root)
 	assert.NoError(t, err)
 	original := artifact.FS.(*FS)
@@ -102,13 +114,19 @@ func TestFS_ExcludedDirectoryMembership(t *testing.T) {
 					assert.Equal(t, os.IsNotExist(regularErr), true)
 					entries, readErr := fs.ReadDir(view, ".")
 					assert.NoError(t, readErr)
-					assert.Equal(t, len(entries), 3)
+					want := 3
+					if tc.mode == Direct {
+						want++
+					}
+					assert.Equal(t, len(entries), want)
 					directory, openErr := view.Open(".")
 					assert.NoError(t, openErr)
 					listed, listErr := directory.(fs.ReadDirFile).ReadDir(-1)
 					assert.NoError(t, listErr)
 					assert.NoError(t, directory.Close())
-					assert.Equal(t, len(listed), 3)
+					assert.Equal(t, len(listed), want)
+					_, readErr = fs.ReadFile(view, "noise")
+					assert.Equal(t, os.IsNotExist(readErr), true)
 					for _, name := range []string{".cache-sibling/kept", ".hidden/kept", "nested/kept"} {
 						data, readErr := fs.ReadFile(view, name)
 						assert.NoError(t, readErr)
@@ -129,4 +147,6 @@ func TestFS_ExcludedDirectoryMembership(t *testing.T) {
 	data, err = fs.ReadFile(sub, "kept")
 	assert.NoError(t, err)
 	assert.Equal(t, string(data), "nested/kept")
+	_, err = fs.ReadFile(sub, "noise")
+	assert.Equal(t, os.IsNotExist(err), true)
 }

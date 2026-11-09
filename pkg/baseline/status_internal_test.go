@@ -16,6 +16,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 func TestStatus_MetadataObservation(t *testing.T) {
@@ -32,7 +34,9 @@ func TestStatus_MetadataObservation(t *testing.T) {
 	counted := &countedMetadata{Filesystem: original.Filesystem}
 	observed := *original
 	observed.Filesystem = counted
-	s := selection{repo: repo}
+	input, _, err := AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
+	assert.NoError(t, err)
+	s := selection{repo: repo, current: input.FS.(*gittree.FS)}
 	head, err := repo.Head()
 	assert.NoError(t, err)
 	commit, err := repo.CommitObject(head.Hash())
@@ -90,6 +94,9 @@ func TestWorktreeMetadata_Boundary(t *testing.T) {
 	input := &worktreeMetadata{
 		Filesystem: osfs.New(dir), root: root, ctx: t.Context(), observations: map[string]os.FileInfo{},
 	}
+	artifact, _, err := AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
+	assert.NoError(t, err)
+	input.current = artifact.FS.(*gittree.FS)
 	repo, err = git.Open(repo.Storer, input)
 	assert.NoError(t, err)
 	observed, err := repo.Worktree()
@@ -145,7 +152,9 @@ func TestSelection_IdenticalTreeMetadata(t *testing.T) {
 	repo := openHelper(t, root)
 	reads := &testutil.GitReads{}
 	repo.Storer = &testutil.CountingStorer{Storer: repo.Storer, Reads: reads}
-	s := selection{repo: repo, base: &resolution{Repo: repo, Hash: pin}}
+	input, _, err := AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
+	assert.NoError(t, err)
+	s := selection{repo: repo, base: &resolution{Repo: repo, Hash: pin}, current: input.FS.(*gittree.FS)}
 	entries, comparison, err := s.baseEntries(t.Context())
 	assert.NoError(t, err)
 	reads.Reset()

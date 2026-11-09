@@ -102,6 +102,10 @@ func (f *policyReadFS) ReadFile(name string) ([]byte, error) {
 
 func TestNew_EntryPolicy(t *testing.T) {
 	t.Parallel()
+	t.Run("git ignored membership", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitIgnoredMembership(t) })
+	t.Run("git rule capture", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitRuleCapture(t) })
+	t.Run("git and flux policy", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitAndFluxPolicy(t) })
+	t.Run("git admission routes", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitAdmissionRoutes(t) })
 	t.Run("ownership labels", func(t *testing.T) { t.Parallel(); testNewEntryPolicyOwnershipLabels(t) })
 
 	t.Run("warning evidence reuse", func(t *testing.T) { t.Parallel(); testNewEntryPolicyWarningEvidenceReuse(t) })
@@ -263,6 +267,7 @@ func (c *fingerprintJoinerContext) Err() error {
 
 func TestFS_ContentFingerprint(t *testing.T) {
 	t.Parallel()
+	t.Run("git ignored noise", func(t *testing.T) { t.Parallel(); testFSContentFingerprintGitIgnoredNoise(t) })
 	for _, mode := range []string{"equal", "payload", "name", "ignored", "canceled", "error", "read_error", "walk_error", "scan_canceled", "scan_deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -302,6 +307,7 @@ func (f *contentReadBilly) Open(name string) (billy.File, error) {
 
 func TestFS_GitContentEvidence(t *testing.T) {
 	t.Parallel()
+	t.Run("committed membership", func(t *testing.T) { t.Parallel(); testFSGitContentEvidenceCommittedMembership(t) })
 	for _, mode := range []string{"clean", "dirty", "staged", "untracked", "racy", "subtree", "immutable", "sdk", "unreadable_clean", "source_unreadable", "unlocated", "routed", "scoped_local", "scoped_immutable", "direct_immutable"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()

@@ -670,7 +670,7 @@ func prepareTreeEntries(ctx context.Context, trees []Tree, cfg *Config, inputs *
 				Declarations: cfg.Supply, Selection: request, Changes: tree.ExternalChanges,
 				Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, Input: tree.Input,
 				RemoteInputs: inputs, RemoteRetry: cfg.SourceRetry,
-				StrictSubstitutions: cfg.StrictSubstitutions, SkipKinds: cfg.HelmOptions.SkipResourceKinds(),
+				StrictSubstitutions: cfg.StrictSubstitutions, SkipKinds: cfg.HelmOptions.SkipKinds,
 			})
 			if err != nil {
 				failures[i] = &treeError{id: tree.ID, err: err}

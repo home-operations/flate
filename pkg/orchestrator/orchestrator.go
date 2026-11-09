@@ -314,7 +314,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 
 		Store: o.store,
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
-		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipResourceKinds(),
+		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipKinds,
 	}
 	o.cfg.entry = nil
 	var res *discovery.Result

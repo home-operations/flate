@@ -553,14 +553,3 @@ func TestMergeChartValuesFiles(t *testing.T) {
 		assert.ErrorIf(t, len(got) != 0, "expected empty result for nil names: %v", got)
 	})
 }
-
-func TestOptions_SkipResourceKinds(t *testing.T) {
-	t.Parallel()
-	o := Options{SkipCRDs: true, SkipKinds: []string{manifest.KindConfigMap, manifest.KindSecret}}
-	got := o.SkipResourceKinds()
-	want := map[string]bool{"ConfigMap": true, "CustomResourceDefinition": true, "Secret": true}
-	for _, k := range got {
-		assert.ErrorIf(t, !want[k], "unexpected kind in skip list: %s", k)
-	}
-	assert.ErrorIf(t, len(got) != 3, "expected 3 kinds, got %d: %v", len(got), got)
-}

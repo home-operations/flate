@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"slices"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -39,7 +40,11 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	client := NewClient(owner)
 	hr := newHR()
 	hr.TargetNamespace = "runtime"
-	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
+	input := RenderOptions{
+		SkipCRDs:  true,
+		SkipKinds: []string{manifest.KindCustomResourceDefinition, manifest.KindSecret},
+		Sources:   localChartResolver(t, "chart-repo", "flux-system", chartDir),
+	}
 	t.Run("disabled preparation", func(t *testing.T) {
 		t.Parallel()
 		testTemplateAcceptedHistoryDisabledPreparation(
@@ -172,6 +177,18 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, records)
+	equal := *testCaseInput.input
+	equal.SkipKinds = slices.Clone(equal.SkipKinds)
+	equalPrevious, equalComplete := fresh.PreviousRender(t.Context(), *testCaseInput.hr, nil, equal)
+	assert.Equal(t, equalComplete, true)
+	assert.Diff(t, maps.Collect(equalPrevious), records)
+	changed := equal
+	changed.SkipKinds = []string{manifest.KindCustomResourceDefinition}
+	_, changedComplete := fresh.PreviousRender(t.Context(), *testCaseInput.hr, nil, changed)
+	assert.Equal(t, changedComplete, false)
+	prepared, prepareErr := fresh.prepareTemplate(t.Context(), *testCaseInput.hr, nil, &changed)
+	assert.NoError(t, prepareErr)
+	assert.Equal(t, prepared.key, testCaseInput.frame.header.Key)
 	observed := *testCaseInput.input
 	calls := 0
 	observed.Admit = func(admission RenderAdmission) (bool, error) {

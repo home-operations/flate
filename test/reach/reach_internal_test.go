@@ -168,7 +168,7 @@ func reachConfig() orchestrator.Config {
 			KubeVersion:                helm.BundledKubeVersion(),
 			SkipTests:                  true,
 			SkipCRDs:                   true,
-			SkipKinds:                  []string{manifest.KindSecret},
+			SkipKinds:                  []string{manifest.KindCustomResourceDefinition, manifest.KindSecret},
 		},
 	}
 }

@@ -483,9 +483,10 @@ func TestBindCommon_HelmOptions(t *testing.T) {
 		args []string
 		want helm.Options
 	}{
-		{name: "defaults", want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"Secret"}}},
-		{name: "CRD only", args: []string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--enable-dns", "--skip-kinds=CustomResourceDefinition"}, want: helm.Options{KubeVersion: "1.31.2", APIVersions: "fixture.example/v1", EnableDNS: true, SkipTests: true, SkipCRDs: true, SkipKinds: []string{}}},
-		{name: "mixed", args: []string{"--skip-kinds=Secret,CustomResourceDefinition,ConfigMap"}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"Secret", "ConfigMap"}}},
+		{name: "defaults", want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"CustomResourceDefinition", "Secret"}}},
+		{name: "CRD only", args: []string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--enable-dns", "--skip-kinds=CustomResourceDefinition"}, want: helm.Options{KubeVersion: "1.31.2", APIVersions: "fixture.example/v1", EnableDNS: true, SkipTests: true, SkipCRDs: true, SkipKinds: []string{"CustomResourceDefinition"}}},
+		{name: "mixed", args: []string{"--skip-kinds=Secret,CustomResourceDefinition,ConfigMap"}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"ConfigMap", "CustomResourceDefinition", "Secret"}}},
+		{name: "duplicates", args: []string{"--skip-kinds=Secret,CustomResourceDefinition,ConfigMap,Secret,CustomResourceDefinition"}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"ConfigMap", "CustomResourceDefinition", "Secret"}}},
 		{name: "explicit false and empty", args: []string{"--enable-dns=false", "--skip-kinds="}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipKinds: []string{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -503,6 +504,7 @@ func TestBindCommon_HelmOptions(t *testing.T) {
 		})
 	}
 	assert.Equal(t, buildOrchCfg(&commonFlags{}).HelmOptions.SkipTests, true)
+	assert.Diff(t, buildOrchCfg(&commonFlags{}).HelmOptions.SkipKinds, []string(nil))
 }
 
 func TestRunSelected_WarningIdentity(t *testing.T) {

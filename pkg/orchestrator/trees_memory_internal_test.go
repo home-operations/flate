@@ -213,6 +213,7 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 								SkipTests:                  true,
 								SkipCRDs:                   true,
 								SkipKinds: []string{
+									manifest.KindCustomResourceDefinition,
 									manifest.KindSecret,
 								},
 							},

@@ -377,7 +377,7 @@ func (g *FS) FreshInputs(ctx context.Context, requested []string) (InputObservat
 func (g *FS) freshInput(ctx context.Context) (*FS, error) {
 	switch v := g.view.(type) {
 	case *localView:
-		input := newLocal(v.root, true, &localPolicy{})
+		input := newLocal(v.root, true, &localPolicy{}, v.visibility)
 		input.location = g.location
 		input.excluded = g.excluded
 		return input, nil

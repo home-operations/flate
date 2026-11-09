@@ -98,7 +98,7 @@ func (g *FS) Location() *gitrepo.Location { return g.location }
 // OperationView creates private local observations while retaining admitted membership.
 func (g *FS) OperationView() *FS {
 	if local, ok := g.view.(*localView); ok {
-		input := newLocal(local.root, true, g.snapshot)
+		input := newLocal(local.root, true, g.snapshot, local.visibility)
 		input.location = g.location
 		input.excluded = g.excluded
 		input.Warnings = g.Warnings
@@ -201,7 +201,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		if _, statErr := os.Stat(root); statErr != nil {
 			return nil, "", statErr //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 		}
-		input := newLocal(root, false, &localPolicy{})
+		input := newLocal(root, false, &localPolicy{}, gitVisibility{})
 		input.location = opts.Location
 		input.excluded = opts.excluded
 		return input, "", nil

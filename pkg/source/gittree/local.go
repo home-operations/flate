@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -30,7 +34,11 @@ func AdmitDirectory(ctx context.Context, location *gitrepo.Location) (*store.Sou
 	if _, err := os.Stat(root); err != nil {
 		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
-	input := newLocal(root, false, &localPolicy{})
+	visibility, err := newGitVisibility(location)
+	if err != nil {
+		return nil, err
+	}
+	input := newLocal(root, false, &localPolicy{}, visibility)
 	input.location = location
 	return &store.SourceArtifact{
 		Kind:               manifest.KindGitRepository,
@@ -43,9 +51,58 @@ func AdmitDirectory(ctx context.Context, location *gitrepo.Location) (*store.Sou
 }
 
 type localView struct {
+	visibility   gitVisibility
 	root         string
 	operation    bool
 	observations sync.Map
+}
+
+// gitVisibility hides untracked paths that the repository ignore rules match.
+// Flux only receives committed content, so these paths never reach its source artifact.
+type gitVisibility struct {
+	matcher gitignore.Matcher
+	tracked map[string]bool
+	prefix  string
+}
+
+func newGitVisibility(location *gitrepo.Location) (gitVisibility, error) {
+	if location.Repository == nil {
+		return gitVisibility{}, nil
+	}
+	patterns, err := gitignore.ReadPatterns(osfs.New(location.RepositoryRoot, osfs.WithBoundOS()), nil)
+	if err != nil {
+		return gitVisibility{}, fmt.Errorf("read git ignore rules: %w", err)
+	}
+	if len(patterns) == 0 {
+		return gitVisibility{}, nil
+	}
+	index, err := location.Repository.Storer.Index()
+	if err != nil {
+		return gitVisibility{}, fmt.Errorf("read git index: %w", err)
+	}
+	prefix, err := filepath.Rel(location.RepositoryRoot, location.ContentRoot)
+	if err != nil {
+		return gitVisibility{}, fmt.Errorf("locate content root: %w", err)
+	}
+	tracked := make(map[string]bool, len(index.Entries))
+	for _, entry := range index.Entries {
+		for name := entry.Name; name != "." && !tracked[name]; name = path.Dir(name) {
+			tracked[name] = true
+		}
+	}
+	return gitVisibility{
+		matcher: gitignore.NewMatcher(patterns),
+		tracked: tracked,
+		prefix:  filepath.ToSlash(prefix),
+	}, nil
+}
+
+func (v gitVisibility) hidden(name string, isDir bool) bool {
+	if v.matcher == nil {
+		return false
+	}
+	name = path.Join(v.prefix, name)
+	return !v.tracked[name] && v.matcher.Match(strings.Split(name, "/"), isDir)
 }
 
 type localPolicy struct {
@@ -62,11 +119,11 @@ func (p *localPolicy) load(input fs.FS) (*sourceignore.Matcher, error) {
 }
 
 // The public wrapper and mounted state MUST share one allocation on loader paths.
-func newLocal(root string, operation bool, policy *localPolicy) *FS {
+func newLocal(root string, operation bool, policy *localPolicy, visibility gitVisibility) *FS {
 	input := &struct {
 		FS
 		localView
-	}{root: root, operation: operation}
+	}{root: root, operation: operation, visibility: visibility}
 	input.view = &input.localView
 	input.snapshot = policy
 	return &input.FS
@@ -134,16 +191,16 @@ func (g *localView) ReadDir(name string) ([]fs.DirEntry, error) {
 		return nil, admitDirectoryErr
 	}
 	if !g.operation {
-		return g.readDir(abs)
+		return g.readDir(name, abs)
 	}
 	cached, _ := g.observations.Load(abs)
 	entries, err := cached.(*localObservation).list( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-		func() ([]fs.DirEntry, error) { return g.readDir(abs) },
+		func() ([]fs.DirEntry, error) { return g.readDir(name, abs) },
 	)
 	return slices.Clone(entries), err
 }
 
-func (g *localView) readDir(abs string) ([]fs.DirEntry, error) {
+func (g *localView) readDir(dir, abs string) ([]fs.DirEntry, error) {
 	entries, err := os.ReadDir(abs)
 	return slices.DeleteFunc(entries, func(entry fs.DirEntry) bool {
 		if g.operation && entry.Type()&fs.ModeSymlink != 0 && entry.Name() != gitDirectory {
@@ -153,7 +210,8 @@ func (g *localView) readDir(abs string) ([]fs.DirEntry, error) {
 				&localObservation{err: &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}},
 			)
 		}
-		return entry.Name() == gitDirectory || !entry.Type().IsRegular() && !entry.IsDir()
+		return entry.Name() == gitDirectory || !entry.Type().IsRegular() && !entry.IsDir() ||
+			g.visibility.hidden(path.Join(dir, entry.Name()), entry.IsDir())
 	}), err
 }
 
@@ -228,7 +286,8 @@ func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 	if err == nil && info.Mode()&fs.ModeSymlink != 0 {
 		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrPermission}
 	}
-	if errors.Is(err, fs.ErrNotExist) || err == nil && !info.Mode().IsRegular() && !info.IsDir() {
+	if errors.Is(err, fs.ErrNotExist) ||
+		err == nil && (!info.Mode().IsRegular() && !info.IsDir() || g.visibility.hidden(name, info.IsDir())) {
 		return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	return info, err
@@ -247,7 +306,7 @@ func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 	if listing != nil {
 		entries, err := listing.list(
 			func() ([]fs.DirEntry, error) {
-				return g.readDir(filepath.Dir(abs))
+				return g.readDir(path.Dir(name), filepath.Dir(abs))
 			},
 		)
 		if err != nil {

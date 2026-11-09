@@ -302,6 +302,7 @@ Registry access still needs network access and any required credentials.
 
 The bootstrap Git source is the repository with cluster manifests.
 The working tree can be this source.
+In a Git working tree, flate ignores untracked files that the Git ignore rules match, because Flux only receives committed files.
 Missing OCIRepository, HelmRepository and Bucket references stay missing dependencies.
 flate does not use the working tree in place of their content.
 

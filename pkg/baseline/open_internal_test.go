@@ -301,7 +301,6 @@ func TestAutoResolve_CheckoutInventory(t *testing.T) {
 				_, err = worktree.Add(".gitignore")
 				assert.NoError(t, err)
 				testutil.WriteFile(t, root, "ignored/input.yaml", "new")
-				want = []string{"ignored/input.yaml"}
 			case "submodule_file":
 				module := filepath.Join(root, "module")
 				assert.NoError(t, os.Mkdir(module, 0o755))

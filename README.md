@@ -10,11 +10,17 @@ Native Docker credential helpers and AWS credential processes can run external p
 
 ## Install
 
+Use one of these commands:
+
 ```sh
 brew install --cask home-operations/tap/flate
 go install github.com/home-operations/flate/cmd/flate@latest
 docker pull ghcr.io/home-operations/flate:latest
 ```
+
+Homebrew installs the `flate` cask from `home-operations/tap`.
+`go install` builds flate from source and needs a Go toolchain.
+The Docker image is on the GitHub Container Registry.
 
 ## Quick start
 
@@ -25,10 +31,11 @@ flate test  # Report render status and exit 1 on failure
 flate get   # List Kustomizations and HelmReleases in tables
 ```
 
-Run from the repository root to render every detected cluster.
+Run flate from the repository root to render every detected cluster.
 Use `-p` to choose a directory.
 `build`, `get` and `test` render the full tree by default.
-`diff` detects a Git baseline when neither `--base` nor `--path-orig` is set.
+The baseline is the version that `diff` compares against.
+If you set neither `--base` nor `--path-orig`, `diff` detects a Git baseline.
 
 `get` prints one table per kind.
 Use `-o name` for `Kind/name`, or `-o yaml` and `-o json` for objects.
@@ -53,7 +60,8 @@ repos:
       - id: flate
 ```
 
-CI logs are usually pipes, so flate prints plain text there. Set `CLICOLOR_FORCE=1` to keep colors, or `NO_COLOR=1` to turn them off on a terminal.
+CI logs are usually pipes, so flate prints plain text there.
+Set `CLICOLOR_FORCE=1` to keep colors, or `NO_COLOR=1` to turn them off on a terminal.
 
 ## Common tasks
 
@@ -63,35 +71,45 @@ CI logs are usually pipes, so flate prints plain text there. Set `CLICOLOR_FORCE
 flate diff --base main -o github
 ```
 
-This compares rendered output with `main` and formats the diff for a GitHub comment.
-`--base` and `--path-orig` are mutually exclusive.
+This command compares rendered output with `main` and formats the diff for a GitHub comment.
+You cannot use `--base` and `--path-orig` together.
 A merge base is a shared ancestor commit.
 Without either flag, `diff` tries merge bases in this order: the branch upstream, `origin/HEAD`, `origin/main`, then `origin/master`.
-If shallow history prevents detection, use an explicit baseline or fetch more history.
-Flate fetches explicit revisions absent from the checkout from `origin`.
+A shallow clone contains only recent commits.
+If a shallow clone prevents detection, use an explicit baseline or fetch more history.
+If the checkout does not contain an explicit revision, flate fetches it from `origin`.
 
 Repeat `--strip-attr <key>` to ignore annotation or label keys.
 The defaults are `helm.sh/chart`, `checksum/`, `app.kubernetes.io/version`, and `chart`.
 The trailing slash in `checksum/` matches all keys with that prefix.
-Repeat `--strip-field <path>` to ignore dotted fields. Its default list is empty.
-Each flag replaces its own default list on first use.
+Repeat `--strip-field <path>` to ignore fields.
+A path uses dots between field names.
+The default list of `--strip-field` is empty.
+The first use of each flag replaces the default list of that flag.
 
 `diff ks`, `diff hr`, and `diff all` accept `-o json`.
-For one cluster present on both sides, they emit a 2-space-indented object with `changes` and `suppressed` arrays.
-Empty arrays remain `[]`.
+If one cluster is present on both sides, they write one object with `changes` and `suppressed` arrays.
+The object uses an indent of 2 spaces.
+An empty array stays `[]`.
 Each change contains `parent`, `apiVersion`, `kind`, `namespace`, `name`, `status`, `old`, `new`, `oldChart`, and `newChart`.
-Status is `added`, `changed`, or `removed`.
+The `status` is `added`, `changed`, or `removed`.
 The normalized `old` manifest is `null` for additions, and `new` is `null` for removals.
-Chart labels are captured before stripping and remain empty strings when absent.
+flate reads the chart labels into `oldChart` and `newChart` before it removes the stripped keys.
+If a chart label is absent, its field is an empty string.
 
-Parents contain `kind`, `namespace`, `name`, and `path`, which is empty for HelmReleases.
-Changes sort by parent and resource identity.
-Suppressions contain `parent`, `side`, `count`, and `reason`.
-The `side` is `orig`, `current`, or `both`, and `count` counts withheld objects.
-For multiple clusters, or an added or removed cluster, output is an array of these objects.
-Each object also contains `cluster` and, when applicable, `added: true` or `removed: true`.
-Render failures still write diagnostics to stderr and exit with status 1.
-Other producers can still contribute changes on stdout.
+Each parent contains `kind`, `namespace`, `name`, and `path`.
+The `path` is empty for a HelmRelease.
+flate sorts the changes by parent and by resource identity.
+Each suppression contains `parent`, `side`, `count`, and `reason`.
+The `side` is `orig`, `current`, or `both`.
+The `count` is the number of objects that flate withheld.
+
+If the diff has multiple clusters, or an added or removed cluster, the output is an array of these objects.
+Each object also contains `cluster`.
+An added cluster also has `added: true`, and a removed cluster has `removed: true`.
+If a render fails, flate still writes diagnostics to stderr and exits with status 1.
+A producer is an object that renders other objects, such as a Kustomization or a HelmRelease.
+Other producers can still write changes to stdout.
 `diff images` uses its own image format.
 
 ### Render one app
@@ -100,9 +118,9 @@ Other producers can still contribute changes on stdout.
 flate build hr plex -n media
 ```
 
-This selects the `plex` HelmRelease in `media` and the inputs it needs.
-Namespace selection also applies to `test` and `diff`.
-Unselected sibling producers do not render or fetch their sources.
+This command selects the `plex` HelmRelease in `media` and the inputs that it needs.
+The `-n` namespace selection also applies to `test` and `diff`.
+Sibling producers that you do not select do not render or fetch their sources.
 
 ### Render changed objects
 
@@ -110,11 +128,13 @@ Unselected sibling producers do not render or fetch their sources.
 flate build --base main
 ```
 
-A changed-only run renders objects that the diff reaches and the inputs they need.
-The same rule applies to the root layer, which contains objects applied from the cluster entry directory.
-An unchanged root layer stays outside the render unless the diff reaches it.
+A changed-only run renders the objects that the diff reaches and the inputs that they need.
+The root layer is the set of objects that flate applies from the cluster entry directory.
+The same rule applies to the root layer.
+If the root layer is unchanged and the diff does not reach it, flate does not render it.
 
-Changed inputs reach their consumers even when an ignore rule hides a required input.
+A changed input reaches its consumers.
+If an ignore rule hides a required input, the change still reaches them.
 Changes to unused substitution variables do not render unrelated output.
 Use `--path-orig <directory>` to compare with another directory instead of a Git revision.
 
@@ -125,7 +145,7 @@ flate get -p ./kubernetes
 ```
 
 Reports for multiple clusters use `<cluster>: <name>` labels.
-The `get` tables include a leading `CLUSTER` column.
+The `get` tables start with a `CLUSTER` column.
 Use `-p <cluster-entry>` to select one cluster.
 
 ### Supply objects from outside Git
@@ -134,35 +154,41 @@ Use `-p <cluster-entry>` to select one cluster.
 flate build --supply ./offline-inputs.yaml
 ```
 
-`--supply` accepts any Kubernetes kind that a render references, including sources and custom resources.
+`--supply` accepts any Kubernetes kind that a render references.
+This includes sources and custom resources.
 Each document needs `apiVersion`, `kind` and `metadata.name`.
 Namespaced kinds also need `metadata.namespace`.
 
 Repeat `--supply` for multiple YAML files, or use `--supply -` to read standard input once.
-Paths are relative to the directory where you invoke flate.
-Later duplicate identities replace whole supplied objects.
+Paths are relative to the directory where you run flate.
+If two supplied objects have the same identity, the later object replaces the earlier object.
 Both sides of a diff use the same supplied objects.
 
 Repository objects take precedence over supplied objects.
-For Secret and ConfigMap data, repository keys, including empty strings, win.
-Supply fills absent keys.
+For Secret and ConfigMap data, the repository keys win.
+This is also true for repository keys with empty strings.
+Supplied data fills absent keys.
 
 Supplied objects satisfy references but never become render targets or appear as objects in output, selection or counts.
 Referenced values can still appear in rendered resources.
 Supplied Secret and ConfigMap data follows the same SOPS rule as repository data.
 Encrypted keys stay absent, and repository plaintext keys take precedence.
-Supply changes reference data only. It does not fill encrypted keys in emitted objects.
+`--supply` changes only the reference data.
+It does not fill encrypted keys in rendered objects.
 
-A `substituteFrom` Secret that exists only on the cluster leaves its variables unavailable.
-A non-optional `substituteFrom` Secret with no readable keys produces an `UnresolvedSubstitution` warning.
+Flux postBuild substitution replaces `${VAR}` references with variable values.
+If a `substituteFrom` Secret exists only on the cluster, its variables are unavailable.
+If a non-optional `substituteFrom` Secret has no readable keys, flate warns `UnresolvedSubstitution`.
 Encrypted SOPS keys are absent, so their variables are unavailable.
-`SOPSUnreadable` names the removed encrypted keys.
-Flux substitution runs when a variable is readable or inline, or when the strategy is `Always`.
+The `SOPSUnreadable` warning names the removed encrypted keys.
+If a variable is readable or inline, Flux substitution runs.
+If the strategy is `Always`, substitution also runs.
+
 Active substitution applies defaults with or without `--strict-substitutions`.
 Without `--strict-substitutions`, it replaces other unavailable `${VAR}` references with empty strings.
 If no variables are readable under the default strategy, `${VAR}` remains literal.
 Give those variables defaults (`${VAR:=value}`) or supply a dummy Secret with the keys.
-A missing required `substituteFrom` ConfigMap still fails.
+If a required `substituteFrom` ConfigMap is missing, the render still fails.
 
 For unreadable SOPS keys, save a dummy input with the matching identity as `dummy-values.yaml`:
 
@@ -183,42 +209,49 @@ Then supply the file or read it through standard input:
 flate build --path ./kubernetes --supply - < dummy-values.yaml
 ```
 
-This supplies `DOMAIN` for references. It does not fill encrypted keys in the emitted Secret.
-`--strict-substitutions` rejects undefined variables without defaults and is disabled by default.
-Explicit flags replace the corresponding environment input, including `--strict-substitutions=false`.
-Supply does not enable substitution without `postBuild`.
+This command supplies `DOMAIN` for references.
+It does not fill encrypted keys in the rendered Secret.
+`--strict-substitutions` rejects undefined variables that have no default.
+This flag is off by default.
+An explicit flag replaces the matching environment input.
+This is also true for `--strict-substitutions=false`.
+`--supply` does not turn on substitution for a Kustomization without `postBuild`.
 Defined empty values, `${VAR:=default}`, `${VAR:-default}`, and escaped `$${VAR}` keep their Flux behavior.
-Resources with the `kustomize.toolkit.fluxcd.io/substitute: disabled` annotation or label bypass expansion.
+flate does not expand variables in resources that have the `kustomize.toolkit.fluxcd.io/substitute: disabled` annotation or label.
 
 ### Private sources
 
+Machine credentials are the credentials on the machine that runs flate.
 flate looks for credentials in this order:
 
 1. Real repository Secret data.
 2. Supplied data for absent keys.
-3. Machine credentials after no producer can provide the missing Secret.
+3. Machine credentials, after no producer can provide the missing Secret.
 
-Machine credentials include the SSH agent with local `known_hosts`, OCI registry stores, AWS environment, shared-profile and IAM credentials, and Helm repository logins.
+Machine credentials include the SSH agent with local `known_hosts`, OCI registry stores, and Helm repository logins.
+They also include AWS credentials from the environment, from shared profiles and from IAM.
 For OCI, `--registry-config` selects one store.
-Otherwise, flate tries the Docker store and then the Helm registry store.
+Without `--registry-config`, flate tries the Docker store and then the Helm registry store.
 Native stores can run configured credential helpers or the platform default helper.
 Cluster Secrets never run helpers.
 
 AWS shared profiles can run credential processes.
-Profile errors fail the run, including a missing executable or SSO token.
-Local Helm TLS, proxy, and forwarding configuration does not replace manifest transport or `passCredentials`.
-HTTP charts can use a matching Helm `repositories.yaml` username and password.
-Without `AWS_PROFILE`, shared files without a `default` profile fail before instance-role lookup.
-To restore role lookup, set `AWS_PROFILE` or remove those files.
-Helpers use the user's own configuration and network.
+A profile error fails the run.
+A missing executable or a missing SSO token is a profile error.
+Local Helm configuration for TLS, proxies and forwarding does not replace manifest transport or `passCredentials`.
+An HTTP chart can use the username and password of a matching entry in the Helm `repositories.yaml`.
+If `AWS_PROFILE` is unset and the shared files have no `default` profile, they fail before the instance-role lookup.
+To restore the role lookup, set `AWS_PROFILE` or remove those files.
+Helpers use the configuration and the network of the user.
 
-Authentication is silent on success.
-Malformed explicit credentials fail instead of advancing to machine credentials.
-If credentials remain unavailable, `--allow-missing-kinds Secret` skips the whole source with `SourceCredentialsUnavailable`.
-Other acquisition failures, missing host verification, cancellation, and deadlines remain fatal.
-When local selection yields no credential, OCI and HTTPS Git use the library's anonymous flow.
-AWS Buckets resolve the machine chain, then use MinIO's anonymous signer.
-Typed authentication rejection follows the same skip policy without a second anonymous acquisition.
+A successful authentication writes no output.
+If explicit credentials are malformed, the run fails and flate does not go on to machine credentials.
+If credentials stay unavailable, `--allow-missing-kinds Secret` skips the whole source and warns `SourceCredentialsUnavailable`.
+Other acquisition failures, missing host verification, cancellation, and deadlines stay fatal.
+If flate selects no local credential, OCI and HTTPS Git use the anonymous flow of the library.
+AWS Buckets resolve the machine credential chain first, and then use the anonymous signer of MinIO.
+If a server returns a typed authentication rejection, flate applies the same skip policy.
+flate does not try a second anonymous acquisition.
 
 ### Cache between runs
 
@@ -237,14 +270,19 @@ flate cache gc --cache-dir ~/.cache/flate --dry-run
 ```
 
 `cache gc` requires an explicit `--cache-dir` or `FLATE_CACHE_DIR`.
-It retires named tags by payload last-use, prunes unreachable Git generations, and delegates blob reclamation to ORAS graph GC.
-Shared payloads survive while a retained tag can reach them.
-`--max-age` selects the unused duration before pruning, and zero disables age-based pruning.
+It retires named tags by the last use of their payload.
+It removes stored Git source copies that no tag can reach.
+ORAS garbage collection then frees the unused blobs.
+A shared payload stays while a retained tag can reach it.
+`--max-age` sets how long an entry stays unused before flate removes it.
+A zero `--max-age` turns off removal by age.
 
-`--git-depth` limits Git source fetch history to one commit by default.
+By default, `--git-depth` limits the fetch history of a Git source to one commit.
 Set it to zero for full history.
-References pinned to an explicit commit without a branch first fetch that commit at depth one, even with `--git-depth=0`, and fall back to full history if that request fails.
-Commit pins that also specify a branch fetch full history.
+A reference can pin an explicit commit without a branch.
+flate first fetches that commit at depth one, also with `--git-depth=0`.
+If that request fails, flate fetches the full history.
+If a commit pin also names a branch, flate fetches the full history.
 
 ## What flate renders
 
@@ -257,14 +295,15 @@ Commit pins that also specify a branch fetch full history.
 | ResourceSet                                                     | Inline inputs and referenced input providers                         |
 | ResourceSetInputProvider                                        | Defaults, exported inputs and OCI registry tags                      |
 
-Unsupported dynamic ResourceSet input provider types with no offline inputs contribute no inputs and produce an `OfflineInputProvider` warning.
+flate does not support some dynamic input provider types for a ResourceSet.
+If such a provider has no offline inputs, it contributes no inputs and flate warns `OfflineInputProvider`.
 `OCIArtifactTag` can fetch registry tags without supplied `status.exportedInputs`.
 Registry access still needs network access and any required credentials.
 
 The bootstrap Git source is the repository with cluster manifests.
-The working tree can serve as this source.
+The working tree can be this source.
 Missing OCIRepository, HelmRepository and Bucket references stay missing dependencies.
-flate does not substitute the working tree for their content.
+flate does not use the working tree in place of their content.
 
 ## Differences from a live cluster
 
@@ -272,40 +311,49 @@ flate does not substitute the working tree for their content.
   A `SOPSUnreadable` warning names the object and its unreadable keys.
   Supply a dummy Secret or ConfigMap with those keys through `--supply`.
   Re-encrypted ciphertext cannot produce a value diff.
-- flate does not verify Git and OCI signatures.
-- Helm renders fresh installs, without live release history.
+- flate ignores Git and OCI signatures.
+- Helm renders each release as a fresh install, without live release history.
 - `--kube-version` and `--api-versions` set cluster facts for Helm.
-- `--allow-missing-kinds` independently selects `Secret`, `ConfigMap` or `CustomResourceDefinition` for unavailable source credentials, Helm values or CRD dependencies.
+- `--allow-missing-kinds` independently selects `Secret`, `ConfigMap` or `CustomResourceDefinition`.
+  These cover unavailable source credentials, Helm values and CustomResourceDefinition (CRD) dependencies.
 - Required postBuild ConfigMap references and malformed real data still fail.
 - flate does not perform cloud workload identity. Use repository, supplied or machine credentials.
 
 When `--allow-missing-kinds` accepts unavailable Helm values, flate warns `OmittedValues`.
 When it accepts missing CRD dependencies, flate warns `MissingCRD`.
-`--allow-missing-kinds` accepts comma-separated or repeated selections and defaults to an empty list.
+`--allow-missing-kinds` accepts comma-separated or repeated selections.
+Its default is an empty list.
 
-Helm template flags apply to every reconcile command because flate reconciles the full graph before filtering output.
-`--enable-dns` enables DNS lookups in Helm templates. Source fetches still need network access when template DNS lookups are disabled.
+Helm template flags apply to every reconcile command because flate reconciles the full graph before it filters output.
+`--enable-dns` turns on DNS lookups in Helm templates.
+If template DNS lookups are off, source fetches still need network access.
 `--disable-chart-digest-tracking` omits digest suffixes from OCI chart versions.
 Install hooks, CRD handling, and validation follow `spec.install`.
 Upgrade-only templates and template-path previews are unavailable because flate has no live release history.
 
-`--restrict-egress` blocks private-address source fetches and local Git transports.
-Configured HTTP proxies and SSH egress remain under operator control.
+`--restrict-egress` blocks source fetches to private addresses and local Git transports.
+The operator still controls configured HTTP proxies and outbound SSH traffic.
 The restriction does not provide a general network sandbox.
 
 If a producer cannot render, diffs withhold its objects and warn `DiffSuppressed`.
-JSON diffs include these omissions in the `suppressed` array.
+JSON diffs list these omissions in the `suppressed` array.
 
-Secrets and CustomResourceDefinitions are excluded from output by default.
-`--skip-kinds` replaces that exclusion list, and an empty list includes all kinds.
-Build also accepts `--only-kinds` to select output kinds.
+By default, flate excludes Secrets and CRDs from output.
+`--skip-kinds` replaces that exclusion list.
+An empty `--skip-kinds` list includes all kinds.
+`build` also accepts `--only-kinds` to select output kinds.
 Both flags accept comma-separated or repeated selections.
-`--skip-kinds Job` replaces the defaults, so rendered Secrets and CRDs become eligible for output, subject to HelmRelease CRD policy.
-To exclude Job while keeping the defaults, use `--skip-kinds Secret,CustomResourceDefinition,Job`.
+
+`--skip-kinds Job` replaces the defaults.
+Rendered Secrets and CRDs can then appear in the output, subject to the HelmRelease CRD policy.
+To exclude Job and keep the defaults, use `--skip-kinds Secret,CustomResourceDefinition,Job`.
 `--only-kinds CustomResourceDefinition` removes CRDs from the default exclusions.
-An explicit `--skip-kinds` list wins over inclusion. Dependencies remain available regardless of output filtering.
+An explicit `--skip-kinds` list wins over inclusion.
+Dependencies stay available for every output filter.
 
 ## Flags
+
+The commands share the flags in this table:
 
 | Shared flag                       | Description                                               |
 | --------------------------------- | --------------------------------------------------------- |
@@ -329,12 +377,13 @@ An explicit `--skip-kinds` list wins over inclusion. Dependencies remain availab
 | `--log-level`                     | Set log level: debug,info,warn,error                      |
 | `--no-progress`                   | Hide live progress on stderr                              |
 
-See `flate <command> --help` for defaults, environment variables, output formats and flags for each command.
+Run `flate <command> --help` to see the defaults, environment variables, output formats and flags for each command.
 
 ## Library
 
-Embed through `github.com/home-operations/flate/pkg/orchestrator`.
+Embed flate through `github.com/home-operations/flate/pkg/orchestrator`.
 The `pkg/manifest` package provides resource types and identities.
+This example renders the current directory as one cluster, with at most four parallel reconciles:
 
 ```go
 runs, err := orchestrator.RenderTrees(ctx, []orchestrator.Tree{{
@@ -345,4 +394,6 @@ runs, err := orchestrator.RenderTrees(ctx, []orchestrator.Tree{{
 
 ## License
 
-[AGPL-3.0](LICENSE). Behavior and fixtures also draw on flux-local (Apache-2.0).
+flate uses the [AGPL-3.0](LICENSE) license.
+Its behavior and fixtures also draw on flux-local, which uses the Apache-2.0 license.
+The [LICENSE](LICENSE) file contains the full text.

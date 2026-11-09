@@ -29,9 +29,9 @@ func Prepare(left, right []Doc, opts *Options) Prepared {
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
 		resource := manifest.DocIdentity(d.Manifest)
 		parent := d.Parent.NamedResource
-		keys := opts.ProducerKeys[0]
+		keys := opts.producerKeys[0]
 		if side == SideCurrent {
-			keys = opts.ProducerKeys[1]
+			keys = opts.producerKeys[1]
 		}
 		if key, known := keys[parent]; known {
 			parent = key

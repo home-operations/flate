@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.2](https://github.com/home-operations/flate/compare/v0.7.1...v0.7.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **diff:** pair renamed entry applier output ([#1491](https://github.com/home-operations/flate/issues/1491)) ([481db74](https://github.com/home-operations/flate/commit/481db745096e41bd14af116e418cd45fd689cdd9))
+* **helm:** recover kustomize panics in post-render ([#1489](https://github.com/home-operations/flate/issues/1489)) ([73dc213](https://github.com/home-operations/flate/commit/73dc213ed8c20ffa97e935d5e32aed773986772b))
+
+
+### Performance Improvements
+
+* **store:** short-circuit emission output comparison ([#1490](https://github.com/home-operations/flate/issues/1490)) ([25aff6b](https://github.com/home-operations/flate/commit/25aff6bc7c319289d40fe68700fab994da86e8dc))
+
 ## [0.7.1](https://github.com/home-operations/flate/compare/v0.7.0...v0.7.1) (2026-11-08)
 
 

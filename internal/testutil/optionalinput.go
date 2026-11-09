@@ -51,7 +51,7 @@ func CrossSourceOptionalInputs(tb testing.TB) [2]string {
 			tb,
 			root,
 			"flux/sources.yaml",
-			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://example.test/cluster.git}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: supplier, namespace: flux-system}\nspec: {url: https://example.test/cluster.git, ref: {branch: selected}}\n",
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://example.test/cluster.git}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: supplier, namespace: flux-system}\nspec: {url: https://example.test/cluster.git, ref: {name: refs/heads/selected}}\n",
 		)
 		WriteFile(
 			tb,

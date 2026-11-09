@@ -18,6 +18,12 @@ type GitReference struct {
 	Value string
 }
 
+// BootstrapPinned keeps branch-only previews on admitted files unless submodules require checkout.
+func (g *GitRepository) BootstrapPinned() bool {
+	kind := (*GitRepositoryRef)(g.Reference).Effective().Kind
+	return kind != "" && (kind != branchKey || g.RecurseSubmodules)
+}
+
 // Effective returns the selected reference or an empty HEAD selection.
 func (r *GitRepositoryRef) Effective() GitReference {
 	if r != nil {

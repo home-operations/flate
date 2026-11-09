@@ -69,6 +69,7 @@ func TestFetchRemoteBase_References(t *testing.T) {
 		name, url, ref, revision, content string
 	}{
 		{"tag", "file://" + src, "v0.2.2", first, "v1"},
+		{"revision expression", "file://" + src, "HEAD~1", first, "v1"},
 		{"branch", "file://" + src, "feature", first, "v1"},
 		{"divergent named ref", "file://" + src, "refs/heads/pinned", first, "v1"},
 		{"commit", "file://" + src, first, first, "v1"},

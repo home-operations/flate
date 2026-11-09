@@ -400,3 +400,52 @@ func TestRootEvidence_CapturesRequestedBuiltChild(t *testing.T) {
 	defer fresh.Retire()
 	assert.Equal(t, l.RootEvidence(children[0].Obj.Named(), &fresh).BuiltCurrent, false)
 }
+
+// A prepared producer's directory probes must not claim unrelated descendant content.
+func TestRegisterBuilt_DirectoryReadsDoNotOwnDescendants(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: []\n")
+	testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(
+		t, root, "workload/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\n",
+	)
+
+	st := store.New()
+	admitForTest(st, root)
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./parent"}
+	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./workload"}
+	st.AddObject(parent)
+	st.AddObject(child)
+
+	l := New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	packageRoot := filepath.Join(root, "parent")
+	_, err := l.Load(t.Context(), packageRoot, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+
+	l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
+		Root: packageRoot, Owner: parent.Named(), Source: manifest.BootstrapSourceID,
+		Reads: map[string]bool{"workload": false, "missing.yaml": false, "workload/settings.txt": true},
+	}), []store.Child{{Obj: child}})
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+
+	owners := l.Index.OwnersOfFile("workload/cm.yaml").Owners
+	assert.Equal(t, slices.Contains(owners, parent.Named()), false)
+	assert.Equal(t, slices.Contains(owners, child.Named()), true)
+
+	for _, file := range []string{"workload/cm.yaml", "workload/added.yaml", "missing.yaml"} {
+		readers := slices.Collect(l.Index.ReadersOfFile(file))
+		assert.Equal(t, slices.ContainsFunc(readers, func(reader manifest.FileReader) bool {
+			return reader.Reader == parent.Named()
+		}), false)
+	}
+
+	readers := slices.Collect(l.Index.ReadersOfFile("workload/settings.txt"))
+	assert.Equal(t, slices.Contains(readers, manifest.FileReader{
+		Reader: parent.Named(), Source: manifest.BootstrapSourceID, Exact: true,
+	}), true)
+}

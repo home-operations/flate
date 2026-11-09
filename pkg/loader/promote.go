@@ -147,9 +147,8 @@ func (l *Loader) RegisterBuilt(
 	selected := map[string]bool{}
 	inputs := l.selectBuiltInputs(sourceRoot, rel, &input, selected)
 	slices.Sort(inputs.inputs)
-	inputs.inputs = slices.Compact(inputs.inputs)
 	slices.Sort(inputs.shared)
-	inputs.shared = slices.Compact(inputs.shared)
+	inputs.inputs, inputs.shared = slices.Compact(inputs.inputs), slices.Compact(inputs.shared)
 	builder := l.fileCoordinate(cmp.Or(l.documents.read(root).file, root))
 	records := make([]manifest.DiscoveryRecord, len(docs))
 	locations := make([]authoredOccurrence, len(docs))
@@ -172,6 +171,8 @@ func (l *Loader) RegisterBuilt(
 	previous := cached.builtInput
 	cached.built = append([]store.Child{}, docs...)
 	input.Reads = maps.Clone(input.Reads)
+	// Directory membership and node-kind probes MUST NOT claim descendant content.
+	maps.DeleteFunc(input.Reads, func(_ string, exact bool) bool { return !exact })
 	cached.builtInput = &input
 	l.documents.cache[root] = cached
 	for i, facts := range l.scopes.rootFacts {

@@ -5,5 +5,5 @@ metadata:
   namespace: flux-system
 spec:
   ref:
-    branch: selected
+    name: refs/heads/selected
   url: https://example.test/cluster.git

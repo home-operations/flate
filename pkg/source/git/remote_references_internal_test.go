@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"strings"
@@ -30,6 +31,7 @@ func testFetcherReferencesCase(t *testing.T, src *string, tc *struct {
 	warmCommit        string
 	recurse           bool
 	wantErr           bool
+	invalidInput      bool
 	errText           string
 	localAcquisitions uint64
 },
@@ -68,6 +70,21 @@ func testFetcherReferencesCase(t *testing.T, src *string, tc *struct {
 		MaxAge: time.Hour,
 		Work:   &manifest.AcquisitionWork{Scope: (&work).Scope()},
 	}, nil)
+	if tc.invalidInput {
+		assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
+		var attempts, acquisitions uint64
+		records := work.Scope().Snapshot(0).Normalize()
+		for i := range records {
+			record := &records[i]
+			if record.Key.Phase == manifest.WorkAcquisition {
+				attempts += record.Counts.Attempts
+				acquisitions += record.Counts.LocalAcquisitions
+			}
+		}
+		assert.Equal(t, attempts, uint64(0))
+		assert.Equal(t, acquisitions, uint64(0))
+	}
 	if tc.wantErr {
 		if err == nil || tc.errText != "" && !strings.Contains(err.Error(), tc.errText) {
 			t.Fatalf("Fetch error = %v, want failure containing %q", err, tc.errText)
@@ -109,6 +126,7 @@ type assertFetcherReferenceWorkInputs struct {
 		warmCommit        string
 		recurse           bool
 		wantErr           bool
+		invalidInput      bool
 		errText           string
 		localAcquisitions uint64
 	}

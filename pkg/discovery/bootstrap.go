@@ -485,7 +485,7 @@ func (a *Admission) resolve(
 	alias, descriptor := behavior.BootstrapAlias(bootstrap.LocalPath)
 	candidate.git = descriptor
 	candidate.pinned = !candidate.synthetic && id != manifest.BootstrapSourceID &&
-		(*manifest.GitRepositoryRef)(descriptor.Reference).String() != ""
+		descriptor.BootstrapPinned()
 	if id != manifest.BootstrapSourceID && !candidate.synthetic {
 		if _, match := a.remotes[normalizeGitURL(descriptor.URL)]; !match {
 			return candidate, nil
@@ -498,20 +498,22 @@ func (a *Admission) resolve(
 		candidate.artifact = bootstrap
 		return candidate, nil
 	}
+	var location *gitrepo.Location
 	if candidate.pinned {
-		var location *gitrepo.Location
 		if input, ok := bootstrap.FS.(*gittree.FS); ok {
 			location = input.Location()
 		}
-		artifacts, err := git.ResolveLocal(
-			ctx,
-			location,
-			[]*manifest.GitRepository{descriptor},
-			git.LocalOptions{Revision: bootstrap.Revision, Work: work},
-		)
-		if err != nil {
-			return candidate, err
-		}
+	}
+	artifacts, err := git.ResolveLocal(
+		ctx,
+		location,
+		[]*manifest.GitRepository{descriptor},
+		git.LocalOptions{Revision: bootstrap.Revision, Work: work},
+	)
+	if err != nil {
+		return candidate, err
+	}
+	if candidate.pinned {
 		artifact := artifacts[id]
 		if artifact == nil {
 			candidate.warnings = []manifest.Warning{

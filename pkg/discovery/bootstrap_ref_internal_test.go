@@ -22,6 +22,8 @@ import (
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -160,6 +162,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 		commit                                            bool
 		ref                                               *sourcev1.GitRepositoryRef
 		head, fallback, fail, noStore, sparse, submodules bool
+		lookupErr                                         bool
 	}{
 		{name: "no-ref", head: true},
 		{name: "empty-ref", ref: &sourcev1.GitRepositoryRef{}, head: true},
@@ -173,7 +176,13 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 		{name: "conflicting", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}},
 		{name: "missing-tag", ref: &sourcev1.GitRepositoryRef{Tag: "missing"}, fallback: true},
 		{name: "missing-name", ref: &sourcev1.GitRepositoryRef{Name: "refs/pull/9/head"}, fallback: true},
-		{name: "missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, fallback: true},
+		{name: "branch", ref: &sourcev1.GitRepositoryRef{Branch: "master"}, head: true},
+		{name: "missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, head: true},
+		{name: "older-base-head-branch-submodules", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Branch: "master"}, submodules: true, fallback: true},
+		{name: "recursive-missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, submodules: true, fallback: true},
+		{name: "invalid-branch", ref: &sourcev1.GitRepositoryRef{Branch: "bad branch"}, fail: true},
+		{name: "branch-lookup-error", ref: &sourcev1.GitRepositoryRef{Branch: "main"}, lookupErr: true, head: true},
+		{name: "no-store-branch", ref: &sourcev1.GitRepositoryRef{Branch: "main"}, noStore: true, head: true},
 		{name: "missing-semver", ref: &sourcev1.GitRepositoryRef{SemVer: ">3.0.0"}, fallback: true},
 		{name: "no-store", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, noStore: true, fallback: true},
 		{name: "no-store-invalid", ref: &sourcev1.GitRepositoryRef{Commit: "abc"}, noStore: true, fail: true},
@@ -447,6 +456,7 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 		noStore    bool
 		sparse     bool
 		submodules bool
+		lookupErr  bool
 	},
 ) {
 	t.Helper()
@@ -486,6 +496,13 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	{
 		_, err := d.resolveEntrySources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
+	}
+	if testCaseInput.lookupErr {
+		input, err := gittree.AdmitDirectory(t.Context(), &gitrepo.Location{
+			ContentRoot: root, LookupErr: errors.New("repository lookup failed"),
+		})
+		assert.NoError(t, err)
+		st.SetArtifact(manifest.BootstrapSourceID, input)
 	}
 	st.AddObject(repository)
 	bootstrap := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)

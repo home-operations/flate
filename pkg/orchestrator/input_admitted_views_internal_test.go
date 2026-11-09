@@ -355,7 +355,7 @@ func selectedAliasRepository(
 				),
 			)
 		}
-		ref := ", ref: {branch: selected}"
+		ref := ", ref: {name: refs/heads/selected}"
 		if (*(*statementInput.testCaseInput)) == "selected_payload_only" {
 			ref = ""
 		}

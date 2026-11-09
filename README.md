@@ -303,6 +303,17 @@ Registry access still needs network access and any required credentials.
 The bootstrap Git source is the repository with cluster manifests.
 The working tree can be this source.
 flate excludes untracked files that Git ignores because Flux only receives committed files.
+If a GitRepository URL matches a checkout remote, flate uses the local files when:
+
+- No ref is set.
+- The ref sets only `branch`.
+
+If a source names a deployment branch, such as `main`, pull-request changes stay visible.
+Each side of a diff uses its own files.
+The `commit`, `tag`, `semver` and `name` ref fields keep their current behavior.
+Use `ref.name: refs/heads/<branch>` to read a specific branch from the same repository.
+Sources from other repositories keep their configured refs.
+Sources with a ref and `recurseSubmodules: true` keep their current ref and fetch behavior.
 Missing OCIRepository, HelmRepository and Bucket references stay missing dependencies.
 flate does not use the working tree in place of their content.
 

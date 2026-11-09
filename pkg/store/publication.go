@@ -43,9 +43,8 @@ func (s *Store) RecordEmitted(
 			candidate.shadowed = prev.shadowed
 			candidate.documentOwners = prev.documentOwners
 		}
-		retainCandidateFingerprint(&candidate, prev, unchanged)
 		proposal := prev
-		if !unchanged || !candidate.sameOutput(prev) {
+		if !retainCandidateFingerprint(&candidate, prev, unchanged) {
 			byID := make(map[manifest.NamedResource]int, len(next.Children))
 			prepared := s.prepareAdmissions(id, &candidate, prev, byID)
 			proposal = prepareEmission(&candidate, prev, prepared, byID)
@@ -215,10 +214,8 @@ func (e *Emission) sameOutput(other *Emission) bool {
 		(len(e.Manifests) == 0 || &e.Manifests[0] == &other.Manifests[0])
 	exactInput := other.inputHead.owner == e.inputHead.owner && other.inputHead.generation == e.inputHead.generation &&
 		other.inputHead.revision == e.inputHead.revision && manifest.Equal(other.input, e.input)
-	semanticInput := e.input != nil &&
-		semanticEqual(Child{Obj: other.input, Doc: other.inputDoc}, Child{Obj: e.input, Doc: e.inputDoc})
-	sameBinding := other.inputHead.binding.equal(&e.inputHead.binding)
-	sameInput := sameBinding && (exactInput || semanticInput)
+	sameInput := other.inputHead.binding.equal(&e.inputHead.binding) && (exactInput || e.input != nil &&
+		semanticEqual(Child{Obj: other.input, Doc: other.inputDoc}, Child{Obj: e.input, Doc: e.inputDoc}))
 	return sameInput && other.family == e.family &&
 		(sameDocuments || slices.EqualFunc(other.Manifests, e.Manifests, func(a, b manifest.DocOccurrence) bool {
 			return a.Ordinal == b.Ordinal && manifest.ValueEqual(a.Document, b.Document)
@@ -361,13 +358,20 @@ func (s *Store) candidateChildPayload(
 	return payload, output
 }
 
-func retainCandidateFingerprint(candidate, prev *Emission, unchanged bool) {
-	if unchanged && candidate.Fingerprint == "" {
-		candidate.Fingerprint = prev.Fingerprint
-		if !candidate.sameOutput(prev) {
-			candidate.Fingerprint = ""
-		}
+// retainCandidateFingerprint reports whether an unchanged candidate keeps prev's output.
+func retainCandidateFingerprint(candidate, prev *Emission, unchanged bool) bool {
+	if !unchanged {
+		return false
 	}
+	if candidate.Fingerprint != "" {
+		return candidate.sameOutput(prev)
+	}
+	candidate.Fingerprint = prev.Fingerprint
+	if candidate.sameOutput(prev) {
+		return true
+	}
+	candidate.Fingerprint = ""
+	return false
 }
 
 func retainProposalFingerprint(proposal, prev *Emission, unchanged bool) {

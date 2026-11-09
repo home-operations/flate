@@ -86,6 +86,7 @@ func TestAdmission_DeclarationMountSource(t *testing.T) {
 			if aliasMounted {
 				mounted, want = alias, source
 			}
+
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
 			st.SetArtifact(source, alias)
@@ -102,17 +103,21 @@ func TestAdmission_DeclarationMountSource(t *testing.T) {
 					},
 				},
 			}
+
 			c := solverClosure(t, st, facts)
 			c.states[id] = admissionState{productionsKnown: true, productions: []manifest.Production{{Source: source}}}
 			assert.Equal(t, c.source(id), source)
+
 			var reads store.ReadSet
 			reads.Init(st, id, nil)
 			defer reads.Retire()
 			c.objects, c.proposal.reads = &reads, &reads
+
 			input, support := c.hydrationSource(id, mounted.LocalPath)
 			assert.Equal(t, input == mounted, true)
 			assert.Equal(t, support, want)
 			assert.Equal(t, reads.Valid(), true)
+
 			st.SetArtifact(source, &store.SourceArtifact{LocalPath: "/replacement", FS: fstest.MapFS{}})
 			assert.Equal(t, reads.Valid(), !aliasMounted)
 		})

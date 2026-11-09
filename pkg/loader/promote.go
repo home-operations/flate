@@ -138,19 +138,18 @@ func (l *Loader) RegisterBuilt(
 	if l.frozen || input.Support == nil || !input.Support.Valid() {
 		return
 	}
-	root := input.Root
-	sourceRoot, admitted := l.admitBuiltRoot(root)
+	sourceRoot, admitted := l.admitBuiltRoot(input.Root)
 	if !admitted {
 		return
 	}
-	rel, _ := filepath.Rel(sourceRoot, root)
+	rel, _ := filepath.Rel(sourceRoot, input.Root)
 	selected := map[string]bool{}
 	inputs := l.selectBuiltInputs(sourceRoot, rel, &input, selected)
 	slices.Sort(inputs.inputs)
 	inputs.inputs = slices.Compact(inputs.inputs)
 	slices.Sort(inputs.shared)
 	inputs.shared = slices.Compact(inputs.shared)
-	builder := l.fileCoordinate(cmp.Or(l.documents.read(root).file, root))
+	builder := l.fileCoordinate(cmp.Or(l.documents.read(input.Root).file, input.Root))
 	records := make([]manifest.DiscoveryRecord, len(docs))
 	locations := make([]authoredOccurrence, len(docs))
 	authored := map[manifest.NamedResource]store.Child{}
@@ -168,14 +167,16 @@ func (l *Loader) RegisterBuilt(
 			l.locations[docs[i].Obj.Named()] = locations[i]
 		}
 	}
-	cached := l.documents.cache[root]
+	cached := l.documents.cache[input.Root]
 	previous := cached.builtInput
 	cached.built = append([]store.Child{}, docs...)
 	input.Reads = maps.Clone(input.Reads)
+	// Directory membership and node-kind probes MUST NOT claim descendant content.
+	maps.DeleteFunc(input.Reads, func(_ string, exact bool) bool { return !exact })
 	cached.builtInput = &input
-	l.documents.cache[root] = cached
+	l.documents.cache[input.Root] = cached
 	for i, facts := range l.scopes.rootFacts {
-		if filepath.Join(l.SourceRoot, filepath.FromSlash(facts.Path)) == root &&
+		if filepath.Join(l.SourceRoot, filepath.FromSlash(facts.Path)) == input.Root &&
 			(facts.Built != (cached.built != nil) || facts.Selected != cached.selected || facts.Excluded != cached.buildExcluded) {
 			l.scopes.rootFacts = slices.Clone(l.scopes.rootFacts)
 			l.scopes.rootFacts[i].Built, l.scopes.rootFacts[i].Selected, l.scopes.rootFacts[i].Excluded =

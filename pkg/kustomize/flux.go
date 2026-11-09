@@ -216,7 +216,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	req.Work.Fingerprint(key)
 	source := manifest.BootstrapSourceID
 	if req.Spec != nil {
-		source = req.Spec.SourceID()
+		source = req.Spec.EffectiveSourceID()
 	}
 	work.Finish(nil)
 	prepared := Preparation{

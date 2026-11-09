@@ -642,10 +642,7 @@ func (w *qualificationWalk) construct(
 ) (qualificationBatch, error) {
 	input := evidence.source.artifact
 	if input == nil {
-		source := ks.SourceID()
-		if source.Kind == "" || source.Name == "" {
-			source = manifest.BootstrapSourceID
-		}
+		source := ks.EffectiveSourceID()
 		input, _ = w.reads.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	if input == nil || w.q.trees == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
@@ -688,7 +685,7 @@ func (w *qualificationWalk) prepare(
 			return err
 		}
 	}
-	support, current := w.preparationSupport(evidence, ks.Named(), ks.SourceID())
+	support, current := w.preparationSupport(evidence, ks.Named(), ks.EffectiveSourceID())
 	defer w.store.Retire(support)
 	defer support.ReleaseCapture()
 	if !current {
@@ -714,9 +711,6 @@ func (w *qualificationWalk) preparationSupport(
 ) (*store.ReadSet, bool) {
 	support := &store.ReadSet{}
 	support.Init(w.store, origin, nil)
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
-	}
 	support.GetArtifact(source, store.ArtifactContent)
 	support.GetDeclaration(source)
 	switch {

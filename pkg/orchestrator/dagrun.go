@@ -264,7 +264,7 @@ func (o *Orchestrator) publishEntry(
 ) (bool, error) {
 	incoming := store.Child{}
 	if root != nil {
-		application := manifest.EntryApplication{Source: root.SourceID(), Path: root.Path}
+		application := manifest.EntryApplication{Source: root.EffectiveSourceID(), Path: root.Path}
 		incoming = store.Child{Obj: root, Entry: &application}
 	}
 	if o.selection == nil {

@@ -166,6 +166,15 @@ func (k *Kustomization) SourceID() NamedResource {
 	)
 }
 
+// EffectiveSourceID defaults incomplete execution coordinates without changing authored facts.
+func (k *Kustomization) EffectiveSourceID() NamedResource {
+	source := k.SourceID()
+	if source.Kind == "" || source.Name == "" {
+		return BootstrapSourceID
+	}
+	return source
+}
+
 // IsFragment identifies patch fragments without a render path or source name.
 func (k *Kustomization) IsFragment() bool { return k.Path == "" && k.SourceRef.Name == "" }
 
@@ -349,7 +358,7 @@ func (k *Kustomization) sourceReference(yield func(Reference) bool, view Referen
 		content := src.Kind != "" && src.Name != ""
 		use := sourceKey
 		if !content && k.Path != "" {
-			src = BootstrapSourceID
+			src = k.EffectiveSourceID()
 			use = ""
 		}
 		if (view == ReferenceAll || use != "") && !yield(Reference{

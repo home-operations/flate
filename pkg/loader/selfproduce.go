@@ -100,9 +100,8 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 			}
 			p := manifest.Production{Owner: r.owner, Source: r.source, File: l.fileCoordinate(r.file)}
 			if ks, ok := l.Store.Get[*manifest.Kustomization](r.owner); ok {
-				p.Source = ks.SourceID()
-			}
-			if p.Source.Name == "" || p.Source.Kind == "" {
+				p.Source = ks.EffectiveSourceID()
+			} else if p.Source.Name == "" || p.Source.Kind == "" {
 				p.Source = manifest.BootstrapSourceID
 			}
 			if !slices.Contains(record.Productions, p) {

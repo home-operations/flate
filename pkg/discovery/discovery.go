@@ -592,7 +592,7 @@ func (d *Session) commitBinding(ctx context.Context, root *manifest.Kustomizatio
 	}
 	incoming := store.Child{}
 	if root != nil {
-		application := manifest.EntryApplication{Source: root.SourceID(), Path: root.Path}
+		application := manifest.EntryApplication{Source: root.EffectiveSourceID(), Path: root.Path}
 		incoming = store.Child{Obj: root, Entry: &application}
 	}
 	binding.Reads.SetWork(d.cfg.Work.Recorder(&manifest.WorkKey{
@@ -674,10 +674,7 @@ func (d *Session) prepareDocuments(
 		d.prepared = map[manifest.NamedResource]*declarationPreparation{}
 	}
 	d.prepared[ks.Named()] = frame
-	sourceID := ks.SourceID()
-	if sourceID.Kind == "" || sourceID.Name == "" {
-		sourceID = manifest.BootstrapSourceID
-	}
+	sourceID := ks.EffectiveSourceID()
 	frame.captureSupport(d.cfg.Store, sourceID)
 	if guard != nil && (!guard.Valid() || !frame.support.Matches(guard)) {
 		frame.retire(d.cfg.Store)
@@ -692,7 +689,7 @@ func (d *Session) prepareDocuments(
 	request := kustomize.RenderRequest{
 		Work:                    work.RenderWork(),
 		Source:                  input,
-		ApplyIgnore:             ks.SourceID() == manifest.BootstrapSourceID || input.InputAlias || input.Content == "",
+		ApplyIgnore:             kustomize.ApplySourceIgnore(prepared, input),
 		SubPath:                 prepared.Path,
 		Spec:                    prepared,
 		StrictSubstitutions:     d.cfg.StrictSubstitutions,
@@ -758,10 +755,7 @@ func (d *Session) prepareProducer(
 }
 
 func (d *Session) registerProducer(prepared *declarationPreparation) {
-	sourceID := prepared.owner.SourceID()
-	if sourceID.Name == "" || sourceID.Kind == "" {
-		sourceID = manifest.BootstrapSourceID
-	}
+	sourceID := prepared.owner.EffectiveSourceID()
 	owner := prepared.owner.Named()
 	d.loader.RegisterBuilt(
 		loader.BuiltInput{
@@ -799,10 +793,7 @@ func (d *Session) acceptPrepared(ctx context.Context) error {
 				children[i].Obj = obj
 			}
 		}
-		sourceID := ks.SourceID()
-		if sourceID.Name == "" || sourceID.Kind == "" {
-			sourceID = manifest.BootstrapSourceID
-		}
+		sourceID := ks.EffectiveSourceID()
 		input := prepared.source
 		if err := d.cfg.Trees.RecordRender(ctx, kustomize.RenderAcceptance{
 			Work:  prepared.work,

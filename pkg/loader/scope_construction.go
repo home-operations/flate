@@ -32,12 +32,13 @@ type scopeConstruction struct {
 }
 
 type scopeInput struct {
-	owner       *manifest.Kustomization
-	source      int
-	published   bool
-	active      bool
-	ownerClaims ownerClaims
-	derived     bool
+	owner        *manifest.Kustomization
+	source       int
+	scanRequired bool
+	published    bool
+	active       bool
+	ownerClaims  ownerClaims
+	derived      bool
 }
 
 type sourceState struct {
@@ -120,9 +121,9 @@ func (l *Loader) prepareClaimInputs(repoRoot string, kss []store.Child) {
 		child := &kss[i]
 		//nolint:errcheck // Kustomization-only inputs must panic on an invalid object type.
 		ks := child.Obj.(*manifest.Kustomization)
-		view := l.scopeSource(new(l.sourceState(ks.SourceID(), repoRoot)))
+		view := l.scopeSource(new(l.sourceState(ks.EffectiveSourceID(), repoRoot)))
 		published := l.Store.GetObject(ks.Named()) != nil
-		input := scopeInput{owner: ks, source: view, published: published}
+		input := scopeInput{owner: ks, source: view, scanRequired: ks.SourceRef.Name != "", published: published}
 		for len(previous) != 0 && previous[0].owner.Named().Compare(ks.Named()) < 0 {
 			previous = previous[1:]
 		}
@@ -207,7 +208,7 @@ func (l *Loader) publishScopeClaims(repoRoot string) {
 	}
 	l.scopes.claims, _ = l.claimView(repoRoot, func(input scopeInput) bool {
 		view := l.scopes.sources[input.source]
-		return repoRoot == "" || view.id.Name == "" || view.ready
+		return repoRoot == "" || !input.scanRequired || view.ready
 	})
 	l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
 	for _, claim := range l.scopes.claims {

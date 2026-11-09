@@ -130,6 +130,35 @@ func TestResolvePaths_ReusesRoot(t *testing.T) {
 	}
 }
 
+func TestResolvePaths_IndependentGitRules(t *testing.T) {
+	t.Parallel()
+	current, original := t.TempDir(), t.TempDir()
+	for _, root := range []string{current, original} {
+		initRepoWithFile(t, root, "entry/tracked.yaml", "tracked")
+		testutil.WriteFile(t, root, "entry/current-only.yaml", "current")
+		testutil.WriteFile(t, root, "entry/original-only.yaml", "original")
+	}
+	testutil.WriteFile(t, current, ".gitignore", "current-only.yaml\n")
+	testutil.WriteFile(t, original, ".gitignore", "original-only.yaml\n")
+	result, err := ResolvePaths(t.Context(), filepath.Join(current, "entry"), filepath.Join(original, "entry"))
+	assert.NoError(t, err)
+	for _, side := range []struct {
+		input        fs.FS
+		hidden, kept string
+	}{
+		{result.Source.FS, "entry/current-only.yaml", "entry/original-only.yaml"},
+		{result.BaseInput.FS, "entry/original-only.yaml", "entry/current-only.yaml"},
+	} {
+		_, readErr := fs.ReadFile(side.input, side.hidden)
+		assert.Equal(t, errors.Is(readErr, fs.ErrNotExist), true)
+		_, readErr = fs.ReadFile(side.input, side.kept)
+		assert.NoError(t, readErr)
+		data, readErr := fs.ReadFile(side.input, "entry/tracked.yaml")
+		assert.NoError(t, readErr)
+		assert.Equal(t, string(data), "tracked")
+	}
+}
+
 func TestResolve_InputErrors(t *testing.T) {
 	t.Parallel()
 	headCause := errors.New("read HEAD")

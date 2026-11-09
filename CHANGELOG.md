@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/home-operations/flate/compare/v0.7.0...v0.7.1) (2026-11-08)
+
+
+### Performance Improvements
+
+* **output:** marshal YAML documents in parallel ([#1487](https://github.com/home-operations/flate/issues/1487)) ([bcf5c2b](https://github.com/home-operations/flate/commit/bcf5c2b41c348fe74f98f406cb3038fe40ffa8f4))
+
 ## [0.7.0](https://github.com/home-operations/flate/compare/v0.6.5...v0.7.0) (2026-11-08)
 
 

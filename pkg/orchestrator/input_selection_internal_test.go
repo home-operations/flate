@@ -349,7 +349,7 @@ func newSelectedSelfFixture(t *testing.T) selectedSelfFixture {
 		root,
 		"source.yaml",
 		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n"+
-			"metadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {branch: selected}}\n",
+			"metadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {name: refs/heads/selected}}\n",
 	)
 	for i := range 145 {
 		name := fmt.Sprintf("app-%03d", i)

@@ -393,7 +393,7 @@ data: {value: fixture}
 		testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: source, namespace: flux-system}
-spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
+spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavailable}}
 `)
 	}
 	res, err := discovery.Run(t.Context(), cfg)

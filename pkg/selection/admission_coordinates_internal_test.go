@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 	"testing/fstest"
 
@@ -67,6 +68,53 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 			assert.Equal(t, indexed, "input.txt")
 			assert.Equal(t, c.fileChanged(manifest.BootstrapSourceID, "input.txt"), true)
 			assert.Diff(t, slices.Collect(c.sourceFiles(manifest.BootstrapSourceID)), []string{"input.txt"})
+		})
+	}
+}
+
+func TestAdmission_DeclarationMountSource(t *testing.T) {
+	t.Parallel()
+	for _, aliasMounted := range []bool{false, true} {
+		t.Run(strconv.FormatBool(aliasMounted), func(t *testing.T) {
+			t.Parallel()
+			root := "/workspace"
+			bootstrap := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
+			alias := &store.SourceArtifact{LocalPath: "/alias", LocalRoot: root, InputAlias: true, FS: fstest.MapFS{}}
+			source := (&manifest.GitRepository{Name: "self", Namespace: "flux-system"}).Named()
+			id := (&manifest.Kustomization{Name: "cluster", Namespace: "flux-system"}).Named()
+			mounted, want := bootstrap, manifest.BootstrapSourceID
+			if aliasMounted {
+				mounted, want = alias, source
+			}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+			st.SetArtifact(source, alias)
+			facts := &solverFacts{
+				store: st,
+				sources: map[manifest.NamedResource]SourceFacts{
+					source: {Source: source, Input: alias},
+				},
+				occurrences: map[manifest.NamedResource]OccurrenceFacts{
+					id: {
+						Identity: id, Authored: id,
+						Declaration: OccurrenceID{Source: mounted.LocalPath, File: "cluster.yaml"},
+						Mounted:     mounted, CatalogKnown: true,
+					},
+				},
+			}
+			c := solverClosure(t, st, facts)
+			c.states[id] = admissionState{productionsKnown: true, productions: []manifest.Production{{Source: source}}}
+			assert.Equal(t, c.source(id), source)
+			var reads store.ReadSet
+			reads.Init(st, id, nil)
+			defer reads.Retire()
+			c.objects, c.proposal.reads = &reads, &reads
+			input, support := c.hydrationSource(id, mounted.LocalPath)
+			assert.Equal(t, input == mounted, true)
+			assert.Equal(t, support, want)
+			assert.Equal(t, reads.Valid(), true)
+			st.SetArtifact(source, &store.SourceArtifact{LocalPath: "/replacement", FS: fstest.MapFS{}})
+			assert.Equal(t, reads.Valid(), !aliasMounted)
 		})
 	}
 }

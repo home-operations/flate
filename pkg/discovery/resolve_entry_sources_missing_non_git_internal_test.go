@@ -10,6 +10,9 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -18,6 +21,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -131,6 +135,13 @@ func TestResolveEntrySources_Content(t *testing.T) {
 
 func TestResolveEntrySources_IndexedDeclarations(t *testing.T) {
 	t.Parallel()
+	t.Run("git changed only", func(t *testing.T) {
+		t.Parallel()
+		kind, independent := manifest.KindOCIRepository, false
+		testResolveEntrySourcesIndexedDeclarationsCase(t, testResolveEntrySourcesIndexedDeclarationsCaseInputs{
+			kind: &kind, independent: &independent, changed: true,
+		})
+	})
 	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindHelmRepository, manifest.KindBucket} {
 		for _, independent := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/independent=%t", kind, independent), func(t *testing.T) {
@@ -195,6 +206,7 @@ func testResolveEntrySourcesContentCase(t *testing.T, testCaseInput testResolveE
 type testResolveEntrySourcesIndexedDeclarationsCaseInputs struct {
 	kind        *string
 	independent *bool
+	changed     bool
 }
 
 func testResolveEntrySourcesIndexedDeclarationsCase(
@@ -204,6 +216,7 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 	t.Helper()
 
 	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
 	id := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      (*testCaseInput.kind),
@@ -227,6 +240,12 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 			spec,
 		),
 	)
+	testutil.GitCommitAll(t, repo, "indexed declaration", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@e"},
+	})
+	testutil.WriteFile(t, root, ".gitignore", "*.yaml\n")
+	testutil.WriteFile(t, root, "entry/ignored.yaml", testutil.KustomizationYAML("ignored", "apps",
+		"  path: ./payload\n  sourceRef: {kind: GitRepository, name: ignored-source}\n"))
 	st := store.New()
 	l := loader.New(st)
 	l.SourceRoot = root
@@ -258,15 +277,22 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	cfg := Config{
-		Path:      filepath.Join(root, "entry"),
-		RepoRoot:  root,
-		Store:     st,
-		Selection: selection.Request{Roots: []manifest.NamedResource{requester.Named()}},
+		Path:     filepath.Join(root, "entry"),
+		RepoRoot: root,
+		Store:    st,
+		Selection: selection.Request{
+			Roots:   []manifest.NamedResource{requester.Named()},
+			Changed: testCaseInput.changed,
+		},
 	}
 	if *testCaseInput.independent {
 		cfg.Selection.Roots = []manifest.NamedResource{id}
 	}
 	configureSelection(t, l, cfg.Selection)
+	if testCaseInput.changed {
+		cfg.Changes = change.NewSet([]string{"payload/input.yaml"})
+		l.Options.Changes = cfg.Changes
+	}
 	d := Session{cfg: cfg, loader: l}
 
 	{
@@ -280,6 +306,9 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 	}
 
 	l.Admit(root)
+	ignored := testutil.KustomizationID("apps", "ignored")
+	_, ignoredIndexed := l.Index.Lookup(ignored)
+	assert.Equal(t, ignoredIndexed, false)
 	record, indexed := l.Index.Lookup(id)
 
 	assert.FatalIf(
@@ -336,4 +365,11 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 		"%v",
 		"explicit non-Git declaration acquired a local artifact",
 	)
+	assert.Equal(t, st.GetObject(ignored) == nil, true)
+	ignoredSource := manifest.NamedResource{
+		Group: manifest.SourceDomain, Kind: manifest.KindGitRepository,
+		Namespace: "apps", Name: "ignored-source",
+	}
+	assert.Equal(t, st.GetObject(ignoredSource) == nil, true)
+	assert.Equal(t, st.GetArtifact(ignoredSource, store.ArtifactContent) == nil, true)
 }

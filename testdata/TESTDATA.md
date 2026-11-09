@@ -16,6 +16,9 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`gitignored-working-tree/ignored-working-tree` keeps ignored untracked desktop files and Flux declarations out of local Git inputs.
+Two replays compare complete full-selection, changed-only, and diff output with fresh caches and two workers.
+
 - `bootstrap-credentials/build-and-diff` compares complete build and diff output before and after a bootstrap source gains unavailable authentication and verification references.
   Both replays use two workers and fresh caches.
 

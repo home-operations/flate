@@ -1,0 +1,351 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "21584c02d5eccbb0e64006722f45fd8556f4af06",
+    "paths": [
+      "test/e2e/scope/gitignored_working_tree_test.go"
+    ],
+    "reductions": "Authored offline witness for repository-ignored desktop files and untracked Flux declarations."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "edit",
+      "directory": "overlays/edit"
+    },
+    {
+      "name": "noise",
+      "directory": "overlays/noise",
+      "operations": [
+        {
+          "rename": {
+            "from": "repo/flux/desktop-noise",
+            "to": "repo/flux/.DS_Store"
+          }
+        },
+        {
+          "rename": {
+            "from": "repo/flux/observability/desktop-noise",
+            "to": "repo/flux/observability/.DS_Store"
+          }
+        }
+      ]
+    },
+    {
+      "name": "declaration",
+      "directory": "overlays/declaration"
+    }
+  ],
+  "cases": [
+    {
+      "name": "ignored-working-tree",
+      "description": "Ignored untracked files leave full visibility and changed-only selection unchanged.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "edit"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "clean-full",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "-o",
+              "name",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "clean-full",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "clean-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "-o",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--base",
+              "HEAD"
+            ],
+            "cache": {
+              "name": "clean-changed",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/changed.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "clean-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--base",
+              "HEAD"
+            ],
+            "cache": {
+              "name": "clean-diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "add-noise",
+          "edit": {
+            "overlay": "noise"
+          }
+        },
+        {
+          "id": "noise-changed",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "-o",
+              "yaml",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--base",
+              "HEAD"
+            ],
+            "cache": {
+              "name": "noise-changed",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/changed.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "noise-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "-o",
+              "diff",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--base",
+              "HEAD"
+            ],
+            "cache": {
+              "name": "noise-diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "add-ignored-declaration",
+          "edit": {
+            "overlay": "declaration"
+          }
+        },
+        {
+          "id": "ignored-full",
+          "invoke": {
+            "argv": [
+              "get",
+              "ks",
+              "--path",
+              "@@repo@@/flux",
+              "-o",
+              "name",
+              "--no-progress",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "ignored-full",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/.gitignore",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "repo/flux/a.yaml",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "repo/flux/b.yaml",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "repo/workloads/a/kustomization.yaml",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "repo/workloads/a/cm.yaml",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "repo/workloads/b/kustomization.yaml",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "repo/workloads/b/cm.yaml",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "overlays/edit/repo/workloads/a/cm.yaml",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "overlays/noise/repo/flux/desktop-noise",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "overlays/noise/repo/flux/observability/desktop-noise",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "overlays/declaration/repo/flux/ignored.yaml",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Offline source content or ignored-input witness."
+    },
+    {
+      "path": "expect/full.stdout",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Independently authored complete expected stream."
+    },
+    {
+      "path": "expect/changed.stdout",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Independently authored complete expected stream."
+    },
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Independently authored complete expected stream."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "ignored-working-tree"
+      ],
+      "purpose": "Independently authored complete expected stream."
+    }
+  ]
+}

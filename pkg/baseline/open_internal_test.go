@@ -282,7 +282,7 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 
 func TestAutoResolve_CheckoutInventory(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"unchanged_symlink", "ignored_file", "submodule_file"} {
+	for _, kind := range []string{"unchanged_symlink", "ignored_file", "tracked_match", "unignored_file", "submodule_file"} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -301,8 +301,16 @@ func TestAutoResolve_CheckoutInventory(t *testing.T) {
 				_, err = worktree.Add(".gitignore")
 				assert.NoError(t, err)
 				testutil.WriteFile(t, root, "ignored/input.yaml", "new")
-				want = []string{"ignored/input.yaml"}
+			case "tracked_match":
+				testutil.WriteFile(t, root, ".gitignore", "input.yaml\n")
+				_, err = worktree.Add(".gitignore")
+				assert.NoError(t, err)
+			case "unignored_file":
+				want = []string{"notes.txt"}
 			case "submodule_file":
+				testutil.WriteFile(t, root, ".gitignore", "module/\n")
+				_, err = worktree.Add(".gitignore")
+				assert.NoError(t, err)
 				module := filepath.Join(root, "module")
 				assert.NoError(t, os.Mkdir(module, 0o755))
 				hash := initRepoWithFile(t, module, "input.yaml", "new")
@@ -325,12 +333,57 @@ func TestAutoResolve_CheckoutInventory(t *testing.T) {
 			}
 			pin, err := worktree.Commit(
 				"checkout inventory",
-				&git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.invalid"}},
+				&git.CommitOptions{
+					AllowEmptyCommits: true,
+					Author:            &object.Signature{Name: "test", Email: "test@example.invalid"},
+				},
 			)
 			assert.NoError(t, err)
+			if kind == "tracked_match" {
+				testutil.WriteFile(t, root, "input.yaml", "modified tracked file")
+				want = []string{"input.yaml"}
+			}
+			if kind == "unignored_file" {
+				testutil.WriteFile(t, root, "notes.txt", "untracked input")
+			}
 			result, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
 			assert.NoError(t, err)
 			assert.Diff(t, result.Changes.Paths(), want)
 		})
 	}
+}
+
+func TestAutoResolve_IgnoredHistoricalRemoval(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	for _, name := range []string{"historical.ignored", "tracked.ignored"} {
+		testutil.WriteFile(t, root, name, "identical historical bytes")
+	}
+	base := testutil.GitCommitAll(t, repo, "historical inputs", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@e"},
+	})
+	worktree, err := repo.Worktree()
+	assert.NoError(t, err)
+	_, err = worktree.Remove("historical.ignored")
+	assert.NoError(t, err)
+	testutil.WriteFile(t, root, ".gitignore", "*.ignored\n")
+	head := testutil.GitCommitAll(t, repo, "remove historical input", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@e"},
+	})
+	assert.Equal(t, base != head, true)
+	testutil.WriteFile(t, root, "historical.ignored", "identical historical bytes")
+	result, err := AutoResolve(t.Context(), root, base.String(), cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
+	data, err := fs.ReadFile(result.BaseInput.FS, "historical.ignored")
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), "identical historical bytes")
+	_, err = fs.ReadFile(result.Source.FS, "historical.ignored")
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+	for _, input := range []*store.SourceArtifact{result.BaseInput, result.Source} {
+		data, readErr := fs.ReadFile(input.FS, "tracked.ignored")
+		assert.NoError(t, readErr)
+		assert.Equal(t, string(data), "identical historical bytes")
+	}
+	assert.Diff(t, result.Changes.Paths(), []string{"historical.ignored"})
 }

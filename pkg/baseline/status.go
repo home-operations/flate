@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path"
 	"slices"
@@ -17,6 +18,8 @@ import (
 	merklefs "github.com/go-git/go-git/v5/utils/merkletrie/filesystem"
 	merkleindex "github.com/go-git/go-git/v5/utils/merkletrie/index"
 	"github.com/go-git/go-git/v5/utils/merkletrie/noder"
+
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 //nolint:wrapcheck // The adapter preserves upstream filesystem and repository error identities.
@@ -35,6 +38,7 @@ func (s selection) worktreeChanges(
 	defer func() { _ = root.Close() }()
 	input := &worktreeMetadata{
 		Filesystem: osfs.New(root.Name()), root: root, ctx: ctx, observations: map[string]os.FileInfo{},
+		current: s.current.OperationView(),
 	}
 	observed, err := git.Open(s.repo.Storer, input)
 	if err == nil {
@@ -62,6 +66,7 @@ type worktreeMetadata struct {
 	billy.Filesystem
 
 	root         *os.Root
+	current      *gittree.FS
 	ctx          context.Context //nolint:containedctx // The upstream filesystem interface has no context parameter; this view shares one operation lifetime.
 	prefix       string
 	observations map[string]os.FileInfo
@@ -80,16 +85,27 @@ func (w *worktreeMetadata) ReadDir(name string) ([]os.FileInfo, error) {
 		return nil, err
 	}
 	entries, readErr := file.Readdir(-1)
-	if err := errors.Join(readErr, file.Close()); err != nil {
-		return nil, err
+	if closeErr := errors.Join(readErr, file.Close()); closeErr != nil {
+		return nil, closeErr
 	}
 	slices.SortFunc(entries, func(a, b os.FileInfo) int { return strings.Compare(a.Name(), b.Name()) })
+	selected := entries[:0]
 	for _, info := range entries {
+		if info.Mode().IsRegular() || info.IsDir() {
+			info, err = w.current.Lstat(path.Join(w.prefix, name, info.Name()))
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
 		if info.IsDir() {
 			w.observations[path.Join(w.prefix, name, info.Name())] = info
 		}
+		selected = append(selected, info)
 	}
-	return entries, nil
+	return selected, nil
 }
 
 //nolint:wrapcheck // Filesystem adapters preserve I/O and cancellation error identities.
@@ -105,6 +121,9 @@ func (w *worktreeMetadata) Lstat(name string) (os.FileInfo, error) {
 		return info, nil
 	}
 	info, err := w.root.Lstat(name)
+	if err == nil && (info.Mode().IsRegular() || info.IsDir()) {
+		info, err = w.current.Lstat(name)
+	}
 	if err == nil && info.IsDir() {
 		w.observations[name] = info
 	}
@@ -119,5 +138,6 @@ func (w *worktreeMetadata) Chroot(name string) (billy.Filesystem, error) {
 	}
 	return &worktreeMetadata{
 		Filesystem: scoped, root: w.root, ctx: w.ctx, prefix: path.Join(w.prefix, name), observations: w.observations,
+		current: w.current,
 	}, nil
 }

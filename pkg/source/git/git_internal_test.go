@@ -282,9 +282,12 @@ func TestFetcher_References(t *testing.T) {
 		warmCommit        string
 		recurse           bool
 		wantErr           bool
+		invalidInput      bool
 		errText           string
 		localAcquisitions uint64
 	}{
+		{name: "invalid full commit", ref: &sourcev1.GitRepositoryRef{Commit: strings.Repeat("g", 40)}, wantErr: true, invalidInput: true},
+		{name: "invalid commit branch", ref: &sourcev1.GitRepositoryRef{Commit: first, Branch: "bad branch"}, wantErr: true, invalidInput: true},
 		{name: "HEAD", depth: 1, want: tip, files: []string{"hello.txt", "second.txt"}, localAcquisitions: 1},
 		{
 			name:              "tag",

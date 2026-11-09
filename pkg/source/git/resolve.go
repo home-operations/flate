@@ -22,9 +22,6 @@ func resolveRefHash(repo *git.Repository, ref *sourcev1.GitRepositoryRef, origin
 	kind, value := reference.Kind, reference.Value
 	switch kind {
 	case commitReference:
-		if err := selected.Validate(); err != nil {
-			return plumbing.ZeroHash, manifest.NewError(manifest.ErrInput, err, "")
-		}
 		hash := plumbing.NewHash(value)
 		commit, err := readCommit(repo, hash)
 		if err != nil {

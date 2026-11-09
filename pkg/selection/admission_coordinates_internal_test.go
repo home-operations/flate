@@ -123,3 +123,90 @@ func TestAdmission_DeclarationMountSource(t *testing.T) {
 		})
 	}
 }
+
+func TestAdmission_DeclarationMountLifetime(t *testing.T) {
+	t.Parallel()
+	source := (&manifest.GitRepository{Name: "self", Namespace: "flux-system"}).Named()
+	id := (&manifest.Kustomization{Name: "cluster", Namespace: "flux-system"}).Named()
+	for _, tc := range []struct {
+		name         string
+		aliasMounted bool
+		committed    bool
+		absent       bool
+		stale        bool
+		replaced     manifest.NamedResource
+		wantReads    int
+	}{
+		{name: "bootstrap replacement", replaced: manifest.BootstrapSourceID, wantReads: 1},
+		{name: "alias survives bootstrap replacement", aliasMounted: true, replaced: manifest.BootstrapSourceID, wantReads: 1},
+		{name: "absent mount", absent: true, replaced: source},
+		{name: "stale bootstrap", stale: true, replaced: manifest.BootstrapSourceID, wantReads: 1},
+		{name: "stale alias", aliasMounted: true, stale: true, replaced: source, wantReads: 1},
+		{name: "committed mount", aliasMounted: true, committed: true, replaced: source, wantReads: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bootstrap := &store.SourceArtifact{LocalPath: "/workspace", FS: fstest.MapFS{}}
+			alias := &store.SourceArtifact{LocalPath: "/alias", InputAlias: !tc.committed, FS: fstest.MapFS{}}
+			mounted, want := bootstrap, manifest.BootstrapSourceID
+			if tc.aliasMounted {
+				mounted, want = alias, source
+			}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+			st.SetArtifact(source, alias)
+			facts := &solverFacts{
+				sources: map[manifest.NamedResource]SourceFacts{
+					manifest.BootstrapSourceID: {Source: manifest.BootstrapSourceID, Input: bootstrap},
+					source:                     {Source: source, Input: alias},
+				},
+				occurrences: map[manifest.NamedResource]OccurrenceFacts{
+					id: {
+						Identity: id, Authored: id,
+						Declaration: OccurrenceID{Source: mounted.LocalPath, File: "cluster.yaml"},
+						Mounted:     mounted, CatalogKnown: true,
+					},
+				},
+			}
+			if tc.absent {
+				occurrence := facts.occurrences[id]
+				occurrence.Mounted = nil
+				facts.occurrences[id] = occurrence
+			}
+			c := solverClosure(t, st, facts)
+			c.states[id] = admissionState{productionsKnown: true, productions: []manifest.Production{{Source: source}}}
+			var reads store.ReadSet
+			reads.Init(st, id, nil)
+			defer reads.Retire()
+			tracked := &admissionArtifactReads{admissionReader: &reads, bySource: map[manifest.NamedResource]int{}}
+			c.objects, c.proposal.reads = tracked, &reads
+			replace, done := make(chan struct{}), make(chan struct{})
+			go func() {
+				<-replace
+				st.SetArtifact(tc.replaced, &store.SourceArtifact{LocalPath: "/replacement", FS: fstest.MapFS{}})
+				close(done)
+			}()
+			if tc.stale {
+				close(replace)
+				<-done
+			}
+			input, support := c.hydrationSource(id, mounted.LocalPath)
+			if tc.absent || tc.stale {
+				assert.Equal(t, input == nil, true)
+				assert.Equal(t, support, manifest.NamedResource{})
+			} else {
+				assert.Equal(t, input == mounted, true)
+				assert.Equal(t, support, want)
+			}
+			assert.Equal(t, reads.Valid(), true)
+			assert.Equal(t, len(tracked.bySource), tc.wantReads)
+			_, captured := tracked.bySource[want]
+			assert.Equal(t, captured, !tc.absent)
+			if !tc.stale {
+				close(replace)
+				<-done
+				assert.Equal(t, reads.Valid(), tc.absent || tc.replaced != want)
+			}
+		})
+	}
+}

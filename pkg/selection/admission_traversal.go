@@ -88,13 +88,14 @@ func (c *admissionClosure) hydrationSource(
 	root string,
 ) (*store.SourceArtifact, manifest.NamedResource) {
 	mounted := c.occurrenceMount(id, root)
-	// Bootstrap declarations MUST not depend on unused alias authority.
-	source := manifest.BootstrapSourceID
-	candidate, _ := c.objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-	if candidate != mounted {
-		source = c.source(id)
-		candidate, _ = c.objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+	if mounted == nil {
+		return nil, manifest.NamedResource{}
 	}
+	source := manifest.BootstrapSourceID
+	if mounted != c.facts.SourceFacts(manifest.BootstrapSourceID, nil).Input {
+		source = c.source(id)
+	}
+	candidate, _ := c.objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 	if candidate == nil || candidate != mounted || !c.objects.SourceAdmission(id, source) {
 		return nil, manifest.NamedResource{}
 	}

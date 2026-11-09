@@ -253,6 +253,12 @@ func (r *gitAcquisition) complete(
 	if _, err := f.validateRepo(r.spec, false); err != nil {
 		return nil, err
 	}
+	ref := (*manifest.GitRepositoryRef)(r.spec.Reference)
+	if ref.Effective().Kind == commitReference {
+		if err := ref.Validate(); err != nil {
+			return nil, manifest.NewError(manifest.ErrInput, err, "")
+		}
+	}
 	return f.fetch(ctx, r, &policy)
 }
 

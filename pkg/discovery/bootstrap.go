@@ -484,12 +484,8 @@ func (a *Admission) resolve(
 	}
 	alias, descriptor := behavior.BootstrapAlias(bootstrap.LocalPath)
 	candidate.git = descriptor
-	ref := (*manifest.GitRepositoryRef)(descriptor.Reference)
-	reference := ref.Effective()
-	// A self-source branch selects the deployed branch, not the checkout being
-	// previewed. Both comparison sides must retain their admitted input.
 	candidate.pinned = !candidate.synthetic && id != manifest.BootstrapSourceID &&
-		reference.Kind != "" && (reference.Kind != "branch" || descriptor.RecurseSubmodules)
+		descriptor.BootstrapPinned()
 	if id != manifest.BootstrapSourceID && !candidate.synthetic {
 		if _, match := a.remotes[normalizeGitURL(descriptor.URL)]; !match {
 			return candidate, nil
@@ -502,23 +498,22 @@ func (a *Admission) resolve(
 		candidate.artifact = bootstrap
 		return candidate, nil
 	}
-	if err := ref.Validate(); err != nil {
-		return candidate, manifest.NewError(manifest.ErrInput, err, "")
-	}
+	var location *gitrepo.Location
 	if candidate.pinned {
-		var location *gitrepo.Location
 		if input, ok := bootstrap.FS.(*gittree.FS); ok {
 			location = input.Location()
 		}
-		artifacts, err := git.ResolveLocal(
-			ctx,
-			location,
-			[]*manifest.GitRepository{descriptor},
-			git.LocalOptions{Revision: bootstrap.Revision, Work: work},
-		)
-		if err != nil {
-			return candidate, err
-		}
+	}
+	artifacts, err := git.ResolveLocal(
+		ctx,
+		location,
+		[]*manifest.GitRepository{descriptor},
+		git.LocalOptions{Revision: bootstrap.Revision, Work: work},
+	)
+	if err != nil {
+		return candidate, err
+	}
+	if candidate.pinned {
 		artifact := artifacts[id]
 		if artifact == nil {
 			candidate.warnings = []manifest.Warning{

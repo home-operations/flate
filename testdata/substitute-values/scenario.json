@@ -271,6 +271,12 @@
         },
         {
           "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod",
+            "to": "repo/kubernetes/apps/${ENV:=prod}"
+          }
         }
       ]
     },
@@ -301,6 +307,12 @@
         },
         {
           "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod",
+            "to": "repo/kubernetes/apps/${ENV:=prod}"
+          }
         }
       ]
     },
@@ -331,6 +343,12 @@
         },
         {
           "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod",
+            "to": "repo/kubernetes/apps/${ENV:=prod}"
+          }
         }
       ]
     },
@@ -361,20 +379,59 @@
         },
         {
           "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod",
+            "to": "repo/kubernetes/apps/${ENV:=prod}"
+          }
         }
       ]
     },
     {
       "name": "setup-literal-kustomization-path-changed-only-2",
-      "directory": "overlays/setup-literal-kustomization-path-changed-only-2"
+      "directory": "overlays/setup-literal-kustomization-path-changed-only-2",
+      "operations": [
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod/cm.yaml",
+            "to": "repo/kubernetes/apps/${ENV:=prod}/cm.yaml"
+          }
+        },
+        {
+          "delete": "repo/kubernetes/apps/env-prod"
+        }
+      ]
     },
     {
       "name": "setup-literal-kustomization-path-paired-diff-2",
-      "directory": "overlays/setup-literal-kustomization-path-paired-diff-2"
+      "directory": "overlays/setup-literal-kustomization-path-paired-diff-2",
+      "operations": [
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod/cm.yaml",
+            "to": "repo/kubernetes/apps/${ENV:=prod}/cm.yaml"
+          }
+        },
+        {
+          "delete": "repo/kubernetes/apps/env-prod"
+        }
+      ]
     },
     {
       "name": "setup-literal-kustomization-path-reverse-diff-2",
-      "directory": "overlays/setup-literal-kustomization-path-reverse-diff-2"
+      "directory": "overlays/setup-literal-kustomization-path-reverse-diff-2",
+      "operations": [
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod/cm.yaml",
+            "to": "repo/kubernetes/apps/${ENV:=prod}/cm.yaml"
+          }
+        },
+        {
+          "delete": "repo/kubernetes/apps/env-prod"
+        }
+      ]
     }
   ],
   "inputs": "inputs",
@@ -1236,7 +1293,7 @@
       "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
     },
     {
-      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-changed-only",
         "literal-kustomization-path-paired-diff"
@@ -1244,7 +1301,7 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/env-prod/kustomization.yaml",
       "cases": [
         "literal-kustomization-path-changed-only",
         "literal-kustomization-path-paired-diff"
@@ -1284,14 +1341,14 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-full-build"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/env-prod/kustomization.yaml",
       "cases": [
         "literal-kustomization-path-full-build"
       ],
@@ -1305,14 +1362,14 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-own-postbuild"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/env-prod/kustomization.yaml",
       "cases": [
         "literal-kustomization-path-own-postbuild"
       ],
@@ -1326,14 +1383,14 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-reverse-diff"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/env-prod/kustomization.yaml",
       "cases": [
         "literal-kustomization-path-reverse-diff"
       ],
@@ -1368,21 +1425,21 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/setup-literal-kustomization-path-changed-only-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/setup-literal-kustomization-path-changed-only-2/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-changed-only"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/setup-literal-kustomization-path-paired-diff-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/setup-literal-kustomization-path-paired-diff-2/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-paired-diff"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/setup-literal-kustomization-path-reverse-diff-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/setup-literal-kustomization-path-reverse-diff-2/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-reverse-diff"
       ],

@@ -197,7 +197,6 @@ func (o *Orchestrator) configureControllers() {
 		Loader:                  o.loader,
 		Index:                   o.index,
 		Existence:               existence,
-		PreflightFailure:        o.preflightFailure,
 		AllowMissingKinds:       o.cfg.AllowMissingKinds,
 	}
 	o.ksc.Configure(kustomization.Options{

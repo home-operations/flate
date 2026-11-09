@@ -253,6 +253,12 @@ func (g *dependencyGraph) Failures() map[manifest.NamedResource]*dependencyCycle
 	return g.snapshotFailedLocked()
 }
 
+func (g *dependencyGraph) failuresCurrent(failures map[manifest.NamedResource]*dependencyCycle) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return maps.Equal(g.failed, failures)
+}
+
 type dependencyCycle struct {
 	path    []manifest.NamedResource
 	message atomic.Pointer[string]

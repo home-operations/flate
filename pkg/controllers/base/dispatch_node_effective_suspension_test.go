@@ -40,16 +40,11 @@ func TestDispatchNode_EffectiveSuspension(t *testing.T) {
 	}
 	publish(input)
 	entered, replaced := make(chan struct{}), make(chan struct{})
-	c.Configure(base.Options{PreflightFailure: func(id manifest.NamedResource) (string, bool) {
-		if id == input.Named() {
-			close(entered)
-			tasks.YieldSlot(func() { <-replaced })
-		}
-		return "", false
-	}})
 	c.StartLifecycle()
 	var bodies atomic.Int64
 	tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
+		close(entered)
+		tasks.YieldSlot(func() { <-replaced })
 		run := controllertest.NewExecution(c, input.Named())
 		run.Dispatch(
 			ctx,

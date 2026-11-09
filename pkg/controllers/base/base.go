@@ -34,7 +34,6 @@ type Controller struct {
 	// AllowMissingKinds permits unavailable Helm valuesFrom kinds and absent CRDs.
 	AllowMissingKinds []string
 	allowMissingCRDs  bool
-	preflight         func(manifest.NamedResource) (string, bool)
 }
 
 // New constructs a controller with the shared store and task service.
@@ -72,10 +71,6 @@ type Options struct {
 	Existence depwait.ExistenceLookup
 	// AllowMissingKinds permits unavailable Helm valuesFrom kinds and absent CRDs.
 	AllowMissingKinds []string
-	// PreflightFailure reports dependency-graph errors discovered before
-	// reconcile; when set for an id the controller marks it Failed and renders
-	// nothing.
-	PreflightFailure func(manifest.NamedResource) (string, bool)
 }
 
 // Configure installs immutable setup before dispatch.
@@ -88,7 +83,6 @@ func (c *Controller) Configure(opts Options) {
 	c.loader = opts.Loader
 	c.SkipKinds = opts.SkipKinds
 	c.existence = opts.Existence
-	c.preflight = opts.PreflightFailure
 	c.Store.SetDiscoveryIndex(opts.Index)
 	c.allowMissingCRDs = slices.Contains(opts.AllowMissingKinds, manifest.KindCustomResourceDefinition)
 	c.AllowMissingKinds = opts.AllowMissingKinds

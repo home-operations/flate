@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -329,14 +328,12 @@ func TestEmit_LatePreflight(t *testing.T) {
 			)
 			admissiontest.Commit(t, filterLoader.Options.Session, nil)
 			filter := filterLoader.Options.Session
-			var reject atomic.Bool
 			c := New(s, task.NewBounded(2))
 			c.Configure(
 				Options{
-					Session:          filter,
-					Index:            index,
-					PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() },
-					Loader:           filterLoader,
+					Session: filter,
+					Index:   index,
+					Loader:  filterLoader,
 				},
 			)
 			execution := gateExecution(c, parent.Named())
@@ -351,7 +348,6 @@ func TestEmit_LatePreflight(t *testing.T) {
 			_, _, next := s.GetEmission(parent.Named())
 			defer next.Finish()
 			next.Children, next.Complete = []store.Child{{Obj: child}}, complete
-			reject.Store(true)
 			s.SetPreflight(parent.Named(), "cycle")
 			payloads := map[manifest.NamedResource]*store.SourceArtifact{child.Named(): {FS: fstest.MapFS{}}}
 			{

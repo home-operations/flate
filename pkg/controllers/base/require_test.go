@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestExecution_CycleSettlementOrder(t *testing.T) {
@@ -32,12 +33,26 @@ func TestExecution_CycleSettlementOrder(t *testing.T) {
 		t.Run(ids[first].Name+"_first", func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
+			tasks := task.NewBounded(2)
 			for _, id := range ids {
 				st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
-				st.SetPreflight(id, message)
 				st.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
 			}
-			c := base.New(st, nil)
+			c := base.New(st, tasks)
+			early := controllertest.NewExecution(c, ids[1-first])
+			defer early.Close()
+			assert.Equal(t, early.Reads.Preflight(), "")
+			st.SetPreflight(ids[first], message)
+			peer := controllertest.NewExecution(c, ids[first])
+			peer.Reads.Require(manifest.DependencyRef{NamedResource: ids[1-first]})
+			peer.Settle(t.Context(), manifest.DrainForce)
+			peer.Close()
+			early.Reads.Require(manifest.DependencyRef{NamedResource: ids[first]})
+			early.Settle(t.Context(), manifest.DrainForce)
+			before, _ := st.GetStatus(ids[1-first])
+			assert.Equal(t, before.Outcome(), store.OutcomeBlocked)
+			st.SetPreflight(ids[1-first], message)
+			assert.Equal(t, early.Valid(), false)
 			for i, id := range ids {
 				e := controllertest.NewExecution(c, id)
 				w := depwait.Waiter{Store: &e.Reads, Parent: id}
@@ -48,26 +63,34 @@ func TestExecution_CycleSettlementOrder(t *testing.T) {
 			release := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
 			done := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
 			for i, id := range ids {
-				go func() {
+				tasks.Go(t.Context(), id.String(), func(ctx context.Context) {
 					defer close(done[i])
 					<-release[i]
 					e := controllertest.NewExecution(c, id)
 					defer e.Close()
 					e.Reads.Require(manifest.DependencyRef{NamedResource: ids[1-i]})
-					e.Settle(t.Context(), manifest.DrainForce)
-				}()
+					e.Settle(ctx, manifest.DrainForce)
+				})
 			}
 			close(release[first])
 			<-done[first]
 			close(release[1-first])
 			<-done[1-first]
+			tasks.BlockTillDone()
 			var output strings.Builder
-			for _, id := range ids {
+			var statuses [2]store.StatusInfo
+			for i, id := range ids {
 				info, _ := st.GetStatus(id)
+				statuses[i] = info
 				assert.Equal(t, info.Outcome(), store.OutcomeFailed)
 				fmt.Fprintf(&output, "%s: %s\n", id, info.String())
 			}
 			assert.Equal(t, output.String(), want)
+			assert.Equal(t, statuses, [2]store.StatusInfo{
+				{Status: store.StatusFailed, Reason: store.ReasonFailed, Message: message},
+				{Status: store.StatusFailed, Reason: store.ReasonFailed, Message: message},
+			})
+			t.Logf("ordered statuses:\n%s", output.String())
 		})
 	}
 }

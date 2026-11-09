@@ -92,11 +92,7 @@ func testExecutionReplacesDerivedFailureProvenanceCase(
 		c.Configure(base.Options{Session: admissionLoader1.Options.Session, Loader: admissionLoader1})
 	}
 	if (*testCaseInput) == "preflight" {
-		c.Configure(
-			base.Options{
-				PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true },
-			},
-		)
+		st.SetPreflight(id, "cycle")
 	}
 	ran := false
 	execution := controllertest.NewExecution(c, id)
@@ -211,11 +207,7 @@ func testDispatchNodeCanonicalReadCase(t *testing.T, testCaseInput testDispatchN
 	c := base.New(s, task.NewBounded(2))
 	if (*testCaseInput.stage) == "preflight" {
 		s.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
-		c.Configure(
-			base.Options{
-				PreflightFailure: func(manifest.NamedResource) (string, bool) { replace(); return "", false },
-			},
-		)
+		replace()
 	} else {
 		s.UpdateFailure(
 			id,

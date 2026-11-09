@@ -213,7 +213,7 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 	{
-		msg, ok := o.preflightFailure(testutil.KustomizationID("flux-system", "consumer"))
+		msg, ok := capturedPreflight(o.store, testutil.KustomizationID("flux-system", "consumer"))
 		assert.FatalIf(t, ok, "consumer should wait for rendered dependency, not fail preflight: %s", msg)
 	}
 	{

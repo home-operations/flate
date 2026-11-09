@@ -297,7 +297,7 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 
 		for _, name := range []string{"owner", "sibling"} {
 			{
-				message, ok := o.preflightFailure(
+				message, ok := capturedPreflight(o.store,
 					testutil.KustomizationID("apps", name),
 				)
 				assert.FatalIf(t, !ok ||

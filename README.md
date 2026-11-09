@@ -307,7 +307,7 @@ If a GitRepository URL matches a checkout remote, flate uses the local files whe
 - No ref is set.
 - The ref sets only `branch`.
 
-This keeps pull-request changes visible when a source names a deployment branch, such as `main`.
+If a source names a deployment branch, such as `main`, pull-request changes stay visible.
 Each side of a diff uses its own files.
 The `commit`, `tag`, `semver` and `name` ref fields keep their current behavior.
 Use `ref.name: refs/heads/<branch>` to read a specific branch from the same repository.

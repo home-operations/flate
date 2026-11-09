@@ -8,7 +8,6 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/fluxcd/pkg/apis/kustomize"
 	"helm.sh/helm/v4/pkg/postrenderer"
-	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/resmap"
 	kustypes "sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
@@ -85,19 +84,11 @@ func runKustomizePostRender(in *bytes.Buffer, k *helmv2.Kustomize, work *manifes
 		return nil, fmt.Errorf("postRenderer: write kustomization: %w", writeFileErr)
 	}
 
-	opts := &krusty.Options{
-		LoadRestrictions: kustypes.LoadRestrictionsNone,
-		PluginConfig:     kustypes.DisabledPluginConfig(),
-	}
-	// kustomize's krusty pipeline mutates package-global state that is
-	// not goroutine-safe. Hold the shared build mutex so this HR
-	// post-render never runs concurrently with a Kustomization's
-	// build (or another HR's post-render) — see kustomizestate.BuildMutex.
 	work.Add(&manifest.WorkCounts{Attempts: 1})
 	rm, err := func() (resmap.ResMap, error) {
 		kustomizestate.BuildMutex.Lock()
 		defer kustomizestate.BuildMutex.Unlock()
-		return krusty.MakeKustomizer(opts).Run(fs, ".")
+		return kustomizestate.Build(fs, ".")
 	}()
 	work.Finish(err)
 	if err != nil {

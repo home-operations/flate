@@ -264,7 +264,7 @@ Its `source` records the repository, full revision, original paths, and reductio
 `inputs` names supplied material outside the rendered repository.
 `tokens` declares exact file sentinels that need runtime references before commit creation.
 `files` assigns every file to named cases and states its purpose.
-The schema guard rejects missing expectations, undeclared files, and empty successful Kustomize packages.
+The schema guard rejects missing expectations, undeclared files, empty successful Kustomize packages, and file paths that a Go module zip rejects.
 
 Each case declares initial `setup`, an optional working directory, environment values, a cache policy, and ordered `steps`.
 Each step has a unique `id` and exactly one `edit` or `invoke`.

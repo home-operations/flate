@@ -30,11 +30,10 @@ func Compare(
 	selectedErr error,
 	opts Options,
 ) ([]byte, []manifest.Warning, []Suppression, error) {
-	projection := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
-	left, right, suppressed := projection.Orig, projection.Current, projection.Suppressed
-	opts.subjects = [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}
+	prepared, suppressed := diffprep.PrepareSnapshots(
+		diffprep.Snapshot(orig), diffprep.Snapshot(current), prepareOptions(new(opts)),
+	)
 	opts.Suppressed = append(slices.Clone(opts.Suppressed), publicSuppressions(suppressed)...)
-	prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), prepareOptions(new(opts)))
 	out, err := renderPrepared(prepared, new(opts))
 	warnings := prepared.Warnings
 	return out, warnings, opts.Suppressed, errors.Join(err, selectedErr)

@@ -2,6 +2,7 @@ package diffprep
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -195,6 +196,31 @@ func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Si
 		plans[key] = plan
 	}
 	return out
+}
+
+// PrepareSnapshots pairs the documents Suppress retains under each side's comparison identities.
+func PrepareSnapshots(orig, current Snapshot, opts *Options) (Prepared, []Suppression) {
+	retained := Suppress(orig, current)
+	options := *opts
+	options.Subjects = [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}
+	options.producerKeys = [2]map[manifest.NamedResource]manifest.NamedResource{
+		orig.pairingKeys(current.Manifests), current.pairingKeys(orig.Manifests),
+	}
+	return Prepare(Documents(retained.Orig), Documents(retained.Current), &options), retained.Suppressed
+}
+
+// A producer that also emits on the other side MUST pair under its own identity.
+func (s Snapshot) pairingKeys(other []manifest.DocumentBatch) map[manifest.NamedResource]manifest.NamedResource {
+	keys := s.ProducerKeys
+	for producer := range s.ProducerKeys {
+		if slices.ContainsFunc(other, func(batch manifest.DocumentBatch) bool {
+			return batch.Parent != nil && batch.Parent.Named() == producer
+		}) {
+			keys = maps.Clone(keys)
+			delete(keys, producer)
+		}
+	}
+	return keys
 }
 
 // SuppressionResult keeps both retained sides with their shared withholding reasons.

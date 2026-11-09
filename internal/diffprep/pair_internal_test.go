@@ -135,7 +135,7 @@ func TestPair_EntryComparisonPreservesCurrentParent(t *testing.T) {
 	prepared := Prepare(
 		[]Doc{cmDoc(&old, id, "before", "")},
 		[]Doc{cmDoc(&current, id, "after", "")},
-		&Options{ProducerKeys: [2]map[manifest.NamedResource]manifest.NamedResource{
+		&Options{producerKeys: [2]map[manifest.NamedResource]manifest.NamedResource{
 			{old.NamedResource: key}, {current.NamedResource: key},
 		}},
 	)

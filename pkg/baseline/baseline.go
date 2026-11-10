@@ -72,11 +72,12 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 		)
 	}
 	root := location.ContentRoot
-	input, err := admitLocation(ctx, location, manifest.WorkScope{})
+	directory, err := admitLocation(ctx, location, manifest.WorkScope{})
 	if err != nil {
 		return nil, err
 	}
-	input = gittree.ExcludeDirectory(input, owner.Directory())
+	defer func() { _ = directory.Close() }()
+	input := gittree.ExcludeDirectory(directory.Artifact(), owner.Directory())
 	current, _ := input.FS.(*gittree.FS)
 	s := selection{repo: repo, current: current.OperationView(), input: input, owner: owner}
 	r, err := s.resolve(ctx, location, base)
@@ -89,6 +90,10 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 		Remotes []string
 	}{root, urls}
 	s.base, s.content = r, content
+	s.worktree, err = directory.Worktree(current)
+	if err != nil {
+		return nil, fmt.Errorf("worktree: %w", err)
+	}
 	before, selected, _, warnings, err := selectChanges(ctx, s)
 	input.Warnings = append(slices.Clone(input.Warnings), warnings...)
 	var baseWarnings []manifest.Warning
@@ -179,16 +184,20 @@ func ResolvePaths(ctx context.Context, current, original string) (*Result, error
 		}
 		urls = after.URLs
 	}
-	baseInput, err := admitLocation(ctx, before, manifest.WorkScope{})
+	baseDirectory, err := admitLocation(ctx, before, manifest.WorkScope{})
 	if err != nil {
 		return nil, err
 	}
+	_ = baseDirectory.Close()
+	baseInput := baseDirectory.Artifact()
 	input := baseInput
 	if after.ContentRoot != before.ContentRoot {
-		input, err = admitLocation(ctx, after, manifest.WorkScope{})
+		directory, err := admitLocation(ctx, after, manifest.WorkScope{})
 		if err != nil {
 			return nil, err
 		}
+		input = directory.Artifact()
+		_ = directory.Close()
 	} else if after.ScanPath != before.ScanPath {
 		if _, err := os.Stat(after.ScanPath); err != nil {
 			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("--path %q: %w", after.ScanPath, err), "")

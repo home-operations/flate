@@ -208,8 +208,10 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			fixture := testutil.NewSparseGit(t, size.files, size.bytes)
 			location, err := gitrepo.Locate(t.Context(), fixture.Root, "")
 			assert.NoError(t, err)
-			input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
+			directory, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 			assert.NoError(t, err)
+			t.Cleanup(func() { _ = directory.Close() })
+			input := directory.Artifact()
 			reads := &testutil.GitReads{LargeHash: fixture.Large}
 			observed := *fixture.Repo
 			observed.Storer = &testutil.CountingStorer{Storer: fixture.Repo.Storer, Reads: reads}
@@ -230,9 +232,9 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			}
 			reads.Reset()
 			s := selection{
-				repo:    &observed,
-				base:    &resolution{Repo: &observed, Hash: fixture.Base},
-				current: input.FS.(*gittree.FS),
+				repo:     &observed,
+				base:     &resolution{Repo: &observed, Hash: fixture.Base},
+				worktree: comparisonWorktree(t, input.FS.(*gittree.FS)), current: input.FS.(*gittree.FS),
 			}
 			entries, comparison, err := s.baseEntries(t.Context())
 			assert.NoError(t, err)

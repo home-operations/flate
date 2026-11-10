@@ -3,13 +3,11 @@ package baseline
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/utils/merkletrie"
@@ -17,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
@@ -32,11 +31,11 @@ func TestStatus_MetadataObservation(t *testing.T) {
 	original, err := repo.Worktree()
 	assert.NoError(t, err)
 	counted := &countedMetadata{Filesystem: original.Filesystem}
-	observed := *original
-	observed.Filesystem = counted
-	input, _, err := AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
+	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	s := selection{repo: repo, current: input.FS.(*gittree.FS)}
+	location.Repository, err = git.Open(repo.Storer, counted)
+	assert.NoError(t, err)
+	s := selection{repo: repo}
 	head, err := repo.Head()
 	assert.NoError(t, err)
 	commit, err := repo.CommitObject(head.Hash())
@@ -47,7 +46,12 @@ func TestStatus_MetadataObservation(t *testing.T) {
 	assert.NoError(t, err)
 	compare := func() map[string]git.StatusCode {
 		t.Helper()
-		changes, err := s.worktreeChanges(t.Context(), &observed, base)
+		directory, err := gittree.OpenDirectory(t.Context(), location)
+		assert.NoError(t, err)
+		defer func() { _ = directory.Close() }()
+		worktree, err := directory.Worktree(directory.Artifact().FS.(*gittree.FS))
+		assert.NoError(t, err)
+		changes, err := s.worktreeChanges(t.Context(), worktree, base)
 		assert.NoError(t, err)
 		got := map[string]git.StatusCode{}
 		for _, change := range changes {
@@ -82,53 +86,20 @@ func TestStatus_MetadataObservation(t *testing.T) {
 	compare()
 }
 
-func TestWorktreeMetadata_Boundary(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	repo := testutil.GitInit(t, dir)
-	testutil.WriteFile(t, dir, "nested/deep/file", "before")
-	assert.NoError(t, os.Symlink("file", filepath.Join(dir, "nested", "deep", "link")))
-	root, err := os.OpenRoot(dir)
-	assert.NoError(t, err)
-	t.Cleanup(func() { _ = root.Close() })
-	input := &worktreeMetadata{
-		Filesystem: osfs.New(dir), root: root, ctx: t.Context(), observations: map[string]os.FileInfo{},
-	}
-	artifact, _, err := AdmitDirectory(t.Context(), dir, dir, manifest.WorkScope{})
-	assert.NoError(t, err)
-	input.current = artifact.FS.(*gittree.FS)
-	repo, err = git.Open(repo.Storer, input)
-	assert.NoError(t, err)
-	observed, err := repo.Worktree()
-	assert.NoError(t, err)
-	scoped, err := observed.Filesystem.Chroot("nested")
-	assert.NoError(t, err)
-	info, err := scoped.Lstat("deep/link")
-	assert.NoError(t, err)
-	assert.Equal(t, info.Mode()&fs.ModeSymlink != 0, true)
-	assert.NoError(t, os.Symlink("nested", filepath.Join(dir, "alias")))
-	_, err = observed.Filesystem.Lstat("alias/deep/file")
-	assert.FatalIf(t, err == nil, "%s", "go-git accepted a leading symlink")
-	assert.NoError(t, root.Close())
-	_, err = scoped.ReadDir("deep")
-	assert.FatalIf(t, !errors.Is(err, os.ErrClosed), "closed observation remains readable: %v", err)
-}
-
 func TestStatus_Cancellation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	repo := testutil.GitInit(t, dir)
-	root, err := os.OpenRoot(dir)
-	assert.NoError(t, err)
-	defer func() { _ = root.Close() }()
 	ctx, cancel := context.WithCancel(t.Context())
-	input := &worktreeMetadata{
-		Filesystem: osfs.New(dir), root: root, ctx: ctx, observations: map[string]os.FileInfo{},
-	}
-	original, err := repo.Worktree()
+	location, err := gitrepo.Locate(ctx, dir, dir)
+	assert.NoError(t, err)
+	directory, err := gittree.OpenDirectory(ctx, location)
+	assert.NoError(t, err)
+	defer func() { _ = directory.Close() }()
+	original, err := directory.Worktree(directory.Artifact().FS.(*gittree.FS))
 	assert.NoError(t, err)
 	cancel()
-	_, err = input.ReadDir("")
+	_, err = original.Filesystem.ReadDir("")
 	assert.FatalIf(t, !errors.Is(err, context.Canceled), "metadata read ignored cancellation: %v", err)
 	_, err = (selection{repo: repo}).worktreeChanges(ctx, original, nil)
 	assert.FatalIf(t, !errors.Is(err, context.Canceled), "observation ignored cancellation: %v", err)
@@ -154,7 +125,12 @@ func TestSelection_IdenticalTreeMetadata(t *testing.T) {
 	repo.Storer = &testutil.CountingStorer{Storer: repo.Storer, Reads: reads}
 	input, _, err := AdmitDirectory(t.Context(), root, root, manifest.WorkScope{})
 	assert.NoError(t, err)
-	s := selection{repo: repo, base: &resolution{Repo: repo, Hash: pin}, current: input.FS.(*gittree.FS)}
+	s := selection{
+		repo:     repo,
+		worktree: comparisonWorktree(t, input.FS.(*gittree.FS)),
+		base:     &resolution{Repo: repo, Hash: pin},
+		current:  input.FS.(*gittree.FS),
+	}
 	entries, comparison, err := s.baseEntries(t.Context())
 	assert.NoError(t, err)
 	reads.Reset()
@@ -164,4 +140,14 @@ func TestSelection_IdenticalTreeMetadata(t *testing.T) {
 	assert.Equal(t, len(warnings), 0)
 	assert.Equal(t, reads.Metadata.Load(), int64(2))
 	assert.Equal(t, reads.Bodies.Load(), int64(0))
+}
+
+func comparisonWorktree(t *testing.T, current *gittree.FS) *git.Worktree {
+	t.Helper()
+	directory, err := gittree.OpenDirectory(t.Context(), current.Location())
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, directory.Close()) })
+	worktree, err := directory.Worktree(current)
+	assert.NoError(t, err)
+	return worktree
 }

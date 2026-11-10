@@ -128,8 +128,10 @@ func TestOperationView_AcquisitionBoundary(t *testing.T) {
 	testutil.WriteFile(t, root, ".sourceignore", "# policy evidence\n")
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	admittedDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	admitted := admittedDirectory.Artifact()
+	assert.NoError(t, admittedDirectory.Close())
 	shaped, pin, err := gittree.New(
 		t.Context(),
 		nil,

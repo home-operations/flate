@@ -146,7 +146,7 @@ func testNewEntryPolicyConcurrentFirstPolicyAndCancellation(t *testing.T) {
 	wg.Wait()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = AdmitDirectory(ctx, artifact.FS.(*FS).Location())
+	_, err = OpenDirectory(ctx, artifact.FS.(*FS).Location())
 	assert.Equal(t, err, context.Canceled)
 	for _, mode := range []ViewMode{Direct, Source} {
 		_, _, err = New(ctx, nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: artifact.FS})

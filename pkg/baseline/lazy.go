@@ -28,12 +28,13 @@ import (
 )
 
 type selection struct {
-	repo    *git.Repository
-	base    *resolution
-	current *gittree.FS
-	input   *store.SourceArtifact
-	owner   *sourcecache.Cache
-	content any
+	repo     *git.Repository
+	worktree *git.Worktree
+	base     *resolution
+	current  *gittree.FS
+	input    *store.SourceArtifact
+	owner    *sourcecache.Cache
+	content  any
 }
 
 func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, string, []manifest.Warning, error) {
@@ -183,11 +184,7 @@ func (s selection) candidates(
 			return nil, nil, fmt.Errorf("tree: %w", treeErr)
 		}
 	}
-	worktree, err := s.repo.Worktree()
-	if err != nil {
-		return nil, nil, fmt.Errorf("worktree: %w", err)
-	}
-	status, statusErr := s.worktreeChanges(ctx, worktree, comparison)
+	status, statusErr := s.worktreeChanges(ctx, s.worktree, comparison)
 	var warnings []manifest.Warning
 	if statusErr != nil {
 		warnings = []manifest.Warning{

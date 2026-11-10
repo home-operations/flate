@@ -30,8 +30,10 @@ func localSource(tb testing.TB, root string) *store.SourceArtifact {
 	tb.Helper()
 	location, err := gitrepo.Locate(tb.Context(), root, root)
 	assert.NoError(tb, err)
-	admitted, err := gittree.AdmitDirectory(tb.Context(), location)
+	admittedDirectory, err := gittree.OpenDirectory(tb.Context(), location)
 	assert.NoError(tb, err)
+	admitted := admittedDirectory.Artifact()
+	assert.NoError(tb, admittedDirectory.Close())
 	return &store.SourceArtifact{LocalPath: root, FS: admitted.FS}
 }
 

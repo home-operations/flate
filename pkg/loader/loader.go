@@ -747,15 +747,16 @@ func (l *Loader) mountDirectory(ctx context.Context, inputRoot string) (bool, er
 	if locateErr != nil {
 		return false, locateErr
 	}
-	input, locateErr := gittree.AdmitDirectory(ctx, location)
+	directory, locateErr := gittree.OpenDirectory(ctx, location)
 	if locateErr != nil {
 		if l.IgnoreFile != "" && errors.Is(locateErr, fs.ErrNotExist) {
 			return true, nil
 		}
 		return false, locateErr
 	}
-	//nolint:errcheck // AdmitDirectory supplies the native filesystem required by the operation view.
-	l.documents.views[inputRoot] = input.FS.(*gittree.FS).OperationView()
+	defer func() { _ = directory.Close() }()
+	//nolint:errcheck // Admission supplies the native filesystem required by the operation view.
+	l.documents.views[inputRoot] = directory.Artifact().FS.(*gittree.FS).OperationView()
 	l.documents.edgesDirty = true
 	return false, nil
 }

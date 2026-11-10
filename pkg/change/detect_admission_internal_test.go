@@ -39,8 +39,10 @@ func TestDetect_AdmittedCandidates(t *testing.T) {
 				input := &store.SourceArtifact{FS: os.DirFS(root), LocalPath: root}
 				if !tc.raw {
 					var err error
-					input, err = gittree.AdmitDirectory(t.Context(), &gitrepo.Location{ContentRoot: root})
+					inputDirectory, err := gittree.OpenDirectory(t.Context(), &gitrepo.Location{ContentRoot: root})
 					assert.NoError(t, err)
+					input = inputDirectory.Artifact()
+					assert.NoError(t, inputDirectory.Close())
 				}
 				inputs[side] = input
 				if tc.completed {

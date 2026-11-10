@@ -34,8 +34,10 @@ func sourceValuesCacheFixture(t *testing.T) (string, *store.Store, *manifest.Hel
 	testutil.WriteFile(t, root, "config/prod.yaml", "marker: first\n")
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	admittedDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	admitted := admittedDirectory.Artifact()
+	assert.NoError(t, admittedDirectory.Close())
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
 		Namespace: "apps",

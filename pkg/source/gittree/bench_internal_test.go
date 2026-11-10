@@ -133,8 +133,10 @@ func BenchmarkFreshInputs_FileSize(b *testing.B) {
 			testutil.WriteFile(b, root, "file", string(data))
 			location, err := gitrepo.Locate(b.Context(), root, root)
 			assert.NoError(b, err)
-			input, err := AdmitDirectory(b.Context(), location)
+			directory, err := OpenDirectory(b.Context(), location)
 			assert.NoError(b, err)
+			input := directory.Artifact()
+			assert.NoError(b, directory.Close())
 			selected := input.FS.(*FS)
 			kinds := map[string]fs.FileMode{"file": 0}
 			requested := []string{"file"}

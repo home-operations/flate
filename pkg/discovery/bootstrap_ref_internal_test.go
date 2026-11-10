@@ -498,10 +498,12 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	if testCaseInput.lookupErr {
-		input, err := gittree.AdmitDirectory(t.Context(), &gitrepo.Location{
+		inputDirectory, err := gittree.OpenDirectory(t.Context(), &gitrepo.Location{
 			ContentRoot: root, LookupErr: errors.New("repository lookup failed"),
 		})
 		assert.NoError(t, err)
+		input := inputDirectory.Artifact()
+		assert.NoError(t, inputDirectory.Close())
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 	}
 	st.AddObject(repository)

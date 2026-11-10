@@ -58,10 +58,12 @@ func (f *generatedOCIFetcher) Fetch(
 			if err != nil {
 				return nil, err
 			}
-			input, err := gittree.AdmitDirectory(ctx, location)
+			directory, err := gittree.OpenDirectory(ctx, location)
 			if err != nil {
 				return nil, err
 			}
+			defer func() { _ = directory.Close() }()
+			input := directory.Artifact()
 			input.Kind, input.Digest = manifest.KindOCIRepository, "sha256:fixture"
 			return input, nil
 		},

@@ -39,7 +39,12 @@ func admitLocal(t *testing.T, root string) (*store.SourceArtifact, error) {
 	if err != nil {
 		return nil, err
 	}
-	return AdmitDirectory(t.Context(), location)
+	directory, err := OpenDirectory(t.Context(), location)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = directory.Close() }()
+	return directory.Artifact(), nil
 }
 
 func operation(t *testing.T, input fs.FS, mode ViewMode) (*FS, string, error) {

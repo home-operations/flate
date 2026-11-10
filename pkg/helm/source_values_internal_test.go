@@ -153,8 +153,10 @@ func TestTemplate_sFilesFailures(t *testing.T) {
 	assert.NoError(t, os.Symlink("../absent", filepath.Join(root, "link")))
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	admittedDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	admitted := admittedDirectory.Artifact()
+	assert.NoError(t, admittedDirectory.Close())
 	owner := cachetest.New(t, "", cache.New)
 	var archive bytes.Buffer
 	w := tar.NewWriter(&archive)
@@ -407,8 +409,10 @@ func testTemplateSourceRootValuesFilesCase(t *testing.T, testCaseInput *testTemp
 	owner := cachetest.New(t, "", cache.New)
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	admittedDirectory2, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	admitted := admittedDirectory2.Artifact()
+	assert.NoError(t, admittedDirectory2.Close())
 	input := admitted.FS
 	if (*testCaseInput.kind) == manifest.KindBucket {
 		input = acquireChartFS(t, owner, os.DirFS(root))

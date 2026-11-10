@@ -634,8 +634,10 @@ func testDocumentReaderSourceViewsAndReuseNativeReaderOwnership(t *testing.T) {
 	testutil.WriteFile(t, root, "kustomization.yaml", "namespace: native\n")
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	artifact, err := gittree.AdmitDirectory(t.Context(), location)
+	artifactDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	artifact := artifactDirectory.Artifact()
+	assert.NoError(t, artifactDirectory.Close())
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, artifact)
 	r := documentReader{}

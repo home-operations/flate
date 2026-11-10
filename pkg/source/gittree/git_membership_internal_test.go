@@ -29,6 +29,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func testNewEntryPolicyGitIgnoredMembership(t *testing.T) {
@@ -55,8 +56,10 @@ func testNewEntryPolicyGitIgnoredMembership(t *testing.T) {
 	assert.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	artifact, err := AdmitDirectory(ctx, location)
+	artifactDirectory, err := OpenDirectory(ctx, location)
 	assert.NoError(t, err)
+	artifact := artifactDirectory.Artifact()
+	assert.NoError(t, artifactDirectory.Close())
 	cancel()
 	index := &membershipIndexStorer{Storer: artifact.FS.(*FS).location.Repository.Storer, err: fs.ErrPermission}
 	artifact.FS.(*FS).location.Repository.Storer = index
@@ -341,12 +344,14 @@ func testNewEntryPolicyGitMembershipReplacements(t *testing.T) {
 type membershipCountingFS struct {
 	billy.Filesystem
 
-	reads        map[string]int
-	opens        int
-	lstats       int
-	cancel       context.CancelFunc
-	payloadOpens int
-	err          error
+	reads           map[string]int
+	directoryChecks map[string]int
+	names           *int
+	opens           int
+	lstats          int
+	cancel          context.CancelFunc
+	payloadOpens    int
+	err             error
 }
 
 func (f *membershipCountingFS) ReadDir(name string) ([]fs.FileInfo, error) {
@@ -355,6 +360,16 @@ func (f *membershipCountingFS) ReadDir(name string) ([]fs.FileInfo, error) {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: f.err}
 	}
 	entries, err := f.Filesystem.ReadDir(name)
+	if f.names != nil {
+		for i, entry := range entries {
+			entries[i] = countedName{FileInfo: entry, calls: f.names}
+		}
+	}
+	if f.directoryChecks != nil {
+		for i, entry := range entries {
+			entries[i] = countedDirectory{FileInfo: entry, calls: f.directoryChecks, name: f.Join(name, entry.Name())}
+		}
+	}
 	if f.cancel != nil {
 		f.cancel()
 	}
@@ -368,13 +383,18 @@ func (f *membershipCountingFS) Lstat(name string) (fs.FileInfo, error) {
 
 //nolint:ireturn // The billy filesystem contract requires billy.File.
 func (f *membershipCountingFS) Open(name string) (billy.File, error) {
+	return f.OpenFile(name, os.O_RDONLY, 0)
+}
+
+//nolint:ireturn // The billy filesystem contract requires billy.File.
+func (f *membershipCountingFS) OpenFile(name string, flag int, mode fs.FileMode) (billy.File, error) {
 	f.opens++
 	base := filepath.Base(name)
 	if base != ".gitignore" && base != ".gitmodules" &&
 		!strings.HasSuffix(filepath.ToSlash(name), ".git/info/exclude") {
 		f.payloadOpens++
 	}
-	return f.Filesystem.Open(name)
+	return f.Filesystem.OpenFile(name, flag, mode)
 }
 
 func testNewEntryPolicyGitRuleCapture(t *testing.T) {
@@ -407,7 +427,12 @@ func testNewEntryPolicyGitRuleCapture(t *testing.T) {
 				index.err = nil
 			case "no_rules", "index_error":
 			}
-			input, err := AdmitDirectory(ctx, location)
+			directory, err := OpenDirectory(ctx, location)
+			var input *store.SourceArtifact
+			if err == nil {
+				input = directory.Artifact()
+				assert.NoError(t, directory.Close())
+			}
 			switch mode {
 			case "no_rules":
 				assert.NoError(t, err)
@@ -537,8 +562,10 @@ func testNewEntryPolicyGitAdmissionRoutes(t *testing.T) {
 				index = &membershipIndexStorer{Storer: location.Repository.Storer}
 				location.Repository.Storer = index
 			}
-			artifact, err := AdmitDirectory(t.Context(), location)
+			artifactDirectory3, err := OpenDirectory(t.Context(), location)
 			assert.NoError(t, err)
+			artifact := artifactDirectory3.Artifact()
+			assert.NoError(t, artifactDirectory3.Close())
 			if index != nil {
 				assert.Equal(t, index.calls, 1)
 			}
@@ -582,4 +609,27 @@ func newMembershipRoot(t *testing.T, directory string) *membershipRoot {
 	assert.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, root.Close()) })
 	return &membershipRoot{Filesystem: osfs.New(directory, osfs.WithBoundOS()), root: root}
+}
+
+type countedName struct {
+	fs.FileInfo
+
+	calls *int
+}
+
+type countedDirectory struct {
+	fs.FileInfo
+
+	calls map[string]int
+	name  string
+}
+
+func (f countedDirectory) Mode() fs.FileMode {
+	f.calls[f.name]++
+	return f.FileInfo.Mode()
+}
+
+func (f countedName) Name() string {
+	*f.calls++
+	return f.FileInfo.Name()
 }

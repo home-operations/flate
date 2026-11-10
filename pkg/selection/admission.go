@@ -336,22 +336,28 @@ func (c *admissionClosure) matchesDeclarationContent(
 				slices.Equal(state.productions, productions)
 		}
 	}
-	if index := c.nextGeneration[id]; index != 0 {
-		incoming := request.Generation[index-1]
-		if previousChild := c.incoming(id); previousChild.Obj != nil {
-			if request.Owner != c.owner ||
-				!slices.Equal(c.generation[state.incoming-1].Productions, incoming.Productions) {
-				incoming.Productions = c.incomingProductions(&incoming, request.Owner, request.Reads)
-				productions = c.objects.IncomingProductions(incoming, c.facts.SelectionIndex())
-			}
-			matched = manifest.Equal(previousChild.Obj, incoming.Obj) &&
-				manifest.ValueEqual(previousChild.Doc, incoming.Doc) && slices.Equal(state.productions, productions)
-		} else {
-			current, document, output := c.objects.GetEmission(id)
-			output.Finish()
-			matched = matched && manifest.Equal(current, incoming.Obj) &&
-				manifest.ValueEqual(document, incoming.Doc)
+	index := c.nextGeneration[id]
+	if index == 0 {
+		return matched
+	}
+	incoming := request.Generation[index-1]
+	if previousChild := c.incoming(id); previousChild.Obj != nil {
+		usesPromotions := request.Owner == (manifest.NamedResource{}) && len(incoming.Productions) == 0
+		if usesPromotions || request.Owner != c.owner ||
+			!slices.Equal(c.generation[state.incoming-1].Productions, incoming.Productions) {
+			incoming.Productions = c.incomingProductions(&incoming, request.Owner, request.Reads)
+			productions = c.objects.IncomingProductions(incoming, c.facts.SelectionIndex())
 		}
+		matched = manifest.Equal(previousChild.Obj, incoming.Obj) &&
+			manifest.ValueEqual(previousChild.Doc, incoming.Doc) && slices.Equal(state.productions, productions)
+	} else {
+		current, document, output := c.objects.GetEmission(id)
+		output.Finish()
+		if incoming.Doc == nil {
+			incoming.Doc = document
+		}
+		matched = matched && manifest.Equal(current, incoming.Obj) &&
+			manifest.ValueEqual(document, incoming.Doc)
 	}
 	return matched
 }
@@ -362,7 +368,11 @@ func (c *admissionClosure) capturePrerequisites(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err //nolint:wrapcheck // Cancellation MUST preserve the caller's error identity.
 		}
-		if state.captured || !state.initialKnown && !state.productionsKnown {
+		if !state.initialKnown && !state.productionsKnown {
+			continue
+		}
+		c.objects.Productions(id, c.facts.SelectionIndex())
+		if state.captured {
 			continue
 		}
 		c.currentProductions(id)
@@ -719,7 +729,9 @@ func (c *admissionClosure) captureGeneration(request *PrepareRequest) {
 			slices.ContainsFunc(request.Generation, func(child store.Child) bool {
 				return child.Obj != nil && c.incoming(child.Obj.Named()).Obj != child.Obj
 			})
-		if !request.Invocation && len(c.identities) == 0 && len(c.generation) != 0 && replaced {
+		replacesInventory := request.Owner != (manifest.NamedResource{}) && !request.Invocation &&
+			(request.Owner != c.owner || replaced)
+		if replacesInventory && len(c.identities) == 0 {
 			clear(c.states)
 			clear(c.children)
 		}

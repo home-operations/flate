@@ -343,10 +343,33 @@ func TestRenderTrees_GeneratedSourceSelectionWork(t *testing.T) {
 			tree, sourceID := generatedSourceWorkTree(t, kind)
 			var previous manifest.WorkSummary
 			for repeat := range 2 {
-				runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{
+				invocation := prepareOrderingTrees(t, []Tree{tree}, &Config{
 					RecordWork: true, Concurrency: 2, CacheDir: t.TempDir(),
 					Selection: selection.Request{Roots: []manifest.NamedResource{sourceID}},
 				})
+				o := invocation.results[0].Orchestrator
+				if kind == manifest.KindExternalArtifact {
+					published := make(chan struct{})
+					o.controllers.ArtifactGenerator = &orderedPublisherController{
+						reconcileController: o.agc,
+						publisher: manifest.NamedResource{
+							Group:     "source.extensions.fluxcd.io",
+							Kind:      "ArtifactGenerator",
+							Namespace: "apps",
+							Name:      "generator",
+						},
+						published: published,
+						t:         t,
+					}
+					o.controllers.Source = &afterPublicationController{
+						reconcileController: o.src, published: published, only: sourceID, tasks: o.tasks,
+					}
+				}
+				invocation.renderTrees(t.Context())
+				clusterAdvisories(invocation.results, invocation.stores)
+				runs := invocation.results
+				err := runs[0].Err
+				t.Cleanup(runs[0].Result.Close)
 				assert.NoError(t, err)
 				if kind != manifest.KindHelmChart {
 					assert.NoError(t, err)

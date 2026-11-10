@@ -1,5 +1,6 @@
 ARG GO_VERSION
 FROM golang:${GO_VERSION}-alpine AS build
+RUN apk add --no-cache git
 ARG VERSION=dev
 ARG REVISION=dev
 WORKDIR /src

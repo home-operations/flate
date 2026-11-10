@@ -17,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -352,7 +353,7 @@ type selectedPayload struct {
 	warnings [][]manifest.Warning
 	rosters  []output.TestReport
 	subjects [][]manifest.NamedResource
-	prepare  func([]output.Names)
+	prepare  func([]diff.Names)
 	write    func() error
 }
 

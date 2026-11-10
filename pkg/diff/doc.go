@@ -31,12 +31,13 @@
 //
 // # SDK usage
 //
-// [Compare] consumes two [Snapshot] values from completed runs selected by
-// orchestrator.Select, withholds unavailable producer batches, and returns
-// formatted bytes, duplicate warnings and structured suppressions without discarding
-// selected render errors. The comparison requires cfg.HeadOnly to be false so
-// both runs are completed. Render two trees, select the requested producer kinds,
-// then compare them:
+// [Compare] prepares groups from completed runs selected by orchestrator.Select.
+// Each [Group] contains two [Snapshot] values and any selected render error.
+// It withholds unavailable producer batches and returns grouped warnings and
+// structured suppressions. [Comparison.Write] formats the prepared comparison
+// without repeating normalization. The comparison requires cfg.HeadOnly to be
+// false so both runs complete. Render two trees, select the requested producer
+// kinds, then compare all groups:
 //
 //	runs, runErr := orchestrator.RenderTrees(ctx, []orchestrator.Tree{
 //		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: baseDir},
@@ -47,6 +48,7 @@
 //			run.Result.Close()
 //		}
 //	}()
+//	groups := make([]diff.Group, 0, len(runs)/2)
 //	for start := 0; start < len(runs); {
 //		end := start + 1
 //		for end < len(runs) && runs[end].ID.Cluster == runs[start].ID.Cluster {
@@ -57,20 +59,20 @@
 //		selected, projection := orchestrator.Select(
 //			pair, errors.Join(pair[0].Err, pair[1].Err),
 //			[]manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}}, nil)
-//		out, warnings, suppressed, err := diff.Compare(
-//			diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys},
-//			diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys},
-//			projection.Selected,
-//			diff.Options{
-//				StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,
-//				Normalize: redact, // optional extra per-manifest scrub
-//			},
-//		)
-//		// Deliver out under pair[0].ID.Cluster; present warnings, suppressed and err
-//		// through the diagnostic writer, including when partial output is available.
+//		groups = append(groups, diff.Group{
+//			Cluster: string(pair[0].ID.Cluster),
+//			Orig: diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys},
+//			Current: diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys},
+//			SelectedErr: projection.Selected,
+//		})
 //	}
-//	// Check the invocation error once after every cluster, including shared cleanup failures.
-//	return runErr
+//	comparison, compareErr := diff.Compare(groups, diff.Options{
+//		StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,
+//		Normalize: redact,
+//	})
+//	writeErr := comparison.Write(w, nil)
+//	// Present each comparison.Groups entry's warnings and suppressions alongside errors.
+//	return errors.Join(runErr, compareErr, writeErr)
 //
 // [CompareImages] uses the same selected producer availability and returns a
 // sorted image list plus structured suppressions. [Changes] and [RenderDocs] retain

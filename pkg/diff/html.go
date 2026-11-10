@@ -1,4 +1,4 @@
-package output
+package diff
 
 import (
 	"bytes"
@@ -107,7 +107,7 @@ type highlighter struct {
 	lexer chroma.Lexer
 }
 
-func (e Encoder) html(changes []LineChange) error {
+func (e encoder) html(changes []lineChange) error {
 	hl, css, err := newHighlighter()
 	if err != nil {
 		return err
@@ -163,7 +163,7 @@ func buildTree(res []htmlResource) []treeParent {
 // trimmed before/between/after the hunks are emitted as collapsed rows behind
 // an expander so the whole file can be revealed in place — see unifiedRows /
 // sideRows.
-func buildHTMLResource(p *LineChange, hl *highlighter) htmlResource {
+func buildHTMLResource(p *lineChange, hl *highlighter) htmlResource {
 	a, b := difflib.SplitLines(p.From), difflib.SplitLines(p.To)
 	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(diffContextLines)
 	highlighted := highlightPair(a, b, groups, hl)

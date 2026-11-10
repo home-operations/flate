@@ -1,7 +1,9 @@
 package diff
 
 import (
-	"github.com/home-operations/flate/internal/diffprep"
+	"fmt"
+	"strings"
+
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -27,7 +29,14 @@ type Suppression struct {
 	Reason  string                      `json:"reason"` // the render failure, skip, or suspension reason
 }
 
-// String renders the suppression as a human-readable sentence.
 func (s Suppression) String() string {
-	return (diffprep.Suppression{Parent: diffprep.Parent(s.Parent), Subject: s.Subject, Side: diffprep.Side(s.Side), Count: s.Count, Reason: s.Reason}).String()
+	noun := "objects"
+	if s.Count == 1 {
+		noun = "object"
+	}
+	reason := strings.Join(strings.Fields(s.Reason), " ")
+	if s.Side == SideBoth {
+		return fmt.Sprintf("%d %s withheld; diff suppressed (%s)", s.Count, noun, reason)
+	}
+	return fmt.Sprintf("%d %s not rendered on the %s side; diff suppressed (%s)", s.Count, noun, s.Side, reason)
 }

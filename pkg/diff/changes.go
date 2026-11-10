@@ -3,8 +3,6 @@ package diff
 import (
 	"bytes"
 
-	"github.com/home-operations/flate/internal/diffprep"
-	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -60,7 +58,7 @@ type Change struct {
 //
 //nolint:gocritic // The SDK takes a value snapshot of normalization options.
 func Changes(left, right []Doc, opts Options) ([]Change, []manifest.Warning) {
-	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(new(opts)))
+	prepared := prepare(left, right, &opts)
 	return publicChanges(prepared), prepared.Warnings
 }
 
@@ -86,18 +84,18 @@ func renderJSON(
 		}
 	}
 	var buf bytes.Buffer
-	err := (output.Encoder{Writer: &buf}).JSON(struct {
+	err := (encoder{Writer: &buf}).json(struct {
 		Changes    []Change      `json:"changes"`
 		Suppressed []Suppression `json:"suppressed"`
 	}{changes, notes})
 	return buf.Bytes(), err
 }
 
-func publicChanges(prepared diffprep.Prepared) []Change {
+func publicChanges(prepared prepared) []Change {
 	out := make([]Change, 0, len(prepared.Pairs))
-	for c, status := range prepared.Changes() {
+	for c, status := range prepared.changes() {
 		out = append(out, Change{
-			Parent: Parent(c.Parent), APIVersion: c.APIVersion,
+			Parent: c.Parent, APIVersion: c.APIVersion,
 			Kind: c.Resource.Kind, Namespace: c.Resource.Namespace, Name: c.Resource.Name,
 			Status: ChangeStatus(status), Old: c.Old, New: c.New,
 			OldChart: c.OldChart, NewChart: c.NewChart,

@@ -1,8 +1,10 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,21 +107,22 @@ spec:
 		selected, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, selectedErr)
 		assert.NoError(t, remainder)
-		body, _, _, err := diff.Compare(
-			diff.Snapshot{
-				Subjects:     selected[0].Subjects,
-				Manifests:    selected[0].Manifests,
-				ProducerKeys: selected[0].ProducerKeys,
-				Unavailable:  selected[0].Unavailable,
-			},
-			diff.Snapshot{
-				Subjects:     selected[1].Subjects,
-				Manifests:    selected[1].Manifests,
-				ProducerKeys: selected[1].ProducerKeys,
-				Unavailable:  selected[1].Unavailable,
-			},
-			selectedErr,
-			diff.Options{Format: diff.FormatJSON},
+		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+			Subjects:     selected[0].Subjects,
+			Manifests:    selected[0].Manifests,
+			ProducerKeys: selected[0].ProducerKeys,
+			Unavailable:  selected[0].Unavailable,
+		}, Current: diff.Snapshot{
+			Subjects:     selected[1].Subjects,
+			Manifests:    selected[1].Manifests,
+			ProducerKeys: selected[1].ProducerKeys,
+			Unavailable:  selected[1].Unavailable,
+		}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+		var comparisonOutput1 bytes.Buffer
+		writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+		body, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+			preparationErr1,
+			writeErr1,
 		)
 		assert.NoError(t, err)
 		return body
@@ -392,21 +395,22 @@ func testRenderTreesChangedOnlyAndDiffCase(t *testing.T, testCaseInput *struct {
 	projectedResults1, projectionErrors1 := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	selected, selectedErr, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
-	body, _, _, err := diff.Compare(
-		diff.Snapshot{
-			Subjects:     selected[0].Subjects,
-			Manifests:    selected[0].Manifests,
-			ProducerKeys: selected[0].ProducerKeys,
-			Unavailable:  selected[0].Unavailable,
-		},
-		diff.Snapshot{
-			Subjects:     selected[1].Subjects,
-			Manifests:    selected[1].Manifests,
-			ProducerKeys: selected[1].ProducerKeys,
-			Unavailable:  selected[1].Unavailable,
-		},
-		selectedErr,
-		diff.Options{Format: diff.FormatJSON},
+	comparison2, preparationErr2 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+		Subjects:     selected[0].Subjects,
+		Manifests:    selected[0].Manifests,
+		ProducerKeys: selected[0].ProducerKeys,
+		Unavailable:  selected[0].Unavailable,
+	}, Current: diff.Snapshot{
+		Subjects:     selected[1].Subjects,
+		Manifests:    selected[1].Manifests,
+		ProducerKeys: selected[1].ProducerKeys,
+		Unavailable:  selected[1].Unavailable,
+	}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	body, _, _, err := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	var output struct {

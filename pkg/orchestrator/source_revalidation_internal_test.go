@@ -344,8 +344,13 @@ func sourceRevalidationProjection(
 	}
 	body, err := json.Marshal(manifests)
 	assert.NoError(t, err)
-	changes, warnings, _, err := diff.Compare(snapshots[0], snapshots[1], nil, diff.Options{Format: diff.FormatJSON})
+	comparison, err := diff.Compare(
+		[]diff.Group{{Orig: snapshots[0], Current: snapshots[1]}},
+		diff.Options{Format: diff.FormatJSON},
+	)
 	assert.NoError(t, err)
-	assert.Equal(t, len(warnings), 0)
-	return string(body), changes
+	var changes bytes.Buffer
+	assert.NoError(t, comparison.Write(&changes, nil))
+	assert.Equal(t, len(comparison.Groups[0].Warnings), 0)
+	return string(body), changes.Bytes()
 }

@@ -1,4 +1,4 @@
-package diffprep
+package diff
 
 import (
 	"testing"
@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-func ncm(name, key, val string) Doc {
+func preparedCM(name, key, val string) Doc {
 	return Doc{Manifest: map[string]any{
 		"apiVersion": "v1",
 		"kind":       "ConfigMap",
@@ -23,11 +23,11 @@ func TestPrepared_NativeInputs(t *testing.T) {
 	t.Parallel()
 	leftParent := Parent{NamedResource: testutil.HelmReleaseID("apps", "a")}
 	rightParent := Parent{NamedResource: testutil.HelmReleaseID("apps", "b")}
-	left, right := ncm("hello", "greeting", "same"), ncm("hello", "greeting", "same")
+	left, right := preparedCM("hello", "greeting", "same"), preparedCM("hello", "greeting", "same")
 	left.Parent, right.Parent = leftParent, rightParent
 	t.Run("report bodies", func(t *testing.T) {
 		t.Parallel()
-		report, err := Prepare([]Doc{left}, []Doc{right}, &Options{}).Native()
+		report, err := prepare([]Doc{left}, []Doc{right}, &Options{}).native()
 		assert.NoError(t, err)
 		assert.FatalIf(t, len(report.Diffs) != 2, "want two report diffs, got %+v", report.Diffs)
 		for i, want := range []struct {
@@ -53,10 +53,10 @@ func TestPrepared_NativeInputs(t *testing.T) {
 	})
 	t.Run("namespace labels", func(t *testing.T) {
 		t.Parallel()
-		absent, empty := ncm("cluster", "greeting", "old"), ncm("empty", "greeting", "old")
+		absent, empty := preparedCM("cluster", "greeting", "old"), preparedCM("empty", "greeting", "old")
 		delete(absent.Manifest["metadata"].(map[string]any), "namespace")
 		empty.Manifest["metadata"].(map[string]any)["namespace"] = ""
-		report, err := Prepare([]Doc{absent, empty}, nil, &Options{}).Native()
+		report, err := prepare([]Doc{absent, empty}, nil, &Options{}).native()
 		assert.NoError(t, err)
 		assert.Equal(t, report.Diffs[0].Path.RootDescription(), "v1/ConfigMap/cluster")
 		assert.Equal(t, report.Diffs[1].Path.RootDescription(), "v1/ConfigMap//empty")
@@ -68,9 +68,13 @@ func TestPrepared_NativeOrder(t *testing.T) {
 	t.Run("duplicate winning order", func(t *testing.T) {
 		t.Parallel()
 
-		left := []Doc{ncm("a", "greeting", "shadowed"), ncm("z", "greeting", "old-z"), ncm("a", "greeting", "old-a")}
-		right := []Doc{ncm("a", "greeting", "new-a"), ncm("z", "greeting", "new-z")}
-		report, err := Prepare(left, right, &Options{}).Native()
+		left := []Doc{
+			preparedCM("a", "greeting", "shadowed"),
+			preparedCM("z", "greeting", "old-z"),
+			preparedCM("a", "greeting", "old-a"),
+		}
+		right := []Doc{preparedCM("a", "greeting", "new-a"), preparedCM("z", "greeting", "new-z")}
+		report, err := prepare(left, right, &Options{}).native()
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -82,19 +86,19 @@ func TestPrepared_NativeOrder(t *testing.T) {
 		assert.Equal(t, report.Diffs[1].Path.RootDescription(), "v1/ConfigMap/apps/a")
 	})
 	left := []Doc{
-		ncm("b-removed", "greeting", "gone"),
-		ncm("z-modified", "greeting", "old"),
-		ncm("middle-unchanged", "greeting", "same"),
-		ncm("a-modified", "greeting", "before"),
+		preparedCM("b-removed", "greeting", "gone"),
+		preparedCM("z-modified", "greeting", "old"),
+		preparedCM("middle-unchanged", "greeting", "same"),
+		preparedCM("a-modified", "greeting", "before"),
 	}
 	right := []Doc{
-		ncm("y-added", "greeting", "born"),
-		ncm("a-modified", "greeting", "after"),
+		preparedCM("y-added", "greeting", "born"),
+		preparedCM("a-modified", "greeting", "after"),
 		left[2],
-		ncm("z-modified", "greeting", "new"),
+		preparedCM("z-modified", "greeting", "new"),
 	}
 
-	report, err := Prepare(left, right, &Options{}).Native()
+	report, err := prepare(left, right, &Options{}).native()
 	assert.NoError(t, err)
 	assert.FatalIf(
 		t,

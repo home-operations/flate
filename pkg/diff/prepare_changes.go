@@ -1,4 +1,4 @@
-package diffprep
+package diff
 
 import (
 	"iter"
@@ -7,13 +7,12 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// Changes yields changed pairs and statuses with manifests independent of the inputs.
-func (p Prepared) Changes() iter.Seq2[Pair, string] {
-	return func(yield func(Pair, string) bool) {
+func (p prepared) changes() iter.Seq2[pair, string] {
+	return func(yield func(pair, string) bool) {
 		paired, leftCopied, rightCopied := p.Pairs, p.leftCopied, p.rightCopied
 		for i := range paired {
 			p := paired[i]
-			status := p.Status()
+			status := p.status()
 			if status == "" {
 				continue
 			}
@@ -30,8 +29,7 @@ func (p Prepared) Changes() iter.Seq2[Pair, string] {
 	}
 }
 
-// Status classifies the pair, returning an empty string for equal sides.
-func (p *Pair) Status() string {
+func (p *pair) status() string {
 	switch {
 	case p.Old == nil:
 		return "added"

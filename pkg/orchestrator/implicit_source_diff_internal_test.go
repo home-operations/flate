@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"slices"
 	"testing"
@@ -149,7 +151,16 @@ func implicitSourceDiff(t *testing.T, runs []Rendered) ([]byte, []diff.Change) {
 			ProducerKeys: result.ProducerKeys, Unavailable: result.Unavailable,
 		}
 	}
-	body, _, _, err := diff.Compare(snapshots[0], snapshots[1], nil, diff.Options{Format: diff.FormatJSON})
+	comparison1, preparationErr1 := diff.Compare(
+		[]diff.Group{{Orig: snapshots[0], Current: snapshots[1], SelectedErr: nil}},
+		diff.Options{Format: diff.FormatJSON},
+	)
+	var comparisonOutput1 bytes.Buffer
+	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+	body, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, stderrors.Join(
+		preparationErr1,
+		writeErr1,
+	)
 	assert.NoError(t, err)
 	var output struct {
 		Changes []diff.Change `json:"changes"`

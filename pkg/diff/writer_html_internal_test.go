@@ -1,4 +1,4 @@
-package output
+package diff
 
 import (
 	"bytes"
@@ -6,13 +6,12 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestEncoderLines_PreservesStatus(t *testing.T) {
 	t.Parallel()
-	lines := []LineChange{
+	lines := []lineChange{
 		{
 			Resource: Subject{
 				ID: manifest.NamedResource{Group: "example.test", Kind: "Widget", Namespace: "ns", Name: "same"},
@@ -24,10 +23,10 @@ func TestEncoderLines_PreservesStatus(t *testing.T) {
 			To:   "key: new\n",
 		},
 	}
-	names := PrepareNames([]string{""}, [][]manifest.NamedResource{LineSubjects(lines, FormatHTML)}, nil)
-	NameLines(lines, names[0])
+	names := PrepareNames([]string{""}, [][]manifest.NamedResource{lineSubjects(lines, FormatHTML)}, nil)
+	nameLines(lines, names.Groups[0])
 	var buf bytes.Buffer
-	assert.NoError(t, (Encoder{Writer: &buf, Format: FormatHTML}).Lines(lines))
+	assert.NoError(t, (encoder{Writer: &buf, Format: FormatHTML}).lines(lines))
 	{
 		out := buf.String()
 		assert.FatalIf(t, !strings.Contains(out, "1 changed") ||

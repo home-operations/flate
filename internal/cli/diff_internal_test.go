@@ -5,47 +5,19 @@ import (
 	"encoding/json"
 	"maps"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
-	"unsafe"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
-
-func TestAppendSuppressionWarnings_Presentation(t *testing.T) {
-	t.Parallel()
-	duplicate := manifest.Warning{Category: manifest.WarnDuplicateDocument, Message: "shadowed"}
-	suppressed := []diff.Suppression{
-		{
-			Parent: diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")},
-			Side:   diff.SideCurrent,
-			Count:  2,
-			Reason: "missing source",
-		},
-	}
-	want := manifest.Warning{
-		Resource: suppressed[0].Parent.NamedResource, Category: manifest.WarnDiffSuppressed,
-		Message: "2 objects not rendered on the current side; diff suppressed (missing source)",
-	}
-	assert.Diff(t, appendSuppressionWarnings(nil, suppressed), []manifest.Warning{want})
-	assert.Diff(
-		t,
-		appendSuppressionWarnings([]manifest.Warning{duplicate}, suppressed),
-		[]manifest.Warning{want, duplicate},
-	)
-	assert.Diff(t, appendSuppressionWarnings([]manifest.Warning{duplicate}, nil), []manifest.Warning{duplicate})
-}
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_Diff_OneSidedSkipSuppressed(t *testing.T) {
@@ -280,7 +252,6 @@ data:
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_DiffJSON(t *testing.T) {
-	t.Run("borrows_payload", testDocumentsBorrowsPayload)
 	orig, current := writeFixture(t), writeFixture(t)
 	for _, root := range []string{orig, current} {
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/cluster.yaml, flux/broken.yaml]\n")
@@ -630,32 +601,6 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 					"current snapshot",
 				), "want only baseline external-source disclosure: %s", stderr)
 		})
-	}
-}
-
-func testDocumentsBorrowsPayload(t *testing.T) {
-	t.Helper()
-	payload := strings.Repeat("immutable payload", 1<<20)
-	doc := map[string]any{
-		"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "large"},
-		"data": map[string]any{"payload": payload},
-	}
-	batches := []manifest.DocumentBatch{{Documents: []map[string]any{doc}}}
-	projected := diffprep.Documents(batches)
-	if reflect.ValueOf(projected[0].Manifest).Pointer() != reflect.ValueOf(doc).Pointer() {
-		t.Fatal("projection copied the completed document")
-	}
-	borrowed := projected[0].Manifest["data"].(map[string]any)["payload"].(string)
-	if unsafe.StringData(borrowed) != unsafe.StringData(payload) {
-		t.Fatal("projection copied the immutable payload")
-	}
-	allocs := testing.AllocsPerRun(2, func() {
-		if got := diffprep.Documents(batches); len(got) != 1 {
-			t.Fatal("projection lost the document")
-		}
-	})
-	if allocs != 1 {
-		t.Fatalf("projection allocations = %v, want one document slice and zero payload copies or decodes", allocs)
 	}
 }
 

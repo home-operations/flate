@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -331,7 +333,16 @@ func testSelectEntryDocumentsCase3(t *testing.T, testCaseInput *bool,
 			ProducerKeys: side.ProducerKeys,
 		}
 	}
-	body, _, _, err := diff.Compare(snapshots[0], snapshots[1], nil, diff.Options{Format: diff.FormatJSON})
+	comparison1, preparationErr1 := diff.Compare(
+		[]diff.Group{{Orig: snapshots[0], Current: snapshots[1], SelectedErr: nil}},
+		diff.Options{Format: diff.FormatJSON},
+	)
+	var comparisonOutput1 bytes.Buffer
+	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+	body, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+		preparationErr1,
+		writeErr1,
+	)
 	assert.NoError(t, err)
 	var output struct {
 		Changes []json.RawMessage `json:"changes"`
@@ -654,7 +665,16 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 		Unavailable:  selected[1].Unavailable,
 		ProducerKeys: selected[1].ProducerKeys,
 	}
-	output, _, notes, err := diff.Compare(left, right, nil, diff.Options{Format: diff.FormatJSON})
+	comparison2, preparationErr2 := diff.Compare(
+		[]diff.Group{{Orig: left, Current: right, SelectedErr: nil}},
+		diff.Options{Format: diff.FormatJSON},
+	)
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	output, _, notes, err := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
+	)
 	assert.NoError(t, err)
 	assert.FatalIf(
 		t,

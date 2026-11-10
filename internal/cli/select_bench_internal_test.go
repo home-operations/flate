@@ -1,12 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"slices"
 	"testing"
-
-	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testrunner"
@@ -15,6 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -256,7 +256,16 @@ func benchmarkSelectCompletedScopeCase(b *testing.B, count *int, failures *bool,
 				ProducerKeys: selected[1].ProducerKeys,
 			}
 			if (*capturedInputs.command) == "documents" {
-				_, _, _, _ = diff.Compare(orig, current, selectedErr, opts)
+				comparison1, preparationErr1 := diff.Compare(
+					[]diff.Group{{Orig: orig, Current: current, SelectedErr: selectedErr}},
+					opts,
+				)
+				var comparisonOutput1 bytes.Buffer
+				writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+				_, _, _, _ = comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+					preparationErr1,
+					writeErr1,
+				)
 			} else {
 				_, _, _ = diff.CompareImages(orig, current, selectedErr, false)
 			}

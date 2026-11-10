@@ -10,7 +10,6 @@ import (
 	"github.com/homeport/dyff/pkg/dyff"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/testutil"
 )
 
@@ -268,8 +267,8 @@ func testRenderDocsNativeCanonicalEdgesNamespacePresence(t *testing.T) {
 					md["namespace"] = ""
 				}
 			}
-			report, err := diffprep.Prepare(prepareDocs([]Doc{left}), prepareDocs([]Doc{right}), prepareOptions(new(Options{}))).
-				Native()
+			report, err := prepare([]Doc{left}, []Doc{right}, &Options{}).
+				native()
 			assert.NoError(t, err)
 			assert.Diff(t, report.From.Names, []string{tc.want})
 			assert.Diff(t, report.To.Names, []string{tc.want})
@@ -305,8 +304,8 @@ func testRenderDocsNativeCanonicalEdgesIncompleteNormalizedIdentity(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			opts := Options{Format: FormatGitHub, Normalize: func(m map[string]any) { delete(m, "apiVersion") }}
-			report, err := diffprep.Prepare(prepareDocs(tc.left), prepareDocs(tc.right), prepareOptions(new(opts))).
-				Native()
+			report, err := prepare(tc.left, tc.right, &opts).
+				native()
 			assert.NoError(t, err)
 			assert.FatalIf(
 				t,

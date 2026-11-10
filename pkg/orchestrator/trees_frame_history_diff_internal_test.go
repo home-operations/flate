@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -215,16 +216,18 @@ func observeFrameHistoryDiff(
 	}
 	selected, failures := Select(runs, err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 	observed.Selected, observed.Remaining = fmt.Sprint(failures.Selected), fmt.Sprint(failures.Remaining)
-	body, warnings, suppressed, failure := diff.Compare(
-		diff.Snapshot{
-			Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
-			ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable,
-		},
-		diff.Snapshot{
-			Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
-			ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable,
-		},
-		failures.Selected, diff.Options{Format: diff.FormatJSON},
+	comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+		Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
+		ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable,
+	}, Current: diff.Snapshot{
+		Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
+		ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable,
+	}, SelectedErr: failures.Selected}}, diff.Options{Format: diff.FormatJSON})
+	var comparisonOutput1 bytes.Buffer
+	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+	body, warnings, suppressed, failure := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+		preparationErr1,
+		writeErr1,
 	)
 	assert.Equal(t, errors.Is(failure, manifest.ErrFlux), true)
 	observed.Diff, observed.Warnings, observed.Suppressions, observed.DiffError = body, warnings, suppressed, fmt.Sprint(

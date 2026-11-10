@@ -1,55 +1,12 @@
-package diffprep
+package diff
 
 import (
-	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-// Side identifies an unavailable comparison side.
-type Side string
-
-// Comparison sides use the CLI orig/current vocabulary.
-const (
-	SideOrig    Side = "orig"
-	SideCurrent Side = "current"
-	SideBoth    Side = "both"
-)
-
-// Snapshot contains immutable selected batches and producer availability.
-type Snapshot struct {
-	Subjects    map[manifest.NamedResource]manifest.DiagnosticIdentity
-	Manifests   []manifest.DocumentBatch
-	Unavailable map[manifest.NamedResource]store.StatusInfo
-	// ProducerKeys maps actual producers to their paired comparison identities.
-	ProducerKeys map[manifest.NamedResource]manifest.NamedResource
-}
-
-// Suppression discloses withheld producer output.
-type Suppression struct {
-	Parent  Parent
-	Subject manifest.DiagnosticIdentity
-	Side    Side
-	Count   int
-	Reason  string
-}
-
-// String renders the suppression as a human-readable sentence.
-func (s Suppression) String() string {
-	noun := "objects"
-	if s.Count == 1 {
-		noun = "object"
-	}
-	reason := strings.Join(strings.Fields(s.Reason), " ")
-	if s.Side == SideBoth {
-		return fmt.Sprintf("%d %s withheld; diff suppressed (%s)", s.Count, noun, reason)
-	}
-	return fmt.Sprintf("%d %s not rendered on the %s side; diff suppressed (%s)", s.Count, noun, s.Side, reason)
-}
 
 type suppressionPlan struct {
 	parent        Parent
@@ -141,9 +98,7 @@ func unavailableReason(info store.StatusInfo, side Side) string {
 	return string(side) + ": " + info.String()
 }
 
-// Suppress withholds unavailable producer batches on both comparison sides.
-// Producer identity excludes paths; counts measure withheld document entries.
-func Suppress(orig, current Snapshot) SuppressionResult {
+func suppress(orig, current Snapshot) suppressionResult {
 	plans := selectedSuppressionPlans(orig, current)
 	l, r := orig.keep(plans, SideOrig), current.keep(plans, SideCurrent)
 	suppressed := slices.Grow([]Suppression(nil), len(plans))
@@ -169,7 +124,7 @@ func Suppress(orig, current Snapshot) SuppressionResult {
 	slices.SortFunc(suppressed, func(a, b Suppression) int {
 		return a.Parent.Compare(b.Parent.NamedResource)
 	})
-	return SuppressionResult{Orig: l, Current: r, Suppressed: suppressed}
+	return suppressionResult{Orig: l, Current: r, Suppressed: suppressed}
 }
 
 func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Side) []manifest.DocumentBatch {
@@ -198,15 +153,14 @@ func (s Snapshot) keep(plans map[manifest.NamedResource]suppressionPlan, side Si
 	return out
 }
 
-// PrepareSnapshots pairs the documents Suppress retains under each side's comparison identities.
-func PrepareSnapshots(orig, current Snapshot, opts *Options) (Prepared, []Suppression) {
-	retained := Suppress(orig, current)
+func prepareSnapshots(orig, current Snapshot, opts *Options) (prepared, []Suppression) {
+	retained := suppress(orig, current)
 	options := *opts
-	options.Subjects = [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}
+	options.subjects = [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}
 	options.producerKeys = [2]map[manifest.NamedResource]manifest.NamedResource{
 		orig.pairingKeys(current.Manifests), current.pairingKeys(orig.Manifests),
 	}
-	return Prepare(Documents(retained.Orig), Documents(retained.Current), &options), retained.Suppressed
+	return prepare(documents(retained.Orig), documents(retained.Current), &options), retained.Suppressed
 }
 
 // A producer that also emits on the other side MUST pair under its own identity.
@@ -223,8 +177,7 @@ func (s Snapshot) pairingKeys(other []manifest.DocumentBatch) map[manifest.Named
 	return keys
 }
 
-// SuppressionResult keeps both retained sides with their shared withholding reasons.
-type SuppressionResult struct {
+type suppressionResult struct {
 	Orig, Current []manifest.DocumentBatch
 	Suppressed    []Suppression
 }

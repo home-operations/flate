@@ -1,4 +1,4 @@
-package diffprep
+package diff
 
 import (
 	"testing"
@@ -8,7 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func cmDoc(parent *Parent, id manifest.NamedResource, dataVal, chart string) Doc {
+func preparedCMDoc(parent *Parent, id manifest.NamedResource, dataVal, chart string) Doc {
 	meta := map[string]any{"name": id.Name}
 	if id.Namespace != "" {
 		meta["namespace"] = id.Namespace
@@ -37,18 +37,18 @@ func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
 func pairDuplicateDocumentsWarnAndLastWinsSide(t *testing.T, parent *Parent, side *string) {
 	t.Helper()
 
-	first := cmDoc(parent, manifest.NamedResource{Name: "first", Namespace: "ns"}, "shadowed", "first-1")
-	last := cmDoc(parent, manifest.NamedResource{Name: "last", Namespace: "ns"}, "retained", "last-2")
+	first := preparedCMDoc(parent, manifest.NamedResource{Name: "first", Namespace: "ns"}, "shadowed", "first-1")
+	last := preparedCMDoc(parent, manifest.NamedResource{Name: "last", Namespace: "ns"}, "retained", "last-2")
 	last.Parent.Path = "new/apps"
 	last.Manifest["apiVersion"] = "v2"
-	other := cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "ns"}, "other-side", "other-3")
-	foreign := cmDoc(parent, manifest.NamedResource{Name: "foreign", Namespace: "ns"}, "separate-group", "")
+	other := preparedCMDoc(parent, manifest.NamedResource{Name: "other", Namespace: "ns"}, "other-side", "other-3")
+	foreign := preparedCMDoc(parent, manifest.NamedResource{Name: "foreign", Namespace: "ns"}, "separate-group", "")
 	foreign.Manifest["apiVersion"] = "example.test/v1"
 	left, right := []Doc{first, last, foreign}, []Doc{other}
 	if (*side) == "right" {
 		left, right = right, left
 	}
-	prepared := Prepare(
+	result := prepare(
 		left,
 		right,
 		&Options{
@@ -64,7 +64,7 @@ func pairDuplicateDocumentsWarnAndLastWinsSide(t *testing.T, parent *Parent, sid
 			},
 		},
 	)
-	pairs, warnings := prepared.Pairs, prepared.Warnings
+	pairs, warnings := result.Pairs, result.Warnings
 	assert.FatalIf(t, len(pairs) != 2, "expected two paired resources, got %d", len(pairs))
 	assert.Equal(
 		t,
@@ -132,18 +132,18 @@ func TestPair_EntryComparisonPreservesCurrentParent(t *testing.T) {
 	current := Parent{NamedResource: testutil.KustomizationID("apps", "current"), Path: "entry"}
 	key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named()
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "payload", Namespace: "apps"}
-	prepared := Prepare(
-		[]Doc{cmDoc(&old, id, "before", "")},
-		[]Doc{cmDoc(&current, id, "after", "")},
+	result := prepare(
+		[]Doc{preparedCMDoc(&old, id, "before", "")},
+		[]Doc{preparedCMDoc(&current, id, "after", "")},
 		&Options{producerKeys: [2]map[manifest.NamedResource]manifest.NamedResource{
 			{old.NamedResource: key}, {current.NamedResource: key},
 		}},
 	)
-	assert.Equal(t, len(prepared.Pairs), 1)
-	assert.Equal(t, len(prepared.Warnings), 0)
-	pair := prepared.Pairs[0]
-	assert.Equal(t, pair.Parent, current)
-	assert.Equal(t, pair.Status(), "changed")
-	assert.Equal(t, pair.Old["data"].(map[string]any)["k"], any("before"))
-	assert.Equal(t, pair.New["data"].(map[string]any)["k"], any("after"))
+	assert.Equal(t, len(result.Pairs), 1)
+	assert.Equal(t, len(result.Warnings), 0)
+	entry := result.Pairs[0]
+	assert.Equal(t, entry.Parent, current)
+	assert.Equal(t, entry.status(), "changed")
+	assert.Equal(t, entry.Old["data"].(map[string]any)["k"], any("before"))
+	assert.Equal(t, entry.New["data"].(map[string]any)["k"], any("after"))
 }

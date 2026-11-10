@@ -15,6 +15,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -494,17 +495,17 @@ func TestReport_OverrideCollisions(t *testing.T) {
 	model := func(context string, subjects map[manifest.NamedResource]manifest.DiagnosticIdentity) Model {
 		return Model{Context: context, Subjects: subjects, Primary: []Primary{{ID: raw, Msg: "failed"}}}
 	}
-	labels := func(prefix string, entries ...Subject) *Names {
-		n := &Names{Prefix: prefix, Subjects: make(map[manifest.NamedResource]Subject, len(entries))}
+	labels := func(prefix string, entries ...diff.Subject) *diff.Names {
+		n := &diff.Names{Prefix: prefix, Subjects: make(map[manifest.NamedResource]diff.Subject, len(entries))}
 		for _, subject := range entries {
 			n.Subjects[subject.ID] = subject
 		}
 		return n
 	}
-	alphaRaw := labels("alpha: ", Subject{ID: raw, Kind: "OCIRepository", Name: "alpha: apps/source"})
-	alphaA := labels("alpha: ", Subject{ID: raw, Kind: "Widget.a.example", Name: "alpha: apps/a"})
-	alphaB := labels("alpha: ", Subject{ID: raw, Kind: "Widget", Name: "alpha: apps/b"})
-	betaB := labels("beta: ", Subject{ID: b, Kind: "Widget.b.example", Name: "beta: apps/b"})
+	alphaRaw := labels("alpha: ", diff.Subject{ID: raw, Kind: "OCIRepository", Name: "alpha: apps/source"})
+	alphaA := labels("alpha: ", diff.Subject{ID: raw, Kind: "Widget.a.example", Name: "alpha: apps/a"})
+	alphaB := labels("alpha: ", diff.Subject{ID: raw, Kind: "Widget", Name: "alpha: apps/b"})
+	betaB := labels("beta: ", diff.Subject{ID: b, Kind: "Widget.b.example", Name: "beta: apps/b"})
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	synthetic := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
 	chartRaw := synthetic.Named()
@@ -518,9 +519,9 @@ func TestReport_OverrideCollisions(t *testing.T) {
 		name         string
 		report       Report
 		extra        [][]manifest.NamedResource
-		wantNames    []Names
-		wantModels   [][]*Names
-		wantWarnings []Subject
+		wantNames    []diff.Names
+		wantModels   [][]*diff.Names
+		wantWarnings []diff.Subject
 		wantText     string
 	}{
 		{
@@ -530,8 +531,8 @@ func TestReport_OverrideCollisions(t *testing.T) {
 				{Cluster: "beta"},
 			}},
 			extra:      [][]manifest.NamedResource{nil, {b}},
-			wantNames:  []Names{*alphaRaw, *labels("beta: ", Subject{ID: b, Kind: "Widget", Name: "beta: apps/b"})},
-			wantModels: [][]*Names{{nil, alphaRaw, alphaA, alphaRaw}, nil},
+			wantNames:  []diff.Names{*alphaRaw, *labels("beta: ", diff.Subject{ID: b, Kind: "Widget", Name: "beta: apps/b"})},
+			wantModels: [][]*diff.Names{{nil, alphaRaw, alphaA, alphaRaw}, nil},
 			wantText: "\n  ✗  baseline: OCIRepository  alpha: apps/source  failed\n\n" +
 				"  ✗  empty: OCIRepository  alpha: apps/source  failed\n\n" +
 				"  ✗  captured: Widget.a.example  alpha: apps/a  failed\n\n" +
@@ -545,8 +546,8 @@ func TestReport_OverrideCollisions(t *testing.T) {
 				{Cluster: "beta"},
 			}},
 			extra:      [][]manifest.NamedResource{{raw, raw}, {b}},
-			wantNames:  []Names{*alphaA, *betaB},
-			wantModels: [][]*Names{{nil, alphaRaw, alphaB, alphaA}, nil},
+			wantNames:  []diff.Names{*alphaA, *betaB},
+			wantModels: [][]*diff.Names{{nil, alphaRaw, alphaB, alphaA}, nil},
 			wantText: "\n  ✗  baseline: Widget.a.example  alpha: apps/a  failed\n\n" +
 				"  ✗  empty: OCIRepository  alpha: apps/source  failed\n\n" +
 				"  ✗  captured: Widget  alpha: apps/b  failed\n\n" +
@@ -560,8 +561,8 @@ func TestReport_OverrideCollisions(t *testing.T) {
 				{Cluster: "beta"},
 			}},
 			extra:      [][]manifest.NamedResource{nil, {b}},
-			wantNames:  []Names{*alphaA, *betaB},
-			wantModels: [][]*Names{{alphaB}, nil},
+			wantNames:  []diff.Names{*alphaA, *betaB},
+			wantModels: [][]*diff.Names{{alphaB}, nil},
 			wantText: "\n  ✗  captured: Widget  alpha: apps/b  failed\n\n" +
 				"  alpha: ✗ 1 failed\n\n  beta: ✓ 0 failed\n",
 		},
@@ -573,8 +574,8 @@ func TestReport_OverrideCollisions(t *testing.T) {
 				{Cluster: "gamma"},
 			}},
 			extra:      [][]manifest.NamedResource{nil, {b}, {a}},
-			wantNames:  []Names{*alphaA, *betaB, *labels("gamma: ", Subject{ID: a, Kind: "Widget.a.example", Name: "gamma: apps/a"})},
-			wantModels: [][]*Names{{labels("alpha: ", Subject{ID: raw, Kind: "Widget.b.example", Name: "alpha: apps/b"})}, nil, nil},
+			wantNames:  []diff.Names{*alphaA, *betaB, *labels("gamma: ", diff.Subject{ID: a, Kind: "Widget.a.example", Name: "gamma: apps/a"})},
+			wantModels: [][]*diff.Names{{labels("alpha: ", diff.Subject{ID: raw, Kind: "Widget.b.example", Name: "alpha: apps/b"})}, nil, nil},
 			wantText: "\n  ✗  captured: Widget.b.example  alpha: apps/b  failed\n\n" +
 				"  alpha: ✗ 1 failed\n\n  beta: ✓ 0 failed\n\n  gamma: ✓ 0 failed\n",
 		},
@@ -594,9 +595,9 @@ func TestReport_OverrideCollisions(t *testing.T) {
 				},
 			},
 			extra:      [][]manifest.NamedResource{{raw, b, b}, {b}},
-			wantNames:  []Names{*labels("alpha: ", Subject{ID: raw, Kind: "OCIRepository", Name: "alpha: apps/source"}, Subject{ID: b, Kind: "Widget.a.example", Name: "alpha: apps/a"}), *betaB},
-			wantModels: [][]*Names{nil, nil},
-			wantWarnings: []Subject{
+			wantNames:  []diff.Names{*labels("alpha: ", diff.Subject{ID: raw, Kind: "OCIRepository", Name: "alpha: apps/source"}, diff.Subject{ID: b, Kind: "Widget.a.example", Name: "alpha: apps/a"}), *betaB},
+			wantModels: [][]*diff.Names{nil, nil},
+			wantWarnings: []diff.Subject{
 				{ID: raw, Kind: "Widget", Name: "alpha: apps/b"},
 				{ID: b, Kind: "Widget", Name: "beta: apps/a"},
 				{ID: raw, Kind: "Widget.a.example", Name: `alpha: apps/a (entry path "warning/a")`},
@@ -621,12 +622,12 @@ func TestReport_OverrideCollisions(t *testing.T) {
 				Warnings: []Warning{{Warning: manifest.Warning{Resource: chartRaw, Subject: manifest.DiagnosticFor(chartRaw, synthetic), Message: "captured"}}},
 			},
 			extra: [][]manifest.NamedResource{nil, {otherChart}},
-			wantNames: []Names{
-				*labels("alpha: ", Subject{ID: chartRaw, Kind: "OCIRepository", Name: "alpha: apps/chart"}),
-				*labels("beta: ", Subject{ID: otherChart, Kind: "HelmChart", Name: "beta: apps/other"}),
+			wantNames: []diff.Names{
+				*labels("alpha: ", diff.Subject{ID: chartRaw, Kind: "OCIRepository", Name: "alpha: apps/chart"}),
+				*labels("beta: ", diff.Subject{ID: otherChart, Kind: "HelmChart", Name: "beta: apps/other"}),
 			},
-			wantModels:   [][]*Names{nil, nil},
-			wantWarnings: []Subject{{ID: chartRaw, Kind: "HelmChart.source.toolkit.fluxcd.io", Name: "alpha: apps/chart"}},
+			wantModels:   [][]*diff.Names{nil, nil},
+			wantWarnings: []diff.Subject{{ID: chartRaw, Kind: "HelmChart.source.toolkit.fluxcd.io", Name: "alpha: apps/chart"}},
 			wantText: "\n  ⚠ warnings (1)\n    HelmChart.source.toolkit.fluxcd.io alpha: apps/chart: captured\n\n" +
 				"  alpha: ✓ 0 failed\n\n  beta: ✓ 0 failed\n",
 		},
@@ -639,9 +640,9 @@ func reportOverrideCollisionsName(t *testing.T, tc *struct {
 	name         string
 	report       Report
 	extra        [][]manifest.NamedResource
-	wantNames    []Names
-	wantModels   [][]*Names
-	wantWarnings []Subject
+	wantNames    []diff.Names
+	wantModels   [][]*diff.Names
+	wantWarnings []diff.Subject
 	wantText     string
 },
 ) {
@@ -681,8 +682,8 @@ func reportOverrideCollisionsName(t *testing.T, tc *struct {
 	for _, report := range []*Report{&first, &second} {
 		assert.Diff(t, report.Prepare(tc.extra), tc.wantNames)
 		{
-			diff := cmp.Diff(want, *report, cmp.AllowUnexported(Warning{}))
-			assert.ErrorIf(t, diff != "", "prepared report (-want +got):\n%s", diff)
+			delta := cmp.Diff(want, *report, cmp.AllowUnexported(Warning{}))
+			assert.ErrorIf(t, delta != "", "prepared report (-want +got):\n%s", delta)
 		}
 		var out bytes.Buffer
 		encoder := Encoder{Writer: &out}
@@ -690,7 +691,7 @@ func reportOverrideCollisionsName(t *testing.T, tc *struct {
 		assert.Equal(t, out.String(), tc.wantText)
 	}
 	{
-		diff := cmp.Diff(first, second, cmp.AllowUnexported(Warning{}))
-		assert.ErrorIf(t, diff != "", "preparation is not deterministic (-first +second):\n%s", diff)
+		delta := cmp.Diff(first, second, cmp.AllowUnexported(Warning{}))
+		assert.ErrorIf(t, delta != "", "preparation is not deterministic (-first +second):\n%s", delta)
 	}
 }

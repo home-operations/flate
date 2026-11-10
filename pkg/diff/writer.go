@@ -1,27 +1,24 @@
-package output
+package diff
 
 import (
 	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/gonvenience/bunt"
 	"github.com/homeport/dyff/pkg/dyff"
 	"github.com/pmezard/go-difflib/difflib"
 	"sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// DiffFormats lists accepted diff formats in help order, with the default first.
-// Callers must not modify this list.
-func DiffFormats() []Format {
-	return []Format{
-		FormatHuman, FormatGitHub, FormatDiff, FormatHTML,
-		FormatBrief, FormatGitLab, FormatGitea, FormatJSON,
-	}
+type encoder struct {
+	Writer io.Writer
+	Format Format
 }
 
 const (
@@ -31,15 +28,13 @@ const (
 	dyffMinorChangeThreshold = 0.1
 )
 
-// DiffGroup holds one cluster's prepared diff and presence on each side.
-type DiffGroup struct {
+type diffGroup struct {
 	Cluster        string
 	Added, Removed bool
 	Body           []byte
 }
 
-// DiffGroups writes canonical per-cluster JSON changes and suppressions.
-func (e Encoder) DiffGroups(groups []DiffGroup) error {
+func (e encoder) diffGroups(groups []diffGroup) error {
 	if len(groups) == 1 && !groups[0].Added && !groups[0].Removed {
 		if _, err := e.Writer.Write(groups[0].Body); err != nil {
 			return fmt.Errorf("write cluster diff: %w", err)
@@ -67,20 +62,19 @@ func (e Encoder) DiffGroups(groups []DiffGroup) error {
 		}
 		values[i] = value
 	}
-	return e.JSON(values)
+	return e.json(values)
 }
 
-// LineChange carries canonical diff values and resolved presentation labels.
-type LineChange struct {
+type lineChange struct {
 	Resource, Parent Subject
 	ParentPath       string
 	From, To         string
 	Status, Label    string
 }
 
-// PrepareLines collects serialization errors before any report is written.
-func PrepareLines(prepared diffprep.Prepared) ([]LineChange, error) {
-	var out []LineChange
+// prepareLines collects serialization errors before any report is written.
+func prepareLines(prepared prepared) ([]lineChange, error) {
+	var out []lineChange
 	for pIndex := range prepared.Pairs {
 		p := prepared.Pairs[pIndex]
 		var sides [2]string
@@ -97,16 +91,16 @@ func PrepareLines(prepared diffprep.Prepared) ([]LineChange, error) {
 		if sides[0] == sides[1] {
 			continue
 		}
-		out = append(out, LineChange{
+		out = append(out, lineChange{
 			Resource: Subject{ID: p.Resource}, Parent: Subject{ID: p.Parent.NamedResource},
-			ParentPath: p.Parent.Path, From: sides[0], To: sides[1], Status: p.Status(),
+			ParentPath: p.Parent.Path, From: sides[0], To: sides[1], Status: p.status(),
 		})
 	}
 	return out, nil
 }
 
-// LineSubjects inventories only the resource and producer labels this format prints.
-func LineSubjects(changes []LineChange, format Format) []manifest.NamedResource {
+// lineSubjects inventories only the resource and producer labels this format prints.
+func lineSubjects(changes []lineChange, format Format) []manifest.NamedResource {
 	ids := make([]manifest.NamedResource, 0, len(changes))
 	for cIndex := range changes {
 		c := changes[cIndex]
@@ -118,8 +112,7 @@ func LineSubjects(changes []LineChange, format Format) []manifest.NamedResource 
 	return ids
 }
 
-// NameLines binds the invocation's resolved subjects to its line changes.
-func NameLines(changes []LineChange, names Names) {
+func nameLines(changes []lineChange, names Names) {
 	for i := range changes {
 		c := &changes[i]
 		c.Resource = names.Subjects[c.Resource.ID]
@@ -128,8 +121,7 @@ func NameLines(changes []LineChange, names Names) {
 	}
 }
 
-// Lines consumes prepared resource differences once in unified or HTML format.
-func (e Encoder) Lines(changes []LineChange) error {
+func (e encoder) lines(changes []lineChange) error {
 	if e.Format == FormatHTML {
 		return e.html(changes)
 	}
@@ -176,20 +168,19 @@ func nativeStyle(format Format, report *dyff.Report) dyff.ReportWriter {
 		}
 	case FormatBrief:
 		return &dyff.BriefReport{Report: *report}
-	case FormatTable, FormatYAML, FormatJSON, FormatName, FormatDiff, FormatHTML:
+	case FormatJSON, FormatDiff, FormatHTML:
 		return nil
 	}
 	return nil
 }
 
-// Native writes a prepared dyff report.
-func (e Encoder) Native(report *dyff.Report) error {
+func (e encoder) native(report *dyff.Report) error {
 	// dyff emits a stray newline for an empty report.
 	if len(report.Diffs) == 0 {
 		return nil
 	}
 	color := bunt.OFF
-	if ColorEnabled(e.Writer) {
+	if colorprofile.Detect(e.Writer, os.Environ()) > colorprofile.Ascii {
 		color = bunt.ON
 	}
 	bunt.SetColorSettings(color, bunt.AUTO)
@@ -221,4 +212,18 @@ func diffSyntax(path, root, change string) func(dyff.Report) dyff.ReportWriter {
 			MinorChangeThreshold:  dyffMinorChangeThreshold,
 		}
 	}
+}
+
+func (e encoder) json(value any) error {
+	out, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode output: %w", err)
+	}
+	if _, writeErr := e.Writer.Write(out); writeErr != nil {
+		return fmt.Errorf("write output: %w", writeErr)
+	}
+	if _, err = io.WriteString(e.Writer, "\n"); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	return nil
 }

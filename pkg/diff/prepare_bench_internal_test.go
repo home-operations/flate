@@ -1,4 +1,4 @@
-package diffprep
+package diff
 
 import (
 	"fmt"

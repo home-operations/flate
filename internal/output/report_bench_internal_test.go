@@ -5,6 +5,7 @@ import (
 	"maps"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -39,7 +40,7 @@ func BenchmarkPrepareNames_NoOverrides(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				PrepareNames(names, inventory, nil)
+				diff.PrepareNames(names, inventory, nil)
 			}
 		})
 	}

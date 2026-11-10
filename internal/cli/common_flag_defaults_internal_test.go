@@ -31,7 +31,7 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 	opts := buildOrchCfg(&flags).HelmOptions
 	assert.Equal(t, opts.SkipCRDs, true)
 	assert.Equal(t, opts.SkipTests, true)
-	assert.Diff(t, opts.SkipKinds, []string{"Secret"})
+	assert.Diff(t, opts.SkipKinds, []string{"CustomResourceDefinition", "Secret"})
 }
 
 func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -71,7 +72,12 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 	cacheDir := t.TempDir()
 	cache := newTestTreeCache(t, cacheDir)
 	spec := &manifest.Kustomization{Name: "emitter", Path: "."}
-	req := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
+	req := RenderRequest{
+		Source:    localSource(t, root),
+		Spec:      spec,
+		SubPath:   ".",
+		SkipKinds: []string{manifest.KindCustomResourceDefinition, manifest.KindSecret},
+	}
 	owner := spec.Named()
 	owner.Namespace = "inherited"
 	var absent *TreeCache
@@ -178,6 +184,15 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, records)
+	equal := req
+	equal.SkipKinds = slices.Clone(equal.SkipKinds)
+	equalPrevious, equalComplete := previousHistory(t.Context(), fresh, &equal, owner)
+	assert.Equal(t, equalComplete, true)
+	assert.Diff(t, maps.Collect(equalPrevious), records)
+	changed := equal
+	changed.SkipKinds = []string{manifest.KindCustomResourceDefinition}
+	_, changedComplete := previousHistory(t.Context(), fresh, &changed, owner)
+	assert.Equal(t, changedComplete, false)
 	_, acceptedReceipt, rawHit := fresh.PreviousRender(t.Context(), req)
 	assert.Equal(t, rawHit, true)
 	{

@@ -103,7 +103,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 			t.Context(),
 			(*(*testCaseInput).hr),
 			nil,
-			RenderOptions{Sources: (*testCaseInput).input.Sources},
+			RenderOptions{Options: (*testCaseInput).input.Options, Sources: (*testCaseInput).input.Sources},
 		),
 	)
 	assert.NoError(t, (*(*testCaseInput).err))
@@ -216,7 +216,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 			t.Context(),
 			(*(*testCaseInput).hr),
 			nil,
-			RenderOptions{Sources: (*testCaseInput).input.Sources},
+			RenderOptions{Options: (*testCaseInput).input.Options, Sources: (*testCaseInput).input.Sources},
 		),
 	)
 	assert.NoError(t, err)

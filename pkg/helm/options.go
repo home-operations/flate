@@ -1,7 +1,6 @@
 package helm
 
 import (
-	"slices"
 	"strings"
 
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -44,11 +43,12 @@ type Options struct {
 	// False enables tracking. Revision validation and full source cache identity
 	// apply in every mode.
 	DisableChartDigestTracking bool `json:"DisableChartDigestTracking"`
-	// SkipCRDs excludes CRDs from the rendered output.
+	// SkipCRDs controls upstream Helm CRD generation.
 	SkipCRDs bool `json:"SkipCRDs"`
 	// SkipTests excludes templates that are helm test hooks.
 	SkipTests bool `json:"SkipTests"`
-	// SkipKinds is an arbitrary list of kinds to drop.
+	// SkipKinds MUST hold the complete, sorted, unique emission policy, including CRDs.
+	// Callers keep it immutable and keep SkipCRDs consistent with its CRD membership.
 	SkipKinds []string `json:"SkipKinds"`
 
 	// KubeVersion overrides Capabilities.KubeVersion (.Capabilities.KubeVersion).
@@ -59,16 +59,6 @@ type Options struct {
 
 	// EnableDNS enables DNS lookups during templating.
 	EnableDNS bool `json:"EnableDNS"`
-}
-
-// SkipResourceKinds returns the union of canonical and user-specified
-// kinds to drop from rendered output.
-func (o Options) SkipResourceKinds() []string {
-	out := slices.Grow(slices.Clone(o.SkipKinds), 1)
-	if o.SkipCRDs {
-		out = append(out, manifest.KindCustomResourceDefinition)
-	}
-	return out
 }
 
 // capabilities builds common.Capabilities from the supplied options.

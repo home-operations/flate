@@ -242,10 +242,10 @@ func inputTrees(c *commonFlags) []orchestrator.Tree {
 func buildOrchCfg(c *commonFlags) orchestrator.Config {
 	helmOptions := c.helm
 	helmOptions.SkipTests = true
-	helmOptions.SkipCRDs = slices.Contains(c.skipKinds, manifest.KindCustomResourceDefinition)
-	helmOptions.SkipKinds = slices.DeleteFunc(slices.Clone(c.skipKinds), func(kind string) bool {
-		return kind == manifest.KindCustomResourceDefinition
-	})
+	helmOptions.SkipKinds = slices.Clone(c.skipKinds)
+	slices.Sort(helmOptions.SkipKinds)
+	helmOptions.SkipKinds = slices.Compact(helmOptions.SkipKinds)
+	helmOptions.SkipCRDs = slices.Contains(helmOptions.SkipKinds, manifest.KindCustomResourceDefinition)
 	return orchestrator.Config{
 		Cache:          c.owner,
 		HelmOptions:    helmOptions,

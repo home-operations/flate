@@ -316,8 +316,8 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest,tparallel // The complete fixture sets the process-wide egress policy.
 func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		name, kind                     string
 		absentDeclaration, stale, want bool
@@ -388,4 +388,63 @@ func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
 			}
 		})
 	}
+	t.Run("final alias warnings", func(t *testing.T) {
+		testOrchestratorExistenceFinalAliasWarnings(t)
+	})
+}
+
+func testOrchestratorExistenceFinalAliasWarnings(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "apps/decoy", "working tree")
+	aliases := []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "zeta"},
+		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "alpha"},
+	}
+	run := func() *Result {
+		o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
+		assert.NoError(t, err)
+		assert.NoError(t, o.bootstrap(t.Context()))
+		assert.Equal(t, o.selection == nil, true)
+		assert.Equal(t, o.preparation == nil, true)
+		o.configureControllers()
+		consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+		o.store.AddObject(consumer)
+		existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
+		for _, id := range aliases {
+			var reads store.ReadSet
+			reads.Init(o.store, consumer.Named(), nil)
+			promoted, promoteErr := existence.Promote(t.Context(), selection.PrepareRequest{Reads: &reads}, id)
+			reads.Retire()
+			assert.NoError(t, promoteErr)
+			assert.Equal(t, promoted, true)
+			assert.Equal(t, o.store.GetObject(id) != nil, true)
+			assert.Equal(t, o.store.GetArtifact(id, store.ArtifactContent) != nil, true)
+			status, ok := o.store.GetStatus(id)
+			assert.Equal(t, ok, true)
+			assert.Equal(t, status.Status, store.StatusReady)
+		}
+		o.tasks.BlockTillDone()
+		result, collectErr := o.collectResult(nil)
+		assert.NoError(t, collectErr)
+		t.Cleanup(result.Close)
+		return result
+	}
+	first, second := run(), run()
+	assert.Diff(t, second.Warnings, first.Warnings)
+	var warnings []manifest.Warning
+	for i := range first.Warnings {
+		warning := &first.Warnings[i]
+		if warning.Category == manifest.WarnBootstrapAliases {
+			warnings = append(warnings, *warning)
+		}
+	}
+	assert.Diff(t, warnings, []manifest.Warning{
+		{
+			Category: manifest.WarnBootstrapAliases,
+			Message:  "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
+			Detail:   []string{aliases[1].String(), aliases[0].String(), root},
+			Count:    1,
+		},
+	})
 }

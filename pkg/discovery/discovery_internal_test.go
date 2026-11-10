@@ -28,6 +28,7 @@ import (
 
 func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 	t.Parallel()
+	t.Run("runtime alias and overlapping claims", testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias)
 	t.Run(
 		"projected owner",
 		func(t *testing.T) { t.Parallel(); testDiscardPinnedWorkingTreeFilesPreservesSourcesProjectedOwner(t) },
@@ -288,12 +289,15 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesCase(
 	}
 	artifact.FS = os.DirFS(artifact.LocalPath)
 	d := Session{
-		cfg: Config{Store: st}, loader: loader.New(st),
-		resolvedSources: map[manifest.NamedResource]entryResolution{other.Named(): {object: other}},
+		cfg:    Config{Store: st},
+		loader: loader.New(st),
+		resolvedSources: &entrySourcePublisher{
+			mutable: map[manifest.NamedResource]entryResolution{other.Named(): {object: other}},
+		},
 	}
 	d.loader.SourceRoot = root
 	if testCaseInput.resolved {
-		d.resolvedSources[repository.Named()] = entryResolution{object: repository}
+		d.resolvedSources.record(repository.Named(), &entryResolution{object: repository})
 	}
 	for _, obj := range []manifest.BaseManifest{repository, other, ks, cm} {
 		st.AddObject(obj)

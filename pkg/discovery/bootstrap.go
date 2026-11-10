@@ -43,7 +43,59 @@ type entryResolution struct {
 	viewKey   string
 }
 
-// Admission supplies bytes and remote metadata; only publishEntrySource publishes identities.
+type entrySourcePublisher struct {
+	store   *store.Store
+	root    string
+	mutable map[manifest.NamedResource]entryResolution
+	current atomic.Pointer[map[manifest.NamedResource]entryResolution]
+}
+
+func (p *entrySourcePublisher) snapshot() map[manifest.NamedResource]entryResolution {
+	if p == nil {
+		return nil
+	}
+	if current := p.current.Load(); current != nil {
+		return *current
+	}
+	return p.mutable
+}
+
+func (p *entrySourcePublisher) record(id manifest.NamedResource, resolution *entryResolution) {
+	current := p.current.Load()
+	if current == nil {
+		p.mutable[id] = *resolution
+		return
+	}
+	for {
+		next := maps.Clone(*current)
+		next[id] = *resolution
+		if p.current.CompareAndSwap(current, &next) {
+			return
+		}
+		current = p.current.Load()
+	}
+}
+
+// Freeze MUST follow the last construction write and precede runtime admission.
+func (p *entrySourcePublisher) freeze() {
+	if p.current.Load() != nil {
+		return
+	}
+	current := p.mutable
+	p.current.Store(&current)
+	p.mutable = nil
+}
+
+func (p *entrySourcePublisher) publish(candidate *entryResolution, addObject bool) {
+	id := candidate.object.Named()
+	if addObject {
+		p.store.AddObject(candidate.object)
+	}
+	p.store.SetArtifact(id, candidate.artifact)
+	p.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
+	p.record(id, candidate)
+}
+
 func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
 	admitted := d.cfg.Input
 	if admitted == nil {
@@ -145,11 +197,15 @@ func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtif
 			return nil, err
 		}
 		bootstrap = admitted
-		d.resolvedSources = map[manifest.NamedResource]entryResolution{}
+		d.resolvedSources = &entrySourcePublisher{
+			store: d.cfg.Store, root: admitted.LocalPath,
+			mutable: map[manifest.NamedResource]entryResolution{},
+		}
 	}
-	if previous, ok := d.resolvedSources[manifest.BootstrapSourceID]; ok && previous.input != bootstrap {
+	if previous, ok := d.resolvedSources.snapshot()[manifest.BootstrapSourceID]; ok && previous.input != bootstrap {
 		d.aliasViews = nil
 	}
+	d.resolvedSources.root = bootstrap.LocalPath
 	return bootstrap, nil
 }
 
@@ -279,7 +335,8 @@ func (d *Session) entrySourceObject(
 	}
 	restricted := d.loader != nil && d.loader.Options.Session != nil
 	obj := d.cfg.Store.GetObject(id)
-	if previous, seen := d.resolvedSources[id]; restricted && seen && previous.synthetic && obj == previous.object &&
+	if previous, seen := d.resolvedSources.snapshot()[id]; restricted && seen && previous.synthetic &&
+		obj == previous.object &&
 		group.evidence.Obj != nil {
 		obj = group.evidence.Obj
 	}
@@ -306,7 +363,7 @@ func (d *Session) resolveEntrySource(
 ) (bool, error) {
 	bootstrap := admission.input
 	obj := d.entrySourceObject(id, group)
-	previous, seen := d.resolvedSources[id]
+	previous, seen := d.resolvedSources.snapshot()[id]
 	if seen && obj != nil && previous.object == obj && previous.input != bootstrap && previous.artifact != nil &&
 		(previous.synthetic || previous.artifact.InputAlias) {
 		if err := d.refreshEntrySource(ctx, admission, id, &previous); err != nil {
@@ -316,7 +373,7 @@ func (d *Session) resolveEntrySource(
 	}
 	if seen && previous.input == bootstrap && previous.object == obj {
 		if previous.artifact != nil && obj != nil && d.cfg.Store.GetArtifact(id, store.ArtifactContent) == nil {
-			d.publishEntrySource(&previous, previous.artifact)
+			d.publishResolvedSource(&previous)
 			return id != manifest.BootstrapSourceID, nil
 		}
 		return false, nil
@@ -325,11 +382,11 @@ func (d *Session) resolveEntrySource(
 	if err != nil {
 		return false, err
 	}
-	d.resolvedSources[id] = candidate
 	for i := range candidate.warnings {
 		d.cfg.Store.AddWarning(candidate.warnings[i])
 	}
 	if candidate.artifact == nil {
+		d.resolvedSources.record(id, &candidate)
 		return false, nil
 	}
 	d.publishResolvedSource(&candidate)
@@ -345,7 +402,7 @@ func (d *Session) refreshEntrySource(
 	previous.input = admission.input
 	if id == manifest.BootstrapSourceID {
 		previous.artifact = admission.input
-		d.publishEntrySource(previous, admission.input)
+		d.publishResolvedSource(previous)
 		return nil
 	}
 	artifact, key, err := admission.entrySourceView(ctx, previous)
@@ -353,9 +410,7 @@ func (d *Session) refreshEntrySource(
 		return err
 	}
 	previous.artifact, previous.viewKey = artifact, key
-	d.cfg.Store.SetArtifact(id, artifact)
-	d.cfg.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
-	d.resolvedSources[id] = *previous
+	d.resolvedSources.publish(previous, false)
 	return nil
 }
 
@@ -363,7 +418,11 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) {
 	if candidate.pinned && !candidate.artifact.InputAlias {
 		d.hasPins = true
 	}
-	d.publishEntrySource(candidate, candidate.artifact)
+	id := candidate.object.Named()
+	current := d.cfg.Store.GetObject(id)
+	restricted := d.loader != nil && d.loader.Options.Session != nil
+	addObject := candidate.synthetic || restricted && current != nil && current != candidate.object
+	d.resolvedSources.publish(candidate, addObject)
 	if candidate.viewKey == "" {
 		return
 	}
@@ -383,7 +442,7 @@ type Admission struct {
 	entryEvidence    *kustomize.EntryEvidence
 	applications     atomic.Pointer[applicationEvidence]
 	entryBound       atomic.Bool
-	sources          map[manifest.NamedResource]entryResolution
+	resolvedSources  *entrySourcePublisher
 	input            *store.SourceArtifact
 	path             string
 	remotes          map[string]struct{}
@@ -401,7 +460,6 @@ type Admission struct {
 
 func (d *Session) admission() *Admission {
 	if d.entryAdmission != nil {
-		d.entryAdmission.sources = maps.Clone(d.resolvedSources)
 		d.entryAdmission.substitutions = d.substitutions
 		d.entryAdmission.entryDemand = d.requiresEntry()
 		if d.entryAdmission.entryDemand {
@@ -420,16 +478,16 @@ func (d *Session) admission() *Admission {
 		input = d.cfg.Input
 	}
 	admission := &Admission{
-		input:         input,
-		path:          d.cfg.Path,
-		remotes:       maps.Clone(d.remotes),
-		aliasViews:    maps.Clone(d.aliasViews),
-		sources:       maps.Clone(d.resolvedSources),
-		store:         d.cfg.Store,
-		loader:        d.loader,
-		trees:         d.cfg.Trees,
-		session:       d,
-		substitutions: d.substitutions,
+		input:           input,
+		path:            d.cfg.Path,
+		remotes:         maps.Clone(d.remotes),
+		aliasViews:      maps.Clone(d.aliasViews),
+		resolvedSources: d.resolvedSources,
+		store:           d.cfg.Store,
+		loader:          d.loader,
+		trees:           d.cfg.Trees,
+		session:         d,
+		substitutions:   d.substitutions,
 	}
 	admission.requestedEntry = manifest.EntryApplication{
 		Source: manifest.BootstrapSourceID, Path: admission.entryPath(),
@@ -465,6 +523,28 @@ func (a *Admission) Resolve(
 		resolved.artifact = &captured
 	}
 	return store.Child{Obj: resolved.object}, resolved.artifact, err
+}
+
+// Publish MUST complete acceptance before publishing readiness or recording a source.
+func (a *Admission) Publish(
+	ctx context.Context,
+	id manifest.NamedResource,
+	work manifest.WorkScope,
+	accept func(store.Child) (bool, error),
+) (bool, error) {
+	if a == nil {
+		return false, nil
+	}
+	resolved, err := a.resolve(ctx, id, nil, work)
+	if err != nil || resolved.object == nil || resolved.artifact == nil {
+		return false, nil //nolint:nilerr // Resolution errors leave ordinary acquisition responsible for the source.
+	}
+	accepted, err := accept(store.Child{Obj: resolved.object})
+	if err != nil || !accepted {
+		return false, err
+	}
+	a.resolvedSources.publish(&resolved, true)
+	return true, nil
 }
 
 func (a *Admission) resolve(
@@ -600,37 +680,37 @@ func (a *Admission) entrySourceView(
 	return &artifact, viewKey, nil
 }
 
-func (d *Session) publishEntrySource(candidate *entryResolution, artifact *store.SourceArtifact) {
-	id := candidate.object.Named()
-	if candidate.synthetic ||
-		d.loader != nil && d.loader.Options.Session != nil && d.cfg.Store.GetObject(id) != nil &&
-			d.cfg.Store.GetObject(id) != candidate.object {
-		d.cfg.Store.AddObject(candidate.object)
-	}
-
-	d.cfg.Store.SetArtifact(id, artifact)
-	d.cfg.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "local entry source"})
-	d.resolvedSources[id] = *candidate
-}
-
 // Only working-input aliases contribute; canonical and independently committed artifacts do not.
-func (d *Session) warnBootstrapAliases(repoRoot string) {
+func (p *entrySourcePublisher) aliasWarning() *manifest.Warning {
 	var names []string
-	for id := range d.resolvedSources {
-		artifact, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	for id := range p.snapshot() {
+		artifact, _ := p.store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		if id != manifest.BootstrapSourceID && artifact != nil && artifact.InputAlias {
 			names = append(names, id.String())
 		}
 	}
 	if len(names) <= 1 {
-		return
+		return nil
 	}
 	slices.Sort(names)
-	d.cfg.Store.AddWarning(manifest.Warning{
+	return &manifest.Warning{
 		Category: manifest.WarnBootstrapAliases,
 		Message:  "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
-		Detail:   append(names, repoRoot),
+		Detail:   append(names, p.root),
+		Count:    1,
+	}
+}
+
+// Warnings MUST replace construction alias diagnostics after runtime publication drains.
+func (a *Admission) Warnings() []manifest.Warning {
+	warnings := slices.DeleteFunc(a.store.Warnings(), func(warning manifest.Warning) bool {
+		return warning.Category == manifest.WarnBootstrapAliases
 	})
+	if warning := a.resolvedSources.aliasWarning(); warning != nil {
+		warnings = append(warnings, *warning)
+	}
+	slices.SortFunc(warnings, manifest.CompareWarning)
+	return warnings
 }
 
 func normalizeGitURL(raw string) string {

@@ -217,7 +217,7 @@ func (c *entryCapture) mapFiles() bool {
 
 func (c *entryCapture) mapFile(absolute string) (string, bool) {
 	a := c.admission
-	for id := range a.sources {
+	for id := range a.resolvedSources.snapshot() {
 		artifact, _ := c.reads.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		if artifact == nil || !artifact.InputAlias || !safepath.Contains(artifact.LocalPath, absolute) {
 			continue

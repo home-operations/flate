@@ -22,6 +22,51 @@ import (
 
 func TestBindEntry_LiteralSourceViews(t *testing.T) {
 	t.Parallel()
+	t.Run("alias recorded after freeze", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "entry/file", "mapped input")
+		st := store.New()
+		d := Session{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
+		t.Cleanup(d.loader.Close)
+		t.Cleanup(d.Close)
+		_, err := d.resolveEntrySources(t.Context(), false)
+		assert.NoError(t, err)
+		a := d.finishAdmission(t.Context())
+		before := a.resolvedSources.snapshot()
+		id := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Namespace: "apps",
+			Name:      "late",
+		}
+		published, err := a.Publish(
+			t.Context(),
+			id,
+			manifest.WorkScope{},
+			func(store.Child) (bool, error) { return true, nil },
+		)
+		assert.NoError(t, err)
+		assert.Equal(t, published, true)
+		_, existed := before[id]
+		assert.Equal(t, existed, false)
+		resolution := a.resolvedSources.snapshot()[id]
+		var reads store.ReadSet
+		reads.Init(st, manifest.BootstrapSourceID, nil)
+		defer reads.Retire()
+		file, err := filepath.Rel(root, filepath.Join(resolution.artifact.LocalPath, "entry", "file"))
+		assert.NoError(t, err)
+		capture := entryCapture{admission: a, reads: &reads, files: []string{filepath.ToSlash(file)}}
+		assert.Equal(t, capture.mapFiles(), true)
+		assert.Diff(t, capture.files, []string{"entry/file"})
+		assert.Equal(t, reads.Valid(), true)
+		st.DeleteObject(id)
+		qualified := a.applicationSource(st, nil, &manifest.EntryApplication{Source: id})
+		assert.Equal(t, qualified.object == resolution.object, true)
+		assert.Equal(t, qualified.artifact == nil, true)
+		assert.Equal(t, a.session == nil, true)
+		assert.Equal(t, a.qualification.session == nil, true)
+	})
 	for _, changed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("changed=%t", changed), func(t *testing.T) {
 			t.Parallel()

@@ -144,24 +144,16 @@ func (e *orchestratorExistence) promoteAdmission(
 	if e.o.admission == nil || reads == nil || reads.GetDeclaration(reads.ID()) == nil {
 		return false, nil
 	}
-	child, artifact, err := e.o.admission.Resolve(ctx, id, nil, reads.Work().Scope())
-	if err == nil && child.Obj != nil && artifact != nil && reads.Valid() {
+	return e.o.admission.Publish(ctx, id, reads.Work().Scope(), func(child store.Child) (bool, error) {
+		if !reads.Valid() {
+			return false, nil
+		}
 		request.Generation = slices.Collect(selection.Declarations([]store.Child{child}))
 		if len(request.Generation) == 0 {
 			return false, nil
 		}
-		accepted, admissionErr := e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, request)
-		if admissionErr != nil {
-			return false, admissionErr
-		}
-		if accepted {
-			e.o.store.AddObject(child.Obj)
-			e.o.store.SetArtifact(id, artifact)
-			e.o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
-			return true, nil
-		}
-	}
-	return false, nil
+		return e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, request)
+	})
 }
 
 func (o *Orchestrator) run(ctx context.Context) error {
@@ -210,14 +202,18 @@ func (o *Orchestrator) configureControllers() {
 }
 
 func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
+	var warnings []manifest.Warning
+	if o.admission != nil {
+		warnings = o.admission.Warnings()
+	} else {
+		warnings = o.store.Warnings()
+	}
 	res := &Result{
-		Work:    o.freezeWork(),
-		Failed:  map[manifest.NamedResource]store.StatusInfo{},
-		Orphans: map[manifest.NamedResource]string{},
-		Blocked: map[manifest.NamedResource][]manifest.NamedResource{},
-		// Render advisories collected by producers during Run (HR stale values,
-		// empty scan, …). Nil when none, sorted deterministically by the store.
-		Warnings: o.store.Warnings(),
+		Work:     o.freezeWork(),
+		Failed:   map[manifest.NamedResource]store.StatusInfo{},
+		Orphans:  map[manifest.NamedResource]string{},
+		Blocked:  map[manifest.NamedResource][]manifest.NamedResource{},
+		Warnings: warnings,
 	}
 	// Completed inventory survives a failed successor; diagnostics remain attached to its input.
 	failed := o.store.FailedResources()

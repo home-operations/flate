@@ -32,7 +32,7 @@ func (d *Session) discardPinnedWorkingTreeFiles(repoRoot string) {
 		return
 	}
 	for id, record := range d.loader.Index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		if _, resolved := d.resolvedSources[id]; resolved {
+		if _, resolved := d.resolvedSources.snapshot()[id]; resolved {
 			continue
 		}
 		if _, pinned := pinnedSources[id]; pinned {
@@ -88,7 +88,7 @@ func (d *Session) pinnedWorkingTreeFile(
 	}
 	file := record.File
 	if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
-		for source := range d.resolvedSources {
+		for source := range d.resolvedSources.snapshot() {
 			root, ok := d.cfg.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 			if ok && root.InputAlias && safepath.Contains(root.LocalPath, record.Path) {
 				rel, _ := filepath.Rel(root.LocalPath, record.Path)

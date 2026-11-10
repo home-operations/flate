@@ -321,8 +321,8 @@ func testCommitOrdinaryNativeRoots(t *testing.T, implicit bool) {
 		id := testutil.KustomizationID("apps", name)
 		assert.Equal(
 			t,
-			selection.Root(l.RootEvidence(id, nil)).Independent &&
-				selection.Root(l.RootEvidence(id, nil)).Occurrence.Declaration != (selection.OccurrenceID{}),
+			selection.Root(l.RootEvidence(id, nil, true)).Independent &&
+				selection.Root(l.RootEvidence(id, nil, true)).Occurrence.Declaration != (selection.OccurrenceID{}),
 			false,
 		)
 		at := slices.IndexFunc(proposal.Objects, func(child store.Child) bool { return child.Obj.Named() == id })

@@ -81,14 +81,18 @@ func TestAdmission_ClosureFactsFollowEmits(t *testing.T) {
 	assert.Equal(t, work.Scope().Admission().Counts.OwnerPrepares, uint64(emits))
 }
 
-func (f *countedAdmissionFacts) RootEvidence(id manifest.NamedResource, reads *store.ReadSet) RootEvidence {
+func (f *countedAdmissionFacts) RootEvidence(
+	id manifest.NamedResource,
+	reads *store.ReadSet,
+	completeOwners bool,
+) RootEvidence {
 	f.roots[id]++
 	if f.onRoot != nil {
 		onRoot := f.onRoot
 		f.onRoot = nil
 		onRoot()
 	}
-	return f.census.RootEvidence(id, reads)
+	return f.census.RootEvidence(id, reads, completeOwners)
 }
 
 func TestAdmission_MembershipChangeUsesSuccessorSnapshot(t *testing.T) {

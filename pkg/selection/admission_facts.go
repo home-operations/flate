@@ -145,7 +145,7 @@ func (c *admissionClosure) capturedRoot(id manifest.NamedResource) *RootEvidence
 	if facts, known := c.capturedRoots[id]; known {
 		return facts
 	}
-	facts := c.facts.RootEvidence(id, c.proposal.reads)
+	facts := c.facts.RootEvidence(id, c.proposal.reads, false)
 	if c.capturedRoots == nil {
 		c.capturedRoots = make(map[manifest.NamedResource]*RootEvidence)
 	}

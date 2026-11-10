@@ -723,7 +723,7 @@ func (w *qualificationWalk) preparationSupport(
 	case evidence.owner != (manifest.NamedResource{}):
 		accepted, _ := evidence.ownerAccepts(support)
 		return support, accepted
-	case selection.Root(w.q.loader.RootEvidence(evidence.object.Named(), nil)).InitialEntry:
+	case selection.Root(w.q.loader.RootEvidence(evidence.object.Named(), nil, true)).InitialEntry:
 		current := support.SourceAdmission(evidence.object.Named(), source)
 		return support, current
 	default:

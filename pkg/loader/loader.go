@@ -308,13 +308,13 @@ func (l *Loader) Load(
 		return 0, err
 	}
 	l.ensureScopes()
-	reader := l.documents
-	purpose := l.constructionPurpose.Load()
-	ordinary := purpose != nil && slices.Contains(*purpose, owner)
-	evidence := l.rootFacts(owner)
-	ordinary = ordinary ||
-		!l.frozen && selection.Root(evidence).Independent &&
-			evidence.Occurrence.Declaration != (selection.OccurrenceID{})
+	reader, view := l.documents, l.physicalView()
+	evidence := view.rootFacts(owner, l, nil)
+	ordinary := !l.frozen && selection.Root(evidence).Independent &&
+		evidence.Occurrence.Declaration != (selection.OccurrenceID{})
+	if purpose := l.constructionPurpose.Load(); purpose != nil {
+		ordinary = ordinary || slices.Contains(*purpose, owner)
+	}
 	switch {
 	case !reader.compact,
 		owner == (manifest.NamedResource{}),

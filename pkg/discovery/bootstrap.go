@@ -259,7 +259,7 @@ func (d *Session) addLoadedSources(
 		group.evidence = child
 		groups[id] = group
 		if restricted {
-			if selection.Root(d.loader.RootEvidence(id, nil)).Admitted {
+			if selection.Root(d.loader.RootEvidence(id, nil, true)).Admitted {
 				addEntrySource(groups, id, manifest.NamedResource{})
 			}
 		}
@@ -310,7 +310,7 @@ func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]ent
 		if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil {
 			continue
 		}
-		if !selection.Root(d.loader.RootEvidence(id, nil)).Admitted {
+		if !selection.Root(d.loader.RootEvidence(id, nil, true)).Admitted {
 			continue
 		}
 		for ref := range d.loader.References(id) {
@@ -345,7 +345,7 @@ func (d *Session) entrySourceObject(
 	obj = group.evidence.Obj
 	independentlyAdmitted := false
 	if restricted && obj != nil {
-		independentlyAdmitted = selection.Root(d.loader.RootEvidence(id, nil)).Admitted
+		independentlyAdmitted = selection.Root(d.loader.RootEvidence(id, nil, true)).Admitted
 	}
 	if obj != nil &&
 		(independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool { return d.cfg.Store.GetObject(requester) != nil })) {

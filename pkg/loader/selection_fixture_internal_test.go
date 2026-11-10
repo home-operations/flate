@@ -152,7 +152,7 @@ func rootAtForTest(l *Loader, object manifest.BaseManifest, file string) selecti
 	if !known || record.Path != file {
 		return selection.RootEvidence{}
 	}
-	return l.RootEvidence(object.Named(), nil)
+	return l.RootEvidence(object.Named(), nil, true)
 }
 
 func standaloneRootsForTest(t *testing.T, l *Loader, root string) []string {

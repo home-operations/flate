@@ -30,7 +30,7 @@ func AdmitDirectory(ctx context.Context, location *gitrepo.Location) (*store.Sou
 	if _, err := os.Stat(root); err != nil {
 		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 	}
-	captured, err := captureMembership(ctx, location)
+	captured, err := captureMembership(ctx, location, "")
 	if err != nil {
 		return nil, err
 	}

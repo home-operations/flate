@@ -4,10 +4,15 @@ import (
 	"cmp"
 	"errors"
 	"io/fs"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-billy/v5/helper/chroot"
+	"github.com/go-git/go-billy/v5/osfs"
 
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/store"
@@ -62,6 +67,9 @@ func (g *FS) excludes(name string) bool {
 	}
 	directory := g.membership.directory
 	if directory == "" {
+		if scoped, ok := g.view.(*scopedView); ok {
+			return scoped.parent.excludes(path.Join(scoped.path, name))
+		}
 		return false
 	}
 	rest, matched := strings.CutPrefix(name, directory)
@@ -166,4 +174,73 @@ func (g *FS) ReadDir(name string) ([]fs.DirEntry, error) {
 		}
 	}
 	return selected, err
+}
+
+type memberFilesystem struct {
+	billy.Filesystem
+
+	names fs.FS
+	input *FS
+	root  string
+}
+
+// Only native Billy backends may enumerate the host directory.
+func (g *FS) memberFilesystem(files billy.Filesystem, root string) *memberFilesystem {
+	bridge := &memberFilesystem{Filesystem: files, input: g, root: root}
+	for selected := g; selected.membership.directory == ""; {
+		scoped, ok := selected.view.(*scopedView)
+		if !ok {
+			return bridge
+		}
+		selected = scoped.parent
+	}
+	backend, err := files.Chroot(".")
+	if err != nil {
+		return bridge
+	}
+	native := false
+	switch backend := backend.(type) {
+	case *osfs.BoundOS:
+		native = true
+	case *chroot.ChrootHelper:
+		_, native = backend.Underlying().(*osfs.ChrootOS) //nolint:staticcheck // go-git still supplies this default native backend.
+	}
+	if native {
+		bridge.names = os.DirFS(files.Root())
+	}
+	return bridge
+}
+
+// ReadDir MUST filter names before metadata. go-billy's ReadDir stats every entry.
+// Repository coordinates MUST stay intact for the index and .git/info/exclude.
+//
+//nolint:wrapcheck // The bridge preserves filesystem errors and their concrete identities.
+func (f *memberFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
+	if f.names == nil {
+		return f.Filesystem.ReadDir(name)
+	}
+	relative, err := filepath.Rel(f.root, filepath.Join(f.Filesystem.Root(), name))
+	if err != nil {
+		return nil, err
+	}
+	relative = filepath.ToSlash(relative)
+	if f.input.excludes(relative) {
+		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
+	}
+	entries, err := fs.ReadDir(f.names, filepath.ToSlash(filepath.Clean(name)))
+	if err != nil {
+		return nil, err
+	}
+	selected := make([]fs.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		if f.input.excludes(path.Join(relative, entry.Name())) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		selected = append(selected, info)
+	}
+	return selected, nil
 }

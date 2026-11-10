@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-billy/v5/memfs"
+	"github.com/go-git/go-billy/v5/util"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -313,6 +315,32 @@ func (f *contentReadBilly) Open(name string) (billy.File, error) {
 func TestFS_GitContentEvidence(t *testing.T) {
 	t.Parallel()
 	t.Run("committed membership", func(t *testing.T) { t.Parallel(); testFSGitContentEvidenceCommittedMembership(t) })
+	t.Run("memory worktree", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		worktree, err := memfs.New().Chroot(root)
+		assert.NoError(t, err)
+		assert.NoError(t, util.WriteFile(worktree, "object.yaml", []byte("memory content"), 0o600))
+		input, _, err := New(t.Context(), memfs.New(), plumbing.ZeroHash, ViewOptions{
+			Mode: Source, Worktree: worktree,
+		})
+		assert.NoError(t, err)
+		data, err := input.ReadFile("object.yaml")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "memory content")
+		_, err = ContentFingerprint(t.Context(), input)
+		assert.NoError(t, err)
+		assert.Equal(t, len(input.FileDigests()), 1)
+		assert.NoError(t, util.WriteFile(worktree, ".cache/payload.yaml", []byte("excluded"), 0o600))
+		selected := ExcludeDirectory(
+			&store.SourceArtifact{FS: input, LocalPath: root}, filepath.Join(root, ".cache"),
+		).FS.(*FS)
+		observed, err := selected.FreshInputs(t.Context(), nil, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, len(observed.Files), 1)
+		assert.Equal(t, observed.Files["object.yaml"] != "", true)
+		assert.Equal(t, observed.Files[".cache/payload.yaml"], "")
+	})
 	for _, mode := range []string{"clean", "dirty", "staged", "untracked", "racy", "subtree", "immutable", "sdk", "unreadable_clean", "source_unreadable", "unlocated", "routed", "scoped_local", "scoped_immutable", "direct_immutable"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()

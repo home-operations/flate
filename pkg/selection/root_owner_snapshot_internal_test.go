@@ -79,3 +79,46 @@ func TestAdmission_CoverageReusesOwnerCoordinates(t *testing.T) {
 	assert.Equal(t, c.bootstrapPrerequisite(parented), false)
 	assert.Equal(t, owner.paths, 0)
 }
+
+func TestAdmission_EmptyRootOwnerInventoryShared(t *testing.T) {
+	t.Parallel()
+	session := newSolverSession(t, store.New(), nil, Request{Changed: true})
+	facts := session.facts.(*solverFacts)
+	facts.roots = map[manifest.NamedResource]RootEvidence{}
+	facts.index.Records = map[manifest.NamedResource]manifest.DiscoveryRecord{}
+	closure := solverClosure(t, session.store, facts)
+	reader := &admissionArtifactReads{admissionReader: session.store}
+	closure.objects = reader
+	roots := make([]manifest.NamedResource, 0, 3)
+	for i := range 3 {
+		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: fmt.Sprintf("root-%d", i)}
+		roots = append(roots, id)
+		record := manifest.DiscoveryRecord{Path: filepath.Join(t.TempDir(), "object.yaml")}
+		facts.index.Records[id] = record
+		facts.roots[id] = RootEvidence{
+			Identity: id,
+			Captured: true,
+			Record:   RootRecordFrom(&record),
+			Scope:    RootScopeFacts{NamespaceEligible: true, Initial: true},
+		}
+	}
+	expected := 0
+	for info := range manifest.Kinds() {
+		if info.Structural {
+			expected++
+		}
+	}
+	for _, id := range roots {
+		closure.rootSupport(id)
+	}
+	assert.Equal(t, closure.ownersKnown, true)
+	assert.Equal(t, len(closure.ownerCandidates), 0)
+	assert.Equal(t, reader.lists, expected)
+	assert.NoError(t, closure.refreshPrerequisites(t.Context(), nil, &PrepareRequest{}))
+	for _, id := range roots {
+		closure.rootSupport(id)
+	}
+	assert.Equal(t, closure.ownersKnown, true)
+	assert.Equal(t, len(closure.ownerCandidates), 0)
+	assert.Equal(t, reader.lists, 2*expected)
+}

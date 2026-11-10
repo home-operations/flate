@@ -431,10 +431,12 @@ func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
 	directory = cmp.Or(directory, g.membership.directory)
 	switch v := g.view.(type) {
 	case *localView:
-		captured, err := captureMembership(ctx, g.location, directory)
+		admission, err := openDirectoryAt(ctx, g.location, directory)
 		if err != nil {
 			return nil, err
 		}
+		captured := admission.membership
+		_ = admission.Close()
 		input := newLocal(v.root, true, &localPolicy{})
 		input.location = g.location
 		input.membership = captured

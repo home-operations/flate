@@ -56,8 +56,10 @@ spec:
 	if testCaseInput.alias {
 		location, err := gitrepo.Locate(t.Context(), root, root)
 		assert.NoError(t, err)
-		input, err := gittree.AdmitDirectory(t.Context(), location)
+		inputDirectory, err := gittree.OpenDirectory(t.Context(), location)
 		assert.NoError(t, err)
+		input := inputDirectory.Artifact()
+		assert.NoError(t, inputDirectory.Close())
 		l.Store.SetArtifact(manifest.BootstrapSourceID, input)
 		view, _, err := gittree.New(
 			t.Context(),

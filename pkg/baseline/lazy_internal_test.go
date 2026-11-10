@@ -128,8 +128,10 @@ func TestSelection_AcquireBaseNoOrigin(t *testing.T) {
 	hash := initRepoWithFile(t, dir, "a.yaml", "base")
 	location, err := gitrepo.Locate(t.Context(), dir, "")
 	assert.NoError(t, err)
-	input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
+	directory, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 	assert.NoError(t, err)
+	t.Cleanup(func() { _ = directory.Close() })
+	input := directory.Artifact()
 	s := selection{base: &resolution{Hash: hash}, current: input.FS.(*gittree.FS)}
 	err = s.acquireBase(t.Context())
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
@@ -159,8 +161,10 @@ func TestSelection_SharedIndexInitialization(t *testing.T) {
 			testutil.WriteFile(t, root, ".git/index", "invalid index")
 			location, err := gitrepo.Locate(t.Context(), root, "")
 			assert.NoError(t, err)
-			input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
+			directory, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 			assert.NoError(t, err)
+			t.Cleanup(func() { _ = directory.Close() })
+			input := directory.Artifact()
 			shared := &sharedIndexStorage{Storer: location.Repository.Storer, err: tc.err}
 			location.Repository.Storer = shared
 			repo := openHelper(t, root)
@@ -169,7 +173,10 @@ func TestSelection_SharedIndexInitialization(t *testing.T) {
 			_, statusErr := worktree.Status()
 			assert.FatalIf(t, statusErr == nil, "%v", "malformed index did not fail Worktree.Status")
 			base, changes, identity, warnings, err := selectChanges(t.Context(), selection{
-				repo: repo, base: &resolution{Repo: repo, Hash: pin}, current: input.FS.(*gittree.FS),
+				repo:     repo,
+				base:     &resolution{Repo: repo, Hash: pin},
+				worktree: comparisonWorktree(t, input.FS.(*gittree.FS)),
+				current:  input.FS.(*gittree.FS),
 			})
 			assert.Diff(t, shared.probes, []plumbing.Hash{plumbing.ZeroHash})
 			assert.Diff(t, warnings, []manifest.Warning{
@@ -264,8 +271,10 @@ func TestCollectInputs_BaselineFailure(t *testing.T) {
 			testutil.WriteFile(t, root, ".git/index", "invalid index")
 			location, err := gitrepo.Locate(t.Context(), root, "")
 			assert.NoError(t, err)
-			input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
+			directory, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 			assert.NoError(t, err)
+			t.Cleanup(func() { _ = directory.Close() })
+			input := directory.Artifact()
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			failing := &inputFailureFS{FS: input.FS.(*gittree.FS), fail: func(string) error {
@@ -283,10 +292,10 @@ func TestCollectInputs_BaselineFailure(t *testing.T) {
 			assert.NoError(t, err)
 			repo := openHelper(t, root)
 			base, changes, identity, warnings, err := selectChanges(ctx, selection{
-				repo:    repo,
-				base:    &resolution{Repo: repo, Hash: pin},
-				current: current,
-				owner:   cachetest.New(t, "", sourcecache.New),
+				repo:     repo,
+				base:     &resolution{Repo: repo, Hash: pin},
+				worktree: comparisonWorktree(t, current), current: current,
+				owner: cachetest.New(t, "", sourcecache.New),
 			})
 			want := fs.ErrPermission
 			if canceled {
@@ -478,11 +487,17 @@ func testAutoResolveLocalBaseMissingObjectsCase(t *testing.T, missing string) {
 	if missing == "policy_membership_missing_blob" {
 		location, localErr := gitrepo.Locate(t.Context(), root, "")
 		assert.NoError(t, localErr)
-		input, localErr := admitLocation(t.Context(), location, manifest.WorkScope{})
+		directory, localErr := admitLocation(t.Context(), location, manifest.WorkScope{})
 		assert.NoError(t, localErr)
+		t.Cleanup(func() { _ = directory.Close() })
+		input := directory.Artifact()
 		entries, comparison, localErr := treeEntries(t.Context(), tree)
 		assert.NoError(t, localErr)
-		s := selection{repo: repo, current: input.FS.(*gittree.FS)}
+		s := selection{
+			repo:     repo,
+			worktree: comparisonWorktree(t, input.FS.(*gittree.FS)),
+			current:  input.FS.(*gittree.FS),
+		}
 		candidates, warnings, localErr := s.candidates(t.Context(), entries, comparison)
 		assert.NoError(t, localErr)
 		assert.Equal(t, len(warnings), 0)
@@ -613,14 +628,16 @@ func testAutoResolveLazyBaseReadsCase(t *testing.T, testCaseInput *struct {
 	if testCaseInput.name == "settled" || testCaseInput.name == "committed_deletion" {
 		location, localErr := gitrepo.Locate(t.Context(), root, "")
 		assert.NoError(t, localErr)
-		input, localErr := admitLocation(t.Context(), location, manifest.WorkScope{})
+		directory, localErr := admitLocation(t.Context(), location, manifest.WorkScope{})
 		assert.NoError(t, localErr)
+		t.Cleanup(func() { _ = directory.Close() })
+		input := directory.Artifact()
 		entries, comparison, localErr := treeEntries(t.Context(), tree)
 		assert.NoError(t, localErr)
 		s := selection{
-			repo:    repo,
-			current: input.FS.(*gittree.FS),
-			base:    &resolution{Repo: &git.Repository{Storer: memory.NewStorage()}},
+			repo:     repo,
+			worktree: comparisonWorktree(t, input.FS.(*gittree.FS)), current: input.FS.(*gittree.FS),
+			base: &resolution{Repo: &git.Repository{Storer: memory.NewStorage()}},
 		}
 		candidates, _, localErr := s.candidates(t.Context(), entries, comparison)
 		assert.NoError(t, localErr)

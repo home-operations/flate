@@ -382,8 +382,10 @@ func testLoadChartCoalescesConcurrentFirstLoadCase(
 	owner := cachetest.New(t, "", cache.New)
 	local, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), local)
+	admittedDirectory, err := gittree.OpenDirectory(t.Context(), local)
 	assert.NoError(t, err)
+	admitted := admittedDirectory.Artifact()
+	assert.NoError(t, admittedDirectory.Close())
 	input := admitted.FS
 	location := "mychart"
 	if *testCaseInput.archive {

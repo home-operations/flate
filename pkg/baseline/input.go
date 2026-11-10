@@ -31,18 +31,19 @@ func AdmitDirectory(
 	if err != nil {
 		return nil, "", err
 	}
-	input, err := admitLocation(ctx, location, scope)
+	directory, err := admitLocation(ctx, location, scope)
 	if err != nil {
 		return nil, "", err
 	}
-	return input, location.ScanPath, nil
+	defer func() { _ = directory.Close() }()
+	return directory.Artifact(), location.ScanPath, nil
 }
 
 func admitLocation(
 	ctx context.Context,
 	location *gitrepo.Location,
 	scope manifest.WorkScope,
-) (*store.SourceArtifact, error) {
+) (*gittree.Directory, error) {
 	if !safepath.Contains(location.ContentRoot, location.ScanPath) {
 		return nil, manifest.NewError(
 			manifest.ErrInput,
@@ -52,7 +53,7 @@ func admitLocation(
 	}
 	work := scope.Record(manifest.WorkAcquisition, location.ContentRoot)
 	work.Add(&manifest.WorkCounts{Attempts: 1, LocalAcquisitions: 1})
-	input, err := gittree.AdmitDirectory(ctx, location)
+	directory, err := gittree.OpenDirectory(ctx, location)
 	work.Finish(err)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -61,7 +62,8 @@ func admitLocation(
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("--path %q: %w", location.ScanPath, err), "")
 	}
 	if _, err := os.Stat(location.ScanPath); err != nil {
+		_ = directory.Close()
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("--path %q: %w", location.ScanPath, err), "")
 	}
-	return input, nil
+	return directory, nil
 }

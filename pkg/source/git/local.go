@@ -148,12 +148,13 @@ func (r *localResolver) directory(
 	if r.local == nil {
 		work := r.work.Source(repository.Named()).Record(manifest.WorkAcquisition, "")
 		work.Add(&manifest.WorkCounts{Attempts: 1, LocalAcquisitions: 1})
-		input, err := gittree.AdmitDirectory(ctx, r.location)
+		directory, err := gittree.OpenDirectory(ctx, r.location)
 		work.Finish(err)
 		if err != nil {
 			return nil, localError(err)
 		}
-		r.local = input.FS
+		r.local = directory.Artifact().FS
+		_ = directory.Close()
 	}
 	return &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: r.root, Revision: hash.String(),

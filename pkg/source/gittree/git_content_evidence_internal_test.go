@@ -69,8 +69,10 @@ func testFSGitContentEvidenceCase(t *testing.T, mode *string,
 	reader := &contentReadBilly{Filesystem: osfs.New(root)}
 	location.Repository, err = git.Open(repo.Storer, reader)
 	assert.NoError(t, err)
-	input, err := AdmitDirectory(t.Context(), location)
+	inputDirectory, err := OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	input := inputDirectory.Artifact()
+	assert.NoError(t, inputDirectory.Close())
 	objects := &contentReadBilly{Filesystem: repo.Storer.(*filesystem.Storage).Filesystem(), all: true}
 	if (*mode) == "immutable" || (*mode) == "scoped_immutable" ||
 		(*mode) == "direct_immutable" {

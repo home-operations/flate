@@ -78,8 +78,10 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 	t.Cleanup(func() { o.stop() })
 	location, err := gitrepo.Locate(t.Context(), root, "")
 	assert.NoError(t, err)
-	input, err := gittree.AdmitDirectory(t.Context(), location)
+	inputDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	input := inputDirectory.Artifact()
+	assert.NoError(t, inputDirectory.Close())
 	o.store.SetArtifact(manifest.BootstrapSourceID, input)
 	o.src.Fetchers[manifest.KindGitRepository] = emptySourceFetcher{}
 	o.store.AddObject(
@@ -591,8 +593,10 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 
 		location, locateErr := gitrepo.Locate(t.Context(), root, "")
 		assert.NoError(t, locateErr)
-		input, admitErr := gittree.AdmitDirectory(t.Context(), location)
+		inputDirectory2, admitErr := gittree.OpenDirectory(t.Context(), location)
 		assert.NoError(t, admitErr)
+		input := inputDirectory2.Artifact()
+		assert.NoError(t, inputDirectory2.Close())
 		o.store.SetArtifact(manifest.BootstrapSourceID, input)
 		o.src.Fetchers[manifest.KindGitRepository] = emptySourceFetcher{}
 		o.store.AddObject(

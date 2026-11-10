@@ -183,10 +183,12 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}
 	}
 	if liveWorktree && !opts.membership.captured {
-		captured, err := captureMembership(ctx, opts.Location, opts.membership.directory)
+		directory, err := openDirectoryAt(ctx, opts.Location, opts.membership.directory)
 		if err != nil {
 			return nil, "", err
 		}
+		captured := directory.membership
+		_ = directory.Close()
 		opts.membership = captured
 	}
 	if liveWorktree && opts.Mode == Direct {
@@ -434,7 +436,7 @@ func (g *gitView) list() {
 // Lstat exposes only visible entries without following the final link.
 func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "lstat", Path: name, Err: fs.ErrInvalid}
+		return nil, &fs.PathError{Op: lstatOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	node := g.nodes[name]
 	if node == nil {

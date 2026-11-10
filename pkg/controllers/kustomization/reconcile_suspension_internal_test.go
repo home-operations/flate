@@ -411,8 +411,10 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	}
 	location, err := gitrepo.Locate(t.Context(), root, "")
 	assert.NoError(t, err)
-	input, err := gittree.AdmitDirectory(t.Context(), location)
+	inputDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	input := inputDirectory.Artifact()
+	assert.NoError(t, inputDirectory.Close())
 	guard := &guardedSourceFS{FS: input.FS}
 	initial := *input
 	initial.Key, initial.Content, initial.FS, initial.Revision = "initial-pin", "initial-content", guard, "initial-pin"

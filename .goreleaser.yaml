@@ -28,7 +28,7 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
-    main: ./cmd/flate/main.go
+    main: ./cmd/flate
     binary: flate
 
 archives:

@@ -64,7 +64,10 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	required.Init(st, manifest.NamedResource{}, nil)
 	defer required.Retire()
 	required.RequireData(one)
-	proposal, err := l.Options.Session.Prepare(t.Context(), selection.PrepareRequest{Reads: &required})
+	proposal, err := l.Options.Session.Prepare(
+		t.Context(),
+		selection.PrepareRequest{Reads: &required, Missing: l.Options.Missing},
+	)
 	assert.NoError(t, err)
 	advanced, err := session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)

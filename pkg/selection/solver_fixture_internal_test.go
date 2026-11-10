@@ -11,6 +11,35 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+type solverMissingPolicy struct {
+	allowed bool
+}
+
+//nolint:gocritic // The fixture matches the policy value contract.
+func (p *solverMissingPolicy) Missing(manifest.Reference, store.ReferenceFacts) (bool, bool, bool) {
+	return p != nil && p.allowed, false, false
+}
+
+//nolint:gocritic // Test requests keep independent snapshots.
+func (s *Session) prepareTest(ctx context.Context, request PrepareRequest) (*Admission, error) {
+	if request.Missing == nil {
+		request.Missing = (*solverMissingPolicy)(nil)
+	}
+	return s.Prepare(ctx, request)
+}
+
+//nolint:gocritic // Test requests keep independent snapshots.
+func (s *Session) refreshHistoryTest(
+	ctx context.Context,
+	previous *Admission,
+	request PrepareRequest,
+) (*Admission, error) {
+	if request.Missing == nil {
+		request.Missing = (*solverMissingPolicy)(nil)
+	}
+	return s.RefreshHistory(ctx, previous, request)
+}
+
 type solverFacts struct {
 	store        *store.Store
 	reader       admissionReader
@@ -139,7 +168,7 @@ func solverClosure(t *testing.T, st *store.Store, facts *solverFacts) admissionC
 		t.Fatal(err)
 	}
 	return admissionClosure{
-		session: session, decision: session.Snapshot(), facts: facts, objects: st,
+		session: session, decision: session.Snapshot(), facts: facts, objects: st, missing: (*solverMissingPolicy)(nil),
 		states: map[manifest.NamedResource]admissionState{}, proposal: new(Admission),
 	}
 }
@@ -152,7 +181,7 @@ func prepareSolver(ctx context.Context, t *testing.T, session *Session, request 
 		request.Preparation = &preparation
 		t.Cleanup(func() { preparation.Retire() })
 	}
-	proposal, err := session.Prepare(ctx, request)
+	proposal, err := session.prepareTest(ctx, request)
 	for err == nil && len(proposal.demands) != 0 {
 		acquired := make([]Acquisition, 0, len(proposal.demands))
 		for i := range proposal.demands {
@@ -165,7 +194,7 @@ func prepareSolver(ctx context.Context, t *testing.T, session *Session, request 
 		}
 		request = proposal.Request
 		request.Acquired = acquired
-		next, nextErr := session.Prepare(ctx, request)
+		next, nextErr := session.prepareTest(ctx, request)
 		proposal.Retire()
 		proposal, err = next, nextErr
 	}
@@ -208,6 +237,10 @@ func evaluateSolver(t *testing.T, c *admissionClosure, request *PrepareRequest) 
 	facts := c.facts.(*solverFacts)
 	c.context, c.changes = facts.context, facts.changes
 	request.Changes = facts.changes
+	if request.Missing == nil {
+		request.Missing = c.missing
+	}
+	c.missing = request.Missing
 	if len(request.Generation) == 0 {
 		request.Generation = c.generation
 	}

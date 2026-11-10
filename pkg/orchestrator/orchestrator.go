@@ -5,7 +5,6 @@ import (
 	"iter"
 	"log/slog"
 	"maps"
-	"slices"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/controllers/artifactgenerator"
@@ -14,6 +13,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -83,9 +83,11 @@ type Config struct {
 	// Cache, when injected, remains caller-owned and can be shared across runs.
 	Cache *sourcecache.Cache
 	// Network shares compatible HTTP transports and connection-timeout facts for this invocation.
-	Network      *source.Network
-	chartFetcher *helmchart.Fetcher
-	projections  *manifest.ProducerProjections
+	Network             *source.Network
+	chartFetcher        *helmchart.Fetcher
+	projections         *manifest.ProducerProjections
+	missing             *depwait.MissingPolicy
+	allowMissingSecrets bool
 	// HelmClient must borrow Cache; both remain caller-owned when supplied.
 	HelmClient *helm.Client
 	// StatusListener receives concurrent tree-qualified store events and must not block.
@@ -217,7 +219,7 @@ func newOrchestrator(ctx context.Context, cfg *Config, treeInput *Tree, ts *task
 	}
 	st.SetWorkTree(tree.ID, o.cfg.work.Scope())
 	o.loader = loader.New(st)
-	o.loader.Options.AllowMissingKinds = cfg.AllowMissingKinds
+	o.loader.Options.Missing = cfg.missing
 	o.cfg.Selection.Changed = cfg.Selection.Changed || tree.ExternalChanges != nil
 	var err error
 	o.selection, err = selection.New(st, o.loader, o.cfg.Selection)
@@ -373,7 +375,7 @@ func (o *Orchestrator) completeBootstrap() {
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	o.rsc.Inputs = ociFetcher
 	o.rsc.Retry = o.cfg.SourceRetry
-	o.rsc.AllowMissingSecrets = slices.Contains(o.cfg.AllowMissingKinds, manifest.KindSecret)
+	o.rsc.AllowMissingSecrets = o.cfg.allowMissingSecrets
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
 			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network}),

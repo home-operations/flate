@@ -92,7 +92,7 @@ func (o *Orchestrator) admissionRequest(request *selection.PrepareRequest) {
 	o.loader.Options.Changes = o.cfg.ExternalChanges
 	o.loader.Options.ConfiguredInput = o.cfg.Input
 	request.Changes, request.HistoryOwners = o.cfg.ExternalChanges, o.historyOwners
-	request.AllowMissingKinds = o.cfg.AllowMissingKinds
+	request.Missing = o.cfg.missing
 	if request.Preparation == nil {
 		request.Preparation = &o.admissionPreparation
 	}

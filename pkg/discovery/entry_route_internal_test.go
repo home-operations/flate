@@ -57,7 +57,10 @@ func TestEntryRoute_RejectedProposalPreservesAcceptedSupport(t *testing.T) {
 			assert.FatalIf(t, accepted == nil, "accepted route was not retained")
 			assert.Equal(t, accepted.Reads, support)
 			assert.Equal(t, accepted.Root, acceptedRoot)
-			proposal, err := l.Options.Session.Prepare(t.Context(), selection.PrepareRequest{})
+			proposal, err := l.Options.Session.Prepare(
+				t.Context(),
+				selection.PrepareRequest{Missing: l.Options.Missing},
+			)
 			assert.NoError(t, err)
 			provisional := capture()
 			provisional.Retire()

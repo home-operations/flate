@@ -6,7 +6,6 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -108,7 +107,6 @@ func (c *execution) render(
 	hr, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).Declaration, c.data, c.Helm.ValuesCache())
 	slices.SortFunc(omitted, manifest.NamedResource.Compare)
 	omitted = slices.Compact(omitted)
-	c.recordOmittedValues(id, omitted)
 	if err != nil {
 		return err
 	}
@@ -225,31 +223,22 @@ func (c *Controller) PreviousRender(
 	history := base.History{Assessment: &ex.run}
 	data := values.NewStoreProvider(reads)
 	ex.data = data
-	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
+	inputs, err := ex.run.DataInputs(ctx, hr, data)
+	if err != nil {
+		return history
+	}
 	var omittedRefs []manifest.NamedResource
-	for ref := range manifest.References(hr, manifest.ReferenceRelations) {
-		if ref.Use != "valuesFrom" {
-			continue
-		}
-		availability := waiter.Available(
-			ctx,
-			depwait.DataDependency{
-				DependencyRef: ref.DependencyRef,
-				Input:         data.Lookup(ref.NamedResource),
-				Optional:      ref.Optional,
-				AllowMissing:  slices.Contains(c.AllowMissingKinds, ref.Kind),
-			},
-			manifest.DrainNone,
-		)
-		if availability.Err != nil || availability.Kind != schedule.Terminal {
-			return history
-		}
-		if availability.Omit {
-			omittedRefs = append(omittedRefs, ref.NamedResource)
-		}
+	if err = ex.run.AwaitData(ctx, base.DataWait{
+		Inputs: inputs,
+		Resume: func(_ context.Context, _ manifest.DrainLevel, omitted []manifest.NamedResource) error {
+			omittedRefs = requiredValuesOmissions(hr, omitted)
+			return nil
+		},
+	}, manifest.DrainNone); err != nil {
+		return history
 	}
 	hr = omitValues(hr, omittedRefs)
-	hr, err := helm.Prepare(hr, helm.NewSources(reads).Declaration, data, c.Helm.ValuesCache())
+	hr, err = helm.Prepare(hr, helm.NewSources(reads).Declaration, data, c.Helm.ValuesCache())
 	if err != nil {
 		return history
 	}

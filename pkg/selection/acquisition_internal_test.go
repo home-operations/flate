@@ -68,7 +68,7 @@ func TestPreparation_RetireReleasesCapturedState(t *testing.T) {
 	t.Parallel()
 	session := newPublicationSession(t)
 	var preparation *Preparation
-	proposal, err := session.Prepare(t.Context(), PrepareRequest{Preparation: &preparation})
+	proposal, err := session.prepareTest(t.Context(), PrepareRequest{Preparation: &preparation})
 	assert.NoError(t, err)
 	proposal.Retire()
 	preparation.Retire()
@@ -87,7 +87,7 @@ func TestSession_RefreshHistoryGuardsAttemptedAbsence(t *testing.T) {
 	var preparation *Preparation
 	defer func() { preparation.Retire() }()
 	request := PrepareRequest{Preparation: &preparation}
-	proposal, err := session.RefreshHistory(t.Context(), previous, request)
+	proposal, err := session.refreshHistoryTest(t.Context(), previous, request)
 	assert.NoError(t, err)
 	demands := slices.Collect(proposal.Demands())
 	assert.Equal(t, len(demands), 1)
@@ -99,7 +99,7 @@ func TestSession_RefreshHistoryGuardsAttemptedAbsence(t *testing.T) {
 		Complete bool
 	}{owner.Named(): {}}
 	request.Acquired = []Acquisition{{Demand: demands[0], Reads: demands[0].Reads}}
-	next, err := session.RefreshHistory(t.Context(), previous, request)
+	next, err := session.refreshHistoryTest(t.Context(), previous, request)
 	proposal.Retire()
 	assert.NoError(t, err)
 	assert.Equal(t, len(slices.Collect(next.Demands())), 0)
@@ -109,7 +109,7 @@ func TestSession_RefreshHistoryGuardsAttemptedAbsence(t *testing.T) {
 	replacement := *input
 	replacement.Revision = "after"
 	st.SetArtifact(manifest.BootstrapSourceID, &replacement)
-	proposal, err = session.RefreshHistory(t.Context(), previous, request)
+	proposal, err = session.refreshHistoryTest(t.Context(), previous, request)
 	next.Retire()
 	assert.NoError(t, err)
 	demands = slices.Collect(proposal.Demands())
@@ -117,7 +117,7 @@ func TestSession_RefreshHistoryGuardsAttemptedAbsence(t *testing.T) {
 	assert.Equal(t, demands[0].Artifact, &replacement)
 	request = proposal.Request
 	request.Acquired = []Acquisition{{Demand: demands[0], Reads: demands[0].Reads}}
-	next, err = session.RefreshHistory(t.Context(), previous, request)
+	next, err = session.refreshHistoryTest(t.Context(), previous, request)
 	proposal.Retire()
 	assert.NoError(t, err)
 	assert.Equal(t, len(slices.Collect(next.Demands())), 0)
@@ -126,7 +126,7 @@ func TestSession_RefreshHistoryGuardsAttemptedAbsence(t *testing.T) {
 	st.AddObject(changed)
 	request = next.Request
 	request.Acquired = nil
-	proposal, err = session.RefreshHistory(t.Context(), previous, request)
+	proposal, err = session.refreshHistoryTest(t.Context(), previous, request)
 	next.Retire()
 	assert.NoError(t, err)
 	defer proposal.Retire()
@@ -187,7 +187,7 @@ func TestAdmission_EntryReceiptRequiresHistoricalReach(t *testing.T) {
 				}
 				request.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{tc.owner: {evidence}}
 			}
-			proposal, err := session.Prepare(t.Context(), request)
+			proposal, err := session.prepareTest(t.Context(), request)
 			assert.NoError(t, err)
 			defer proposal.Retire()
 			assert.Equal(t, proposal.EntryReceipt != nil, tc.want)

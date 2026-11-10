@@ -777,6 +777,7 @@ data: {VALUE: rendered}
 	prepared, err := kustomize.Prepare(
 		warm.store.GetObject(owner).(*manifest.Kustomization),
 		values.NewStoreProvider(&reads),
+		warm.cfg.missing,
 	)
 	assert.NoError(t, err)
 	source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)

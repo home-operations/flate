@@ -76,7 +76,10 @@ func TestClassify_BootstrapArtifactRequirement(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: fstest.MapFS{}})
-			w := Waiter{Store: s}
+			w := Waiter{
+				Store: captureState(t, s), Missing: NewMissingPolicy(
+					nil),
+			}
 			got := w.Classify(
 				t.Context(),
 				manifest.DependencyRef{NamedResource: manifest.BootstrapSourceID, Artifact: artifact},
@@ -106,7 +109,10 @@ func TestClassify_SyntheticArtifactContext(t *testing.T) {
 				status.Message = "material unavailable"
 			}
 			st.UpdateStatus(repo.Named(), status)
-			waiter := Waiter{Store: st}
+			waiter := Waiter{
+				Store: captureState(t, st), Missing: NewMissingPolicy(
+					nil),
+			}
 			result := waiter.Classify(
 				t.Context(),
 				manifest.DependencyRef{NamedResource: repo.Named(), Artifact: true, ArtifactOnly: mode == "unreadable"},
@@ -187,11 +193,17 @@ func testClassifyArtifactRequirementCase(t *testing.T, testCaseInput *struct {
 		}
 		s.SetArtifact(source.Named(), artifact)
 	}
-	w := Waiter{Store: s}
+	reads := captureState(t, s)
+	w := Waiter{
+		Store: reads, Admission: selection.PrepareRequest{Reads: reads}, Missing: NewMissingPolicy(
+			nil),
+	}
 	if testCaseInput.promote {
 		w.Existence = &artifactPromotion{promote: func(id manifest.NamedResource) bool {
 			assert.FatalIf(t, id != source.Named(), "promotion=%s", id)
 			publish()
+			reads.Retire()
+			reads.Init(s, manifest.NamedResource{}, nil)
 			return true
 		}}
 	} else if !testCaseInput.absent {

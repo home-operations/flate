@@ -61,7 +61,7 @@ func TestAdmission_ClosureFactsFollowEmits(t *testing.T) {
 			Preparation: &preparation, Owner: parent.Named(), Reads: &reads,
 			Generation: []store.Child{{Obj: child}},
 		}
-		proposal, err := session.Prepare(t.Context(), request)
+		proposal, err := session.prepareTest(t.Context(), request)
 		assert.NoError(t, err)
 		_, committed, err := session.Commit(t.Context(), proposal, Execution)
 		assert.NoError(t, err)
@@ -71,7 +71,7 @@ func TestAdmission_ClosureFactsFollowEmits(t *testing.T) {
 		assert.Equal(t, len(preparation.closure.states) <= 4, true)
 		assert.Equal(t, facts.sources[manifest.BootstrapSourceID], 1)
 		clear(facts.roots)
-		proposal, err = session.Prepare(t.Context(), request)
+		proposal, err = session.prepareTest(t.Context(), request)
 		assert.NoError(t, err)
 		assert.Equal(t, proposal.reused, true)
 		assert.Equal(t, len(facts.roots), 0)
@@ -120,7 +120,7 @@ func TestAdmission_MembershipChangeUsesSuccessorSnapshot(t *testing.T) {
 	reads.Init(st, parent.Named(), nil)
 	reads.RequireQualification(child.Named())
 	defer reads.Close()
-	proposal, err := session.Prepare(t.Context(), PrepareRequest{
+	proposal, err := session.prepareTest(t.Context(), PrepareRequest{
 		Preparation: &preparation, Owner: parent.Named(), Reads: &reads,
 		Generation: []store.Child{{Obj: child}},
 	})
@@ -161,7 +161,7 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 			case "emitted":
 				request.Generation = []store.Child{{Obj: object}}
 			}
-			proposal, err := session.Prepare(t.Context(), request)
+			proposal, err := session.prepareTest(t.Context(), request)
 			assert.NoError(t, err)
 			_, committed, err := session.Commit(t.Context(), proposal, Execution)
 			assert.NoError(t, err)
@@ -173,7 +173,7 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 				Needed: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Name: "unrelated"}},
 			}), session.Snapshot().version())
 			assert.Equal(t, retry, false)
-			proposal, err = session.Prepare(t.Context(), request)
+			proposal, err = session.prepareTest(t.Context(), request)
 			assert.NoError(t, err)
 			assert.Equal(t, proposal.reused, true)
 			assert.Equal(t, len(facts.roots), 0)
@@ -213,21 +213,21 @@ func TestAdmission_InvocationSeesNewObjects(t *testing.T) {
 	var preparation *Preparation
 	defer func() { preparation.Retire() }()
 	request := PrepareRequest{Preparation: &preparation, Invocation: true}
-	proposal, err := session.Prepare(t.Context(), request)
+	proposal, err := session.prepareTest(t.Context(), request)
 	assert.NoError(t, err)
 	_, committed, err := session.Commit(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	late := &manifest.Kustomization{Name: "late", Namespace: "apps"}
 	st.AddObject(late)
-	proposal, err = session.Prepare(t.Context(), request)
+	proposal, err = session.prepareTest(t.Context(), request)
 	assert.NoError(t, err)
 	assert.Equal(t, proposal.reused, false)
 	assert.Equal(t, slices.Contains(proposal.Selected, late.Named()), true)
 	_, committed, err = session.Commit(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
-	proposal, err = session.Prepare(t.Context(), PrepareRequest{Preparation: &preparation})
+	proposal, err = session.prepareTest(t.Context(), PrepareRequest{Preparation: &preparation})
 	assert.NoError(t, err)
 	defer proposal.Retire()
 	assert.Equal(t, proposal.reused, false)
@@ -280,7 +280,7 @@ func TestAdmission_IncomingDeclarationKeepsAcceptedProducer(t *testing.T) {
 			if tc.incoming {
 				request.Generation = []store.Child{{Obj: incoming}}
 			}
-			proposal, err := session.Prepare(t.Context(), request)
+			proposal, err := session.prepareTest(t.Context(), request)
 			assert.NoError(t, err)
 			defer proposal.Retire()
 			evidence := proposal.preparation.closure.declarationEvidence(child.Named())
@@ -338,7 +338,7 @@ func TestAdmission_FrozenCatalogSharedAcrossEmits(t *testing.T) {
 	defer reads.Close()
 	for i := range 4 {
 		child := &manifest.Kustomization{Name: fmt.Sprintf("child-%d", i), Namespace: "apps"}
-		proposal, err := session.Prepare(t.Context(), PrepareRequest{
+		proposal, err := session.prepareTest(t.Context(), PrepareRequest{
 			Owner: parent.Named(), Reads: &reads, Generation: []store.Child{{Obj: child}},
 		})
 		assert.NoError(t, err)
@@ -384,7 +384,10 @@ func TestAdmission_QualificationPromotionPreservesInputChange(t *testing.T) {
 			_, retry = publishDecision(t, session, update, session.Snapshot().version())
 			assert.Equal(t, retry, false)
 			assert.Equal(t, session.Snapshot().Changed(source.Named()), true)
-			proposal, err := session.Prepare(t.Context(), PrepareRequest{Generation: []store.Child{{Obj: consumer}}})
+			proposal, err := session.prepareTest(
+				t.Context(),
+				PrepareRequest{Generation: []store.Child{{Obj: consumer}}},
+			)
 			assert.NoError(t, err)
 			defer proposal.Retire()
 			assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), changed)
@@ -412,7 +415,7 @@ func TestAdmission_HistoryRefreshReleasesUnsupportedRouteDemand(t *testing.T) {
 	session.PublishEntry(&EntryRoute{
 		Application: application, Producer: producer.Named(), Root: producer.Named(), Reads: &support, Bound: true,
 	})
-	proposal, err := session.RefreshHistory(
+	proposal, err := session.refreshHistoryTest(
 		t.Context(), previous, PrepareRequest{Invocation: true, Changes: change.NewSet(nil)},
 	)
 	assert.NoError(t, err)

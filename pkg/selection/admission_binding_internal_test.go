@@ -78,13 +78,13 @@ func TestAdmission_ReferenceForecastNeedsDeclaration(t *testing.T) {
 	assert.NoError(t, err)
 	var preparation *Preparation
 	t.Cleanup(func() { preparation.Retire() })
-	proposal, err := session.Prepare(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
+	proposal, err := session.prepareTest(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, child.Named()), true)
 	assert.Equal(t, slices.Contains(proposal.Ordinary, child.Named()), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, child.Named()), false)
 	proposal.Retire()
-	proposal, err = session.Prepare(t.Context(), PrepareRequest{
+	proposal, err = session.prepareTest(t.Context(), PrepareRequest{
 		Preparation: &preparation, Owner: owner.Named(), Generation: []store.Child{{Obj: child}},
 	})
 	assert.NoError(t, err)

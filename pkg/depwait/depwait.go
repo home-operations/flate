@@ -21,20 +21,19 @@ type stateReader interface {
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetStatus(manifest.NamedResource) (store.StatusInfo, bool)
 	Snapshot(manifest.NamedResource, bool) (manifest.BaseManifest, store.Observation)
+	Preflight() string
+	UnsettledProducers(manifest.NamedResource) []manifest.NamedResource
 }
 
 // Waiter holds the parameters for one dependency-classification operation.
 type Waiter struct {
-	Preparation **selection.Preparation
-	Store       stateReader
-	Parent      manifest.NamedResource
+	Admission selection.PrepareRequest
+	Store     stateReader
+	Parent    manifest.NamedResource
+	Missing   *MissingPolicy
 
 	// Materializer requires readiness even for existence-only dependency kinds.
 	Materializer bool
-
-	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
-	// because the cluster installs them at runtime.
-	AllowMissingCRDs bool
 
 	// Existence, when non-nil, lets Classify lazy-promote a missing dep
 	// from the loader's discovery records before deciding it is

@@ -11,6 +11,7 @@ func (d *Session) prepare(
 	ctx context.Context,
 	request selection.PrepareRequest, //nolint:gocritic // Each acquisition round owns an independent immutable request snapshot.
 ) (*selection.Admission, error) {
+	request.Missing = d.loader.Options.Missing
 	proposal, err := d.loader.Options.Session.Prepare(ctx, request)
 	if err != nil {
 		return nil, err

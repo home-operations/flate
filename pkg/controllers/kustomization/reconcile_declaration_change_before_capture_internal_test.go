@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/depwait"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 
@@ -331,11 +333,11 @@ func testReconcileRequiredPostBuildNotWaivedCase(
 	t.Cleanup(trees.Close)
 	opts := Options{}
 	if *testCaseInput.allowed {
-		opts.AllowMissingKinds = []string{
+		opts.Missing = depwait.NewMissingPolicy([]string{
 			manifest.KindSecret,
 			manifest.KindConfigMap,
 			manifest.KindCustomResourceDefinition,
-		}
+		})
 	}
 	c := New(st, original.Tasks, trees)
 	c.Configure(opts, sourcecache.RetryConfig{})

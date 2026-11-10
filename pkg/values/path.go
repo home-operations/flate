@@ -7,7 +7,12 @@ import (
 )
 
 // ResolveStaticPath resolves a produced path from declared parent substitutions.
-func ResolveStaticPath(path string, parent *manifest.Kustomization, provider Provider) (string, bool) {
+func ResolveStaticPath(
+	path string,
+	parent *manifest.Kustomization,
+	provider Provider,
+	missing missingPolicy,
+) (string, bool) {
 	parent = parent.Clone()
 	unknownInputs := false
 	var inline map[string]string
@@ -18,7 +23,7 @@ func ResolveStaticPath(path string, parent *manifest.Kustomization, provider Pro
 			unknownInputs = unknownInputs || provider.Data(id) == nil
 		}
 	}
-	if err := ExpandPostBuildSubstituteReference(parent, provider); err != nil {
+	if err := ExpandPostBuildSubstituteReference(parent, provider, missing); err != nil {
 		return path, false
 	}
 	var variables map[string]string

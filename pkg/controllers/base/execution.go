@@ -27,6 +27,7 @@ type Execution struct {
 	ProbeLeft, ProbeRight *Execution
 	ProbeConsumed         bool
 	probeStored           bool
+	probe                 bool
 	declaration           manifest.BaseManifest
 	generationKnown       bool
 	generationErr         error
@@ -50,6 +51,7 @@ type Execution struct {
 func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
 	c.selection.Include(id)
 	e.Controller = c
+	e.probe = false
 	e.Reads.Init(c.Store, id, nil)
 	e.Reads.BeginExecution(nil)
 }
@@ -57,6 +59,7 @@ func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
 // InitProbe MUST NOT publish runtime admission or status.
 func (e *Execution) InitProbe(c *Controller, object manifest.BaseManifest) {
 	e.Controller = c
+	e.probe = true
 	e.declaration = object
 	e.Reads.Init(c.Store, object.Named(), nil)
 	_, _, output := e.Reads.GetEmission(object.Named())
@@ -193,13 +196,7 @@ func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, 
 }
 
 func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) error {
-	w := depwait.Waiter{
-		Preparation:      &e.AdmissionPreparation,
-		Store:            &e.Reads,
-		Parent:           e.Reads.ID(),
-		Existence:        e.existence,
-		AllowMissingCRDs: e.allowMissingCRDs,
-	}
+	w := e.dependencyWaiter()
 	var blocked []manifest.NamedResource
 	var failed *manifest.DependencyFailedError
 	var cause error
@@ -684,6 +681,7 @@ func (e *Execution) admitRender() error {
 // DataWait resumes a captured execution after its values inputs settle.
 type DataWait struct {
 	Inputs []depwait.DataDependency
+	// Resume receives sorted, unique omissions, including optional inputs.
 	Resume func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error
 }
 
@@ -716,13 +714,7 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 	e := p.execution
 	gateErr := e.classify(ctx, level)
 
-	w := depwait.Waiter{
-		Preparation:      &e.AdmissionPreparation,
-		Store:            &e.Reads,
-		Parent:           e.Reads.ID(),
-		Existence:        e.existence,
-		AllowMissingCRDs: e.allowMissingCRDs,
-	}
+	w := e.dependencyWaiter()
 	var omitted []manifest.NamedResource
 	failed, _ := errors.AsType[*manifest.DependencyFailedError](gateErr)
 	p.blocked = p.blocked[:0]
@@ -741,7 +733,7 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 			if !input.Optional && !input.Input.Private && result.Kind != schedule.Blocked && !result.Omit {
 				e.Reads.RequireData(input.NamedResource)
 			}
-			omit := result.Omit && !input.Optional
+			omit := result.Omit
 			switch result.Kind {
 			case schedule.Blocked:
 				p.blocked = append(p.blocked, result.Blocked...)
@@ -788,8 +780,12 @@ func compactDataIDs(ids []manifest.NamedResource) []manifest.NamedResource {
 	return slices.Compact(ids)
 }
 
-func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) error {
-	if e.selection != nil {
+func (e *Execution) readDataInput(
+	ctx context.Context,
+	id manifest.NamedResource,
+	provider dataLookup,
+) (store.ReferenceFacts, error) {
+	if !e.probe && e.selection != nil {
 		var proof store.ReadSet
 		proof.Init(e.Store, e.Reads.ID(), nil)
 		proof.SetWork(e.Reads.Work())
@@ -800,18 +796,32 @@ func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) 
 			manifest.NamedResource{},
 			selection.PrepareRequest{Generation: nil, Reads: &proof, Preparation: &e.AdmissionPreparation},
 		); err != nil {
-			return err
+			return store.ReferenceFacts{}, err
 		}
 	}
-	if e.existence != nil {
-		_, err := e.existence.Promote(
+	if !e.probe && e.existence != nil {
+		if _, err := e.existence.Promote(
 			ctx,
 			selection.PrepareRequest{Reads: &e.Reads, Preparation: &e.AdmissionPreparation},
 			id,
-		)
-		return err
+		); err != nil {
+			return store.ReferenceFacts{}, err
+		}
 	}
-	return nil
+	input := provider.Lookup(id)
+	if !e.probe || e.Reads.GetDeclaration(id) != nil {
+		return input, nil
+	}
+	if e.existence != nil && e.existence.IsFileIndexed(id) {
+		return store.ReferenceFacts{}, errIncompleteHistory
+	}
+	for i := range input.Productions {
+		production := &input.Productions[i]
+		if production.Declaration == (manifest.NamedResource{}) && production.Path != "" {
+			return store.ReferenceFacts{}, errIncompleteHistory
+		}
+	}
+	return input, nil
 }
 
 func (e *Execution) dispatchMissing(ctx context.Context, level manifest.DrainLevel) {

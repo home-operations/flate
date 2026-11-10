@@ -208,7 +208,11 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 	}
 	assert.Diff(t, repeated.Warnings(), warnings)
 	assert.Diff(t, o.cfg.AllowMissingKinds, []string{manifest.KindSecret})
+	assert.Equal(t, o.cfg.allowMissingSecrets, true)
+	assert.Equal(t, o.loader.Options.Missing == o.cfg.missing, true)
 	plain := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: t.TempDir()})
+	assert.Equal(t, plain.cfg.missing != nil, true)
+	assert.Equal(t, plain.cfg.allowMissingSecrets, false)
 	assert.FatalIf(
 		t,
 		plain.cfg.AllowMissingKinds != nil || plain.cfg.Supply != nil,

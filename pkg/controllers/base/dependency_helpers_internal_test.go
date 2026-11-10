@@ -42,7 +42,8 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 	for itemIndex := range inputs {
 		input := inputs[itemIndex]
 
-		if !input.AllowMissing && !input.Input.Private && !input.Input.Generated &&
+		allowed, _, _ := c.Missing.Missing(input.Reference, input.Input)
+		if !allowed && !input.Input.Private && !input.Input.Generated &&
 			!slices.Contains(input.Input.Materializers, obj.Named()) {
 			deps = append(deps, input.DependencyRef)
 		}

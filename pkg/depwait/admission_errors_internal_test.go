@@ -24,7 +24,11 @@ func (p errorPromotion) Promote(context.Context, selection.PrepareRequest, manif
 func TestClassify_AdmissionErrorPrecedesAbsence(t *testing.T) {
 	t.Parallel()
 	cause := manifest.NewError(manifest.ErrInput, nil, "unavailable exact occurrence")
-	w := Waiter{Store: store.New(), Existence: errorPromotion{cause}, AllowMissingCRDs: true}
+	w := Waiter{
+		Store:     captureState(t, store.New()),
+		Existence: errorPromotion{cause},
+		Missing:   NewMissingPolicy([]string{manifest.KindCustomResourceDefinition}),
+	}
 	dep := manifest.DependencyRef{
 		Group: "apiextensions.k8s.io",
 		Kind:  manifest.KindCustomResourceDefinition,
@@ -51,12 +55,15 @@ func TestAvailable_AdmissionErrorPrecedesOptionalOmission(t *testing.T) {
 		t.Run(fmt.Sprintf("materializer=%t", materializer), func(t *testing.T) {
 			t.Parallel()
 			cause := manifest.NewError(manifest.ErrInput, nil, "admission failed")
-			w := Waiter{Store: store.New(), Existence: errorPromotion{cause}}
+			w := Waiter{
+				Store: captureState(t, store.New()), Existence: errorPromotion{cause}, Missing: NewMissingPolicy(
+					nil),
+			}
 			input := store.ReferenceFacts{Offline: true}
 			if materializer {
 				input.Materializers = []manifest.NamedResource{producer}
 			}
-			dep := DataDependency{NamedResource: id, Input: input, Optional: true, AllowMissing: true}
+			dep := DataDependency{NamedResource: id, Optional: true, Input: input}
 			got := w.Available(t.Context(), dep, manifest.DrainForce)
 			assert.FatalIf(
 				t,

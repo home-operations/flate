@@ -15,6 +15,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -114,11 +115,11 @@ func TestKustomizationFingerprint_PreparedInline(t *testing.T) {
 		Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "first"}},
 	}
-	first, err := kustomize.Prepare(ks, nil)
+	first, err := kustomize.Prepare(ks, nil, depwait.NewMissingPolicy(nil))
 	assert.FatalIf(t, err != nil, "%v", err)
 	other := ks.Clone()
 	other.PostBuild.Substitute["VALUE"] = "second"
-	second, err := kustomize.Prepare(other, nil)
+	second, err := kustomize.Prepare(other, nil, depwait.NewMissingPolicy(nil))
 	assert.FatalIf(t, err != nil, "%v", err)
 	assert.FatalIf(t, replayKey(t.Context(), first.Content("/repo", map[string]struct{}{"VALUE": {}}, true)) ==
 		replayKey(
@@ -162,7 +163,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 					},
 				)
 				provider := values.NewStoreProvider(st)
-				prepared, err := kustomize.Prepare(ks, provider)
+				prepared, err := kustomize.Prepare(ks, provider, depwait.NewMissingPolicy(nil))
 				assert.FatalIf(t, err != nil, "%v", err)
 				assert.FatalIf(
 					t,
@@ -195,7 +196,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	ks.PostBuild = &kustomizev1.PostBuild{
 		SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}},
 	}
-	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st))
+	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil))
 	assert.FatalIf(t, err != nil, "%v", err)
 	want := replayKey(t.Context(), ordinary.Content("/repo", map[string]struct{}{"VALUE": {}}, true))
 	for _, tc := range []struct {
@@ -211,6 +212,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 			prepared, err := kustomize.Prepare(
 				ks,
 				values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads),
+				c.Missing,
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			{

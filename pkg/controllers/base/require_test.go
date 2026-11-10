@@ -55,7 +55,7 @@ func TestExecution_CycleSettlementOrder(t *testing.T) {
 			assert.Equal(t, early.Valid(), false)
 			for i, id := range ids {
 				e := controllertest.NewExecution(c, id)
-				w := depwait.Waiter{Store: &e.Reads, Parent: id}
+				w := depwait.Waiter{Store: &e.Reads, Parent: id, Missing: depwait.NewMissingPolicy(nil)}
 				cl := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: ids[1-i]}, manifest.DrainNone)
 				assert.Equal(t, errors.Is(cl.Err, manifest.ErrInput), true)
 				e.Close()

@@ -41,7 +41,10 @@ func BenchmarkClassify_Dependency(b *testing.B) {
 				s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 				s.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			}
-			w := &Waiter{Store: s}
+			w := &Waiter{
+				Store: captureState(b, s), Missing: NewMissingPolicy(
+					nil),
+			}
 			dep := manifest.DependencyRef{NamedResource: id}
 			switch state {
 			case "CEL dep only", "CEL same identity", "CEL distinct self":

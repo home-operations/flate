@@ -522,6 +522,7 @@ func (w *qualificationWalk) commit(ctx context.Context, request *selection.Prepa
 		}
 		return request.Reads.Valid(), nil
 	}
+	request.Missing = w.q.loader.Options.Missing
 	if request.Preparation == nil {
 		request.Preparation = &w.q.preparation
 	}

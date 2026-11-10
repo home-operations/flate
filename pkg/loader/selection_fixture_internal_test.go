@@ -33,8 +33,8 @@ func prepareSelection(
 		tb.Cleanup(func() { preparation.Retire() })
 	}
 	request.Changes = l.Options.Changes
-	if request.AllowMissingKinds == nil {
-		request.AllowMissingKinds = l.Options.AllowMissingKinds
+	if request.Missing == nil {
+		request.Missing = l.Options.Missing
 	}
 	proposal, err := l.Options.Session.Prepare(ctx, request)
 	for err == nil {

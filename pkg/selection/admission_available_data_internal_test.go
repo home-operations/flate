@@ -11,9 +11,10 @@ import (
 func TestAdmission_AvailableInputDoesNotDemandMaterializers(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name      string
-		available bool
-	}{{name: "missing"}, {name: "available", available: true}} {
+		name         string
+		available    bool
+		allowMissing bool
+	}{{name: "missing"}, {name: "allowed missing", allowMissing: true}, {name: "available", available: true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
@@ -38,13 +39,14 @@ func TestAdmission_AvailableInputDoesNotDemandMaterializers(t *testing.T) {
 			}
 			facts.index.Records[input.Named()] = record
 			c := solverClosure(t, st, facts)
+			c.missing = &solverMissingPolicy{allowed: tc.allowMissing}
 			c.add(consumer.Named(), admissionRole{needed: true})
 			demands := 0
 			assert.NoError(t, c.walk(t.Context(), func(demand materializerDemand, owner manifest.NamedResource) bool {
 				demands++
 				assert.Equal(t, demand.target, input.WithNamespace(consumer.Namespace).Named())
 				assert.Equal(t, owner, consumer.Named())
-				assert.Equal(t, demand.required, true)
+				assert.Equal(t, demand.required, !tc.allowMissing)
 				return false
 			}))
 			want := 1

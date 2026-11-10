@@ -180,6 +180,7 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 		session, err := selection.New(l.Store, l, selection.Request{Changed: true})
 		assert.NoError(t, err)
 		proposal, err := session.Prepare(t.Context(), selection.PrepareRequest{
+			Missing:    l.Options.Missing,
 			Generation: []store.Child{{Obj: consumer}}, Reads: &captured, Invocation: true,
 		})
 		assert.NoError(t, err)
@@ -242,6 +243,7 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 		session, err := selection.New(l.Store, l, selection.Request{Changed: true})
 		assert.NoError(t, err)
 		proposal, err := session.Prepare(t.Context(), selection.PrepareRequest{
+			Missing:    l.Options.Missing,
 			Generation: []store.Child{{Obj: consumer}}, Reads: &captured[i], Invocation: true,
 		})
 		assert.NoError(t, err)

@@ -548,7 +548,7 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	}
 	t.Logf("persisted renderer hit enabled: %t", persistent)
 	before := guard.opened.Load()
-	prepared, err := kustomize.Prepare(ks, nil)
+	prepared, err := kustomize.Prepare(ks, nil, depwait.NewMissingPolicy(nil))
 	assert.NoError(t, err)
 	rendered, _, err := testutil.RenderMaps(
 		kustomize.Render(

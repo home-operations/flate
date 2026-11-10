@@ -41,11 +41,11 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 			equal := *route
 			session.PublishEntry(&equal)
 			assert.Equal(t, session.entry.Load(), route)
-			proposal, err := session.Prepare(t.Context(), PrepareRequest{})
+			proposal, err := session.prepareTest(t.Context(), PrepareRequest{})
 			assert.NoError(t, err)
 			assert.Equal(t, proposal.entry, route)
 			assert.Equal(t, proposal.entrySupported(), true)
-			refreshed, err := session.RefreshHistory(t.Context(), proposal, PrepareRequest{})
+			refreshed, err := session.refreshHistoryTest(t.Context(), proposal, PrepareRequest{})
 			assert.NoError(t, err)
 			assert.Equal(t, refreshed.entry, route)
 			refreshed.Retire()
@@ -92,7 +92,7 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, committed, false)
 			assert.Equal(t, session.Snapshot().version(), uint64(0))
-			current, err := session.Prepare(t.Context(), PrepareRequest{})
+			current, err := session.prepareTest(t.Context(), PrepareRequest{})
 			assert.NoError(t, err)
 			defer current.Retire()
 			assert.Equal(t, current.entry, session.entry.Load())
@@ -118,7 +118,7 @@ func TestEntryRoute_BoundWithoutSupport(t *testing.T) {
 		Application: &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "entry"},
 		Bound:       true,
 	})
-	proposal, err := session.Prepare(t.Context(), PrepareRequest{})
+	proposal, err := session.prepareTest(t.Context(), PrepareRequest{})
 	assert.NoError(t, err)
 	defer proposal.Retire()
 	assert.Equal(t, proposal.entrySupported(), false)

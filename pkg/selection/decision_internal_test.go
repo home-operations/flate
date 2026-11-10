@@ -297,7 +297,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 	assert.Equal(t, admitted(provisional), false)
 	assert.Equal(t, notifications.Load(), int64(0))
 	application := &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "entry"}
-	continuation, err := session.Prepare(t.Context(), PrepareRequest{
+	continuation, err := session.prepareTest(t.Context(), PrepareRequest{
 		Generation: []store.Child{{Obj: provisionalObject, Entry: application}},
 	})
 	assert.NoError(t, err)

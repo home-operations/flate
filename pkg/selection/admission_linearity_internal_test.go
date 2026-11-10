@@ -131,7 +131,7 @@ func TestAdmission_EmittedSourceVisitsItsPath(t *testing.T) {
 					yield(target, manifest.DiscoveryRecord{Origin: manifest.RepositoryDeclaration})
 				}, Complete: true}}
 			}
-			proposal, err := session.Prepare(t.Context(), request)
+			proposal, err := session.prepareTest(t.Context(), request)
 			assert.NoError(t, err)
 			defer proposal.Retire()
 			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), true)

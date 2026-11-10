@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -13,6 +14,8 @@ import (
 
 func snapshotSubstitutions(cfg *Config) error {
 	cfg.AllowMissingKinds = slices.Clone(cfg.AllowMissingKinds)
+	cfg.missing = depwait.NewMissingPolicy(cfg.AllowMissingKinds)
+	cfg.allowMissingSecrets = cfg.missing.AllowsKind(manifest.KindSecret)
 	if len(cfg.Supply) == 0 {
 		return nil
 	}

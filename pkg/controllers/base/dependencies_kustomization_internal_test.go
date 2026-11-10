@@ -550,14 +550,17 @@ func testSubstitutionAvailabilityObservesMaterializersCase(
 	}
 
 	input := values.NewStoreProvider(&execution.Reads).Lookup(id)
-	w := depwait.Waiter{Store: &execution.Reads, Parent: (*testCaseInput.consumer)}
+	w := depwait.Waiter{
+		Store: &execution.Reads, Parent: (*testCaseInput.consumer),
+		Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret}),
+	}
 	got := w.Available(
 		t.Context(),
 		depwait.DataDependency{
 			NamedResource: id,
 			Input:         input,
 			Optional:      testCaseInput.tc.optional,
-			AllowMissing:  testCaseInput.tc.kind == manifest.KindSecret,
+			Use:           "valuesFrom",
 		},
 		manifest.DrainNone,
 	)

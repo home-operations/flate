@@ -37,7 +37,7 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 	for i := range generation {
 		var reads store.ReadSet
 		reads.Init(st, parent.Named(), nil)
-		proposal, err := session.Prepare(t.Context(), PrepareRequest{
+		proposal, err := session.prepareTest(t.Context(), PrepareRequest{
 			Changes:    changes,
 			Generation: generation, Owner: parent.Named(), Reads: &reads, Preparation: &preparation,
 		})
@@ -79,7 +79,7 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 					LocalPath: root, FS: fstest.MapFS{}, Key: "replacement", Content: "replacement",
 				})
 			}
-			proposal, err := session.Prepare(t.Context(), PrepareRequest{
+			proposal, err := session.prepareTest(t.Context(), PrepareRequest{
 				Changes:    changes,
 				Generation: generation, Owner: parent.Named(), Reads: &guard, Preparation: &preparation,
 			})
@@ -105,7 +105,7 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 	replacement := parent.Clone()
 	replacement.Path = "changed"
 	st.AddObject(replacement)
-	proposal, err := session.Prepare(t.Context(), PrepareRequest{
+	proposal, err := session.prepareTest(t.Context(), PrepareRequest{
 		Changes:    changes,
 		Generation: generation, Owner: parent.Named(), Reads: &stale, Preparation: &preparation,
 	})

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
@@ -89,7 +90,10 @@ func Require(
 			reads.RequireData(id)
 		}
 	}
-	proposal, err := session.Prepare(tb.Context(), selection.PrepareRequest{Reads: &reads})
+	proposal, err := session.Prepare(
+		tb.Context(),
+		selection.PrepareRequest{Reads: &reads, Missing: depwait.NewMissingPolicy(nil)},
+	)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -104,7 +108,10 @@ func Commit(tb testing.TB, session *selection.Session, proposal *selection.Admis
 	}
 	var err error
 	if proposal == nil {
-		proposal, err = session.Prepare(tb.Context(), selection.PrepareRequest{Invocation: true})
+		proposal, err = session.Prepare(
+			tb.Context(),
+			selection.PrepareRequest{Invocation: true, Missing: depwait.NewMissingPolicy(nil)},
+		)
 	}
 	if err != nil {
 		tb.Fatal(err)

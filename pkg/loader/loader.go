@@ -17,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source"
@@ -37,10 +38,10 @@ type options struct {
 	ConfiguredInput *store.SourceArtifact
 	// Session supplies the committed execution decision.
 	Session *selection.Session
-	// AllowMissingKinds borrows the values-input absence policy for this invocation.
-	AllowMissingKinds []string
-	RemoteInputs      *source.HTTPInputs
-	RemoteRetry       cache.RetryConfig
+	// Missing borrows the immutable missing-input policy for this invocation.
+	Missing      *depwait.MissingPolicy
+	RemoteInputs *source.HTTPInputs
+	RemoteRetry  cache.RetryConfig
 	// ParsedInputs reuses immutable content only from matching admitted source views.
 	ParsedInputs *ParsedInputs
 }
@@ -118,7 +119,7 @@ const (
 func New(s *store.Store) *Loader {
 	return &Loader{
 		work:  s.WorkScope().Traversal(manifest.BootstrapSourceID),
-		Store: s, Options: options{Work: s.WorkScope()},
+		Store: s, Options: options{Work: s.WorkScope(), Missing: depwait.NewMissingPolicy(nil)},
 		Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 		documents: documentReader{cache: map[string]document{}, views: map[string]fs.FS{}},
 	}

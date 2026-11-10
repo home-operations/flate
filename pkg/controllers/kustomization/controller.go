@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -159,7 +158,7 @@ func (c *execution) render(
 	applyIgnore bool,
 ) error {
 	id := ks.Named()
-	ks, err := kustomize.Prepare(ks, c.data)
+	ks, err := kustomize.Prepare(ks, c.data, c.Missing)
 	if err != nil {
 		return err
 	}
@@ -262,25 +261,17 @@ func (c *Controller) PreviousRender(
 	history := base.History{Assessment: &ex.run}
 	data := values.NewStoreProvider(reads)
 	ex.data = data
-	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
-	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
-		if ref.Use != "substituteFrom" {
-			continue
-		}
-		availability := waiter.Available(
-			ctx,
-			depwait.DataDependency{
-				DependencyRef: ref.DependencyRef,
-				Input:         data.Lookup(ref.NamedResource),
-				Optional:      ref.Optional,
-			},
-			manifest.DrainNone,
-		)
-		if availability.Err != nil || availability.Kind != schedule.Terminal {
-			return history
-		}
+	inputs, err := ex.run.DataInputs(ctx, ks, data)
+	if err != nil {
+		return history
 	}
-	prepared, err := kustomize.Prepare(ks, data)
+	if err = ex.run.AwaitData(ctx, base.DataWait{
+		Inputs: inputs,
+		Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil },
+	}, manifest.DrainNone); err != nil {
+		return history
+	}
+	prepared, err := kustomize.Prepare(ks, data, c.Missing)
 	if err != nil {
 		return history
 	}

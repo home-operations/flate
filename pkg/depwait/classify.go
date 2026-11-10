@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/home-operations/flate/pkg/selection"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -58,10 +56,8 @@ func failedClassification(
 //
 //nolint:gocritic // DependencyRef remains a value in the SDK so callers retain ownership.
 func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level manifest.DrainLevel) Classification {
-	if reads, ok := w.Store.(*store.ReadSet); ok {
-		if message := reads.Preflight(); message != "" {
-			return Classification{Err: manifest.NewError(manifest.ErrInput, nil, message)}
-		}
+	if message := w.Store.Preflight(); message != "" {
+		return Classification{Err: manifest.NewError(manifest.ErrInput, nil, message)}
 	}
 	existence := w.Existence
 	for {
@@ -79,7 +75,6 @@ func (w *Waiter) classify(
 	level manifest.DrainLevel,
 	existence ExistenceLookup,
 ) (Classification, bool) {
-	reads, _ := w.Store.(*store.ReadSet)
 	id := dep.NamedResource
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
 	if dep.ArtifactOnly && w.sourceAvailable(id) {
@@ -100,7 +95,7 @@ func (w *Waiter) classify(
 		}
 	}
 	if !present && existence != nil {
-		promoted, err := existence.Promote(ctx, selection.PrepareRequest{Reads: reads, Preparation: w.Preparation}, id)
+		promoted, err := existence.Promote(ctx, w.Admission, id)
 		if err != nil {
 			return Classification{Err: err}, false
 		}
@@ -132,7 +127,7 @@ func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.Drai
 	if level < manifest.DrainCascade {
 		return Classification{Kind: schedule.Blocked}
 	}
-	if w.AllowMissingCRDs && id.IsCRD() {
+	if allowed, _, _ := w.Missing.Missing(manifest.Reference{DependencyRef: *dep}, store.ReferenceFacts{}); allowed {
 		return w.artifactReady(dep, level)
 	}
 	return Classification{Kind: schedule.DependencyFailed, Message: dependencyNotFound}

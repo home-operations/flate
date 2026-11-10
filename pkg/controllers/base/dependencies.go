@@ -3,10 +3,10 @@ package base
 import (
 	"context"
 	"errors"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -75,8 +75,9 @@ func (e *Execution) dependencies(obj manifest.BaseManifest, stage manifest.GateS
 }
 
 var (
-	errSuspended     = errors.New("reconcile suspended")
-	errInputsChanged = errors.New("execution inputs changed")
+	errSuspended         = errors.New("reconcile suspended")
+	errInputsChanged     = errors.New("execution inputs changed")
+	errIncompleteHistory = errors.New("history requires normal input materialization")
 )
 
 // Checkpoint validates captured inputs and admission before execution continues.
@@ -97,40 +98,55 @@ type dataLookup interface {
 	Lookup(manifest.NamedResource) store.ReferenceFacts
 }
 
-// DataInputs captures authored values and substitution inputs through the shared gate.
+func (e *Execution) dependencyWaiter() depwait.Waiter {
+	w := depwait.Waiter{
+		Store: &e.Reads, Parent: e.Reads.ID(), Missing: e.Missing,
+	}
+	if !e.probe {
+		w.Admission = selection.PrepareRequest{
+			Reads:       &e.Reads,
+			Preparation: &e.AdmissionPreparation,
+			Missing:     e.Missing,
+		}
+		w.Existence = e.existence
+	}
+	return w
+}
+
+// DataInputs MUST assess promotion before capturing values for either render path.
 func (e *Execution) DataInputs(
 	ctx context.Context,
 	obj manifest.BaseManifest,
 	provider dataLookup,
 ) ([]depwait.DataDependency, error) {
+	if message := e.Reads.Preflight(); message != "" {
+		return nil, manifest.NewError(manifest.ErrInput, nil, message)
+	}
 	if obj.ReferenceCapacity().DataInputs == 0 {
 		return nil, nil
 	}
-	e.SetPendingUnlessReady(e.Reads.ID(), "resolving values inputs")
+	if !e.probe {
+		e.SetPendingUnlessReady(e.Reads.ID(), "resolving values inputs")
+	}
 	var inputs []depwait.DataDependency
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if (ref.Use != "valuesFrom" && ref.Use != "substituteFrom") || ref.Name == "" ||
 			!ref.NamedResource.KindInfo().Data {
 			continue
 		}
-		if err := e.promoteData(ctx, ref.NamedResource); err != nil {
+		input, err := e.readDataInput(ctx, ref.NamedResource, provider)
+		if err != nil {
 			return nil, err
 		}
-		input := provider.Lookup(ref.NamedResource)
-		allowMissing := ref.Use == "valuesFrom" && slices.Contains(e.AllowMissingKinds, ref.Kind)
-		if ref.Use == "substituteFrom" {
-			if ref.Kind == manifest.KindSecret && !ref.Optional && (input.Data == nil || !input.Data.HasKeys()) {
-				e.Unreadable = append(e.Unreadable, ref.NamedResource)
-				e.unresolved = append(e.unresolved, ref.NamedResource)
-			}
+		if _, unreadable, _ := e.Missing.Missing(ref, input); unreadable {
+			e.Unreadable = append(e.Unreadable, ref.NamedResource)
+			e.unresolved = append(e.unresolved, ref.NamedResource)
 		}
 		inputs = append(
 			inputs,
 			depwait.DataDependency{
-				DependencyRef: ref.DependencyRef,
-				Input:         input,
-				Optional:      ref.Optional,
-				AllowMissing:  allowMissing,
+				Reference: ref,
+				Input:     input,
 			},
 		)
 	}

@@ -5,10 +5,13 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -48,6 +51,48 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 		}
 	}
 	assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent), nil)
+	for _, tc := range []struct {
+		name                          string
+		kind                          string
+		optional, generated, accepted bool
+		allowMissing, eligible        bool
+	}{
+		{name: "required selected ConfigMap", kind: manifest.KindConfigMap, allowMissing: true},
+		{name: "optional ConfigMap", kind: manifest.KindConfigMap, optional: true, eligible: true},
+		{name: "accepted generated Secret", kind: manifest.KindSecret, generated: true, accepted: true, eligible: true},
+		{name: "unaccepted generated Secret", kind: manifest.KindSecret, generated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := &manifest.Kustomization{
+				Name: "consumer", Namespace: "apps",
+				PostBuild: &kustomizev1.PostBuild{
+					SubstituteFrom: []manifest.SubstituteReference{
+						{Kind: tc.kind, Name: "settings", Optional: tc.optional},
+					},
+				},
+			}
+			objects := store.New()
+			objects.AddObject(candidate)
+			if tc.generated {
+				producer := &manifest.RawObject{
+					APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Namespace: "apps", Name: "settings",
+				}
+				objects.RecordEmitted(candidate.Named(), &store.Emission{
+					Children: []store.Child{{Obj: producer}}, Complete: tc.accepted,
+				}, nil)
+			}
+			l := loader.New(objects)
+			if tc.allowMissing {
+				l.Options.Missing = depwait.NewMissingPolicy([]string{tc.kind})
+			}
+			var reads store.ReadSet
+			reads.Init(objects, candidate.Named(), nil)
+			defer reads.Close()
+			eligibility := entryPrerequisites{loader: l, reads: &reads}
+			assert.Equal(t, eligibility.eligible(candidate, nil), tc.eligible)
+		})
+	}
 }
 
 func TestEntryQualification_OrderedPrefixAndReplacement(t *testing.T) {

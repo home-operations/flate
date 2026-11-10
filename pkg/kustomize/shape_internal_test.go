@@ -19,6 +19,7 @@ import (
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -451,7 +452,14 @@ func TestShaping_DependencySubstitutionInputs(t *testing.T) {
 			childBefore := original.Clone()
 			originalBytes := manifest.Fingerprint(parsedChild.Document)
 			effective := parent.Clone()
-			assert.NoError(t, values.ExpandPostBuildSubstituteReference(effective, values.NewStoreProvider(st)))
+			assert.NoError(
+				t,
+				values.ExpandPostBuildSubstituteReference(
+					effective,
+					values.NewStoreProvider(st),
+					depwait.NewMissingPolicy(nil),
+				),
+			)
 			docs := []manifest.DocOccurrence{{Document: manifest.DeepCopyMap(parsedChild.Document)}}
 			shaping := PrepareShape(&RenderRequest{Spec: effective}, docs)
 			content := manifest.Fingerprint(shaping.Content())

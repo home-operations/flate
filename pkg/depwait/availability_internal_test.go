@@ -116,14 +116,18 @@ func testAvailableOptionalMaterializerAbsenceCase(
 	var reads store.ReadSet
 	parent := testutil.KustomizationID("apps", "reader")
 	reads.Init(s, parent, nil)
-	w := Waiter{Store: &reads, Parent: parent}
+	w := Waiter{
+		Store: &reads, Parent: parent, Missing: NewMissingPolicy(
+			nil),
+	}
+	if testCaseInput.allowed {
+		w.Missing = NewMissingPolicy([]string{manifest.KindConfigMap})
+	}
 	got := w.Available(
 		t.Context(),
 		DataDependency{
-			NamedResource: id,
-			Input:         input,
-			Optional:      testCaseInput.optional,
-			AllowMissing:  testCaseInput.allowed,
+			NamedResource: id, Optional: testCaseInput.optional, Use: "valuesFrom",
+			Input: input,
 		},
 		testCaseInput.level,
 	)
@@ -189,7 +193,10 @@ func testAvailableRequiredMaterializerCycleCase(
 	data := &manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "raw"}}
 	var reads store.ReadSet
 	reads.Init(st, parent, nil)
-	w := Waiter{Store: &reads, Parent: parent}
+	w := Waiter{
+		Store: &reads, Parent: parent, Missing: NewMissingPolicy(
+			nil),
+	}
 	got := w.Available(t.Context(), DataDependency{
 		NamedResource: id, Optional: testCaseInput.optional,
 		Input: store.ReferenceFacts{Data: data, Materializers: []manifest.NamedResource{owner}},

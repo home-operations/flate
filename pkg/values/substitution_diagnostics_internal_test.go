@@ -9,6 +9,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -31,10 +32,12 @@ func TestExpandPostBuildSubstituteReference_DiagnosticLogContext(t *testing.T) {
 		SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: "Unsupported", Name: "ignored"},
 			{Kind: manifest.KindConfigMap, Name: "missing"},
+			{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+			{Kind: manifest.KindSecret, Name: "unreadable"},
 		},
 	}
 	{
-		err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New()))
+		err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New()), depwait.NewMissingPolicy(nil))
 		assert.NoError(t, err)
 	}
 	count := 0

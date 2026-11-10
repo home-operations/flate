@@ -17,6 +17,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -283,7 +284,11 @@ func TestFinalize_DispatchPanic(t *testing.T) {
 			assert.Equal(t, tasks.Failures(), int64(1))
 			assert.Equal(t, len(s.Results()), 0)
 			assert.Equal(t, t.Context().Err(), nil)
-			o := &Orchestrator{store: st, tasks: tasks}
+			o := &Orchestrator{
+				store: st,
+				tasks: tasks,
+				cfg:   treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
+			}
 			err := o.finalize()
 			assert.FatalIf(
 				t,
@@ -342,7 +347,13 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 	records := maps.Clone(index.Records)
 	claims := map[string][]manifest.NamedResource{"startup/": slices.Clone(index.Claims["startup/"])}
 	readers := map[string][]manifest.FileReader{"unrelated.yaml": slices.Clone(index.Readers["unrelated.yaml"])}
-	o := &Orchestrator{store: st, repoRoot: root, index: index, tasks: task.NewBounded(2)}
+	o := &Orchestrator{
+		store:    st,
+		repoRoot: root,
+		index:    index,
+		tasks:    task.NewBounded(2),
+		cfg:      treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
+	}
 	var previousAll, previousLocal, savedAll, savedLocal []manifest.KSClaim
 	for pass := range 2 {
 		if pass != 0 {

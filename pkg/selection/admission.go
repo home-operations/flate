@@ -52,7 +52,7 @@ type admissionClosure struct {
 	catalog            *admissionCatalog
 	context            SourceContext
 	historyOwners      map[manifest.NamedResource][]manifest.SourceEvidence
-	allowMissingKinds  []string
+	missing            missingPolicy
 	objects            admissionReader
 	nextGeneration     map[manifest.NamedResource]int
 	generation         []store.Child
@@ -153,7 +153,7 @@ func (l *Session) Prepare(
 	preparation.evidence = proposal.reads
 	closure.resetDemand()
 	closure.generation, closure.owner, closure.history = request.Generation, request.Owner, request.History
-	closure.historyOwners, closure.allowMissingKinds = request.HistoryOwners, request.AllowMissingKinds
+	closure.historyOwners, closure.missing = request.HistoryOwners, request.Missing
 	closure.changes = request.Changes
 	closure.configuredInput = currentSource.ConfiguredInput
 	closure.frozen, closure.sideKnown, closure.side = closure.context.Frozen, closure.context.SideKnown, closure.context.Side
@@ -179,24 +179,20 @@ func (l *Session) Prepare(
 	return proposal, nil
 }
 
+//nolint:gocognit // Reuse MUST retain ordered eligibility guards and captured-read checks in one decision.
 func (p *Preparation) reuse(request *PrepareRequest, proposal *Admission, configuredInput *store.SourceArtifact) bool {
 	previous := p.completed
 	c := &p.closure
-	if previous == nil || len(request.Acquired) != 0 || request.Changes != p.changes ||
-		configuredInput != c.configuredInput ||
-		proposal.entry != p.entry ||
-		!slices.Equal(request.AllowMissingKinds, c.allowMissingKinds) ||
-		len(request.HistoryOwners) != 0 ||
-		request.Invocation || p.invocation ||
-		len(request.History) != 0 ||
-		len(request.Generation) != len(c.generation) ||
-		(len(c.generation) != 0 && &request.Generation[0] != &c.generation[0]) ||
-		request.Owner != c.owner ||
-		c.frozen != c.context.Frozen ||
-		c.sideKnown != c.context.SideKnown ||
-		c.side != c.context.Side ||
-		!p.evidence.Valid() ||
-		!c.session.guardCurrent(proposal) {
+	inputsMatch := previous != nil && len(request.Acquired) == 0 &&
+		request.Changes == p.changes && configuredInput == c.configuredInput
+	policyMatches := inputsMatch && proposal.entry == p.entry && request.Missing == c.missing &&
+		len(request.HistoryOwners) == 0
+	historyMatches := policyMatches && !request.Invocation && !p.invocation && len(request.History) == 0
+	generationMatches := historyMatches && len(request.Generation) == len(c.generation) &&
+		(len(c.generation) == 0 || &request.Generation[0] == &c.generation[0])
+	ownerMatches := generationMatches && request.Owner == c.owner && c.frozen == c.context.Frozen
+	scopeMatches := ownerMatches && c.sideKnown == c.context.SideKnown && c.side == c.context.Side
+	if !scopeMatches || !p.evidence.Valid() || !c.session.guardCurrent(proposal) {
 		return false
 	}
 	decision := c.session.Snapshot()

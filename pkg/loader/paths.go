@@ -385,7 +385,7 @@ func (l *Loader) projectPathRoots(
 	provider *values.StoreProvider,
 ) bool {
 	owner := record.Parent
-	path, known := values.ResolveStaticPath(child.Path, parent, provider)
+	path, known := values.ResolveStaticPath(child.Path, parent, provider, l.Options.Missing)
 	source := child.EffectiveSourceID()
 	if known {
 		if path == child.Path {
@@ -432,7 +432,7 @@ func (p *pathResolution) projectSubstitutions(
 	}
 	bindings := l.pathBindings(child, p.provider)
 	prepared := child.Clone()
-	if err := values.ExpandPostBuildSubstituteReference(prepared, p.provider); err != nil {
+	if err := values.ExpandPostBuildSubstituteReference(prepared, p.provider, l.Options.Missing); err != nil {
 		bindings.known = false
 	}
 	roots := record.ContentRoots

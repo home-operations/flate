@@ -26,6 +26,9 @@ func Prepare(
 		tb.Cleanup(func() { preparation.Retire() })
 	}
 	request.Changes = l.Options.Changes
+	if request.Missing == nil {
+		request.Missing = l.Options.Missing
+	}
 	proposal, err := l.Options.Session.Prepare(ctx, request)
 	if err != nil {
 		return nil, err
@@ -39,11 +42,9 @@ func Prepare(
 		for i := range demands {
 			demand := &demands[i]
 			result := selection.Acquisition{Demand: *demand, Reads: demand.Reads}
-			if demand.History {
-				if demand.Root != "" {
-					result.Root, result.Available, err = l.ResolveRoot(ctx, demand.Reads, demand.Source, demand.Root)
-				}
-			} else if demand.Occurrence.Identity != (manifest.NamedResource{}) {
+			if demand.History && demand.Root != "" {
+				result.Root, result.Available, err = l.ResolveRoot(ctx, demand.Reads, demand.Source, demand.Root)
+			} else if !demand.History && demand.Occurrence.Identity != (manifest.NamedResource{}) {
 				result.Child, err = l.OccurrenceObject(ctx, &demand.Occurrence, demand.Artifact)
 				result.Available = result.Child.Obj != nil
 			}

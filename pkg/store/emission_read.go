@@ -147,11 +147,6 @@ type ReferenceFacts struct {
 	ReferenceData               []manifest.ReferenceData
 }
 
-// AllowsAbsence MUST preserve omission policy for producer-owned inputs.
-func (f *ReferenceFacts) AllowsAbsence() bool {
-	return f.Private || f.Generated && !f.Offline
-}
-
 // Productions merges discovery evidence with accepted reverse memberships into a read-only snapshot.
 func (s *Store) Productions(id manifest.NamedResource, index *manifest.DiscoveryIndex) []manifest.Production {
 	var result productionResult

@@ -7,6 +7,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -213,6 +214,7 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 	cm := &manifest.ConfigMap{Name: "cluster-settings", Namespace: "flux-system", Data: data}
 	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 
+	missing := depwait.NewMissingPolicy(nil)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
@@ -223,7 +225,7 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 		}
 		ks := &manifest.Kustomization{Name: "app", Namespace: "flux-system"}
 		ks.PostBuild = &postBuild
-		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
+		if err := ExpandPostBuildSubstituteReference(ks, provider, missing); err != nil {
 			b.Fatalf("ExpandPostBuildSubstituteReference: %v", err)
 		}
 	}
@@ -244,6 +246,7 @@ spec:
 	provider := &sliceProvider{
 		ConfigMaps: []*manifest.ConfigMap{{Name: "cluster-settings", Namespace: "flux-system", Data: data}},
 	}
+	missing := depwait.NewMissingPolicy(nil)
 	b.ReportAllocs()
 	for b.Loop() {
 		docs, err := manifest.DecodeDocs(strings.NewReader(input), manifest.IncidentalDocuments)
@@ -256,7 +259,7 @@ spec:
 			b.Fatal(err)
 		}
 		ks := obj.(*manifest.Kustomization)
-		if err := ExpandPostBuildSubstituteReference(ks, provider); err != nil {
+		if err := ExpandPostBuildSubstituteReference(ks, provider, missing); err != nil {
 			b.Fatal(err)
 		}
 		if len(ks.PostBuild.Substitute) != len(data) || ks.PostBuild.Substitute["VAR_49"] != "value-49" {

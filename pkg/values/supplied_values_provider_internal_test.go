@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -125,7 +126,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 			Substitute: map[string]string{"VALUE": "inline"},
 		},
 	}
-	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, provider))
+	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, provider, depwait.NewMissingPolicy(nil)))
 	assert.Equal(t, ks.PostBuild.Substitute["VALUE"], "inline")
 	hr := &manifest.HelmRelease{
 		Name:      "consumer",

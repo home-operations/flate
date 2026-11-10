@@ -25,7 +25,11 @@ type crdPromotion struct {
 func (e *crdPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
 
 //nolint:gocritic // The admission contract requires an independent request snapshot.
-func (e *crdPromotion) Promote(_ context.Context, _ selection.PrepareRequest, id manifest.NamedResource) (bool, error) {
+func (e *crdPromotion) Promote(
+	_ context.Context,
+	request selection.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
 	e.calls = append(e.calls, id)
 	if !e.materialize {
 		return false, nil
@@ -33,6 +37,9 @@ func (e *crdPromotion) Promote(_ context.Context, _ selection.PrepareRequest, id
 	e.store.AddObject(
 		&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Namespace: id.Namespace, Name: id.Name},
 	)
+	parent := request.Reads.ID()
+	request.Reads.Retire()
+	request.Reads.Init(e.store, parent, nil)
 	return true, nil
 }
 
@@ -64,7 +71,7 @@ func TestClassify_MissingCRDs_NoAllocations(t *testing.T) {
 		Name:  "widgets.example.com",
 	}
 	for _, enabled := range []bool{false, true} {
-		w := &Waiter{Store: s, AllowMissingCRDs: enabled}
+		w := &Waiter{Store: captureState(t, s), Missing: crdMissingPolicy(enabled)}
 		{
 			got := testing.AllocsPerRun(100, func() { w.Classify(t.Context(), ref, manifest.DrainCascade) })
 			assert.FatalIf(t, got != 0, "enabled=%t allocations=%v", enabled, got)
@@ -150,7 +157,12 @@ func testClassifyMissingCRDsCase(t *testing.T, testCaseInput testClassifyMissing
 		ref.ReadyExpr = new("dep.((")
 		want = schedule.DependencyFailed
 	}
-	w := &Waiter{Store: s, AllowMissingCRDs: (*testCaseInput.enabled)}
+	reads := captureState(t, s)
+	w := &Waiter{
+		Store:     reads,
+		Admission: selection.PrepareRequest{Reads: reads},
+		Missing:   crdMissingPolicy(*testCaseInput.enabled),
+	}
 	if e != nil {
 		w.Existence = e
 	}

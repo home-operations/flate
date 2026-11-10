@@ -539,6 +539,8 @@ func TestRenderTrees_ThreeClusterSharedInput(t *testing.T) {
 		raw := map[string]manifest.WorkCounts{}
 		outputs := make([]map[string][]map[string]any, 0, len(runs))
 		for _, run := range runs {
+			assert.Equal(t, run.cfg.missing == runs[0].cfg.missing, true)
+			assert.Equal(t, run.loader.Options.Missing == run.cfg.missing, true)
 			owners := []manifest.NamedResource{app}
 			if run.ID.Cluster == "third" {
 				owners = nil

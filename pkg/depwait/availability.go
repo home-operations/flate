@@ -9,13 +9,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// DataDependency retains a values reference and its captured availability policy.
+// DataDependency MUST retain the authored reference with its captured facts.
 type DataDependency struct {
-	manifest.DependencyRef
+	manifest.Reference
 
-	Input        store.ReferenceFacts
-	Optional     bool
-	AllowMissing bool
+	Input store.ReferenceFacts
 }
 
 type availability struct {
@@ -31,10 +29,14 @@ type availability struct {
 //
 //nolint:gocritic // The SDK accepts a value snapshot; a pointer would share caller-owned policy fields.
 func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manifest.DrainLevel) availability {
-	var pending []manifest.NamedResource
-	if reads, ok := w.Store.(*store.ReadSet); ok && dep.Input.Data == nil {
-		pending = reads.UnsettledProducers(dep.NamedResource)
+	if message := w.Store.Preflight(); message != "" {
+		return availability{Err: manifest.NewError(manifest.ErrInput, nil, message)}
 	}
+	var pending []manifest.NamedResource
+	if dep.Input.Data == nil {
+		pending = w.Store.UnsettledProducers(dep.NamedResource)
+	}
+	allowed, _, _ := w.Missing.Missing(dep.Reference, dep.Input)
 	var blocked []manifest.NamedResource
 	for _, producer := range dep.Input.Materializers {
 		if producer == w.Parent {
@@ -48,7 +50,7 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 			cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(pending, producer) {
 			blocked = append(blocked, producer)
 		}
-		if failure, failed := w.materializerFailure(&dep, producer, &cl); failed {
+		if failure, failed := w.materializerFailure(allowed, producer, &cl); failed {
 			return failure
 		}
 	}
@@ -58,15 +60,15 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 	if dep.Input.Data != nil {
 		return availability{Kind: schedule.Terminal}
 	}
-	return w.availableAbsent(ctx, &dep, level)
+	return w.availableAbsent(ctx, &dep, level, allowed)
 }
 
 func (w *Waiter) materializerFailure(
-	dep *DataDependency,
+	allowed bool,
 	producer manifest.NamedResource,
 	cl *Classification,
 ) (availability, bool) {
-	if cl.Kind != schedule.DependencyFailed || dep.Optional || dep.AllowMissing || dep.Input.AllowsAbsence() {
+	if cl.Kind != schedule.DependencyFailed || allowed {
 		return availability{}, false
 	}
 	status, _ := w.Store.GetStatus(producer)
@@ -83,9 +85,14 @@ func (w *Waiter) materializerFailure(
 	}, true
 }
 
-func (w *Waiter) availableAbsent(ctx context.Context, dep *DataDependency, level manifest.DrainLevel) availability {
-	allowed := dep.Optional || dep.AllowMissing || dep.Input.AllowsAbsence()
-	if dep.Input.AllowsAbsence() || len(dep.Input.Materializers) != 0 {
+func (w *Waiter) availableAbsent(
+	ctx context.Context,
+	dep *DataDependency,
+	level manifest.DrainLevel,
+	allowed bool,
+) availability {
+	_, _, producerAbsence := w.Missing.Missing(dep.Reference, dep.Input)
+	if producerAbsence || len(dep.Input.Materializers) != 0 {
 		if allowed {
 			return availability{Kind: schedule.Terminal, Omit: true}
 		}

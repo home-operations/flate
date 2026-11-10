@@ -7,6 +7,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -190,7 +191,7 @@ func testAdmissionMissingInputWaitsForKnownOwnerCase(
 	l.SourceRoot = root
 
 	if testCaseInput.allowMissing {
-		l.Options.AllowMissingKinds = []string{kind}
+		l.Options.Missing = depwait.NewMissingPolicy([]string{kind})
 	}
 	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer.Named()}})
 	l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{

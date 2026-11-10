@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -482,7 +483,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	}
 	postBuild := ks.PostBuild
 	{
-		err := ExpandPostBuildSubstituteReference(ks, provider)
+		err := ExpandPostBuildSubstituteReference(ks, provider, depwait.NewMissingPolicy(nil))
 		assert.FatalIf(t, err != nil, "ExpandPostBuildSubstituteReference: %v", err)
 	}
 	assert.Equal(t, ks.PostBuild, postBuild)
@@ -512,7 +513,7 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 				},
 			}
 			{
-				err := ExpandPostBuildSubstituteReference(ks, provider)
+				err := ExpandPostBuildSubstituteReference(ks, provider, depwait.NewMissingPolicy(nil))
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "got %v, want ErrInput", err)
 			}
 			assert.Diff(t, ks.PostBuild.Substitute, map[string]string{"INLINE": "kept"})
@@ -533,7 +534,7 @@ func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testin
 	}
 	_, want := sec.Value("A")
 	for range 50 {
-		err := ExpandPostBuildSubstituteReference(ks, provider)
+		err := ExpandPostBuildSubstituteReference(ks, provider, depwait.NewMissingPolicy(nil))
 
 		assert.FatalIf(t, err == nil || err.Error() != want.Error(), "got %v, want %v", err, want)
 	}
@@ -559,7 +560,7 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			}
 
 			before := ks.Clone()
-			err := ExpandPostBuildSubstituteReference(ks, provider)
+			err := ExpandPostBuildSubstituteReference(ks, provider, depwait.NewMissingPolicy(nil))
 			assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
 
 			assert.FatalIf(
@@ -587,7 +588,7 @@ func TestExpandPostBuildSubstituteReference_InvalidSingleName(t *testing.T) {
 		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"flate-campaign": "v"}},
 	}
 	before := ks.Clone()
-	err := ExpandPostBuildSubstituteReference(ks, &sliceProvider{})
+	err := ExpandPostBuildSubstituteReference(ks, &sliceProvider{}, depwait.NewMissingPolicy(nil))
 	assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
 
 	assert.FatalIf(t, err == nil || err.Error() != "invalid substitute variable flate-campaign" ||

@@ -58,6 +58,7 @@ func TestRenderTrees_EntryPublicationSourcePreparation(t *testing.T) {
 	proposal, err := o.selection.Prepare(
 		t.Context(),
 		selection.PrepareRequest{
+			Missing:     o.cfg.missing,
 			Reads:       &caller,
 			Preparation: &preparation,
 			Generation:  []store.Child{{Obj: obj, Origin: o.store.Policy(id).Origin}},
@@ -131,6 +132,7 @@ func TestRenderTrees_EntryPublicationSourcePreparation(t *testing.T) {
 	next, err = o.selection.Prepare(
 		t.Context(),
 		selection.PrepareRequest{
+			Missing:     o.cfg.missing,
 			Reads:       &fresh,
 			Preparation: &preparation,
 			Generation:  []store.Child{{Obj: current, Origin: o.store.Policy(id).Origin}},
@@ -172,6 +174,7 @@ func excludedOrderingFixture(t *testing.T, broken bool) (baseDir, headDir string
 
 func prepareOrderingTrees(t *testing.T, treeInputs []Tree, cfg *Config) *renderInvocation {
 	t.Helper()
+	assert.NoError(t, snapshotSubstitutions(cfg))
 	ctx := t.Context()
 	cfg.Network = new(source.Network)
 	cache, err := sourcecache.New(ctx, cfg.CacheDir)
@@ -496,7 +499,8 @@ func TestRenderTrees_SourcePublicationKeepsHelmReleasePreparation(t *testing.T) 
 	fresh.SetWork(work)
 	defer fresh.Close()
 	proposal, err := o.selection.Prepare(t.Context(), selection.PrepareRequest{
-		Reads: &fresh, Preparation: &third.AdmissionPreparation,
+		Missing: o.cfg.missing,
+		Reads:   &fresh, Preparation: &third.AdmissionPreparation,
 		Generation: []store.Child{{Obj: o.store.GetObject(id), Origin: o.store.Policy(id).Origin}},
 	})
 	assert.NoError(t, err)
@@ -511,7 +515,8 @@ func TestRenderTrees_SourcePublicationKeepsHelmReleasePreparation(t *testing.T) 
 	assert.Diff(t, work.Scope().Admission().Counts, counts)
 	decision := o.selection.Snapshot()
 	stale, err := o.selection.Prepare(t.Context(), selection.PrepareRequest{
-		Reads: &second.Reads, Preparation: &third.AdmissionPreparation,
+		Missing: o.cfg.missing,
+		Reads:   &second.Reads, Preparation: &third.AdmissionPreparation,
 		Generation: []store.Child{{Obj: o.store.GetObject(id), Origin: o.store.Policy(id).Origin}},
 	})
 	assert.NoError(t, err)

@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -325,6 +326,7 @@ func TestFinalize_InspectionDoesNotChangeStatus(t *testing.T) {
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "unwired"})
 	o := &Orchestrator{
+		cfg:   treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
 		store: st,
 		tasks: task.NewBounded(2),
 		index: indexForTest(

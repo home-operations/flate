@@ -102,13 +102,18 @@ type Admission struct {
 	producerOwner *producerObligation
 }
 
+type missingPolicy interface {
+	Missing(manifest.Reference, store.ReferenceFacts) (allowed, unreadable, producerAbsence bool)
+}
+
 // PrepareRequest describes the evidence and selection intent for an admission proposal.
 type PrepareRequest struct {
-	Preparation       **Preparation
-	Changes           *change.Set
-	HistoryOwners     map[manifest.NamedResource][]manifest.SourceEvidence
-	Acquired          []Acquisition
-	AllowMissingKinds []string
+	Preparation   **Preparation
+	Changes       *change.Set
+	HistoryOwners map[manifest.NamedResource][]manifest.SourceEvidence
+	Acquired      []Acquisition
+	// Missing MUST retain one immutable policy pointer across proposal retries.
+	Missing missingPolicy
 	// Generation MUST remain immutable until its preparation retires.
 	Generation []store.Child
 	Owner      manifest.NamedResource

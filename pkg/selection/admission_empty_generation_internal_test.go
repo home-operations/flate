@@ -37,7 +37,7 @@ func TestAdmission_EmptyGenerationDropsPreviousObjects(t *testing.T) {
 		Preparation: &preparation, Owner: parent.Named(), Reads: &reads,
 		Generation: []store.Child{{Obj: child, SourceSupport: manifest.BootstrapSourceID}},
 	}
-	first, err := session.Prepare(t.Context(), request)
+	first, err := session.prepareTest(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestAdmission_EmptyGenerationDropsPreviousObjects(t *testing.T) {
 		t.Fatal("first proposal did not commit")
 	}
 	request.Generation = nil
-	empty, err := session.Prepare(t.Context(), request)
+	empty, err := session.prepareTest(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestAdmission_EmptyGenerationDropsPreviousObjects(t *testing.T) {
 	}
 	empty.Retire()
 	request.Generation = []store.Child{{Obj: child, SourceSupport: manifest.BootstrapSourceID}}
-	restored, err := session.Prepare(t.Context(), request)
+	restored, err := session.prepareTest(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +74,13 @@ func TestAdmission_EmptyGenerationDropsPreviousObjects(t *testing.T) {
 		t.Fatalf("restored generation committed = %v, error = %v", committed, err)
 	}
 	request.Owner, request.Generation = manifest.NamedResource{}, nil
-	narrowed, err := session.Prepare(t.Context(), request)
+	narrowed, err := session.prepareTest(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	narrowed.Retire()
 	request.Owner = parent.Named()
-	withdrawn, err := session.Prepare(t.Context(), request)
+	withdrawn, err := session.prepareTest(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}

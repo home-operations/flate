@@ -31,6 +31,10 @@ type Provider interface {
 	Data(manifest.NamedResource) manifest.Data
 }
 
+type missingPolicy interface {
+	Missing(manifest.Reference, store.ReferenceFacts) (allowed, unreadable, producerAbsence bool)
+}
+
 type dataReader interface {
 	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex, manifest.NamedResource) store.ReferenceFacts
 }
@@ -190,12 +194,11 @@ func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) 
 
 //nolint:ireturn // The values contract supports multiple data implementations.
 func resourceData(kind, namespace, name string, p Provider) (manifest.Data, error) {
-	switch kind {
-	case manifest.KindSecret, manifest.KindConfigMap:
-	default:
+	id := manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name}
+	if !id.KindInfo().Data {
 		return nil, manifest.NewError(manifest.ErrInvalidValuesReference, nil, fmt.Sprintf("unsupported kind %s", kind))
 	}
-	return p.Data(manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name}), nil
+	return p.Data(id), nil
 }
 
 type missingValueRefError struct {
@@ -288,7 +291,7 @@ func stripMatchingQuotes(value string) (string, bool) {
 }
 
 // ExpandPostBuildSubstituteReference resolves referenced and authored inline substitutions.
-func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) error {
+func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider, missing missingPolicy) error {
 	if ks == nil || ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 {
 		return nil
 	}
@@ -302,7 +305,7 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 
 	// Flux gives inline substitutions precedence over references.
 	values := map[string]string{}
-	if err := readSubstitutions(ks, p, values); err != nil {
+	if err := readSubstitutions(ks, p, missing, values); err != nil {
 		return err
 	}
 	maps.Copy(values, ks.PostBuild.Substitute)
@@ -400,7 +403,7 @@ func (ex *valueExpansion) expand(
 	return nil
 }
 
-func readSubstitutions(ks *manifest.Kustomization, p Provider, values map[string]string) error {
+func readSubstitutions(ks *manifest.Kustomization, p Provider, missing missingPolicy, values map[string]string) error {
 	for _, ref := range ks.PostBuild.SubstituteFrom {
 		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
 		if err != nil {
@@ -412,7 +415,13 @@ func readSubstitutions(ks *manifest.Kustomization, p Provider, values map[string
 			return err
 		}
 		if data == nil || !data.HasKeys() {
-			if !ref.Optional && ref.Kind != manifest.KindSecret {
+			edge := manifest.Reference{
+				Kind: ref.Kind, Namespace: ks.Namespace, Name: ref.Name,
+				Use:      "substituteFrom",
+				Optional: ref.Optional,
+			}
+			allowed, unreadable, _ := missing.Missing(edge, store.ReferenceFacts{Data: data})
+			if !allowed && !unreadable {
 				slog.Debug("values: SubstituteReference not found",
 					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "ref", ref.Name)
 			}

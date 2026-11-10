@@ -356,8 +356,10 @@ func TestRenderTrees_IndependentModel(t *testing.T) {
 		"work_final_and_retired",
 		func(t *testing.T) {
 			t.Parallel()
+			cfg := Config{RecordWork: true}
+			assert.NoError(t, snapshotSubstitutions(&cfg))
 			o, constructionErr := newOrchestrator(
-				t.Context(), &Config{RecordWork: true},
+				t.Context(), &cfg,
 				&Tree{ID: manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}}, task.NewBounded(2),
 			)
 			assert.NoError(t, constructionErr)

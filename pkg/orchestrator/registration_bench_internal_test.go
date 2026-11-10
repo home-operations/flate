@@ -113,6 +113,7 @@ func benchmarkDirtyRerunDynamicEmissionChainCase(b *testing.B, root *string, wor
 		Path:        (*root),
 		RepoRoot:    (*root),
 	}
+	assert.NoError(b, snapshotSubstitutions(&cfg.Config))
 	var renders int64
 	b.ReportAllocs()
 	for b.Loop() {

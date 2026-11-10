@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -135,7 +136,7 @@ func preparedRequest(
 	source *store.SourceArtifact,
 ) kustomize.RenderRequest {
 	t.Helper()
-	prepared, err := kustomize.Prepare(ks, nil)
+	prepared, err := kustomize.Prepare(ks, nil, depwait.NewMissingPolicy(nil))
 	assert.NoError(t, err)
 	return kustomize.RenderRequest{
 		Source:              source,

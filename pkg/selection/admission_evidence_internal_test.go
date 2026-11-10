@@ -34,7 +34,7 @@ func TestAdmission_NarrowerSuccessorKeepsCompleteEvidence(t *testing.T) {
 	session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{first.Named(), second.Named()}})
 	var preparation *Preparation
 	defer func() { preparation.Retire() }()
-	proposal, err := session.Prepare(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
+	proposal, err := session.prepareTest(t.Context(), PrepareRequest{Invocation: true, Preparation: &preparation})
 	assert.NoError(t, err)
 	assert.Equal(t, preparation.closure.states[second.Named()].initialKnown, true)
 	proposal.Retire()
@@ -44,7 +44,7 @@ func TestAdmission_NarrowerSuccessorKeepsCompleteEvidence(t *testing.T) {
 	guard.Init(st, first.Named(), nil)
 	guard.RequireData(first.Named())
 	defer guard.Close()
-	proposal, err = session.Prepare(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
+	proposal, err = session.prepareTest(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
 	assert.NoError(t, err)
 	assert.Equal(t, preparation.closure.states[second.Named()].initialKnown, true)
 	assert.Equal(t, slices.Contains(slices.Collect(proposal.reads.Inputs()), input.Named()), true)
@@ -52,7 +52,7 @@ func TestAdmission_NarrowerSuccessorKeepsCompleteEvidence(t *testing.T) {
 	for range st.Sweep() {
 	}
 	st.AddObject(manifest.NewConfigMap(input.Named(), map[string]any{"value": "after"}))
-	proposal, err = session.Prepare(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
+	proposal, err = session.prepareTest(t.Context(), PrepareRequest{Reads: &guard, Preparation: &preparation})
 	assert.NoError(t, err)
 	defer proposal.Retire()
 	assert.Equal(t, preparation.closure.states[first.Named()].initialKnown, true)

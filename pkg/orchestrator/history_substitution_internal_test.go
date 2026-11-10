@@ -1,7 +1,11 @@
 package orchestrator
 
 import (
+	"encoding/json"
+	"maps"
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/selection"
@@ -231,4 +235,134 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 	assert.Diff(t, outputByParent(result.Manifests), outputByParent(deterministic.Manifests))
 	assert.Diff(t, result.Failed, deterministic.Failed)
 	assert.Diff(t, result.Warnings, deterministic.Warnings)
+	if testCaseInput.name == "optional appears" {
+		obj := &manifest.ConfigMap{
+			Name:      "supplied",
+			Namespace: "apps",
+			Data:      map[string]any{"NAME": "wanted", "USED": "kept"},
+		}
+		document, encodeErr := json.Marshal(testutil.ObjectDocument(obj))
+		assert.NoError(t, encodeErr)
+		testHistoryInputSides(t, &historyInputSides{
+			root: root, file: "flux/supplied.yaml", document: document, consumer: consumer,
+			files: map[string]string{
+				"flux/emitter.yaml": testutil.KustomizationYAML(
+					"emitter",
+					"apps",
+					"  path: ./producers\n  postBuild:\n    substitute: {NAME: wanted, UNUSED: enabled}\n    substituteFrom: [{kind: ConfigMap, name: supplied, optional: true}]\n",
+				),
+				"flux/consumer.yaml": testutil.KustomizationYAML(
+					"consumer",
+					"apps",
+					"  path: ./app\n  postBuild:\n    substitute: {UNUSED: enabled}\n    substituteFrom: [{kind: ConfigMap, name: wanted, optional: true}]\n",
+				),
+				"producers/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: wanted, namespace: apps}\ndata: {value: '${USED:=absent}'}\n",
+				"app/cm.yaml":       "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result, namespace: apps}\ndata: {value: '${value:=absent}'}\n",
+			},
+		})
+	}
+}
+
+type historyInputSides struct {
+	root, file string
+	files      map[string]string
+	document   []byte
+	consumer   manifest.NamedResource
+}
+
+func testHistoryInputSides(t *testing.T, fixture *historyInputSides) {
+	t.Helper()
+	for _, reverse := range []bool{false, true} {
+		name := "insertion"
+		if reverse {
+			name = "removal"
+		}
+		t.Run(name, func(t *testing.T) {
+			testHistoryInputDirection(t, fixture, reverse)
+		})
+	}
+}
+
+func testHistoryInputDirection(t *testing.T, fixture *historyInputSides, reverse bool) {
+	t.Helper()
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	trees := make([]Tree, 0, len(roots))
+	oracles := make([]Rendered, 0, len(roots))
+	wantError := false
+	orphan := manifest.NamedResource{
+		Kind:      manifest.KindConfigMap,
+		Namespace: fixture.consumer.Namespace,
+		Name:      "independent",
+	}
+	for side, root := range roots {
+		assert.NoError(t, os.CopyFS(root, os.DirFS(fixture.root)))
+		for _, path := range slices.Sorted(maps.Keys(fixture.files)) {
+			testutil.WriteFile(t, root, path, fixture.files[path])
+		}
+		present := (side == 1) != reverse
+		if present {
+			testutil.WriteFile(t, root, fixture.file, string(fixture.document))
+		} else if err := os.Remove(filepath.Join(root, fixture.file)); err != nil {
+			assert.Equal(t, os.IsNotExist(err), true)
+		}
+		testutil.WriteFile(
+			t,
+			root,
+			"flux/independent.yaml",
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent, namespace: "+orphan.Namespace+"}\ndata: {value: independent}\n",
+		)
+		kind := manifest.TreeBase
+		if side == 1 {
+			kind = manifest.TreeHead
+		}
+		tree := Tree{
+			ID:       manifest.TreeID{Cluster: ".", Side: kind},
+			RepoRoot: root,
+			Path:     filepath.Join(root, "flux"),
+			SelfURLs: []string{"https://fixture.invalid/repo"},
+		}
+		full, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		wantError = wantError || err != nil
+		assert.Equal(t, len(full), 1)
+		oracles = append(oracles, full[0])
+		tree.ExternalChanges = change.NewSet([]string{fixture.file})
+		trees = append(trees, tree)
+	}
+	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2}
+	first, err := renderTreesForTest(t.Context(), t, trees, cfg)
+	assert.Equal(t, err != nil, wantError)
+	second, err := renderTreesForTest(t.Context(), t, trees, cfg)
+	assert.Equal(t, err != nil, wantError)
+	assert.Equal(t, len(first), len(oracles))
+	assert.Equal(t, len(second), len(oracles))
+	for side, oracle := range oracles {
+		want, encodeErr := json.Marshal(outputByParent(oracle.Result.Manifests)[fixture.consumer])
+		assert.NoError(t, encodeErr)
+		for _, runs := range [][]Rendered{first, second} {
+			run := &runs[side]
+			got, encodeErr := json.Marshal(outputByParent(run.Result.Manifests)[fixture.consumer])
+			assert.NoError(t, encodeErr)
+			assert.Equal(t, string(got), string(want))
+			assert.Equal(t, len(run.Result.Failed), len(oracle.Result.Failed))
+			for id, expected := range oracle.Result.Failed {
+				actual, failed := run.Result.Failed[id]
+				assert.Equal(t, failed, true)
+				assert.Equal(t, actual.Status, expected.Status)
+				assert.Equal(t, actual.Reason, expected.Reason)
+				assert.Equal(t, actual.Outcome(), expected.Outcome())
+				subject := manifest.DiagnosticFor(id, nil)
+				assert.Diff(t, actual.DependencyReason(subject), expected.DependencyReason(subject))
+			}
+			assert.Diff(t, run.Result.Warnings, oracle.Result.Warnings)
+			record, known := run.index.Lookup(orphan)
+			assert.Equal(t, known, true)
+			assert.Equal(t, record.File, "flux/independent.yaml")
+			assert.Equal(t, record.Path, filepath.Join(roots[side], record.File))
+			for i := range record.Productions {
+				assert.Equal(t, record.Productions[i].Owner, manifest.NamedResource{})
+			}
+			input := run.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+			assert.Equal(t, input.LocalPath, roots[side])
+		}
+	}
 }

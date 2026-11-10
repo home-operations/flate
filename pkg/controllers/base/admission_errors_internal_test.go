@@ -54,8 +54,8 @@ func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
 			}
 			c.Configure(
 				Options{
-					Existence:         admissionFailure{manifest.NewError(manifest.ErrInput, cause, "")},
-					AllowMissingKinds: missingKinds,
+					Existence: admissionFailure{manifest.NewError(manifest.ErrInput, cause, "")},
+					Missing:   depwait.NewMissingPolicy(missingKinds),
 				},
 			)
 			var execution Execution
@@ -101,12 +101,11 @@ func TestAwaitData_AdmissionErrorPreventsResume(t *testing.T) {
 			err := execution.AwaitData(t.Context(), DataWait{
 				Inputs: []depwait.DataDependency{
 					{
-						Kind:         manifest.KindConfigMap,
-						Namespace:    "apps",
-						Name:         "input",
-						Input:        input,
-						Optional:     true,
-						AllowMissing: true,
+						Kind:      manifest.KindConfigMap,
+						Namespace: "apps",
+						Name:      "input",
+						Input:     input,
+						Optional:  true,
 					},
 				},
 				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { resumed = true; return nil },

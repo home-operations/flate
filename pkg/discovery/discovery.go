@@ -519,6 +519,7 @@ func (d *Session) bindEntry(ctx context.Context, _ string) (*manifest.Kustomizat
 func (d *Session) prepareRequest(request *selection.PrepareRequest) selection.PrepareRequest {
 	previous := d.request
 	request.Changes = d.loader.Options.Changes
+	request.Missing = d.loader.Options.Missing
 	if request.HistoryOwners == nil {
 		request.HistoryOwners = previous.HistoryOwners
 	}
@@ -640,7 +641,7 @@ func (d *Session) prepareDocuments(
 		frame.retire(d.cfg.Store)
 		return nil, manifest.NewError(manifest.ErrInput, nil, "construction support changed")
 	}
-	prepared, err := kustomize.Prepare(ks, nil)
+	prepared, err := kustomize.Prepare(ks, nil, d.loader.Options.Missing)
 	if err != nil {
 		frame.err, frame.complete = err, ctx.Err() == nil
 		return frame, err

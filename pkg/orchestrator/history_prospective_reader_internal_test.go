@@ -123,6 +123,11 @@ spec:
 		},
 		)
 	}
+	document, err := os.ReadFile(filepath.Join(root, "flux", "settings.yaml"))
+	assert.NoError(t, err)
+	testHistoryInputSides(t, &historyInputSides{
+		root: root, file: "flux/settings.yaml", document: document, consumer: testutil.KustomizationID("apps", "child"),
+	})
 }
 
 type historyLogBuffer struct {

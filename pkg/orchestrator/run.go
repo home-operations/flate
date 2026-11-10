@@ -178,17 +178,17 @@ func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
 		Session:             o.selection,
 		Loader:              o.loader,
-		AllowMissingSecrets: slices.Contains(o.cfg.AllowMissingKinds, manifest.KindSecret),
+		AllowMissingSecrets: o.cfg.allowMissingSecrets,
 		Admission:           o.admission,
 	}, o.cfg.SourceRetry)
 	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
 	common := base.Options{
-		SkipKinds:         o.cfg.HelmOptions.SkipKinds,
-		Session:           o.selection,
-		Loader:            o.loader,
-		Index:             o.index,
-		Existence:         existence,
-		AllowMissingKinds: o.cfg.AllowMissingKinds,
+		SkipKinds: o.cfg.HelmOptions.SkipKinds,
+		Session:   o.selection,
+		Loader:    o.loader,
+		Index:     o.index,
+		Existence: existence,
+		Missing:   o.cfg.missing,
 	}
 	o.ksc.Configure(kustomization.Options{
 		Discovery:           o.discoveryResult,

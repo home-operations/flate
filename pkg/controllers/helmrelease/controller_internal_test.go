@@ -208,7 +208,7 @@ data:
 
 	c, st := newTestControllerWithOptions(
 		t,
-		&base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+		&base.Options{Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret, manifest.KindConfigMap})},
 	)
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
@@ -361,7 +361,7 @@ func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
 	t.Parallel()
 	c, st := newTestControllerWithOptions(
 		t,
-		&base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+		&base.Options{Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret, manifest.KindConfigMap})},
 	)
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	st.AddObject(chart)

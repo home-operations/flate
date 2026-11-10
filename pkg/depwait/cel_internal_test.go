@@ -116,7 +116,10 @@ func TestReadyExpr_ReplaceOverridesBuiltin(t *testing.T) {
 	) // built-in says Failed
 	s.SetCondition(dep, store.Condition{Type: "Healthy", Status: metav1.ConditionTrue, Reason: "MyCustomCheck"})
 
-	w := &Waiter{Store: s}
+	w := &Waiter{
+		Store: captureState(t, s), Missing: NewMissingPolicy(
+			nil),
+	}
 	ref := manifest.DependencyRef{
 		NamedResource: dep,
 		ReadyExpr:     new(`dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`),
@@ -147,7 +150,10 @@ func TestReadyExpr_CompileError(t *testing.T) {
 				_, err := evaluateReadyExpr(`this isn't valid CEL`, s, manifest.NamedResource{}, dep)
 				assert.FatalIf(t, err == nil, "%v", "expected compile error")
 			}
-			w := &Waiter{Store: s}
+			w := &Waiter{
+				Store: captureState(t, s), Missing: NewMissingPolicy(
+					nil),
+			}
 			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(`this isn't valid CEL`)}
 			got := w.Classify(t.Context(), ref, manifest.DrainNone)
 			assert.ErrorIf(
@@ -191,7 +197,10 @@ func TestReadyExpr_TransientEvalErrorNotTerminal(t *testing.T) {
 	dep := testutil.KustomizationID("ns", "infra")
 	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 
-	w := &Waiter{Store: s}
+	w := &Waiter{
+		Store: captureState(t, s), Missing: NewMissingPolicy(
+			nil),
+	}
 	const expr = `dep.status.conditions[100].type == "Ready"` // index out of range → runtime eval error
 	var observation store.Observation
 	obj, observation := s.Snapshot(dep, true)
@@ -239,7 +248,10 @@ func TestReadyExpr_ReadsLabelsAndAnnotations(t *testing.T) {
 	fresh.Annotations = map[string]string{"app.kubernetes.io/version": "2.0.0"}
 	s.AddObject(fresh)
 	s.UpdateStatus(dep, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "replacement"})
-	w := Waiter{Store: s}
+	w := Waiter{
+		Store: captureState(t, s), Missing: NewMissingPolicy(
+			nil),
+	}
 
 	for _, expr := range []string{
 		`dep.metadata.labels["tier"] == "data"`,
@@ -285,7 +297,10 @@ func TestReadyExpr_BindsSelfAndDep(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			w := Waiter{Store: s, Parent: tc.self}
+			w := Waiter{
+				Store: captureState(t, s), Parent: tc.self, Missing: NewMissingPolicy(
+					nil),
+			}
 			expr := `self.status.conditions.exists(c, c.type == "Ready" && c.reason == "` + tc.reason + `") && dep.status.conditions.exists(c, c.type == "Ready" && c.reason == "Skipped" && c.status == "True")`
 			{
 				ok, err := w.evaluateReadyExpr(expr, dep, obj, conds)
@@ -365,7 +380,13 @@ func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedReso
 	var observation store.Observation
 	obj, observation := s.Snapshot(dep, true)
 	conds := observation.Conditions
-	w := Waiter{Store: s, Parent: self}
+	var reads store.ReadSet
+	reads.Init(s, self, nil)
+	defer reads.Retire()
+	w := Waiter{
+		Store: &reads, Parent: self, Missing: NewMissingPolicy(
+			nil),
+	}
 	return w.evaluateReadyExpr(expr, dep, obj, conds)
 }
 
@@ -420,7 +441,10 @@ func TestReadyExpr_SelfCapture(t *testing.T) {
 			reads.Init(s, self.Named(), nil)
 			defer reads.Retire()
 			obj, info := reads.Snapshot(dep.Named(), true)
-			w := Waiter{Store: &reads, Parent: self.Named()}
+			w := Waiter{
+				Store: &reads, Parent: self.Named(), Missing: NewMissingPolicy(
+					nil),
+			}
 			ok, err := w.evaluateReadyExpr(tc.expr, dep.Named(), obj, info.Conditions)
 			assert.FatalIf(t, err != nil || !ok, "evaluation: ok=%v err=%v, want true/nil", ok, err)
 			assert.FatalIf(t, !reads.Valid(), "%v", "fresh read set invalid")
@@ -456,7 +480,10 @@ func TestReadyExpr_DeclarationChanges(t *testing.T) {
 			reads.Init(s, self.Named(), nil)
 			defer reads.Retire()
 			obj, info := reads.Snapshot(dep.Named(), true)
-			w := Waiter{Store: &reads, Parent: self.Named()}
+			w := Waiter{
+				Store: &reads, Parent: self.Named(), Missing: NewMissingPolicy(
+					nil),
+			}
 			expr := `self.metadata.labels.tier == 'data'`
 			switch field {
 			case "spec":
@@ -492,7 +519,10 @@ func TestReadyExpr_DependencyConditions(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(s, testutil.KustomizationID("ns", "parent"), nil)
 	defer reads.Retire()
-	w := Waiter{Store: &reads, Parent: testutil.KustomizationID("ns", "parent")}
+	w := Waiter{
+		Store: &reads, Parent: testutil.KustomizationID("ns", "parent"), Missing: NewMissingPolicy(
+			nil),
+	}
 	ref := manifest.DependencyRef{
 		NamedResource: dep.Named(),
 		ReadyExpr:     new(`dep.status.conditions.exists(c, c.status == 'True')`),
@@ -539,7 +569,10 @@ spec: {path: ./old}
 				old, info := reads.Snapshot(dep.Named(), true)
 				close(captured)
 				<-published
-				w := Waiter{Store: &reads, Parent: parent}
+				w := Waiter{
+					Store: &reads, Parent: parent, Missing: NewMissingPolicy(
+						nil),
+				}
 				expr := `dep.spec.path == './old' && dep.metadata.labels.version == 'old' && dep.metadata.annotations.revision == 'old' && dep.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True') && dep.metadata.generation == dep.status.observedGeneration`
 				if same {
 					expr += ` && self.spec == dep.spec && self.status == dep.status`
@@ -563,7 +596,10 @@ spec: {path: ./old}
 				reads.Init(s, parent, nil)
 				defer reads.Retire()
 				current, info := reads.Snapshot(dep.Named(), true)
-				w := Waiter{Store: &reads, Parent: parent}
+				w := Waiter{
+					Store: &reads, Parent: parent, Missing: NewMissingPolicy(
+						nil),
+				}
 				expr := `dep.spec.path == './new' && dep.metadata.labels.version == 'new' && dep.metadata.annotations.revision == 'new' && dep.status.conditions.exists(c, c.type == 'Ready' && c.status == 'False')`
 				if same {
 					expr += ` && self.spec == dep.spec && self.status == dep.status`
@@ -644,7 +680,10 @@ func testReadyExprDesiredSpecCase(t *testing.T, testCaseInput *struct {
 					err,
 				)
 			}
-			w := Waiter{Store: s, Parent: self}
+			w := Waiter{
+				Store: captureState(t, s), Parent: self, Missing: NewMissingPolicy(
+					nil),
+			}
 			ref := manifest.DependencyRef{
 				NamedResource: testCaseInput.id,
 				ReadyExpr:     new(testCaseInput.expr),

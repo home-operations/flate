@@ -46,7 +46,8 @@ func (e *entryPrerequisites) prerequisites(obj manifest.BaseManifest) bool {
 			if facts.Data != nil {
 				continue
 			}
-			if _, accepted := acceptedApplicationOutput(e.reads, obj.Named()); accepted && facts.AllowsAbsence() {
+			_, _, producerAbsence := e.loader.Options.Missing.Missing(ref, facts)
+			if _, accepted := acceptedApplicationOutput(e.reads, obj.Named()); accepted && producerAbsence {
 				continue
 			}
 			if !ref.Optional {

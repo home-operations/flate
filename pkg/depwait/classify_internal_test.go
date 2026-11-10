@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/pkg/schedule"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -34,7 +35,10 @@ func TestClassify_CoreStates(t *testing.T) {
 	s.UpdateStatus(pending.NamedResource, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
 	s.AddObject(&manifest.HelmChartSource{Name: "statusless", Namespace: "ns"})
 
-	w := &Waiter{Store: s}
+	w := &Waiter{
+		Store: captureState(t, s), Missing: NewMissingPolicy(
+			nil),
+	}
 
 	{
 		got := w.Classify(t.Context(), ready, manifest.DrainNone)
@@ -130,13 +134,15 @@ func TestClassify_CoreStates(t *testing.T) {
 	}
 	for _, allow := range []bool{false, true} {
 		caseWaiter := *w
-		caseWaiter.AllowMissingCRDs = allow
+		caseWaiter.Missing = crdMissingPolicy(allow)
 		for _, group := range []string{"apiextensions.k8s.io", "example.test", ""} {
 			t.Run(fmt.Sprintf("CRD/group=%s/allow=%t", group, allow), func(t *testing.T) {
 				t.Parallel()
+				localWaiter := caseWaiter
+				localWaiter.Store = captureState(t, s)
 				testClassifyCoreStatesCase6(
 					t,
-					testClassifyCoreStatesCase6Inputs{allow: &allow, caseWaiter: &caseWaiter, group: &group},
+					testClassifyCoreStatesCase6Inputs{allow: &allow, caseWaiter: &localWaiter, group: &group},
 				)
 			},
 			)
@@ -151,7 +157,10 @@ func TestClassify_ReplaceReadyExpr(t *testing.T) {
 	s.UpdateStatus(dep.NamedResource, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	dep.ReadyExpr = new(`dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")`) // not satisfied
 
-	w := &Waiter{Store: s}
+	w := &Waiter{
+		Store: captureState(t, s), Missing: NewMissingPolicy(
+			nil),
+	}
 	{
 		got := w.Classify(t.Context(), dep, manifest.DrainNone)
 		assert.ErrorIf(
@@ -199,7 +208,10 @@ func TestClassify_EdgeReadiness(t *testing.T) {
 				status = store.StatusPending
 			}
 			s.UpdateStatus(tc.obj.Named(), store.StatusInfo{Status: status, Message: "working"})
-			w := &Waiter{Store: s, Materializer: tc.materializer}
+			w := &Waiter{
+				Store: captureState(t, s), Materializer: tc.materializer, Missing: NewMissingPolicy(
+					nil),
+			}
 			got := w.Classify(
 				t.Context(),
 				manifest.DependencyRef{NamedResource: tc.obj.Named(), ReadyExpr: new(tc.expr)},
@@ -224,7 +236,10 @@ func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
 		},
 	}
 	s.UpdateFailure(a, failure)
-	w := Waiter{Store: s, Parent: b}
+	w := Waiter{
+		Store: captureState(t, s), Parent: b, Missing: NewMissingPolicy(
+			nil),
+	}
 	ref := manifest.DependencyRef{NamedResource: a}
 	first := w.Classify(t.Context(), ref, manifest.DrainForce)
 	assert.FatalIf(t, first.Kind != schedule.DependencyFailed ||
@@ -247,6 +262,7 @@ func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
 	}
 	s.UpdateFailure(b, nested)
 	w.Parent = a
+	w.Store = captureState(t, s)
 	next := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: b}, manifest.DrainForce)
 	assert.FatalIf(
 		t,
@@ -272,6 +288,7 @@ func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
 		)
 	}
 	s.UpdateStatus(a, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "leaf failure"})
+	w.Store = captureState(t, s)
 	{
 		got := w.Classify(t.Context(), ref, manifest.DrainForce)
 		assert.FatalIf(t, got.Message != "leaf failure", "direct failure lost its reason: %+v", got)
@@ -341,7 +358,10 @@ func TestClassify_AdmittedDependencyRejectsExcludedReadiness(t *testing.T) {
 				var reads store.ReadSet
 				reads.Init(s, testutil.KustomizationID("apps", "consumer"), nil)
 				defer reads.Retire()
-				w := Waiter{Store: &reads}
+				w := Waiter{
+					Store: &reads, Missing: NewMissingPolicy(
+						nil),
+				}
 				return w.Classify(
 					t.Context(),
 					manifest.DependencyRef{NamedResource: upstream.Named(), ReadyExpr: tc.expr},
@@ -380,12 +400,14 @@ type testClassifyCoreStatesCaseInputs struct {
 
 func testClassifyCoreStatesCase(t *testing.T, testCaseInput testClassifyCoreStatesCaseInputs) {
 	t.Helper()
+	w := **testCaseInput.w
+	w.Store = captureState(t, *testCaseInput.s)
 	(*testCaseInput.s).UpdateStatus(
 		testCaseInput.ready.NamedResource,
 		store.StatusInfo{Status: store.StatusReady, Reason: (*testCaseInput.reason), Message: ""},
 	)
 	{
-		got := (*testCaseInput.w).Classify(t.Context(), (*testCaseInput.ready), manifest.DrainNone)
+		got := w.Classify(t.Context(), (*testCaseInput.ready), manifest.DrainNone)
 		assert.FatalIf(
 			t,
 			got.Kind != schedule.Terminal,
@@ -404,14 +426,16 @@ type testClassifyCoreStatesCase2Inputs struct {
 func testClassifyCoreStatesCase2(t *testing.T, testCaseInput testClassifyCoreStatesCase2Inputs) {
 	t.Helper()
 
+	w := **testCaseInput.w
+	w.Store = captureState(t, *testCaseInput.s)
 	foreign := (*testCaseInput.ready)
 	foreign.Group = (*testCaseInput.group)
 	{
-		got := (*testCaseInput.w).Classify(t.Context(), foreign, manifest.DrainNone)
+		got := w.Classify(t.Context(), foreign, manifest.DrainNone)
 		assert.FatalIf(t, got.Kind != schedule.Blocked, "absent lookalike borrowed Ready status: %+v", got)
 	}
 	{
-		got := (*testCaseInput.w).Classify(
+		got := w.Classify(
 			t.Context(),
 			foreign,
 			manifest.DrainCascade,
@@ -423,8 +447,9 @@ func testClassifyCoreStatesCase2(t *testing.T, testCaseInput testClassifyCoreSta
 		foreign.NamedResource,
 		store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "foreign status"},
 	)
+	w.Store = captureState(t, *testCaseInput.s)
 	{
-		got := (*testCaseInput.w).Classify(t.Context(), foreign, manifest.DrainNone)
+		got := w.Classify(t.Context(), foreign, manifest.DrainNone)
 		assert.FatalIf(
 			t,
 			got.Kind != schedule.Terminal,
@@ -502,7 +527,14 @@ func testClassifyOrdinaryPromotionCase(t *testing.T, testCaseInput *struct {
 			}
 		}
 	}
-	w := Waiter{Store: st, Existence: promotion}
+	reads := captureState(t, st)
+	w := Waiter{
+		Store:     reads,
+		Admission: selection.PrepareRequest{Reads: reads},
+		Existence: promotion,
+		Missing: NewMissingPolicy(
+			nil),
+	}
 	got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: data.Named()}, manifest.DrainCascade)
 	assert.FatalIf(t, testCaseInput.want.Kind == schedule.DependencyFailed &&
 		got.DiagnosticReason(

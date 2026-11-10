@@ -117,10 +117,13 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	parent := testutil.KustomizationID("apps", "reader")
 	before.Init(st, parent, nil)
 	input := values.NewStoreProvider(&before).Lookup(id)
-	w := Waiter{Store: &before, Parent: parent}
+	w := Waiter{
+		Store: &before, Parent: parent, Missing: NewMissingPolicy(
+			nil),
+	}
 	result := w.Available(
 		t.Context(),
-		DataDependency{NamedResource: id, Input: input, Optional: true},
+		DataDependency{NamedResource: id, Optional: true, Input: input},
 		manifest.DrainNone,
 	)
 	assert.Equal(t, result.Kind, schedule.Blocked)
@@ -140,6 +143,7 @@ type inputPromotion struct {
 	calls       int
 	materialize bool
 	before      func()
+	request     selection.PrepareRequest
 }
 
 func (p *inputPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
@@ -147,15 +151,19 @@ func (p *inputPromotion) IsFileIndexed(manifest.NamedResource) bool { return tru
 //nolint:gocritic // The admission contract requires an independent request snapshot.
 func (p *inputPromotion) Promote(
 	_ context.Context,
-	_ selection.PrepareRequest,
+	request selection.PrepareRequest,
 	_ manifest.NamedResource,
 ) (bool, error) {
 	p.calls++
+	p.request = request
 	if p.before != nil {
 		p.before()
 	}
 	if p.materialize {
 		p.store.AddObject(p.data)
+		id := request.Reads.ID()
+		request.Reads.Retire()
+		request.Reads.Init(p.store, id, nil)
 	}
 	return p.materialize, nil
 }
@@ -229,10 +237,13 @@ func testResolveSelectedDataCase(t *testing.T, testCaseInput *struct {
 	defer reads.Retire()
 	provider := values.NewStoreProvider(&reads)
 	input := provider.Lookup(data.Named())
-	w := Waiter{Store: &reads, Parent: ks.Named()}
+	w := Waiter{
+		Store: &reads, Parent: ks.Named(), Missing: NewMissingPolicy(
+			nil),
+	}
 	result := w.Available(
 		t.Context(),
-		DataDependency{NamedResource: data.Named(), Input: input, Optional: true},
+		DataDependency{NamedResource: data.Named(), Optional: true, Input: input},
 		manifest.DrainNone,
 	)
 	if testCaseInput.want == "" {

@@ -23,6 +23,8 @@ func (c *execution) resolvePreRenderValuesFrom(
 		base.DataWait{
 			Inputs: inputs,
 			Resume: func(ctx context.Context, level manifest.DrainLevel, omitted []manifest.NamedResource) error {
+				omitted = requiredValuesOmissions(hr, omitted)
+				c.recordOmittedValues(hr, omitted)
 				hr = omitValues(hr, omitted)
 				return c.render(ctx, hr, level, omitted)
 			},
@@ -31,11 +33,11 @@ func (c *execution) resolvePreRenderValuesFrom(
 	)
 }
 
-func (c *execution) recordOmittedValues(id manifest.NamedResource, refs []manifest.NamedResource) {
+func (c *execution) recordOmittedValues(hr *manifest.HelmRelease, refs []manifest.NamedResource) {
 	for _, ref := range refs {
 		c.run.Reads.AddWarning(
 			manifest.Warning{
-				Resource: id,
+				Resource: hr.Named(),
 				Category: manifest.WarnOmittedValues,
 				Message:  fmt.Sprintf("required valuesFrom %s omitted from offline render", ref),
 			},
@@ -55,4 +57,16 @@ func omitValues(hr *manifest.HelmRelease, omitted []manifest.NamedResource) *man
 		hr.ValuesFrom = filtered
 	}
 	return hr
+}
+
+func requiredValuesOmissions(hr *manifest.HelmRelease, refs []manifest.NamedResource) []manifest.NamedResource {
+	required := refs[:0]
+	for _, ref := range refs {
+		if slices.ContainsFunc(hr.ValuesFrom, func(input manifest.ValuesReference) bool {
+			return !input.Optional && input.Kind == ref.Kind && input.Name == ref.Name
+		}) {
+			required = append(required, ref)
+		}
+	}
+	return required
 }

@@ -193,7 +193,7 @@ func TestAdmission_ProducerFrontierEmptyStages(t *testing.T) {
 	var preparation *Preparation
 	defer func() { preparation.Retire() }()
 	request := PrepareRequest{Preparation: &preparation}
-	initial, err := session.Prepare(t.Context(), request)
+	initial, err := session.prepareTest(t.Context(), request)
 	assert.NoError(t, err)
 	initial.Retire()
 	assert.Equal(t, len(initial.producers), 0)
@@ -209,7 +209,7 @@ func TestAdmission_ProducerFrontierEmptyStages(t *testing.T) {
 	assert.Equal(t, len(slices.Collect(frontier.Demands())), 0)
 	frontier.Retire()
 
-	current, err := session.Prepare(t.Context(), request)
+	current, err := session.prepareTest(t.Context(), request)
 	assert.NoError(t, err)
 	assert.Equal(t, len(current.producers), 0)
 	assert.Equal(t, current.producerOwner == preparation.producerOwner, true)

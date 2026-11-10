@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -145,13 +146,13 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	o := &Orchestrator{
 		store: s,
 		cfg: treeConfig{
-			Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}},
+			Config: Config{missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})},
 			Tree:   Tree{},
 		},
 	}
 	parent := testutil.KustomizationID("flux-system", "parent")
 	s.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	opts := base.Options{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}
+	opts := base.Options{Missing: o.cfg.missing}
 	c := resourcesetctrl.New(s, tasks, nil)
 	c.Configure(opts)
 	c.StartLifecycle()

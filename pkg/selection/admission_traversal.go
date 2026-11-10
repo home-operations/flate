@@ -197,9 +197,9 @@ func (c *admissionClosure) materializeReferenceInput(
 	if input.Data != nil {
 		return
 	}
-	requiredContent := !ref.Optional && !ref.Acquisition && ref.ContentInput()
-	allowedMissing := ref.Use == "valuesFrom" && slices.Contains(c.allowMissingKinds, ref.Kind)
-	required := requiredContent && !allowedMissing && !input.AllowsAbsence() && !c.changedInput(id, ref.NamedResource)
+	requiredContent := !ref.Acquisition && ref.ContentInput()
+	allowedMissing, _, _ := c.missing.Missing(ref, input)
+	required := requiredContent && !allowedMissing && !c.changedInput(id, ref.NamedResource)
 	materializers(
 		materializerDemand{target: ref.NamedResource, source: c.declarationSource(id), required: required},
 		id,

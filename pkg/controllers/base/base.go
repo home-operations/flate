@@ -4,7 +4,6 @@ package base
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/depwait"
@@ -28,18 +27,13 @@ type Controller struct {
 	SkipKinds []string
 
 	existence depwait.ExistenceLookup
-	// AllowMissingKinds permits unavailable Helm valuesFrom kinds and absent CRDs.
-	AllowMissingKinds []string
-	allowMissingCRDs  bool
+	Missing   *depwait.MissingPolicy
 }
 
-// New constructs a controller with the shared store and task service.
+// New MUST install a real empty policy before standalone assessment.
 func New(s *store.Store, t *task.Service) *Controller {
-	return &Controller{Store: s, Tasks: t}
+	return &Controller{Store: s, Tasks: t, Missing: depwait.NewMissingPolicy(nil)}
 }
-
-// MissingCRDsAllowed reports whether unresolved CRD dependencies are allowed.
-func (c *Controller) MissingCRDsAllowed() bool { return c.allowMissingCRDs }
 
 // requireNotStarted panics if the started gate is set, enforcing the
 // invariant that reconcile-shaping config is frozen once dispatch
@@ -64,13 +58,10 @@ type Options struct {
 	// file-indexed deps and to distinguish a render-only dep still in flight
 	// from a typo'd one. See depwait.ExistenceLookup.
 	Existence depwait.ExistenceLookup
-	// AllowMissingKinds permits unavailable Helm valuesFrom kinds and absent CRDs.
-	AllowMissingKinds []string
+	Missing   *depwait.MissingPolicy
 }
 
-// Configure installs immutable setup before dispatch.
-//
-//nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
+// Configure MUST install the invocation policy before dispatch.
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.selection = opts.Session
@@ -78,8 +69,10 @@ func (c *Controller) Configure(opts Options) {
 	c.SkipKinds = opts.SkipKinds
 	c.existence = opts.Existence
 	c.Store.SetDiscoveryIndex(opts.Index)
-	c.allowMissingCRDs = slices.Contains(opts.AllowMissingKinds, manifest.KindCustomResourceDefinition)
-	c.AllowMissingKinds = opts.AllowMissingKinds
+	if opts.Missing == nil {
+		opts.Missing = depwait.NewMissingPolicy(nil)
+	}
+	c.Missing = opts.Missing
 }
 
 // KeepEmitted MUST admit every child in the immutable generation before publication.
@@ -102,6 +95,7 @@ func (c *Controller) KeepEmitted(
 		reads.Init(c.Store, parent, nil)
 		defer reads.Retire()
 	}
+	request.Missing = c.Missing
 	request.Owner = parent
 	var local *selection.Preparation
 	if request.Preparation == nil {

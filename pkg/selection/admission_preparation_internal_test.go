@@ -107,11 +107,17 @@ func TestAdmission_ConsumedSourceReplacementInvalidatesPreparation(t *testing.T)
 	reads.Init(st, requester, nil)
 	defer reads.Retire()
 	reads.RequireData(consumer)
+	missing := &solverMissingPolicy{allowed: true}
 	var preparation *Preparation
 	defer func() { preparation.Retire() }()
 	var work manifest.WorkRecorder
 	reads.SetWork(&work)
-	proposal, err := prepareSolver(t.Context(), t, session, PrepareRequest{Reads: &reads, Preparation: &preparation})
+	proposal, err := prepareSolver(
+		t.Context(),
+		t,
+		session,
+		PrepareRequest{Missing: missing, Reads: &reads, Preparation: &preparation},
+	)
 	assert.NoError(t, err)
 	producer := manifest.NamedResource{
 		Group:     "fluxcd.controlplane.io",
@@ -138,7 +144,12 @@ func TestAdmission_ConsumedSourceReplacementInvalidatesPreparation(t *testing.T)
 	fresh.SetWork(&work)
 	defer fresh.Close()
 	fresh.RequireData(consumer)
-	proposal, err = prepareSolver(t.Context(), t, session, PrepareRequest{Reads: &fresh, Preparation: &preparation})
+	proposal, err = prepareSolver(
+		t.Context(),
+		t,
+		session,
+		PrepareRequest{Missing: missing, Reads: &fresh, Preparation: &preparation},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, proposal.reads != preparation.evidence, false)
 	_, committed, err = session.commitSolver(t.Context(), t, proposal, Execution)
@@ -150,6 +161,21 @@ func TestAdmission_ConsumedSourceReplacementInvalidatesPreparation(t *testing.T)
 	assert.Equal(t, before, uint64(1))
 	assert.Equal(t, work.Scope().Admission().Counts.OwnerPrepares, before)
 
+	for _, policy := range []*solverMissingPolicy{missing, {allowed: true}} {
+		var policyReads store.ReadSet
+		policyReads.Init(st, requester, nil)
+		policyReads.SetWork(&work)
+		policyReads.RequireData(consumer)
+		policyProposal, policyErr := prepareSolver(t.Context(), t, session, PrepareRequest{
+			Missing: policy, Reads: &policyReads, Preparation: &preparation,
+		})
+		assert.NoError(t, policyErr)
+		assert.Equal(t, policyProposal.reused, policy == missing)
+		policyProposal.Retire()
+		policyReads.Close()
+	}
+	missing = preparation.closure.missing.(*solverMissingPolicy)
+	before = work.Scope().Admission().Counts.OwnerPrepares
 	old := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	replacement := *old
 	replacement.Content = manifest.Fingerprint("replaced consumed source")
@@ -163,7 +189,7 @@ func TestAdmission_ConsumedSourceReplacementInvalidatesPreparation(t *testing.T)
 		t.Context(),
 		t,
 		session,
-		PrepareRequest{Reads: &changedReads, Preparation: &preparation},
+		PrepareRequest{Missing: missing, Reads: &changedReads, Preparation: &preparation},
 	)
 	assert.NoError(t, err)
 	defer proposal.Retire()
@@ -181,6 +207,7 @@ func TestAdmission_UnrelatedParentPublicationKeepsPreparation(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 
 	session := newSolverSession(t, st, nil, Request{Roots: []manifest.NamedResource{parent.Named()}})
+	missing := &solverMissingPolicy{}
 	var preparation *Preparation
 	defer func() { preparation.Retire() }()
 	var work manifest.WorkRecorder
@@ -189,17 +216,18 @@ func TestAdmission_UnrelatedParentPublicationKeepsPreparation(t *testing.T) {
 	}), 0)
 	assert.Equal(t, retry, false)
 	generation := []store.Child{{Obj: source}}
-	prepare := func(t *testing.T) {
+	prepare := func(t *testing.T, reused bool) {
 		t.Helper()
 		var reads store.ReadSet
 		reads.Init(st, source.Named(), nil)
 		reads.SetWork(&work)
 		defer reads.Close()
-		proposal, err := session.Prepare(
+		proposal, err := session.prepareTest(
 			t.Context(),
-			PrepareRequest{Generation: generation, Reads: &reads, Preparation: &preparation},
+			PrepareRequest{Missing: missing, Generation: generation, Reads: &reads, Preparation: &preparation},
 		)
 		assert.NoError(t, err)
+		assert.Equal(t, proposal.reused, reused)
 		_, committed, err := session.commitSolver(t.Context(), t, proposal, Execution)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
@@ -215,7 +243,7 @@ func TestAdmission_UnrelatedParentPublicationKeepsPreparation(t *testing.T) {
 		}}, nil)
 		close(published)
 	})
-	prepare(t)
+	prepare(t, false)
 	before := work.Scope().Admission().Counts
 	assert.Equal(t, before.Attempts, uint64(1))
 	assert.Equal(t, before.OwnerPrepares, uint64(1))
@@ -224,9 +252,11 @@ func TestAdmission_UnrelatedParentPublicationKeepsPreparation(t *testing.T) {
 	tasks.BlockTillDone()
 	for range st.Sweep() {
 	}
-	prepare(t)
+	prepare(t, true)
 	assert.Diff(t, work.Scope().Admission().Counts, before)
 	assert.Equal(t, st.GetObject(source.Named()), manifest.BaseManifest(source))
+	missing = &solverMissingPolicy{}
+	prepare(t, false)
 }
 
 func TestAdmission_NewGenerationUsesCurrentProducer(t *testing.T) {
@@ -331,11 +361,17 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 	reads.Init(st, requester, nil)
 	defer reads.Retire()
 	reads.RequireData(consumer)
+	missing := &solverMissingPolicy{allowed: true}
 	var preparation *Preparation
 	defer func() { preparation.Retire() }()
 	var work manifest.WorkRecorder
 	reads.SetWork(&work)
-	proposal, err := prepareSolver(t.Context(), t, session, PrepareRequest{Reads: &reads, Preparation: &preparation})
+	proposal, err := prepareSolver(
+		t.Context(),
+		t,
+		session,
+		PrepareRequest{Missing: missing, Reads: &reads, Preparation: &preparation},
+	)
 	assert.NoError(t, err)
 	producer := manifest.NamedResource{
 		Group:     "fluxcd.controlplane.io",
@@ -367,7 +403,12 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 	fresh.SetWork(&work)
 	defer fresh.Close()
 	fresh.RequireData(consumer)
-	proposal, err = prepareSolver(t.Context(), t, session, PrepareRequest{Reads: &fresh, Preparation: &preparation})
+	proposal, err = prepareSolver(
+		t.Context(),
+		t,
+		session,
+		PrepareRequest{Missing: missing, Reads: &fresh, Preparation: &preparation},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, proposal.reads != preparation.evidence, false)
 	_, derived := preparation.closure.states[unrelated.Named()]

@@ -105,8 +105,20 @@ func TestRenderTrees_EntrySubstitutionSelectsChangedChild(t *testing.T) {
 type preparationReader struct {
 	fs.FS
 
-	parsed       atomic.Int64
-	fingerprints atomic.Int64
+	parsed                               atomic.Int64
+	fingerprints                         atomic.Int64
+	stats, parsedStats, fingerprintStats atomic.Int64
+}
+
+func (r *preparationReader) Stat(name string) (fs.FileInfo, error) {
+	r.stats.Add(1)
+	if name == "ks-a.yaml" {
+		r.parsedStats.Add(1)
+	}
+	if name == "fingerprint.txt" {
+		r.fingerprintStats.Add(1)
+	}
+	return fs.Stat(r.FS, name)
 }
 
 func (r *preparationReader) Open(name string) (fs.File, error) {
@@ -185,8 +197,10 @@ func testRenderTreesPreparesEachSideOnce(t *testing.T) {
 	t.Logf("paired root builds=%d", builds)
 	for side, rendered := range []Rendered{base, head} {
 		assert.Equal(t, rendered.entryBinding.Producer, entry)
-		assert.Equal(t, readers[side].fingerprints.Load(), int64(2))
-		assert.Equal(t, readers[side].parsed.Load(), int64(5))
+		assert.Equal(t, readers[side].fingerprints.Load(), int64(1))
+		assert.Equal(t, readers[side].fingerprintStats.Load(), int64(2))
+		assert.Equal(t, readers[side].parsed.Load(), int64(3))
+		assert.Equal(t, readers[side].parsedStats.Load(), int64(3))
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-a": true})
 		t.Logf(
 			"side=%d declaration reads=%d selected evidence reads=%d",

@@ -159,7 +159,7 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 		"changed.yaml",
 		"apiVersion: foreign.example/v1\nkind: Kustomization\nmetadata: {name: same}\n",
 	)
-	changes, err := change.Detect(t.Context(), testInput(before), testInput(after), manifest.WorkScope{})
+	changes, err := change.Detect(t.Context(), testInput(before), testInput(after), change.DetectConfig{})
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"changed.yaml"})
 	for _, tc := range []struct {

@@ -23,7 +23,7 @@ func (s *inputCache) certify(ctx context.Context, frame *inputFrame) error {
 		requested = append(requested, file.Name)
 	}
 	//nolint:errcheck // Only native source owners create input cache state.
-	current, err := s.input.FS.(*gittree.FS).FreshInputs(ctx, requested)
+	current, err := s.input.FS.(*gittree.FS).FreshInputs(ctx, requested, nil)
 	if err != nil {
 		return err
 	}

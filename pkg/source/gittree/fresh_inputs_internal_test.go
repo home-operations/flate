@@ -44,7 +44,7 @@ func TestFreshInputs_CurrentBytesAndMembership(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = ContentFingerprint(t.Context(), selected)
 			assert.NoError(t, err)
-			before, err := selected.FreshInputs(t.Context(), nil)
+			before, err := selected.FreshInputs(t.Context(), nil, nil)
 			assert.NoError(t, err)
 			_, err = selected.Stat("new")
 			assert.Equal(t, os.IsNotExist(err), true)
@@ -58,7 +58,19 @@ func TestFreshInputs_CurrentBytesAndMembership(t *testing.T) {
 			worktree, err := repo.Worktree()
 			assert.NoError(t, err)
 			assert.NoError(t, worktree.AddWithOptions(&git.AddOptions{Path: "tracked-later", SkipStatus: true}))
-			after, err := selected.FreshInputs(t.Context(), nil)
+			captured, err := selected.FreshInputs(
+				t.Context(),
+				[]string{"file", "new"},
+				map[string]fs.FileMode{"file": 0},
+			)
+			assert.NoError(t, err)
+			assert.Equal(
+				t,
+				captured.Files["file"],
+				manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("bravo"))),
+			)
+			assert.Equal(t, captured.Files["new"], "")
+			after, err := selected.FreshInputs(t.Context(), nil, nil)
 			assert.NoError(t, err)
 			assert.Equal(
 				t,
@@ -81,12 +93,25 @@ func TestFreshInputs_CurrentBytesAndMembership(t *testing.T) {
 			assert.Equal(t, after.Types["empty"]&fs.ModeDir != 0, mode == Direct)
 			assert.NoError(t, os.Remove(filepath.Join(root, "file")))
 			assert.NoError(t, os.Mkdir(filepath.Join(root, "file"), 0o700))
-			replaced, err := selected.FreshInputs(t.Context(), nil)
+			replaced, err := selected.FreshInputs(t.Context(), nil, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, replaced.Files["file"], "")
 			assert.Equal(t, replaced.Types["file"]&fs.ModeDir != 0, mode == Direct)
 		})
 	}
+}
+
+func TestFreshInputs_CapturedDirectory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	assert.NoError(t, os.Mkdir(filepath.Join(root, "directory"), 0o700))
+	input, err := admitLocal(t, root)
+	assert.NoError(t, err)
+	observed, err := input.FS.(*FS).FreshInputs(t.Context(), nil, map[string]fs.FileMode{"directory": fs.ModeDir})
+	assert.NoError(t, err)
+	_, identified := observed.Files["directory"]
+	assert.Equal(t, identified, false)
+	assert.Equal(t, observed.Types["directory"].IsDir(), true)
 }
 
 func TestFreshInputs_ReusesObservedRegularKind(t *testing.T) {
@@ -99,12 +124,12 @@ func TestFreshInputs_ReusesObservedRegularKind(t *testing.T) {
 	original := input.FS.(*FS)
 	observed := &observedRegularView{view: original.view}
 	original.view = observed
-	first, err := original.FreshInputs(t.Context(), nil)
+	first, err := original.FreshInputs(t.Context(), nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, observed.regularReads, 1)
 	assert.Equal(t, observed.unclassifiedReads, 0)
 	testutil.WriteFile(t, root, "file", "bravo")
-	second, err := original.FreshInputs(t.Context(), []string{"file"})
+	second, err := original.FreshInputs(t.Context(), []string{"file"}, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, observed.regularReads, 2)
 	assert.Equal(t, observed.unclassifiedReads, 0)

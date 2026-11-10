@@ -44,7 +44,7 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 			CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
 		}
 	}
-	changes, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	changes, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
 	assert.NoError(t, err)
 	for side, reader := range readers {
 		reader.opens.Store(0)
@@ -399,7 +399,7 @@ func testSetInputVisibilityDuplicateSourcePolicyCase(
 		t.Context(),
 		&store.SourceArtifact{FS: before},
 		&store.SourceArtifact{FS: after},
-		manifest.WorkScope{},
+		DetectConfig{},
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("a/input.yaml"), true)

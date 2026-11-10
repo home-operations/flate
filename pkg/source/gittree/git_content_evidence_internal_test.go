@@ -151,6 +151,20 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 			t.Skipf("filesystem cannot enforce unreadable file: %v", readFileErr3)
 		}
 	}
+	if (*(*captures.mode)) == "routed" {
+		observed, observeErr := selected.FreshInputs(
+			t.Context(),
+			[]string{(*captures.name)},
+			map[string]fs.FileMode{(*captures.name): 0},
+		)
+		assert.NoError(t, observeErr)
+		assert.Equal(
+			t,
+			observed.Files[(*captures.name)],
+			manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte((*captures.want)))),
+		)
+		assert.Equal(t, (*captures.objects).reads.Load(), int64(0))
+	}
 	assert.Equal(t, selected.FileDigests() == nil, true)
 	_, (*captures.err) = ContentFingerprint(t.Context(), selected)
 	assert.NoError(t, (*captures.err))
@@ -179,7 +193,7 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 		var group sync.WaitGroup
 		for _, requested := range [][]string{nil, {(*captures.name)}} {
 			group.Go(func() {
-				observed, err := selected.FreshInputs(t.Context(), requested)
+				observed, err := selected.FreshInputs(t.Context(), requested, nil)
 				assert.NoError(t, err)
 				assert.Equal(t, observed.Files[(*captures.name)], selected.FileDigests()[(*captures.name)])
 				assert.Equal(t, observed.Types["dir"].IsDir(), true)

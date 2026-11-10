@@ -150,7 +150,7 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 		source := (&manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}).Named()
 		left := base.Store().GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 		right := head.Store().GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-		payload, err := change.Detect(t.Context(), left, right, manifest.WorkScope{})
+		payload, err := change.Detect(t.Context(), left, right, change.DetectConfig{})
 		assert.NoError(t, err)
 		if (*(*statementInput.testCaseInput)) != "selected_payload_only" {
 			assert.Equal(t, payload.Len(), 0)

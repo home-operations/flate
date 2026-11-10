@@ -72,7 +72,7 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 				FS:        fstest.MapFS{"apps/cm.yaml": {Data: []byte(payload)}},
 			},
 		)
-		paths, err := change.Detect(t.Context(), input, current, manifest.WorkScope{})
+		paths, err := change.Detect(t.Context(), input, current, change.DetectConfig{})
 		assert.NoError(t, err)
 		assert.Diff(t, paths.Paths(), []string{"apps/cm.yaml"})
 		unqualified[i] = newAdmission(

@@ -30,12 +30,12 @@ func TestDetect_BothPathsRequired(t *testing.T) {
 	t.Parallel()
 
 	{
-		_, err := Detect(t.Context(), testInput(""), testInput("/tmp/x"), manifest.WorkScope{})
+		_, err := Detect(t.Context(), testInput(""), testInput("/tmp/x"), DetectConfig{})
 		assert.ErrorIf(t, err == nil, "expected error for empty before")
 	}
 
 	{
-		_, err := Detect(t.Context(), testInput("/tmp/x"), testInput(""), manifest.WorkScope{})
+		_, err := Detect(t.Context(), testInput("/tmp/x"), testInput(""), DetectConfig{})
 		assert.ErrorIf(t, err == nil, "expected error for empty after")
 	}
 }
@@ -46,7 +46,7 @@ func TestDetect_IdenticalTreesEmpty(t *testing.T) {
 	after := t.TempDir()
 	testutil.WriteFile(t, before, "a.yaml", "x")
 	testutil.WriteFile(t, after, "a.yaml", "x")
-	got, err := Detect(t.Context(), testInput(before), testInput(after), manifest.WorkScope{})
+	got, err := Detect(t.Context(), testInput(before), testInput(after), DetectConfig{})
 
 	assert.FatalIf(t, err != nil, "Detect: %v", err)
 
@@ -76,7 +76,7 @@ func TestDetect_AddedRemovedModified(t *testing.T) {
 		assert.FatalIf(t, err != nil, "chtimes: %v", err)
 	}
 
-	got, err := Detect(t.Context(), testInput(before), testInput(after), manifest.WorkScope{})
+	got, err := Detect(t.Context(), testInput(before), testInput(after), DetectConfig{})
 
 	assert.FatalIf(t, err != nil, "Detect: %v", err)
 
@@ -95,7 +95,7 @@ func TestDetect_SizeDifferAlwaysChanged(t *testing.T) {
 	after := t.TempDir()
 	testutil.WriteFile(t, before, "f.yaml", "small")
 	testutil.WriteFile(t, after, "f.yaml", "this is a larger payload")
-	got, err := Detect(t.Context(), testInput(before), testInput(after), manifest.WorkScope{})
+	got, err := Detect(t.Context(), testInput(before), testInput(after), DetectConfig{})
 
 	assert.FatalIf(t, err != nil, "Detect: %v", err)
 
@@ -114,7 +114,7 @@ func TestDetect_HiddenScanRoot(t *testing.T) {
 	testutil.WriteFile(t, before, "mod.yaml", "old")
 	testutil.WriteFile(t, after, "mod.yaml", "new")
 
-	got, err := Detect(t.Context(), testInput(before), testInput(after), manifest.WorkScope{})
+	got, err := Detect(t.Context(), testInput(before), testInput(after), DetectConfig{})
 
 	assert.FatalIf(t, err != nil, "Detect: %v", err)
 
@@ -156,7 +156,7 @@ func TestDetect_SameSizeSameMtime_StillDetected(t *testing.T) {
 		assert.FatalIf(t, err != nil, "chtimes after: %v", err)
 	}
 
-	got, err := Detect(t.Context(), testInput(before), testInput(after), manifest.WorkScope{})
+	got, err := Detect(t.Context(), testInput(before), testInput(after), DetectConfig{})
 
 	assert.FatalIf(t, err != nil, "Detect: %v", err)
 
@@ -204,7 +204,7 @@ func testInput(root string) *store.SourceArtifact {
 func TestDetect_MissingInputsWrapInput(t *testing.T) {
 	t.Parallel()
 	for _, input := range []*store.SourceArtifact{nil, {}} {
-		_, err := Detect(t.Context(), input, &store.SourceArtifact{FS: fstest.MapFS{}}, manifest.WorkScope{})
+		_, err := Detect(t.Context(), input, &store.SourceArtifact{FS: fstest.MapFS{}}, DetectConfig{})
 
 		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
 			err.Error() != "both admitted inputs required", "missing input error=%v", err)
@@ -238,7 +238,7 @@ func TestDetect_LastBodyCancellation(t *testing.T) {
 						ctx,
 						&store.SourceArtifact{FS: before},
 						&store.SourceArtifact{FS: after},
-						manifest.WorkScope{},
+						DetectConfig{},
 					)
 					t.Logf(
 						"before: opened=%d closed=%d reads after cancel=%d; after: opened=%d closed=%d reads after cancel=%d",
@@ -446,7 +446,7 @@ func TestDetect_OneSidedInputEvidence(t *testing.T) {
 				t.Context(),
 				&store.SourceArtifact{FS: before},
 				&store.SourceArtifact{FS: after},
-				manifest.WorkScope{},
+				DetectConfig{},
 			)
 			assert.NoError(t, err)
 			assert.Diff(t, set.Paths(), []string{tc.file})
@@ -507,7 +507,7 @@ func TestSet_WithReadersBuildInputs(t *testing.T) {
 			CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
 		}
 	}
-	changes, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	changes, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
 	assert.NoError(t, err)
 	qualified, err := changes.WithReaders(
 		t.Context(), [2]*manifest.DiscoveryIndex{
@@ -564,7 +564,7 @@ func testDetectHashLimitCase(t *testing.T, testCaseInput *string) {
 		set, err := Detect(
 			ctx,
 			&store.SourceArtifact{FS: &hashInput{FS: before, reads: reads, before: true}},
-			&store.SourceArtifact{FS: &hashInput{FS: after, reads: reads}}, manifest.WorkScope{},
+			&store.SourceArtifact{FS: &hashInput{FS: after, reads: reads}}, DetectConfig{},
 		)
 		done <- result{set, err}
 	}()
@@ -707,7 +707,7 @@ func testSetWithReadersCase(t *testing.T, testCaseInput *string,
 		}
 		inputs[side] = &store.SourceArtifact{FS: files}
 	}
-	set, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	set, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
 	assert.NoError(t, err)
 	resolved, err := set.WithReaders(
 		t.Context(), [2]*manifest.DiscoveryIndex{
@@ -761,7 +761,7 @@ func testSetWithReadersCase2(t *testing.T, testCaseInput *struct {
 		t.Context(),
 		&store.SourceArtifact{FS: before},
 		&store.SourceArtifact{FS: after},
-		manifest.WorkScope{},
+		DetectConfig{},
 	)
 	assert.NoError(t, err)
 	original := maps.Clone(set.inputs)

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -17,9 +19,12 @@ import (
 	gitindex "github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/go-git/go-git/v5/storage/filesystem"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -254,8 +259,7 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			)
 			reads.Reset()
 			assert.NoError(t, s.acquireBodies(t.Context(), entries, candidates))
-			paths, err := s.compareCandidates(t.Context(), candidates, entries)
-			assert.NoError(t, err)
+			paths := slices.Sorted(maps.Keys(candidates))
 			assert.Diff(t, paths, []string{"app/input.yaml"})
 			assert.Equal(t, reads.Bodies.Load(), int64(0))
 			t.Logf(
@@ -265,8 +269,18 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 				reads.Large.Load(),
 			)
 			reads.Reset()
-			paths, err = s.compareCandidates(t.Context(), map[string]bool{"app/input.yaml": true}, entries)
+			base, _, err := gittree.New(
+				t.Context(),
+				fixture.Repo.Storer.(*filesystem.Storage).Filesystem(),
+				fixture.Base,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS, Changes: paths},
+			)
 			assert.NoError(t, err)
+			before := &sparseReadFS{FS: base, reads: reads, entries: entries}
+			delta, err := change.Detect(t.Context(), &store.SourceArtifact{FS: before}, input,
+				change.DetectConfig{Candidates: map[string]bool{"app/input.yaml": true}})
+			assert.NoError(t, err)
+			paths = delta.Paths()
 			assert.Diff(t, paths, []string{"app/input.yaml"})
 			assert.Equal(t, reads.Bodies.Load(), int64(1))
 			assert.Equal(t, reads.Large.Load(), int64(0))
@@ -386,4 +400,22 @@ func TestAutoResolve_IgnoredHistoricalRemoval(t *testing.T) {
 		assert.Equal(t, string(data), "identical historical bytes")
 	}
 	assert.Diff(t, result.Changes.Paths(), []string{"historical.ignored"})
+}
+
+type sparseReadFS struct {
+	*gittree.FS
+
+	reads   *testutil.GitReads
+	entries map[string]object.TreeEntry
+}
+
+func (f *sparseReadFS) Open(name string) (fs.File, error) {
+	file, err := f.FS.Open(name)
+	if err == nil {
+		f.reads.Bodies.Add(1)
+		if f.entries[name].Hash == f.reads.LargeHash {
+			f.reads.Large.Add(1)
+		}
+	}
+	return file, err
 }

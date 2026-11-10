@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
@@ -224,10 +225,14 @@ func (l *Loader) builtRecord(
 		same := manifest.Equal(obj, original.Obj)
 		if l.canCompareBuiltInputs(same, &raw) {
 			evidence := l.SourceFacts(input.Source, nil)
-			same = evidence.Delta != nil && !l.comparedFileChanged(&evidence, raw.File) &&
+			location := change.FileContext{
+				Root: l.SourceRoot, Origin: evidence.Origin, ToIndex: evidence.ToIndex,
+				Input: evidence.Input, Paired: evidence.Paired,
+			}
+			same = evidence.Delta != nil && !evidence.Delta.FileChanged(location, raw.File) &&
 				!slices.ContainsFunc(
 					inputs.shared,
-					func(file string) bool { return l.comparedFileChanged(&evidence, file) },
+					func(file string) bool { return evidence.Delta.FileChanged(location, file) },
 				)
 		}
 		if !same && original.Doc != nil {

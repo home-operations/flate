@@ -165,10 +165,19 @@ func TestFilter_ProductionReadersSourceCoordinates(t *testing.T) {
 type relationReader struct {
 	fs.FS
 
-	opens atomic.Int64
+	opens, stats atomic.Int64
 }
 
 func (r *relationReader) Open(name string) (fs.File, error) { r.opens.Add(1); return r.FS.Open(name) }
+
+func (r *relationReader) Stat(name string) (fs.FileInfo, error) {
+	r.stats.Add(1)
+	return fs.Stat(r.FS, name)
+}
+
+func (r *relationReader) ReadDir(name string) ([]fs.DirEntry, error) {
+	return fs.ReadDir(r.FS, name)
+}
 
 func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 	t.Parallel()

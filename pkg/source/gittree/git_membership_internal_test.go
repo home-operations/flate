@@ -563,7 +563,7 @@ func testNewEntryPolicyGitAdmissionRoutes(t *testing.T) {
 			if tt.live {
 				testutil.WriteFile(t, root, ".gitignore", "later\n")
 				testutil.WriteFile(t, root, "later", "new ignored file")
-				observed, observeErr := input.FreshInputs(t.Context(), nil)
+				observed, observeErr := input.FreshInputs(t.Context(), nil, nil)
 				assert.NoError(t, observeErr)
 				assert.Equal(t, index.calls, 1)
 				assert.Equal(t, observed.Files["later"], "")

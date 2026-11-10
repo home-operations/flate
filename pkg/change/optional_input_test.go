@@ -65,11 +65,11 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 		t.Context(),
 		stores[0].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
 		stores[1].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
-		manifest.WorkScope{},
+		change.DetectConfig{},
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, bootstrap.Len(), 0)
-	delta, err := change.Detect(t.Context(), selected[0], selected[1], manifest.WorkScope{})
+	delta, err := change.Detect(t.Context(), selected[0], selected[1], change.DetectConfig{})
 	assert.NoError(t, err)
 	assert.Diff(t, delta.Paths(), []string{"inputs/kustomization.yaml", "inputs/optional.yaml"})
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "optional", Namespace: "flux-system"}
@@ -245,7 +245,7 @@ func TestFilter_OrderingOnlySiblingExcluded(t *testing.T) {
 	)
 	inputs, err := baseline.ResolvePaths(t.Context(), after, before)
 	assert.NoError(t, err)
-	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source, manifest.WorkScope{})
+	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source, change.DetectConfig{})
 	assert.NoError(t, err)
 	filters, _ := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
 	f := filters[1].Snapshot()
@@ -355,7 +355,7 @@ data: {VALUE: available}
 	}
 	changes := inputs.Changes
 	if (*testCaseInput) == "directory" {
-		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source, manifest.WorkScope{})
+		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source, change.DetectConfig{})
 		assert.NoError(t, err)
 	}
 
@@ -410,7 +410,7 @@ data: {VALUE: available}
 
 	assert.FatalIf(t, !optional, "%v", "app does not declare the optional substitution input")
 
-	empty, err := change.Detect(t.Context(), inputs.Source, inputs.Source, manifest.WorkScope{})
+	empty, err := change.Detect(t.Context(), inputs.Source, inputs.Source, change.DetectConfig{})
 	assert.NoError(t, err)
 	unchanged := admissiontest.Decision(
 		t,
@@ -476,7 +476,7 @@ func testFilterOptionalInputChangesCase(t *testing.T, testCaseInput *struct {
 	}
 	inputs, err := baseline.ResolvePaths(t.Context(), after, before)
 	assert.NoError(t, err)
-	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source, manifest.WorkScope{})
+	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source, change.DetectConfig{})
 	assert.NoError(t, err)
 	filters, loaders := optionalInputFilters(
 		t,
@@ -610,7 +610,7 @@ func testOptionalInputPairedSidesCase(t *testing.T, testCaseInput *struct {
 			assert.NoError(t, localErr)
 			changes, pair = resolved.Changes, [2]*store.SourceArtifact{resolved.BaseInput, resolved.Source}
 		} else {
-			changes, err = change.Detect(t.Context(), pair[0], pair[1], manifest.WorkScope{})
+			changes, err = change.Detect(t.Context(), pair[0], pair[1], change.DetectConfig{})
 			assert.NoError(t, err)
 		}
 		filters, _ := optionalInputFilters(t, pair, changes)

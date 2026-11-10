@@ -153,7 +153,7 @@ func emittedCycleChanges(t *testing.T, root string, cycle bool) *change.Set {
 	assert.NoError(t, err)
 	newInput, _, err := baseline.AdmitDirectory(t.Context(), after, after, manifest.WorkScope{})
 	assert.NoError(t, err)
-	changes, err := change.Detect(t.Context(), oldInput, newInput, manifest.WorkScope{})
+	changes, err := change.Detect(t.Context(), oldInput, newInput, change.DetectConfig{})
 	assert.NoError(t, err)
 	assert.Equal(t, changes.Contains("parent/b.yaml"), false)
 	assert.Equal(t, changes.Contains("a.yaml"), true)

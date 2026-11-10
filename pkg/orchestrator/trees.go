@@ -721,7 +721,7 @@ func prepareTreeChanges(ctx context.Context, tree *Tree, changes map[[2]*store.S
 	if set, ok := changes[pair]; ok {
 		tree.ExternalChanges = set
 	} else {
-		set, err := change.Detect(ctx, pair[0], pair[1], tree.work.Scope())
+		set, err := change.Detect(ctx, pair[0], pair[1], change.DetectConfig{Work: tree.work.Scope()})
 		if err != nil {
 			return &treeError{id: tree.ID, err: err}
 		}

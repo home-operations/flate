@@ -17,7 +17,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -31,6 +30,12 @@ func TestDetect_FluxIgnoreRules(t *testing.T) {
 		want                      []string
 		nestedBefore, nestedAfter bool
 	}{
+		{
+			name:   "file_to_directory",
+			before: map[string]string{"entry": "old"},
+			after:  map[string]string{"entry/child": "new"},
+			want:   []string{"entry", "entry/child"},
+		},
 		{
 			name:   "dot_file",
 			before: map[string]string{".envrc": "old"},
@@ -228,7 +233,7 @@ func TestDetect_GitlinkFile(t *testing.T) {
 					input.FS = view
 				}
 			}
-			got, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+			got, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
 
 			assert.FatalIf(t, err != nil, "%v", err)
 
@@ -246,7 +251,7 @@ func TestDetect_NestedOppositeRoot(t *testing.T) {
 	testutil.WriteFile(t, outer, "mod.yaml", "old")
 	testutil.WriteFile(t, inner, "mod.yaml", "new")
 	for _, roots := range [][2]string{{outer, inner}, {inner, outer}} {
-		got, err := Detect(t.Context(), testInput(roots[0]), testInput(roots[1]), manifest.WorkScope{})
+		got, err := Detect(t.Context(), testInput(roots[0]), testInput(roots[1]), DetectConfig{})
 
 		assert.FatalIf(t, err != nil, "%v", err)
 
@@ -289,9 +294,13 @@ func TestDetect_CapturedSidePolicies(t *testing.T) {
 		assert.Equal(t, counts[i].reads.Load(), int64(0))
 	}
 	var g errgroup.Group
-	for range 2 {
+	for i := range 2 {
 		g.Go(func() error {
-			got, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+			config := DetectConfig{}
+			if i == 1 {
+				config.Candidates = map[string]bool{".sourceignore": false}
+			}
+			got, err := Detect(t.Context(), inputs[0], inputs[1], config)
 			if err != nil {
 				return err
 			}
@@ -376,7 +385,7 @@ func testDetectFluxIgnoreRulesCase(t *testing.T, testCaseInput *struct {
 					input.FS = view
 				}
 			}
-			got, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+			got, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
 
 			assert.FatalIf(t, err != nil, "%v", err)
 
@@ -400,7 +409,7 @@ func testDetectConcurrentCase(t *testing.T, testCaseInput *int,
 	var g errgroup.Group
 	for range *testCaseInput {
 		g.Go(func() error {
-			got, err := Detect(t.Context(), testInput(before), testInput(after), manifest.WorkScope{})
+			got, err := Detect(t.Context(), testInput(before), testInput(after), DetectConfig{})
 			if err != nil {
 				return err
 			}

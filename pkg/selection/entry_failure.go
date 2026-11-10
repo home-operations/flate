@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -34,7 +35,10 @@ func (s *Session) EntryFailure(ctx context.Context, failures iter.Seq[EntryFailu
 			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 		}
 		if request.Changed && source.Comparison != nil &&
-			!sourceFileChanged(source.Context.Root, &source, failure.Coordinate) {
+			!source.Delta.FileChanged(change.FileContext{
+				Root: source.Context.Root, Origin: source.Origin, ToIndex: source.ToIndex,
+				Input: source.Input, Paired: source.Paired,
+			}, failure.Coordinate) {
 			continue
 		}
 		if Root(failure.Evidence).Admitted {

@@ -62,7 +62,7 @@ func TestDetect_PhysicalScaleWork(t *testing.T) {
 			index.Readers["unchanged.yaml"] = []manifest.FileReader{
 				{Reader: unrelated, Source: manifest.BootstrapSourceID},
 			}
-			changed, err := Detect(ctx, inputs[0], inputs[1], work.Scope())
+			changed, err := Detect(ctx, inputs[0], inputs[1], DetectConfig{Work: work.Scope()})
 			assert.NoError(t, err)
 			assert.Diff(t, changed.Paths(), paths)
 			original := maps.Clone(changed.inputs)

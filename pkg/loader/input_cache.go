@@ -341,7 +341,7 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 }
 
 func (l *Loader) restoreSourceInputs(ctx context.Context, input *store.SourceArtifact, view *gittree.FS) error {
-	observation, err := view.FreshInputs(ctx, nil)
+	observation, err := view.FreshInputs(ctx, nil, nil)
 	if err != nil {
 		return err
 	}

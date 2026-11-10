@@ -73,20 +73,6 @@ func (l *Loader) SelectionIndex() *manifest.DiscoveryIndex {
 	return l.Index
 }
 
-func (l *Loader) comparedFileChanged(evidence *selection.SourceFacts, file string) bool {
-	if evidence.Delta == nil {
-		return false
-	}
-	if evidence.Paired && evidence.Input != nil {
-		if evidence.ToIndex == "." {
-			return evidence.Delta.Contains(filepath.ToSlash(filepath.Clean(file)))
-		}
-		relative, err := filepath.Rel(evidence.Origin, filepath.Join(l.SourceRoot, filepath.FromSlash(file)))
-		return err == nil && evidence.Delta.Contains(filepath.ToSlash(relative))
-	}
-	return evidence.Delta.Contains(file)
-}
-
 // Occurrence borrows exact declaration coordinates and immutable parsed facts.
 func (l *Loader) Occurrence(id manifest.NamedResource) (selection.OccurrenceFacts, bool) {
 	record, indexed := l.Index.Lookup(id)

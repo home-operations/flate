@@ -311,7 +311,7 @@ func (p *entryPlanner) source(
 		if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
 			return entryResolution{}, err
 		}
-		binding = p.session.resolvedSources[id]
+		binding = p.session.resolvedSources.snapshot()[id]
 		if binding.artifact != nil {
 			p.inputs[binding.artifact.LocalPath] = binding.artifact
 		}

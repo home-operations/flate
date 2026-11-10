@@ -105,7 +105,7 @@ type Session struct {
 	substitutions       values.DependencySubstitutions
 	cfg                 Config
 	loader              *loader.Loader
-	resolvedSources     map[manifest.NamedResource]entryResolution
+	resolvedSources     *entrySourcePublisher
 	remotes             map[string]struct{}
 	aliasViews          map[string]*store.SourceArtifact
 	hasPins             bool
@@ -295,6 +295,7 @@ func (d *Session) finishAdmission(ctx context.Context) *Admission {
 			admission.qualification.closed = false
 		}
 	}
+	d.resolvedSources.freeze()
 	return admission
 }
 
@@ -423,7 +424,9 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 		}
 	}
 	l.PreferExisting = false
-	d.warnBootstrapAliases(repoRoot)
+	if warning := d.resolvedSources.aliasWarning(); warning != nil {
+		d.cfg.Store.AddWarning(*warning)
+	}
 	slog.Debug(
 		"discovery: loaded objects",
 		"count",

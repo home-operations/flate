@@ -120,7 +120,7 @@ func (a *Admission) applicationSource(
 		resolved.artifact = nil
 	}
 	if resolved.object == nil {
-		resolved.object = a.sources[application.Source].object
+		resolved.object = a.resolvedSources.snapshot()[application.Source].object
 	}
 	if resolved.object == nil {
 		resolved.object = application.Declaration

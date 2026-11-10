@@ -256,7 +256,25 @@ func (f *advisorySourceFetcher) Fetch(
 func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {
 	t.Parallel()
 	failure := errors.New("discovery failed before evidence")
-	input := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error { return failure }}}
+	warnings := []manifest.Warning{
+		{
+			Category: manifest.WarnInputReadFailed,
+			Message:  "input warning before discovery",
+			Detail:   []string{"retained"},
+			Count:    1,
+		},
+		{
+			Category: manifest.WarnBootstrapAliases,
+			Message:  "input alias evidence",
+			Detail:   []string{"original scope"},
+			Count:    1,
+		},
+	}
+	input := &store.SourceArtifact{
+		LocalPath: t.TempDir(),
+		FS:        &joinedTreeFS{acquire: func() error { return failure }},
+		Warnings:  warnings,
+	}
 	runs, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: input}},
 		Config{Concurrency: 2},
@@ -270,6 +288,7 @@ func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {
 		err,
 	)
 	assert.Equal(t, len(runs[0].Result.ClusterWarnings), 0)
+	assert.Diff(t, runs[0].Result.Warnings, warnings)
 }
 
 func TestSelect_ClusterAdvisories(t *testing.T) {

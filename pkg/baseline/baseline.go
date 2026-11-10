@@ -78,7 +78,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	}
 	input = gittree.ExcludeDirectory(input, owner.Directory())
 	current, _ := input.FS.(*gittree.FS)
-	s := selection{repo: repo, current: current.OperationView(), owner: owner}
+	s := selection{repo: repo, current: current.OperationView(), input: input, owner: owner}
 	r, err := s.resolve(ctx, location, base)
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 		Remotes []string
 	}{root, urls}
 	s.base, s.content = r, content
-	before, selected, identity, warnings, err := selectChanges(ctx, s)
+	before, selected, _, warnings, err := selectChanges(ctx, s)
 	input.Warnings = append(slices.Clone(input.Warnings), warnings...)
 	var baseWarnings []manifest.Warning
 	if before != nil {
@@ -112,18 +112,11 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	}
 	input.URL = ""
 	input.Metadata = map[string]string{"baseline-selection": r.Source}
+	_, origins, _ := selected.ForSource(manifest.BootstrapSourceID)
+	origins[0].Warnings = baseWarnings
 	return &Result{
-		Source: input,
-		BaseInput: &store.SourceArtifact{
-			Kind:      manifest.KindGitRepository,
-			LocalPath: label,
-			LocalRoot: root,
-			Revision:  r.Hash.String(),
-			Key:       identity,
-			Content:   identity,
-			FS:        before,
-			Warnings:  baseWarnings,
-		},
+		Source:       input,
+		BaseInput:    origins[0],
 		ScanPath:     location.ScanPath,
 		BaseScanPath: filepath.Join(label, rel),
 		Changes:      selected,

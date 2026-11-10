@@ -34,7 +34,7 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 					FS: fstest.MapFS{file: {Data: fmt.Appendf(nil, "%d", side)}},
 				}
 			}
-			changes, err := change.Detect(t.Context(), sources[0], sources[1], manifest.WorkScope{})
+			changes, err := change.Detect(t.Context(), sources[0], sources[1], change.DetectConfig{})
 			assert.NoError(t, err)
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, sources[1])

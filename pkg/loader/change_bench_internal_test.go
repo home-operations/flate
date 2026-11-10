@@ -445,7 +445,12 @@ func benchmarkDetectCase(b *testing.B, name string) {
 	testutil.WriteFile(b, after, "mod.yaml", "BBB")
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := change.Detect(b.Context(), testInput(before), testInput(after), manifest.WorkScope{}); err != nil {
+		if _, err := change.Detect(
+			b.Context(),
+			testInput(before),
+			testInput(after),
+			change.DetectConfig{},
+		); err != nil {
 			b.Fatal(err)
 		}
 	}

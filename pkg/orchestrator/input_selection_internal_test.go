@@ -165,7 +165,7 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 					t.Context(),
 					base.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
 					head.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
-					manifest.WorkScope{},
+					change.DetectConfig{},
 				)
 				assert.NoError(t, err)
 				assert.Diff(t, delta.Paths(), []string(nil))

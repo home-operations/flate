@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -24,6 +23,7 @@ import (
 	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -164,133 +164,6 @@ func TestAutoResolve_TwoSidedInput(t *testing.T) {
 		admissiontest.Config{Changes: res.Changes, Index: index, Inventory: nil, Root: ""},
 	)
 	assert.FatalIf(t, filter.Reconcile(app), "%v", "two-sided input supplied an absent input identity")
-}
-
-func TestSelection_OneSidedInputOrder(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name    string
-		routing []string
-		want    []string
-		readErr error
-	}{
-		{name: "duplicates", routing: []string{".sourceignore", "input.yaml", "z.yaml"}, want: []string{"input.yaml", "z.yaml"}, readErr: io.EOF},
-		{name: "first_error", routing: []string{".sourceignore", "z.yaml"}, want: []string{"input.yaml"}, readErr: fs.ErrPermission},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			before, _, err := gittree.New(
-				t.Context(),
-				nil,
-				plumbing.ZeroHash,
-				gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-					".sourceignore": {Data: []byte("*.yaml\n")}, "input.yaml": {}, "z.yaml": {},
-				}},
-			)
-			assert.NoError(t, err)
-			after, _, err := gittree.New(
-				t.Context(),
-				nil,
-				plumbing.ZeroHash,
-				gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-					".sourceignore": {}, "input.yaml": {}, "z.yaml": {},
-				}},
-			)
-			assert.NoError(t, err)
-			var reads []string
-			input := &inputFailureFS{FS: after, fail: func(name string) error {
-				reads = append(reads, name)
-				return tc.readErr
-			}}
-			current, _, err := gittree.New(
-				t.Context(),
-				nil,
-				plumbing.ZeroHash,
-				gittree.ViewOptions{Mode: gittree.Direct, Current: input},
-			)
-			assert.NoError(t, err)
-			changes, err := (selection{current: current}).filterChanges(
-				t.Context(),
-				before,
-				tc.routing,
-				map[string]object.TreeEntry{
-					".sourceignore": {}, "input.yaml": {}, "z.yaml": {},
-				},
-			)
-			assert.Diff(t, reads, tc.want)
-			if errors.Is(tc.readErr, io.EOF) {
-				assert.NoError(t, err)
-				assert.Diff(t, changes.Paths(), []string{".sourceignore", "input.yaml", "z.yaml"})
-			} else {
-				assert.FatalIf(
-					t,
-					!errors.Is(err, tc.readErr) || changes != nil ||
-						!strings.Contains(err.Error(), "read input input.yaml:"),
-					"first input failure: changes=%v err=%v",
-					changes,
-					err,
-				)
-			}
-		})
-	}
-}
-
-func TestSelection_NoOneSidedInputCancellation(t *testing.T) {
-	t.Parallel()
-	before, _, err := gittree.New(
-		t.Context(),
-		nil,
-		plumbing.ZeroHash,
-		gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-			"input.yaml": {Data: []byte("before")},
-		}},
-	)
-	assert.NoError(t, err)
-	after, _, err := gittree.New(
-		t.Context(),
-		nil,
-		plumbing.ZeroHash,
-		gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-			"input.yaml": {Data: []byte("after")},
-		}},
-	)
-	assert.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	input := &inputCancelFS{FS: after, cancel: cancel}
-	current, _, err := gittree.New(
-		ctx,
-		nil,
-		plumbing.ZeroHash,
-		gittree.ViewOptions{Mode: gittree.Direct, Current: input},
-	)
-	assert.NoError(t, err)
-	changes, err := (selection{current: current}).filterChanges(
-		ctx,
-		before,
-		[]string{"input.yaml"},
-		map[string]object.TreeEntry{"input.yaml": {}},
-	)
-	assert.Equal(t, ctx.Err(), context.Canceled)
-	assert.FatalIf(
-		t,
-		changes != nil || !errors.Is(err, context.Canceled),
-		"canceled two-sided selection published changes: changes=%v err=%v",
-		changes,
-		err,
-	)
-}
-
-type inputCancelFS struct {
-	*gittree.FS
-
-	cancel context.CancelFunc
-}
-
-func (f *inputCancelFS) Lstat(name string) (fs.FileInfo, error) {
-	info, err := f.FS.Lstat(name)
-	f.cancel()
-	return info, err
 }
 
 func TestSelection_AcquireBaseNoOrigin(t *testing.T) {
@@ -573,8 +446,7 @@ func testAutoResolveLazyBaseReadsCase(t *testing.T, testCaseInput *struct {
 		dirty, present := candidates["file"]
 		assert.Equal(t, present, true)
 		assert.Equal(t, dirty, false)
-		routing, localErr := s.compareCandidates(t.Context(), candidates, entries)
-		assert.NoError(t, localErr)
+		routing := slices.Sorted(maps.Keys(candidates))
 		assert.Diff(t, routing, []string{"file"})
 	}
 	res, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
@@ -673,6 +545,11 @@ func testAutoResolveIgnoreMembershipFlipsCase(
 	res, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
 	assert.NoError(t, err)
 	assert.Diff(t, res.Changes.Paths(), []string{".sourceignore", "apps/b.yaml"})
+	for _, config := range []change.DetectConfig{{}, {Candidates: map[string]bool{".sourceignore": false}}} {
+		compared, compareErr := change.Detect(t.Context(), res.BaseInput, res.Source, config)
+		assert.NoError(t, compareErr)
+		assert.Diff(t, compared.Paths(), res.Changes.Paths())
+	}
 	testutil.WriteFile(t, root, ".sourceignore", "*.yaml\n")
 	var indexes [2]*manifest.DiscoveryIndex
 	for side := range indexes {

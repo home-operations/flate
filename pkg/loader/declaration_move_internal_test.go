@@ -156,7 +156,7 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 	if scenario == "partial" {
 		loaders[1].Index.CompleteSources = nil
 	}
-	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], change.DetectConfig{})
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(t.Context(),
 		[2]*manifest.DiscoveryIndex{loaders[0].Index, loaders[1].Index},

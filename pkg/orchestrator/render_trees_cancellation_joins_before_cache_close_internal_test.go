@@ -172,7 +172,7 @@ func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-chart}\n",
 	)
 	inputs := [2]*store.SourceArtifact{testDirectoryInput(t, roots[0]), testDirectoryInput(t, roots[1])}
-	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], change.DetectConfig{})
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"ks-a.yaml"})
 	for side, root := range roots {

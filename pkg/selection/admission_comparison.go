@@ -42,22 +42,10 @@ func (c *admissionClosure) boundSource(source manifest.NamedResource) *SourceFac
 
 func (c *admissionClosure) fileChanged(source manifest.NamedResource, file string) bool {
 	evidence := c.boundSource(source)
-	return sourceFileChanged(c.context.Root, evidence, file)
-}
-
-func sourceFileChanged(root string, evidence *SourceFacts, file string) bool {
-	delta := evidence.Delta
-	if delta == nil {
-		return false
-	}
-	if evidence.Paired && evidence.Input != nil {
-		if evidence.ToIndex == "." {
-			return delta.Contains(filepath.ToSlash(filepath.Clean(file)))
-		}
-		relative, err := filepath.Rel(evidence.Origin, filepath.Join(root, filepath.FromSlash(file)))
-		return err == nil && delta.Contains(filepath.ToSlash(relative))
-	}
-	return delta.Contains(file)
+	return evidence.Delta.FileChanged(change.FileContext{
+		Root: c.context.Root, Origin: evidence.Origin, ToIndex: evidence.ToIndex,
+		Input: evidence.Input, Paired: evidence.Paired,
+	}, file)
 }
 
 func (c *admissionClosure) inputsChanged(source manifest.NamedResource, inputs []string) bool {

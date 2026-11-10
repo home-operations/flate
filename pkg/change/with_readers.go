@@ -17,15 +17,8 @@ import (
 
 	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-type fileScan struct {
-	entries     map[string]fileMeta
-	ignoreFiles []string
-}
 
 type readerScope struct {
 	changes        *Set
@@ -529,96 +522,6 @@ func (r *readerScope) ownerComparison(owner manifest.NamedResource) (declaration
 	return comparison, false
 }
 
-type fileMeta struct {
-	size int64
-}
-
-// Excluded directories MUST still be traversed so deeper .sourceignore re-includes
-// survive, matching github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns.
-func scanTree(
-	ctx context.Context,
-	inputs [2]*store.SourceArtifact,
-	digests map[string]string,
-	work *manifest.WorkRecord,
-) (map[string]fileMeta, error) {
-	input, opposite := inputs[0], inputs[1]
-	out := make(map[string]fileMeta)
-	scoped := input.FS
-	oppositeName, err := filepath.Rel(input.LocalPath, opposite.LocalPath)
-	if err == nil {
-		oppositeName = filepath.ToSlash(oppositeName)
-	}
-
-	if digests != nil {
-		oppositePrefix := oppositeName + "/"
-		for name := range digests {
-			work.Add(&manifest.WorkCounts{FileEntries: 1})
-			if name != oppositeName && !strings.HasPrefix(name, oppositePrefix) {
-				out[name] = fileMeta{}
-			}
-		}
-		return out, nil
-	}
-
-	scanned, err := scanFiles(ctx, scoped, oppositeName, work)
-	out, files := scanned.entries, scanned.ignoreFiles
-	if err != nil {
-		return nil, err
-	}
-	var matcher *sourceignore.Matcher
-	if admitted, ok := scoped.(*gittree.FS); ok {
-		matcher, err = admitted.SourcePolicy(ctx)
-	} else {
-		matcher, err = sourceignore.NewFS(scoped, files, "", true)
-	}
-	if err != nil {
-		return nil, err
-	}
-	sourceignore.Select(matcher, out, files)
-	return out, nil
-}
-
-func scanFiles(
-	ctx context.Context,
-	scoped fs.FS,
-	oppositeName string,
-	work *manifest.WorkRecord,
-) (fileScan, error) {
-	out := make(map[string]fileMeta)
-	files := []string{}
-	err := fs.WalkDir(scoped, ".", func(name string, d fs.DirEntry, err error) error {
-		work.Add(&manifest.WorkCounts{FileEntries: 1})
-		if err != nil {
-			return err
-		}
-		if localErr := ctx.Err(); localErr != nil {
-			return fmt.Errorf("context: %w", localErr)
-		}
-		if name != "." && (d.Name() == ".git" || name == oppositeName) {
-			if d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if d.Name() == ".sourceignore" {
-			files = append(files, name)
-		}
-		if d.IsDir() {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return fmt.Errorf("stat %s: %w", name, err)
-		}
-		out[name] = fileMeta{size: info.Size()}
-		return nil
-	})
-	if err != nil {
-		return fileScan{}, fmt.Errorf("walk: %w", err)
-	}
-	return fileScan{entries: out, ignoreFiles: files}, nil
-}
-
 type hashBuffer struct {
 	hash  hash.Hash
 	bytes [32 * 1024]byte
@@ -648,6 +551,9 @@ func hashFile(ctx context.Context, input fs.FS, name string) ([sha256.Size]byte,
 			return [sha256.Size]byte{}, fmt.Errorf("context: %w", err)
 		}
 		n, err := f.Read(buf.bytes[:])
+		if localErr := ctx.Err(); localErr != nil {
+			return [sha256.Size]byte{}, fmt.Errorf("context: %w", localErr)
+		}
 		if n > 0 {
 			_, _ = h.Write(buf.bytes[:n])
 		}

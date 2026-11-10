@@ -57,7 +57,7 @@ func newTestOrchestrator(tb testing.TB, tree Tree, cfg Config) (*Orchestrator, e
 	}
 	if tree.BaseInput != nil && tree.BaseInput != tree.Input && tree.ExternalChanges == nil {
 		var err error
-		tree.ExternalChanges, err = change.Detect(tb.Context(), tree.BaseInput, tree.Input, manifest.WorkScope{})
+		tree.ExternalChanges, err = change.Detect(tb.Context(), tree.BaseInput, tree.Input, change.DetectConfig{})
 		if err != nil {
 			return nil, err
 		}

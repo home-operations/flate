@@ -168,7 +168,7 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 			stores[side].SetDiscoveryIndex(indexes[side])
 			prepared[side] = map[manifest.NamedResource]store.Child{id: {Obj: object, Doc: doc}}
 		}
-		set, err := Detect(t.Context(), artifacts[0], artifacts[1], manifest.WorkScope{})
+		set, err := Detect(t.Context(), artifacts[0], artifacts[1], DetectConfig{})
 		assert.NoError(t, err)
 		set, err = set.WithReaders(
 			t.Context(), [2]*manifest.DiscoveryIndex{
@@ -233,7 +233,7 @@ func TestDetect_OneSidedInputReadFailure(t *testing.T) {
 				t.Context(),
 				&store.SourceArtifact{FS: input},
 				&store.SourceArtifact{FS: fstest.MapFS{}},
-				manifest.WorkScope{},
+				DetectConfig{},
 			)
 
 			assert.FatalIf(t, set != nil || !errors.Is(err, cause) || !errors.Is(err, manifest.ErrInput) ||
@@ -300,7 +300,7 @@ func TestDetect_OneSidedInputCancellation(t *testing.T) {
 		ctx,
 		&store.SourceArtifact{FS: input},
 		&store.SourceArtifact{FS: fstest.MapFS{}},
-		manifest.WorkScope{},
+		DetectConfig{},
 	)
 
 	assert.FatalIf(t, set != nil || !errors.Is(err, context.Canceled), "cancellation set=%v err=%v", set, err)
@@ -319,7 +319,7 @@ func TestDetect_ExistingInputHasNoOneSidedEvidence(t *testing.T) {
 		t.Context(),
 		&store.SourceArtifact{FS: before},
 		&store.SourceArtifact{FS: after},
-		manifest.WorkScope{},
+		DetectConfig{},
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("input.yaml"), true)
@@ -455,12 +455,17 @@ func TestCollectInputs_ParseFailureDrain(t *testing.T) {
 type digestReadFS struct {
 	fs.FS
 
-	opens, lists atomic.Int64
+	opens, lists, stats atomic.Int64
 }
 
 func (f *digestReadFS) Open(name string) (fs.File, error) {
 	f.opens.Add(1)
 	return f.FS.Open(name)
+}
+
+func (f *digestReadFS) Stat(name string) (fs.FileInfo, error) {
+	f.stats.Add(1)
+	return fs.Stat(f.FS, name)
 }
 
 func (f *digestReadFS) ReadDir(name string) ([]fs.DirEntry, error) {
@@ -470,7 +475,7 @@ func (f *digestReadFS) ReadDir(name string) ([]fs.DirEntry, error) {
 
 func TestDetect_SelectedFileEvidence(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"both", "before", "after", "neither", "empty", "nested", "nested_file", "canceled"} {
+	for _, mode := range []string{"both", "before", "after", "neither", "empty", "nested", "nested_file", "mode", "reverse_mode", "normalized_mode", "ignore_exclude", "ignore_reinclude", "canceled"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			testDetectSelectedFileEvidenceCase(t, &mode)
@@ -494,7 +499,7 @@ func TestDetect_SparseDirectoryBodies(t *testing.T) {
 		t.Context(),
 		&store.SourceArtifact{FS: left},
 		&store.SourceArtifact{FS: right},
-		manifest.WorkScope{},
+		DetectConfig{},
 	)
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"app/input.yaml"})
@@ -572,13 +577,13 @@ func testSetWithReadersUnindexedDeclarationMoveCase(
 			},
 		},
 	}
-	changes, err := Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	changes, err := Detect(t.Context(), inputs[0], inputs[1], DetectConfig{})
 	assert.NoError(t, err)
 	for _, reverse := range []bool{false, true} {
 		before, after := indexes[0], indexes[1]
 		if reverse {
 			before, after = after, before
-			changes, err = Detect(t.Context(), inputs[1], inputs[0], manifest.WorkScope{})
+			changes, err = Detect(t.Context(), inputs[1], inputs[0], DetectConfig{})
 			assert.NoError(t, err)
 		}
 		qualified, err := changes.WithReaders(
@@ -629,7 +634,7 @@ func testDetectOneSidedInputIgnorePoliciesCase(
 		t.Context(),
 		&store.SourceArtifact{FS: before},
 		&store.SourceArtifact{FS: after},
-		manifest.WorkScope{},
+		DetectConfig{},
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("input.yaml"), (*testCaseInput) != "both")

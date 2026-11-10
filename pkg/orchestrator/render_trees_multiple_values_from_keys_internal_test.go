@@ -86,7 +86,7 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 		t.Context(),
 		testDirectoryInput(t, roots[0]),
 		testDirectoryInput(t, roots[1]),
-		manifest.WorkScope{},
+		change.DetectConfig{},
 	)
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"charts/demo/templates/cm.yaml", "flux/parent.yaml"})

@@ -3,13 +3,14 @@ package loader
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"weak"
@@ -53,23 +54,21 @@ func TestRestoreFrameFiles_IndependentLifetime(t *testing.T) {
 func TestInputFrame_LazyPayload(t *testing.T) {
 	t.Parallel()
 	payload := bytes.Repeat([]byte("declaration"), 8192)
-	frame := inputFrame{Schema: 1, Files: []cachedInput{{Name: "object.yaml", Objects: []cachedOccurrence{{
+	frame := inputFrame{Files: []cachedInput{{Name: "object.yaml", Objects: []cachedOccurrence{{
 		Ordinal: 3, payload: &inputPayload{data: payload},
 	}}}}}
 	visit := cachedVisit{Context: cachedGraphContext{Root: "."}, File: "object.yaml"}
 	frame.Walks = []cachedWalk{{Visits: []cachedVisit{visit}}, {Visits: []cachedVisit{visit}}}
-	var encoded bytes.Buffer
-	assert.NoError(t, frame.write(&encoded))
-	size := binary.BigEndian.Uint64(encoded.Bytes()[:8])
+	encoded := encodeInputFrame(t, &frame)
 	for _, complete := range []bool{false, true} {
 		t.Run(strconv.FormatBool(complete), func(t *testing.T) {
 			t.Parallel()
 			owner, err := cache.New(t.Context(), "")
 			assert.NoError(t, err)
 			defer func() { assert.NoError(t, owner.Close()) }()
-			data := encoded.Bytes()
+			data := encoded
 			if !complete {
-				data = data[:8+size]
+				data = data[:len(data)-len(payload)]
 			}
 			generation, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: "frame"}, &cache.Policy{},
 				func(_ context.Context, out cache.ProducerInput) (cache.ProducerResult, error) {
@@ -77,27 +76,25 @@ func TestInputFrame_LazyPayload(t *testing.T) {
 					return cache.ProducerResult{}, writeErr
 				})
 			assert.NoError(t, err)
-			restored, err := readInputFrame(generation)
+			restored, err := readInputFrame(t.Context(), generation)
 			assert.NoError(t, err)
 			assert.Equal(t, restored.Files[0].Objects[0].Ordinal, 3)
 			assert.Equal(t, len(restored.Visits), 1)
 			assert.Equal(t, len(restored.Walks[0].Visits), 0)
 			assert.Equal(t, &restored.Walks[0].dictionary[0] == &restored.Walks[1].dictionary[0], true)
 			lazy := inputPayload{
-				archive: restored.archive,
-				offset:  restored.Files[0].Objects[0].Offset,
-				size:    restored.Files[0].Objects[0].Size,
+				frame:  restored.frame,
+				offset: restored.Files[0].Objects[0].Offset,
+				size:   restored.Files[0].Objects[0].Size,
 			}
-			actual, err := lazy.read()
+			actual, err := lazy.read(t.Context())
 			if complete {
 				assert.NoError(t, err)
 				assert.Equal(t, bytes.Equal(actual, payload), true)
 				restored.Files[0].Objects[0].payload = &lazy
-				var first, second bytes.Buffer
-				assert.NoError(t, restored.write(&first))
-				assert.NoError(t, restored.write(&second))
-				assert.Equal(t, bytes.Equal(first.Bytes(), encoded.Bytes()), true)
-				assert.Equal(t, bytes.Equal(first.Bytes(), second.Bytes()), true)
+				first, second := encodeInputFrame(t, restored), encodeInputFrame(t, restored)
+				assert.Equal(t, bytes.Equal(first, encoded), true)
+				assert.Equal(t, bytes.Equal(first, second), true)
 			} else {
 				assert.Equal(t, err != nil, true)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
@@ -110,24 +107,19 @@ func TestInputFrame_RejectsInvalidIndex(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, index string
-		header      uint64
 	}{
-		{name: "schema", index: `{"Schema":2}`},
-		{name: "json", index: `{"Schema":1,`},
-		{name: "negative-visit", index: `{"Schema":1,"Walks":[{"Visits":[-1]}]}`},
-		{name: "missing-visit", index: `{"Schema":1,"Walks":[{"Visits":[0]}]}`},
-		{name: "index-length", index: `{"Schema":1}`, header: 1000},
-		{name: "index-overflow", index: `{"Schema":1}`, header: 1 << 63},
+		{name: "negative-visit", index: `{"Walks":[{"Visits":[-1]}]}`},
+		{name: "missing-visit", index: `{"Walks":[{"Visits":[0]}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var data bytes.Buffer
-			size := uint64(len(tc.index))
-			if tc.header != 0 {
-				size = tc.header
-			}
-			assert.NoError(t, binary.Write(&data, binary.BigEndian, size))
-			data.WriteString(tc.index)
+			frame, err := cache.NewFrame("loader-inputs", json.RawMessage(tc.index), nil)
+			assert.NoError(t, err)
+			publication, err := frame.PreparePublication(t.Context(), cache.FramePublicationInput{})
+			assert.NoError(t, err)
+			_, err = publication.WriteTo(&data)
+			assert.NoError(t, err)
 			owner, err := cache.New(t.Context(), "")
 			assert.NoError(t, err)
 			defer func() { assert.NoError(t, owner.Close()) }()
@@ -137,14 +129,81 @@ func TestInputFrame_RejectsInvalidIndex(t *testing.T) {
 					return cache.ProducerResult{}, writeErr
 				})
 			assert.NoError(t, err)
-			_, err = readInputFrame(generation)
+			_, err = readInputFrame(t.Context(), generation)
 			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
-			if tc.name == "json" {
-				_, syntax := errors.AsType[*json.SyntaxError](err)
-				assert.Equal(t, syntax, true)
-			}
 		})
 	}
+}
+
+func encodeInputFrame(t *testing.T, frame *inputFrame) []byte {
+	t.Helper()
+	content, err := frame.prepare(t.Context())
+	assert.NoError(t, err)
+	publication, err := content.PreparePublication(t.Context(), cache.FramePublicationInput{})
+	assert.NoError(t, err)
+	var encoded bytes.Buffer
+	_, err = publication.WriteTo(&encoded)
+	assert.NoError(t, err)
+	return encoded.Bytes()
+}
+
+func TestFramePublication_UnavailableContent(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	owner, err := cache.New(t.Context(), t.TempDir())
+	assert.NoError(t, err)
+	defer func() { assert.NoError(t, owner.Close()) }()
+	if !owner.CanPersistRenders() {
+		t.Fatal("input cache witness requires a clean stamped test binary")
+	}
+	files := fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
+		"object.yaml":        {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: object}\n")},
+	}
+	first := cachedFixtureLoader(t, root, files, owner)
+	assert.NoError(t, first.PersistInputs(t.Context()))
+	lookup := first.inputCaches[root].lookup
+	previous, previousDescriptor, _, err := owner.Blob(t.Context(), lookup, &cache.Policy{MaxAge: cache.Forever}, nil)
+	assert.NoError(t, err)
+	previousBytes, err := fs.ReadFile(previous, cache.FileName(previous))
+	assert.NoError(t, err)
+	first.Close()
+
+	files["kustomization.yaml"] = &fstest.MapFile{
+		Data: []byte("resources: [object.yaml]\ncommonAnnotations:\n  large: " + strings.Repeat("x", 16<<20) + "\n"),
+	}
+	l := cachedFixtureLoader(t, root, files, owner)
+	defer l.Close()
+	cold := cachedFixtureLoader(t, root, files, nil)
+	defer cold.Close()
+	assert.Diff(t, l.Index, cold.Index)
+	state := l.inputCaches[root]
+	priorFiles, priorLoads, priorWalks := maps.Clone(state.files), maps.Clone(state.loads), maps.Clone(state.walks)
+	frame, err := l.cacheSourceInputs(state)
+	assert.NoError(t, err)
+	assert.FatalIf(t, frame == nil, "changed builder supplied no authored facts")
+	content, err := frame.prepare(t.Context())
+	assert.NoError(t, err)
+	assert.Equal(t, content == nil, true)
+	assert.NoError(t, l.PersistInputs(t.Context()))
+	assert.Equal(t, maps.Equal(state.files, priorFiles), true)
+	assert.Equal(t, maps.Equal(state.loads, priorLoads), true)
+	assert.Equal(t, maps.Equal(state.walks, priorWalks), true)
+	assert.Diff(t, l.Index, cold.Index)
+	occurrence, known := l.Occurrence(manifest.NamedResource{Kind: "ConfigMap", Name: "object"})
+	assert.Equal(t, known, true)
+	child, err := l.OccurrenceObject(t.Context(), &occurrence, nil)
+	assert.NoError(t, err)
+	assert.Diff(t, child.Doc, map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "object"},
+	})
+
+	retained, retainedDescriptor, _, err := owner.Blob(t.Context(), lookup, &cache.Policy{MaxAge: cache.Forever}, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, retainedDescriptor.Digest, previousDescriptor.Digest)
+	retainedBytes, err := fs.ReadFile(retained, cache.FileName(retained))
+	assert.NoError(t, err)
+	assert.Equal(t, bytes.Equal(retainedBytes, previousBytes), true)
 }
 
 func TestInputFrame_RejectsInvalidCoordinates(t *testing.T) {

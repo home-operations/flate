@@ -28,7 +28,9 @@ func recordTestRender(t *testing.T, cache *TreeCache, incoming *RenderRequest, r
 	assert.NoError(t, err)
 	assert.FatalIf(t, replayReceipt == nil, "%v", "unchanged input returned no receipt")
 	frame := replayReceipt.Value().(renderFrame)
-	assert.FatalIf(t, frame.raw == "", "%v", "unchanged input did not hit the accepted render cache")
+	publication, err := frame.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{})
+	assert.NoError(t, err)
+	assert.FatalIf(t, publication.Identity() == "", "%v", "unchanged input did not hit the accepted render cache")
 	assert.Diff(t, replayed, stored)
 }
 

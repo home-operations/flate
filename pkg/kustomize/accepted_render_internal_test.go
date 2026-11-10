@@ -90,11 +90,11 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			binding.Render = prepared.key
 			header := frame.header
 			header.Key, header.Binding = prepared.key, manifest.Fingerprint(binding)
-			wire, err := encodeFrame(&header, frame.output)
+			wire, err := testEncodeFrame(t, &header, frame.output)
 			assert.NoError(t, err)
-			stored, err := decodeFrame(wire)
+			stored, err := testDecodeFrame(t, wire)
 			assert.NoError(t, err)
-			accepted, err := encodeAccepted(owner, &stored, emptyRenderInventory)
+			accepted, err := testAcceptedFrame(t, owner, &stored, emptyRenderInventory)
 			assert.NoError(t, err)
 			_, _, _, err = renderer.owner.Blob(
 				t.Context(),
@@ -104,7 +104,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				},
 				&sourcecache.Policy{MaxAge: 0},
 				func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-					_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(wire), bytes.NewReader(accepted)))
+					_, copyErr := io.Copy(w, bytes.NewReader(accepted))
 					return sourcecache.ProducerResult{}, copyErr
 				},
 			)
@@ -130,17 +130,25 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	frame := renderFrame{header: renderHeader{Key: "oversized-accepted"}, output: payload}
 	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
-		owner: {File: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))},
+		owner: {File: string(bytes.Repeat([]byte{'x'}, (16<<20)+1))},
 	}
-	{
-		err := renderer.RecordRender(t.Context(), RenderAcceptance{
-			Owner:   owner,
-			Receipt: receipt,
-			Records: maps.All(records),
-			Content: acceptedInput,
-		})
-		assert.FatalIf(t, !errors.Is(err, manifest.ErrFlux), "oversized accepted inventory was published: %v", err)
-	}
+	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+		Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: acceptedInput,
+	}))
+	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+		Owner: owner, Receipt: receipt, Records: maps.All(records), Content: acceptedInput,
+	}))
+	generation, _, _, err := renderer.owner.Blob(t.Context(),
+		sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted},
+		&sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	assert.NoError(t, err)
+	stored, valid, err := (*Preparation)(nil).readFrame(t.Context(), generation)
+	assert.NoError(t, err)
+	assert.Equal(t, valid, true)
+	assert.Equal(t, bytes.Equal(stored.output, payload), true)
+	history, complete := stored.stored.History(owner, acceptedInput)
+	assert.Equal(t, complete, true)
+	assert.Diff(t, maps.Collect(history), map[manifest.NamedResource]manifest.DiscoveryRecord{})
 }
 
 func TestRenderKey_DependsOnProjection(t *testing.T) {
@@ -224,11 +232,13 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	before := pending.Value().(renderFrame)
 	assert.FatalIf(
 		t,
-		before.accepted == nil || before.acceptedKey == "" || before.lookup == "" || before.raw == "",
+		before.stored == nil || before.lookup == "",
 		"%s",
 		"warm receipt lacks publication memos",
 	)
-	before.encoded, err = encodeFrame(&before.header, before.output)
+	_, complete := before.stored.History(spec.Named(), acceptedInput)
+	assert.Equal(t, complete, true)
+	beforeWire, err := testEncodeFrame(t, &before.header, before.output)
 	assert.NoError(t, err)
 	_, _, before.lookup, err = renderer.owner.Blob(
 		t.Context(),
@@ -241,7 +251,7 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	pending = manifest.NewRenderReceipt(before, equalRenderFrame)
-	wire, output := bytes.Clone(before.encoded), bytes.Clone(before.output)
+	wire, output := bytes.Clone(beforeWire), bytes.Clone(before.output)
 	final := values.NewDependencySubstitutions([]*manifest.Kustomization{{
 		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "ready"}},
 	}})
@@ -277,11 +287,20 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	original := pending.Value().(renderFrame)
 	assert.Equal(t, original.binding.Dependencies.Equal(before.binding.Dependencies), true)
 	assert.Equal(t, original.header.Binding, before.header.Binding)
-	assert.Equal(t, original.raw, before.raw)
+	originalPublication, err := original.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
+		Owner: spec.Named(), Content: acceptedInput, Records: emptyRenderInventory, Complete: true,
+	})
+	assert.NoError(t, err)
+	beforePublication, err := before.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
+		Owner: spec.Named(), Content: acceptedInput, Records: emptyRenderInventory, Complete: true,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, originalPublication.Identity(), beforePublication.Identity())
 	assert.Equal(t, original.lookup, before.lookup)
-	assert.Equal(t, original.acceptedKey, before.acceptedKey)
-	assert.Equal(t, original.accepted == before.accepted, true)
-	assert.Equal(t, bytes.Equal(original.encoded, wire) && bytes.Equal(original.output, output), true)
+	assert.Equal(t, original.stored == before.stored, true)
+	originalWire, err := testEncodeFrame(t, &original.header, original.output)
+	assert.NoError(t, err)
+	assert.Equal(t, bytes.Equal(originalWire, wire) && bytes.Equal(original.output, output), true)
 	_, rebound, err := Render(t.Context(), renderer, projected, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
 	after := rebound.Value().(renderFrame)

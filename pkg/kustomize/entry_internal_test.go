@@ -2,6 +2,7 @@ package kustomize
 
 import (
 	"context"
+	"maps"
 	"testing"
 	"testing/fstest"
 
@@ -186,4 +187,41 @@ func TestRecordEntry_RequiresCurrentAcceptance(t *testing.T) {
 	assert.Equal(t, cache.PreviousEntry(t.Context(), request).Receipt == nil, true)
 	assert.NoError(t, cache.RecordEntry(t.Context(), evidence.Receipt, nil))
 	assert.Equal(t, cache.PreviousEntry(t.Context(), request).Producer, owner)
+}
+
+func TestApplicationReceipt_FrameHistory(t *testing.T) {
+	t.Parallel()
+	root := testutil.WriteTree(t, map[string]string{"producer.yaml": "accepted"})
+	cache := newTestTreeCache(t, "")
+	request := RenderRequest{Source: localSource(t, root), SubPath: "."}
+	owner := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "owner"}
+	child := manifest.NamedResource{Kind: "ConfigMap", Name: "child"}
+	evidence := EntryEvidence{
+		Producer: owner, Root: owner, Owner: owner,
+		Application: map[string]any{"kind": "Kustomization"},
+		Records:     maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Path: "first"}}),
+	}
+	first, err := cache.ApplicationReceipt(t.Context(), request, evidence, []string{"producer.yaml"})
+	assert.NoError(t, err)
+	assert.Equal(t, maps.Collect(first.Records)[child].Path, "first")
+	before := first.Receipt.Value().(entrySnapshot)
+	_, complete := before.publication.Frame().History(owner, before)
+	assert.Equal(t, complete, true)
+	changed := before
+	changed.Application.Application = map[string]any{"kind": "different"}
+	_, complete = before.publication.Frame().History(owner, changed)
+	assert.Equal(t, complete, false)
+	assert.Equal(t, equalEntryApplication(before, before), true)
+	assert.Equal(t, equalEntryApplication(before, changed), false)
+	evidence.Records = maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Path: "second"}})
+	second, err := cache.ApplicationReceipt(t.Context(), request, evidence, []string{"producer.yaml"})
+	assert.NoError(t, err)
+	after := second.Receipt.Value().(entrySnapshot)
+	assert.Equal(t, manifest.Fingerprint(before), manifest.Fingerprint(after))
+	assert.Equal(t, before.publication.Identity() == after.publication.Identity(), false)
+	assert.Equal(t, equalEntryApplication(before, after), false)
+	assert.Equal(t, maps.Collect(second.Records)[child].Path, "second")
+	assert.Equal(t, maps.Collect(first.Records)[child].Path, "first")
+	_, complete = before.publication.Frame().History(owner, before)
+	assert.Equal(t, complete, true)
 }

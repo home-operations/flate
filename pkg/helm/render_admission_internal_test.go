@@ -64,7 +64,11 @@ func TestTemplate_CurrentRenderAdmission(t *testing.T) {
 			}
 			frame := observed.Receipt.Value().(renderFrame)
 			assert.Equal(t, frame.lookup, "")
-			assert.Equal(t, frame.accepted == nil, true)
+			accepted := false
+			if frame.stored != nil {
+				_, accepted = frame.stored.History(hr.Named(), frame.content)
+			}
+			assert.Equal(t, accepted, false)
 			prepared, err := client.prepareTemplate(t.Context(), hr, values, &current)
 			assert.NoError(t, err)
 			assert.Equal(t, frame.binding.same(&prepared.binding), true)

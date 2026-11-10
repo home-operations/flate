@@ -29,13 +29,13 @@ func testTemplateCacheSameKeyReplacements(
 				var errResult error
 				switch replacement {
 				case "corrupt payload":
-					errResult = writeTestRecord(
+					errResult = writeTestRecord(t.Context(),
 						w,
 						(*alternateKey),
 						&renderRecord{Output: []byte("corrupt"), Analysis: inputs.loaded.analyze()},
 					)
 				case "changed output":
-					errResult = writeTestRecord(
+					errResult = writeTestRecord(t.Context(),
 						w,
 						(*alternateKey),
 						&renderRecord{Output: encodedRender(t, replacementDocs), Analysis: inputs.loaded.analyze()},

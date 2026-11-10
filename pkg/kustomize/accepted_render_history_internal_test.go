@@ -3,7 +3,6 @@ package kustomize
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"io"
 	"io/fs"
@@ -92,9 +91,8 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
-	frame.encoded, err = encodeFrame(&frame.header, frame.output)
+	frame.stored, err = sourcecache.NewFrame(frameDomain, frame.header, frame.output)
 	assert.NoError(t, err)
-	frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
 	original := bytes.Clone(frame.output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
 	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).output, original), true)
@@ -263,18 +261,18 @@ func (h *acceptedHistoryCase) requestKey(t *testing.T) {
 	isolated := newTestTreeCache(t, t.TempDir())
 	foreign := frame.header
 	foreign.Key = "foreign"
-	foreignReceipt, err := encodeFrame(&foreign, frame.output)
+	foreignReceipt, err := testEncodeFrame(t, &foreign, frame.output)
 	assert.NoError(t, err)
-	foreignFrame, err := decodeFrame(foreignReceipt)
+	foreignFrame, err := testDecodeFrame(t, foreignReceipt)
 	assert.NoError(t, err)
-	accepted, err := encodeAccepted(owner, &foreignFrame, maps.All(records))
+	accepted, err := testAcceptedFrame(t, owner, &foreignFrame, maps.All(records))
 	assert.NoError(t, err)
 	_, _, _, err = isolated.owner.Blob(
 		t.Context(),
 		key,
 		&sourcecache.Policy{MaxAge: 0},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-			_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(foreignReceipt), bytes.NewReader(accepted)))
+			_, copyErr := io.Copy(w, bytes.NewReader(accepted))
 			return sourcecache.ProducerResult{}, copyErr
 		},
 	)
@@ -432,12 +430,12 @@ func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache)
 	frame, cache, owner, records, req, key := h.frame, h.cache, h.owner, h.records, h.req, h.key
 	remote := frame.header
 	remote.Reads.Remotes = []remoteEntry{{Input: remoteInput{URL: "https://example.invalid/remote"}}}
-	remoteReceipt, err := encodeFrame(&remote, frame.output)
+	remoteFrame, err := sourcecache.NewFrame(frameDomain, remote, frame.output)
 	assert.NoError(t, err)
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
 		Owner: owner,
 		Receipt: manifest.NewRenderReceipt(renderFrame{
-			header: remote, binding: frame.binding, output: frame.output, encoded: remoteReceipt,
+			header: remote, binding: frame.binding, output: frame.output, stored: remoteFrame,
 		}, equalRenderFrame),
 		Records: maps.All(records),
 		Content: acceptedInput,

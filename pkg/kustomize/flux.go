@@ -345,7 +345,7 @@ func (r *renderRequest) validate(
 	generation fs.FS,
 ) (bool, error) {
 	result.receipt = nil
-	frame, decoded, readFileErr := r.request.Preparation.readFrame(generation)
+	frame, decoded, readFileErr := r.request.Preparation.readFrame(ctx, generation)
 	if readFileErr != nil || !decoded || frame.header.Key != r.key {
 		return false, readFileErr
 	}
@@ -366,8 +366,7 @@ func (r *renderRequest) validate(
 	frame.binding = r.binding
 	binding := manifest.Fingerprint(r.binding)
 	if frame.header.Binding != binding {
-		frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-		frame.accepted, frame.acceptedKey = nil, ""
+		frame.header.Binding, frame.stored = binding, nil
 	}
 	result.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 	return true, nil
@@ -428,14 +427,18 @@ func (r *renderRequest) produce(
 	if cleanedAbsErr != nil {
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
-	data, cleanedAbsErr := encodeFrame(
-		&renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
+	frame, cleanedAbsErr := sourcecache.NewFrame(
+		frameDomain,
+		renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
 		payload,
 	)
-	if cleanedAbsErr == nil {
-		_, cleanedAbsErr = w.Write(data)
+	if cleanedAbsErr != nil || frame == nil {
+		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
-	//nolint:wrapcheck // Cache production must preserve the writer's original error value.
+	publication, cleanedAbsErr := frame.PreparePublication(ctx, sourcecache.FramePublicationInput{})
+	if cleanedAbsErr == nil {
+		_, cleanedAbsErr = publication.WriteTo(w)
+	}
 	return sourcecache.ProducerResult{}, cleanedAbsErr
 }
 

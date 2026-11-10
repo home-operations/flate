@@ -255,7 +255,7 @@ func (l *Loader) projectionFile(
 			return projectionRead{inputs: retained, known: known && retained.Known}, nil
 		}
 	}
-	projection, err := retained.readProjection(input, file, active, shared && l.documents.recordInputs)
+	projection, err := retained.readProjection(ctx, input, file, active, shared && l.documents.recordInputs)
 	if err != nil || projection.stop {
 		return projection, err
 	}
@@ -528,13 +528,15 @@ func (p *pathResolution) resolveRecord(
 	return nil
 }
 
+//nolint:revive // Context and independent projection policies remain explicit without a one-caller options type.
 func (p *projectionInputs) readProjection(
+	ctx context.Context,
 	input *store.SourceArtifact,
 	file string,
 	active, record bool,
 ) (projectionRead, error) {
 	if p != nil && p.payload != nil {
-		data, err := p.payload.read()
+		data, err := p.payload.read(ctx)
 		if err != nil {
 			return projectionRead{}, err
 		}

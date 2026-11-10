@@ -74,6 +74,10 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 			},
 		),
 	)
+	initial, found := renderer.PreviousRender(t.Context(), hr, nil, input)
+	assert.Equal(t, found, true)
+	assert.Diff(t, maps.Collect(initial), records)
+	frame := receipt.Value().(renderFrame)
 	indexPath := filepath.Join(directory, "oci", "index.json")
 	index, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)
@@ -158,9 +162,9 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 				t,
 				&testTemplateHistoryPolicyProjectionCaseInputs{
 					renderer:  &renderer,
+					frame:     &frame,
 					hr:        &hr,
 					input:     &input,
-					records:   &records,
 					indexPath: &indexPath,
 					index:     &index,
 					tc:        &tc,
@@ -205,12 +209,9 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
 			t,
 			&testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothingInputs{
-				renderer:  &renderer,
-				hr:        &hr,
-				input:     &input,
-				records:   &records,
-				indexPath: &indexPath,
-				index:     &index,
+				hr:      &hr,
+				input:   &input,
+				records: &records,
 			},
 		)
 	},
@@ -252,6 +253,10 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 				},
 			),
 		)
+		initial, found := renderer.PreviousRender(t.Context(), hr, nil, input)
+		assert.Equal(t, found, true)
+		assert.Diff(t, maps.Collect(initial), records)
+		frame := receipt.Value().(renderFrame)
 		for _, tc := range []struct {
 			name                      string
 			policy                    helmv2.CRDsPolicy
@@ -276,11 +281,12 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 					changed.Install = &helmv2.Install{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
 				}
 				changed.TargetNamespace, changed.HelmReleaseSpec.ReleaseName = tc.target, tc.release
+				prepared, prepareErr := renderer.prepareTemplate(t.Context(), changed, nil, &input)
+				assert.NoError(t, prepareErr)
+				assert.Equal(t, prepared.key == frame.header.Key && frame.binding.same(&prepared.binding), tc.complete)
 				previous, complete := renderer.PreviousRender(t.Context(), changed, nil, input)
-				assert.Equal(t, complete, tc.complete)
-				if complete {
-					assert.Diff(t, maps.Collect(previous), records)
-				}
+				assert.Equal(t, complete, false)
+				assert.Equal(t, previous == nil, true)
 				warm, _, err := testutil.RenderMaps(renderer.Template(t.Context(), changed, nil, input))
 				assert.NoError(t, err)
 				fresh := NewClient(cachetest.New(t, "", cache.New))
@@ -396,9 +402,9 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 
 type testTemplateHistoryPolicyProjectionCaseInputs struct {
 	renderer  **Client
+	frame     *renderFrame
 	hr        **manifest.HelmRelease
 	input     *RenderOptions
-	records   *map[manifest.NamedResource]manifest.DiscoveryRecord
 	indexPath *string
 	index     *[]byte
 	tc        *struct {
@@ -422,11 +428,17 @@ func testTemplateHistoryPolicyProjectionCase(
 		"%s",
 		"fixture did not change a decoded declaration input",
 	)
+	prepared, err := (*testCaseInput.renderer).prepareTemplate(t.Context(), changed, nil, testCaseInput.input)
+	assert.NoError(t, err)
+	frame := testCaseInput.frame
+	assert.Equal(
+		t,
+		prepared.key == frame.header.Key && frame.binding.same(&prepared.binding),
+		testCaseInput.tc.complete,
+	)
 	previous, complete := (*testCaseInput.renderer).PreviousRender(t.Context(), changed, nil, (*testCaseInput.input))
-	assert.Equal(t, complete, testCaseInput.tc.complete)
-	if complete {
-		assert.Diff(t, maps.Collect(previous), (*testCaseInput.records))
-	}
+	assert.Equal(t, complete, false)
+	assert.Equal(t, previous == nil, true)
 	after, err := os.ReadFile((*testCaseInput.indexPath))
 	assert.NoError(t, err)
 	assert.Equal(t, bytes.Equal((*testCaseInput.index), after), true)
@@ -463,12 +475,9 @@ func testTemplateHistoryPolicyProjectionCase2(
 }
 
 type testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothingInputs struct {
-	renderer  **Client
-	hr        **manifest.HelmRelease
-	input     *RenderOptions
-	records   *map[manifest.NamedResource]manifest.DiscoveryRecord
-	indexPath *string
-	index     *[]byte
+	hr      **manifest.HelmRelease
+	input   *RenderOptions
+	records *map[manifest.NamedResource]manifest.DiscoveryRecord
 }
 
 func testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
@@ -476,34 +485,43 @@ func testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothing(
 	testCaseInput *testTemplateHistoryPolicyProjectionMetadataAcceptanceWritesNothingInputs,
 ) {
 	t.Helper()
-
-	changed := (*testCaseInput.hr).Clone()
+	directory := t.TempDir()
+	renderer := NewClient(cachetest.New(t, directory, cache.New))
+	hr := *testCaseInput.hr
+	input := RenderOptions{Sources: testCaseInput.input.Sources}
+	_, first, err := renderer.Template(t.Context(), hr, nil, input)
+	assert.NoError(t, err)
+	acceptance := RenderAcceptance{
+		Owner:   hr.Named(),
+		Receipt: first,
+		Sources: []manifest.SourceEvidence{},
+		Records: maps.All(*testCaseInput.records),
+	}
+	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	changed := hr.Clone()
 	assert.NoError(
 		t,
 		json.Unmarshal([]byte(`{"commonMetadata":{"labels":{"rev":"changed"}}}`), &changed.HelmReleaseSpec),
 	)
-	_, next, err := testutil.RenderMaps((*testCaseInput.renderer).Template(
-		t.Context(),
-		changed,
-		nil,
-		RenderOptions{Sources: testCaseInput.input.Sources},
-	),
-	)
+	_, next, err := renderer.Template(t.Context(), changed, nil, input)
 	assert.NoError(t, err)
-	assert.NoError(
-		t, (*testCaseInput.renderer).RecordRender(
-			t.Context(),
-			RenderAcceptance{
-				Owner:   changed.Named(),
-				Receipt: next,
-				Sources: []manifest.SourceEvidence{},
-				Records: maps.All((*testCaseInput.records)),
-			},
-		),
-	)
-	after, err := os.ReadFile((*testCaseInput.indexPath))
+	before, current := first.Value().(renderFrame), next.Value().(renderFrame)
+	assert.Equal(t, current.header.Key, before.header.Key)
+	assert.Diff(t, current.output, before.output)
+	assert.Equal(t, next.Equal(first), false)
+	_, complete := renderer.PreviousRender(t.Context(), changed, nil, input)
+	assert.Equal(t, complete, false)
+	acceptance.Receipt = next
+	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	_, complete = renderer.PreviousRender(t.Context(), changed, nil, input)
+	assert.Equal(t, complete, true)
+	indexPath := filepath.Join(directory, "oci", "index.json")
+	index, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)
-	assert.Equal(t, bytes.Equal((*testCaseInput.index), after), true)
+	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	after, err := os.ReadFile(indexPath)
+	assert.NoError(t, err)
+	assert.Equal(t, bytes.Equal(index, after), true)
 }
 
 type testPreviousRenderInlineOCITemplatePolicyCaseInputs struct {

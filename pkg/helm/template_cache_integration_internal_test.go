@@ -121,7 +121,7 @@ func testTemplateCacheTemplateIntegrationFreshAnalysisHandoff(t *testing.T) {
 		)
 		assert.FatalIf(
 			t,
-			frame.chart != nil || frame.encoded != nil,
+			frame.chart != nil || frame.stored != nil,
 			"%s",
 			"fresh receipt retained noncompact backing",
 		)
@@ -213,7 +213,7 @@ func testTemplateCacheTemplateIntegrationCase(
 				key,
 				&cache.Policy{},
 				func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-					return cache.ProducerResult{}, writeTestRecord(w, key, &record)
+					return cache.ProducerResult{}, writeTestRecord(t.Context(), w, key, &record)
 				},
 			)
 			assert.NoError(t, splitDocsErr)
@@ -221,7 +221,7 @@ func testTemplateCacheTemplateIntegrationCase(
 		r, _, _, err := owner.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 		assert.NoError(t, err)
 		var record renderRecord
-		assert.NoError(t, readTestRecord(r, &record))
+		assert.NoError(t, readTestRecord(t.Context(), r, &record))
 
 		raw, err := testutil.DecodeRender(record.Output)
 		assert.NoError(t, err)
@@ -235,7 +235,7 @@ func testTemplateCacheTemplateIntegrationCase(
 			key,
 			&cache.Policy{},
 			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				return cache.ProducerResult{}, writeTestRecord(w, key, &record)
+				return cache.ProducerResult{}, writeTestRecord(t.Context(), w, key, &record)
 			},
 		)
 		assert.NoError(t, err)
@@ -434,7 +434,7 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 			r, _, _, err := cli.cache.Blob(t.Context(), key, &cache.Policy{MaxAge: cache.Forever}, nil)
 			assert.NoError(t, err)
 			var record renderRecord
-			assert.NoError(t, readTestRecord(r, &record))
+			assert.NoError(t, readTestRecord(t.Context(), r, &record))
 
 			decoded, err := testutil.DecodeRender(record.Output)
 			assert.NoError(t, err)
@@ -619,7 +619,7 @@ extra: {sequence: [{value: original}]}
 		key,
 		&cache.Policy{MaxAge: 0},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			writeTestRecordErr := writeTestRecord(
+			writeTestRecordErr := writeTestRecord(t.Context(),
 				w,
 				key,
 				&renderRecord{Output: encodedRender(t, first), Analysis: loaded.analyze()},

@@ -52,7 +52,7 @@ func (c *Cache) attempt(
 		ctx = context.WithValue(ctx, attemptCeilingKey{}, true)
 	}
 	result, err := c.fill(ctx, &key, e, callbacks)
-	if result != nil && result.resolved.IsZero() {
+	if result == nil && err == nil || result != nil && result.resolved.IsZero() {
 		return result, err
 	}
 	if err != nil {

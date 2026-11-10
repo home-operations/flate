@@ -569,7 +569,12 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 		key,
 		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			writeTestRecordErr := writeTestRecord(w, key, &renderRecord{Output: output, Analysis: d.analyze()})
+			writeTestRecordErr := writeTestRecord(
+				t.Context(),
+				w,
+				key,
+				&renderRecord{Output: output, Analysis: d.analyze()},
+			)
 			return cache.ProducerResult{}, writeTestRecordErr
 		},
 	)

@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -61,7 +62,13 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	analysis := *header.Analysis
 	analysis.Version = "invalid"
 	header.Analysis = &analysis
-	payload, err := encodeFrame(header, resident.Output)
+	stored, err := cache.NewFrame(frameDomain, header, resident.Output)
+	assert.NoError(t, err)
+	publication, err := stored.PreparePublication(t.Context(), cache.FramePublicationInput{})
+	assert.NoError(t, err)
+	var encoded bytes.Buffer
+	_, err = publication.WriteTo(&encoded)
+	payload := encoded.Bytes()
 	assert.NoError(t, err)
 	_, _, _, err = owner.Blob(
 		t.Context(),

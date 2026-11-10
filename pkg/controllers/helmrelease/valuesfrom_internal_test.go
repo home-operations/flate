@@ -316,15 +316,21 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
+	omitted := []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: hr.Namespace, Name: "optional"}}
 	seed, err := helm.Prepare(
-		hr,
+		omitValues(hr, omitted),
 		helm.NewSources(st).Declaration,
 		values.NewStoreProvider(st),
 		c.Helm.ValuesCache(),
 	)
 	assert.NoError(t, err)
 	_, receipt, err := testutil.RenderMaps(
-		c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)}),
+		c.Helm.Template(
+			t.Context(),
+			seed,
+			seed.Values,
+			helm.RenderOptions{Sources: helm.NewSources(st), Omitted: omitted},
+		),
 	)
 	assert.NoError(t, err)
 	assert.NoError(
@@ -489,8 +495,9 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				},
 			}
 			st.AddObject(hr)
+			omitted := []manifest.NamedResource{{Kind: kind, Namespace: "apps", Name: "missing"}}
 			seed, err := helm.Prepare(
-				omitValues(hr, []manifest.NamedResource{{Kind: kind, Namespace: "apps", Name: "missing"}}),
+				omitValues(hr, omitted),
 				helm.NewSources(st).Declaration,
 				values.NewStoreProvider(st),
 				c.Helm.ValuesCache(),
@@ -500,7 +507,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				t.Context(),
 				seed,
 				seed.Values,
-				helm.RenderOptions{Sources: helm.NewSources(st)},
+				helm.RenderOptions{Sources: helm.NewSources(st), Omitted: omitted},
 			)
 			assert.NoError(t, err)
 			assert.NoError(

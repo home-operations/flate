@@ -2,13 +2,9 @@ package kustomize
 
 import (
 	"bytes"
-	"cmp"
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"iter"
 	"log/slog"
@@ -20,28 +16,13 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-const frameDomain = "flateks4"
+const frameDomain = "kustomize-render"
 
 type renderHeader struct {
 	Key     string          `json:"Key"`
 	Binding string          `json:"Binding"`
-	Output  string          `json:"Output"`
-	Size    int             `json:"Size"`
 	Reads   readSetSnapshot `json:"Reads"`
 }
-
-type entryApplication struct {
-	Root        manifest.NamedResource `json:"Root"`
-	Application map[string]any         `json:"Application"`
-	Reads       readSetSnapshot        `json:"Reads"`
-	Inventory   acceptedRender         `json:"Inventory"`
-	Inputs      []EntryInput           `json:"Inputs"`
-	Complete    bool                   `json:"Complete"`
-}
-
-const frameHeaderLimit = 16 << 20
-
-const acceptedRenderVersion = 2
 
 type renderBinding struct {
 	Render       string                         `json:"Render"`
@@ -72,12 +53,11 @@ func (a *renderBinding) equal(b *renderBinding) bool {
 }
 
 type renderFrame struct {
-	lookup, raw     string
-	header          renderHeader
-	binding         renderBinding
-	output, encoded []byte
-	accepted        *acceptedRender
-	acceptedKey     string
+	lookup  string
+	header  renderHeader
+	binding renderBinding
+	output  []byte
+	stored  *sourcecache.Frame
 }
 
 type decodedRender struct {
@@ -85,22 +65,26 @@ type decodedRender struct {
 	frame    renderFrame
 }
 
-func (p *Preparation) readFrame(generation fs.FS) (renderFrame, bool, error) {
+func (p *Preparation) readFrame(ctx context.Context, generation fs.FS) (renderFrame, bool, error) {
 	identity := sourcecache.AcquisitionIdentity(generation)
 	if p != nil && p.decoded != nil && identity != "" && p.decoded.identity == identity {
 		return p.decoded.frame, true, nil
 	}
-	data, err := fs.ReadFile(generation, "content")
-	if err != nil {
-		return renderFrame{}, false, manifest.NewError(
-			manifest.ErrFlux, fmt.Errorf("read kustomize render cache: %w", err), "",
-		)
+	var frame renderFrame
+	stored, err := sourcecache.OpenFrame(ctx, frameDomain, generation, &frame.header)
+	if err == nil {
+		frame.output, err = stored.Payload(ctx)
 	}
-	frame, err := decodeFrame(data)
 	if err != nil {
+		if _, ok := errors.AsType[*sourcecache.CacheError](err); ok {
+			return renderFrame{}, false, manifest.NewError(
+				manifest.ErrFlux, fmt.Errorf("read kustomize render cache: %w", err), "",
+			)
+		}
 		slog.Debug("kustomize: decode render frame", "err", err)
 		return renderFrame{}, false, nil
 	}
+	frame.stored = stored
 	if p != nil && identity != "" {
 		p.decoded = &decodedRender{identity: identity, frame: frame}
 	}
@@ -119,211 +103,6 @@ func equalRenderFrame(a, b any) bool {
 		slices.EqualFunc(x.Remotes, y.Remotes, func(a, b remoteEntry) bool {
 			return a.Input == b.Input && a.Identity == b.Identity && slices.Equal(a.Parents, b.Parents)
 		})
-}
-
-type acceptedRoot struct {
-	Source manifest.NamedResource `json:"Source"`
-	Paths  []string               `json:"Paths"`
-}
-
-type acceptedRecord struct {
-	ID     manifest.NamedResource   `json:"ID"`
-	Record manifest.DiscoveryRecord `json:"Record"`
-	Roots  []acceptedRoot           `json:"Roots"`
-}
-
-type acceptedRender struct {
-	Version  int                    `json:"Version"`
-	Complete bool                   `json:"Complete"`
-	Owner    manifest.NamedResource `json:"Owner"`
-	Raw      string                 `json:"Raw"`
-	Final    string                 `json:"Final"`
-	Records  []acceptedRecord       `json:"Records"`
-}
-
-func (a *acceptedRender) equal(b *acceptedRender) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	if a.Version != b.Version || a.Complete != b.Complete || a.Owner != b.Owner || a.Raw != b.Raw ||
-		a.Final != b.Final {
-		return false
-	}
-	if (a.Records == nil) != (b.Records == nil) || len(a.Records) != len(b.Records) {
-		return false
-	}
-	{
-		xValues := a.Records
-		for i := range xValues {
-			x := xValues[i]
-			y := b.Records[i]
-			if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) ||
-				len(x.Roots) != len(y.Roots) {
-				return false
-			}
-			for j, root := range x.Roots {
-				other := y.Roots[j]
-				if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) ||
-					!slices.Equal(root.Paths, other.Paths) {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
-
-func encodeFrame(input *renderHeader, output []byte) ([]byte, error) {
-	header := *input
-
-	if output == nil {
-		output = []byte{}
-	}
-	header.Size, header.Output = len(output), manifest.Fingerprint(output)
-	data, err := json.Marshal(header)
-	if err != nil {
-		return nil, fmt.Errorf("encode render frame: %w", err)
-	}
-	if len(data) > frameHeaderLimit {
-		return nil, errors.New("render header exceeds frame limit")
-	}
-	frame := make([]byte, framePrefixSize+len(data)+len(output))
-	copy(frame, frameDomain)
-	binary.BigEndian.PutUint32(
-		frame[8:framePrefixSize],
-		uint32(len(data)), //nolint:gosec // frameHeaderLimit bounds the header length below uint32 capacity.
-	)
-	copy(frame[framePrefixSize:], data)
-	copy(frame[framePrefixSize+len(data):], output)
-	return frame, nil
-}
-
-func decodeFrame(data []byte) (renderFrame, error) {
-	if len(data) < framePrefixSize || string(data[:8]) != frameDomain {
-		return renderFrame{}, errors.New("invalid render frame domain or version")
-	}
-	size := int(binary.BigEndian.Uint32(data[8:framePrefixSize]))
-	if size > frameHeaderLimit || size > len(data)-framePrefixSize {
-		return renderFrame{}, errors.New("invalid render header length")
-	}
-	var header renderHeader
-	if err := json.Unmarshal(data[framePrefixSize:framePrefixSize+size], &header); err != nil {
-		return renderFrame{}, fmt.Errorf("decode render frame: %w", err)
-	}
-
-	begin := framePrefixSize + size
-	if header.Size < 0 || header.Size > len(data)-begin {
-		return renderFrame{}, errors.New("invalid render payload length")
-	}
-	end := begin + header.Size
-	output := data[begin:end]
-	if header.Output == "" || manifest.Fingerprint(output) != header.Output {
-		return renderFrame{}, errors.New("invalid render payload identity")
-	}
-	frame := renderFrame{
-		header: header,
-		output: bytes.Clone(output),
-		raw:    manifest.Fingerprint(data[framePrefixSize:begin]),
-	}
-	tail := data[end:]
-	if len(tail) == 0 || len(tail) > frameHeaderLimit {
-		return frame, nil
-	}
-	var accepted acceptedRender
-	if err := json.Unmarshal(tail, &accepted); err != nil {
-		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
-		return frame, nil
-	}
-	if accepted.Version != acceptedRenderVersion || accepted.Final == "" || !accepted.Complete ||
-		accepted.Raw != frame.raw {
-		return frame, nil
-	}
-	if !accepted.ordered() {
-		return frame, nil
-	}
-
-	frame.accepted, frame.acceptedKey = &accepted, manifest.Fingerprint(accepted)
-	return frame, nil
-}
-
-func prepareAccepted(
-	owner manifest.NamedResource,
-	frame *renderFrame,
-	fingerprint string,
-	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
-) (acceptedRender, error) {
-	accepted := acceptedRender{
-		Version:  acceptedRenderVersion,
-		Complete: true,
-		Owner:    owner,
-		Raw:      frame.raw,
-		Final:    fingerprint,
-	}
-	//nolint:gocritic // The iterator supplies immutable value snapshots.
-	for id, record := range records {
-		item := acceptedRecord{ID: id, Record: record}
-		item.Record.ContentRoots = nil
-		item.Record.Inputs = slices.Clone(record.Inputs)
-		item.Record.Refs = slices.Clone(record.Refs)
-		slices.SortFunc(item.Record.Refs, manifest.NamedResource.Compare)
-		item.Record.Refs = slices.Compact(item.Record.Refs)
-		item.Record.Productions = slices.Clone(record.Productions)
-		slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
-			return cmp.Or(
-				a.Owner.Compare(b.Owner),
-				a.Declaration.Compare(b.Declaration),
-				a.Authored.Compare(b.Authored),
-				a.Source.Compare(b.Source),
-				cmp.Compare(a.Path, b.Path),
-				cmp.Compare(a.File, b.File),
-			)
-		})
-		item.Record.Productions = slices.Compact(item.Record.Productions)
-		for source, paths := range record.ContentRoots {
-			paths = slices.Clone(paths)
-			slices.Sort(paths)
-			item.Roots = append(item.Roots, acceptedRoot{Source: source, Paths: slices.Compact(paths)})
-		}
-		slices.SortFunc(item.Roots, func(a, b acceptedRoot) int { return a.Source.Compare(b.Source) })
-		accepted.Records = append(accepted.Records, item)
-	}
-	slices.SortFunc(accepted.Records, func(a, b acceptedRecord) int { return a.ID.Compare(b.ID) })
-	for i := 1; i < len(accepted.Records); i++ {
-		if accepted.Records[i-1].ID == accepted.Records[i].ID {
-			return acceptedRender{}, errors.New("duplicate accepted render identity")
-		}
-	}
-	return accepted, nil
-}
-
-//nolint:gocritic // Keep immutable value-receiver semantics.
-func (f renderFrame) history(
-	owner manifest.NamedResource,
-) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
-	if f.accepted == nil || f.accepted.Owner != owner {
-		return nil, false
-	}
-	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-		{
-			itemValues2 := f.accepted.Records
-			for itemIndex := range itemValues2 {
-				item := itemValues2[itemIndex]
-				record := item.Record
-				record.Inputs = slices.Clone(record.Inputs)
-				record.Refs = slices.Clone(record.Refs)
-				record.Productions = slices.Clone(record.Productions)
-				if len(item.Roots) > 0 {
-					record.ContentRoots = make(map[manifest.NamedResource][]string, len(item.Roots))
-				}
-				for _, root := range item.Roots {
-					record.ContentRoots[root.Source] = slices.Clone(root.Paths)
-				}
-				if !yield(item.ID, record) {
-					return
-				}
-			}
-		}
-	}, true
 }
 
 // PreviousRender returns validated raw output without rendering or acquiring remote inputs.
@@ -352,7 +131,7 @@ func (c *TreeCache) PreviousRender(
 	if err != nil {
 		return nil, nil, false
 	}
-	frame, decoded, err := req.Preparation.readFrame(reader)
+	frame, decoded, err := req.Preparation.readFrame(ctx, reader)
 	validBinding := err == nil && decoded && frame.header.Key == prepared.key &&
 		frame.header.Binding == manifest.Fingerprint(prepared.binding)
 	if !validBinding || len(frame.header.Reads.Remotes) != 0 {
@@ -383,47 +162,10 @@ func (*TreeCache) RenderHistory(
 		return nil, false
 	}
 	frame, ok := receipt.Value().(renderFrame)
-	if !ok || frame.accepted == nil || frame.accepted.Final == "" ||
-		frame.accepted.Final != manifest.Fingerprint(content) {
+	if !ok || frame.stored == nil {
 		return nil, false
 	}
-	return frame.history(owner)
-}
-
-type renderPublication struct {
-	frame    renderFrame
-	accepted acceptedRender
-	data     []byte
-}
-
-// WriteTo writes the render frame and accepted inventory.
-//
-//nolint:gocritic // A publication is a value snapshot so encoding never mutates its accepted frame.
-func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
-	if p.frame.encoded == nil {
-		encoded, err := encodeFrame(&p.frame.header, p.frame.output)
-		if err != nil {
-			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
-		}
-		p.frame.encoded = encoded
-	}
-	if !p.accepted.Complete {
-		//nolint:wrapcheck // Cache publication preserves the writer's original error and byte count.
-		return io.Copy(w, bytes.NewReader(p.frame.encoded))
-	}
-	data := p.data
-	if data == nil {
-		encoded, err := json.Marshal(p.accepted)
-		if err != nil {
-			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
-		}
-		data = encoded
-	}
-	if len(data) > frameHeaderLimit {
-		return 0, manifest.NewError(manifest.ErrFlux, nil, "accepted kustomize render exceeds frame limit")
-	}
-	//nolint:wrapcheck // Cache publication preserves the writer's original error and byte count.
-	return io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
+	return frame.stored.History(owner, content)
 }
 
 // RenderAcceptance MUST retain the inventory and reads from the accepted emission.
@@ -464,12 +206,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 
 	if !frame.binding.Dependencies.Equal(acceptance.DependencySubstitutions) {
 		frame.binding.Dependencies = acceptance.DependencySubstitutions
-		frame.header.Binding, frame.lookup, frame.raw = "", "", ""
-		frame.encoded, frame.accepted, frame.acceptedKey = nil, nil, ""
-	}
-	if records == nil && frame.accepted != nil {
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
-		return ctx.Err()
+		frame.header.Binding, frame.lookup, frame.stored = "", "", nil
 	}
 	var sources []manifest.SourceEvidence
 	if records != nil {
@@ -480,17 +217,29 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
-	publication, content, err := prepareRenderPublication(&frame, owner, finalContent, records)
-	if err != nil {
+	if frame.header.Binding == "" {
+		frame.header.Binding = manifest.Fingerprint(frame.binding)
+	}
+	if frame.stored == nil {
+		var err error
+		frame.stored, err = sourcecache.NewFrame(frameDomain, frame.header, frame.output)
+		if err != nil || frame.stored == nil {
+			return err
+		}
+	}
+	publication, err := frame.stored.PreparePublication(ctx, sourcecache.FramePublicationInput{
+		Owner: owner, Content: finalContent, Records: records, Complete: records != nil,
+	})
+	if err != nil || publication == nil {
 		return err
 	}
 	return sourcecache.RecordInventory(
 		ctx,
 		c.owner,
-		sourcecache.AcceptedInventory[renderPublication]{
+		sourcecache.AcceptedInventory[*sourcecache.FramePublication]{
 			Key:        frame.header.Key,
 			Lookup:     frame.lookup,
-			Acceptance: content,
+			Acceptance: publication.Identity(),
 			Work:       acceptance.Work.History(),
 			History:    sourcecache.RenderHistory{Owner: owner, Sources: sources},
 			Content:    publication,
@@ -516,75 +265,4 @@ func collectRenderSources(
 		}
 	}
 	return sources
-}
-
-func prepareRenderPublication(
-	f *renderFrame,
-	owner manifest.NamedResource,
-	finalContent renderContent,
-	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
-) (renderPublication, string, error) {
-	var err error
-	if f.header.Binding == "" {
-		f.header.Binding = manifest.Fingerprint(f.binding)
-	}
-	if f.encoded == nil && f.raw == "" {
-		f.encoded, err = encodeFrame(&f.header, f.output)
-		if err != nil {
-			return renderPublication{}, "", manifest.NewError(
-				manifest.ErrFlux,
-				fmt.Errorf("encode render frame: %w", err),
-				"",
-			)
-		}
-	}
-	if f.raw == "" {
-		f.raw = manifest.Fingerprint(
-			f.encoded[12 : framePrefixSize+int(binary.BigEndian.Uint32(f.encoded[8:framePrefixSize]))],
-		)
-	}
-	var accepted acceptedRender
-	var data []byte
-	content := f.raw
-	if records != nil {
-		accepted, err = prepareAccepted(owner, f, manifest.Fingerprint(finalContent), records)
-		if err != nil {
-			return renderPublication{}, "", manifest.NewError(
-				manifest.ErrFlux,
-				fmt.Errorf("encode accepted kustomize render: %w", err),
-				"",
-			)
-		}
-		content = f.acceptedKey
-		if f.accepted == nil || content == "" || !f.accepted.equal(&accepted) {
-			data, err = json.Marshal(accepted)
-			if err != nil {
-				return renderPublication{}, "", manifest.NewError(
-					manifest.ErrFlux,
-					fmt.Errorf("encode accepted kustomize render: %w", err),
-					"",
-				)
-			}
-			content = manifest.Fingerprint(accepted)
-		}
-	}
-	return renderPublication{frame: *f, accepted: accepted, data: data}, content, nil
-}
-
-const framePrefixSize = 12
-
-func (a *acceptedRender) ordered() bool {
-	itemValues := a.Records
-	for i := range itemValues {
-		item := itemValues[i]
-		if i > 0 && a.Records[i-1].ID.Compare(item.ID) >= 0 {
-			return false
-		}
-		for j, root := range item.Roots {
-			if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
-				return false
-			}
-		}
-	}
-	return true
 }

@@ -25,6 +25,7 @@ type RenderOptions struct {
 	PreparationTasks *task.Service `json:"-"`
 	// DependencySubstitutions binds emitted dependency projection to accepted history.
 	DependencySubstitutions values.DependencySubstitutions      `json:"DependencySubstitutions"`
+	Omitted                 []manifest.NamedResource            `json:"Omitted"`
 	Admit                   func(RenderAdmission) (bool, error) `json:"Admit"`
 }
 

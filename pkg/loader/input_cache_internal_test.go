@@ -3,7 +3,6 @@ package loader
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"maps"
 	"path/filepath"
@@ -798,8 +797,9 @@ func TestInputCache_DeferredPublicationPreservesOffsets(t *testing.T) {
 	saved, known, err := cacheInput(original.Name, original.Digest, &document{deferred: original})
 	assert.NoError(t, err)
 	assert.Equal(t, known, true)
-	frame := inputFrame{Schema: 1, Files: []cachedInput{saved}}
-	assert.NoError(t, frame.write(io.Discard))
+	frame := inputFrame{Files: []cachedInput{saved}}
+	_, err = frame.prepare(t.Context())
+	assert.NoError(t, err)
 	assert.Equal(t, frame.Files[0].Projection.Offset, int64(0))
 	assert.Equal(t, frame.Files[0].Objects[0].Offset, int64(2))
 	assert.Equal(t, original.Projection.Offset, int64(17))

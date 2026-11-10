@@ -18,7 +18,7 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 	var previous *byte
 	for _, value := range []string{"first", "second"} {
 		output := testRenderEncoding(t, []map[string]any{{"value": value}})
-		wire, err := encodeFrame(&renderHeader{Key: "render"}, output)
+		wire, err := testEncodeFrame(t, &renderHeader{Key: "render"}, output)
 		assert.NoError(t, err)
 		generation, _, _, err := cache.owner.Blob(
 			t.Context(),
@@ -30,10 +30,10 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 			},
 		)
 		assert.NoError(t, err)
-		first, valid, err := preparation.readFrame(generation)
+		first, valid, err := preparation.readFrame(t.Context(), generation)
 		assert.NoError(t, err)
 		assert.Equal(t, valid, true)
-		second, valid, err := preparation.readFrame(generation)
+		second, valid, err := preparation.readFrame(t.Context(), generation)
 		assert.NoError(t, err)
 		assert.Equal(t, valid, true)
 		assert.Equal(t, &first.output[0] == &second.output[0], true)
@@ -46,7 +46,7 @@ func TestPreparation_RenderGeneration(t *testing.T) {
 		left[0].Document["value"] = "changed"
 		assert.Equal(t, right[0].Document["value"], any(value))
 		anonymous := fstest.MapFS{"content": &fstest.MapFile{Data: wire}}
-		independent, valid, err := preparation.readFrame(anonymous)
+		independent, valid, err := preparation.readFrame(t.Context(), anonymous)
 		assert.NoError(t, err)
 		assert.Equal(t, valid, true)
 		assert.Equal(t, &independent.output[0] == &first.output[0], false)

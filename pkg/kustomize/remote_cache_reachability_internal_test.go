@@ -168,7 +168,7 @@ func testRenderRemoteCacheReachabilityCase(t *testing.T, testCaseInput *string,
 		preflightRemoteResourcesErr := preflightRemoteResources(t.Context(), c, view, root)
 		assert.NoError(t, preflightRemoteResourcesErr)
 	}
-	snapFrame, err := decodeFrame(testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
+	snapFrame, err := testDecodeFrame(t, testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
 	snap := snapFrame.header.Reads
 	assert.NoError(t, err)
 	{

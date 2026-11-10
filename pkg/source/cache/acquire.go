@@ -626,6 +626,10 @@ func (c *Cache) producePayload(
 	if key.policy.Timeout != nil && ctx.Err() != nil {
 		return nil, repairName, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
+	// Missing optional frames MUST preserve local output and the previous generation.
+	if key.render && staged.written == 0 && !staged.unchanged {
+		return nil, repairName, ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+	}
 	e.resolved = time.Now().UTC()
 	var stored ocispec.Descriptor
 	if c.store != nil && !key.memoryOnly {

@@ -296,3 +296,228 @@ func (c *afterPublicationController) ReconcileNode(
 	}
 	return c.reconcileController.ReconcileNode(ctx, id, level, previous)
 }
+
+func TestRenderTrees_SourcePublicationKeepsHelmReleasePreparation(t *testing.T) {
+	t.Parallel()
+	beforeDir, afterDir := excludedOrderingFixture(t, true)
+	invocation := prepareOrderingTrees(t, []Tree{
+		{RepoRoot: beforeDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
+		{RepoRoot: afterDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
+	}, &Config{RecordWork: true, Concurrency: 2, CacheDir: t.TempDir()})
+	o := invocation.results[1].Orchestrator
+	o.configureControllers()
+	dispatcher := dagDispatcher{o}
+	scheduler := schedule.New(dispatcher, dispatcher)
+	defer o.watchDAG(scheduler)()
+	reconcile := func(c reconcileController, id manifest.NamedResource, previous *base.Execution) *base.Execution {
+		done := make(chan *base.Execution, 1)
+		o.tasks.Go(t.Context(), "controlled controller", func(ctx context.Context) {
+			done <- c.ReconcileNode(ctx, id, manifest.DrainNone, schedule.Result{Assessment: previous})
+		})
+		execution := <-done
+		o.tasks.BlockTillDone()
+		t.Cleanup(execution.Retire)
+		return execution
+	}
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
+	assert.Equal(t, reconcile(o.ksc, entry, nil).Outcome(), schedule.Terminal)
+	id := testutil.HelmReleaseID("flux-system", "selected")
+	parent := testutil.KustomizationID("flux-system", "selected")
+	sourceID := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindOCIRepository,
+		Namespace: "flux-system",
+		Name:      "selected-source",
+	}
+	assert.Equal(t, reconcile(o.ksc, parent, nil).Outcome(), schedule.Terminal)
+	first := reconcile(o.hrc, id, nil)
+	assert.Equal(t, first.Outcome(), schedule.Blocked)
+	assert.Equal(t, first.Valid(), true)
+	assert.Diff(t, first.Blocked, []manifest.NamedResource{sourceID})
+	assert.Diff(
+		t,
+		first.Reads.WorkScope().Admission().Counts,
+		manifest.WorkCounts{Attempts: 1, Completed: 1, OwnerPrepares: 1},
+	)
+	sourceExecution := reconcile(o.src, sourceID, nil)
+	assert.Equal(t, sourceExecution.Outcome(), schedule.Blocked)
+	assert.Equal(t, first.Valid(), false)
+	second := reconcile(o.hrc, id, first)
+	assert.Equal(t, second.Outcome(), schedule.Blocked)
+	assert.Equal(t, second.Valid(), true)
+	assert.Diff(t, second.Blocked, []manifest.NamedResource{sourceID})
+	work := second.Reads.Work()
+	assert.Equal(t, work.Key, manifest.WorkKey{
+		Tree: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Owner: id, Source: sourceID,
+	})
+	counts := manifest.WorkCounts{Attempts: 1, Completed: 1, OwnerPrepares: 1}
+	assert.Diff(t, work.Scope().Admission().Counts, counts)
+	before := make(map[manifest.NamedResource]manifest.BaseManifest)
+	documents := make(map[manifest.NamedResource]map[string]any)
+	productions := make(map[manifest.NamedResource][]manifest.Production)
+	references := make(map[manifest.NamedResource][]manifest.Reference)
+	referenceFacts := make(map[manifest.NamedResource]store.ReferenceFacts)
+	var captured store.ReadSet
+	captured.Init(o.store, id, nil)
+	defer captured.Close()
+	inputs := append(slices.Collect(second.Reads.Inputs()),
+		entry,
+		manifest.BootstrapSourceID,
+		testutil.KustomizationID("flux-system", "monitor-a"),
+		testutil.KustomizationID("flux-system", "monitor-b"),
+		manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization},
+	)
+	slices.SortFunc(inputs, manifest.NamedResource.Compare)
+	inputs = slices.Compact(inputs)
+	entryBefore := o.entryBinding
+	t.Logf(
+		"before terminal source publication: inputs=%v entry=%v source=%v entry-valid=%v counts=%+v",
+		inputs,
+		entryBefore.Producer,
+		entryBefore.Source,
+		entryBefore.Reads.Valid(),
+		counts,
+	)
+	for _, input := range inputs {
+		object, document, output := captured.GetEmission(input)
+		output.Finish()
+		before[input], documents[input] = object, document
+		productions[input] = slices.Clone(captured.Productions(input, o.loader.SelectionIndex()))
+		references[input] = slices.Collect(manifest.References(object, manifest.ReferenceRelations))
+		referenceFacts[input] = o.store.ReferenceFacts(input, o.loader.SelectionIndex(), id)
+		if input.KindInfo().SourceArtifact {
+			captured.GetArtifact(input, store.ArtifactContent|store.ArtifactRevision)
+		}
+	}
+	beforeFacts := o.loader.SourceFacts(sourceID, nil)
+	beforeBootstrap := o.loader.SourceFacts(manifest.BootstrapSourceID, nil)
+	shared := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindGitRepository,
+		Namespace: "flux-system",
+		Name:      "shared",
+	}
+	beforeShared := o.loader.SourceFacts(shared, nil)
+	var caller store.ReadSet
+	caller.Init(o.store, id, nil)
+	defer caller.Close()
+	settled := make(chan struct{})
+	o.tasks.Go(t.Context(), "settle missing source Secret", func(ctx context.Context) {
+		sourceExecution.Settle(ctx, manifest.DrainCascade)
+		close(settled)
+	})
+	<-settled
+	o.tasks.BlockTillDone()
+	status, _ := o.store.GetStatus(sourceID)
+	assert.Equal(t, status.Status, store.StatusFailed)
+	assert.Equal(t, second.Valid(), false)
+	assert.Equal(t, caller.Valid(), true)
+	assert.Equal(t, o.entryBinding, entryBefore)
+	assert.Equal(t, o.entryBinding.Reads.Valid(), true)
+	t.Logf("published source status=%s reason=%s message=%s", status.Status, status.Reason, status.Message)
+	assert.Diff(t, work.Scope().Admission().Counts, counts)
+	var current store.ReadSet
+	current.Init(o.store, id, nil)
+	defer current.Close()
+	for _, input := range inputs {
+		object, document, output := current.GetEmission(input)
+		output.Finish()
+		assert.Equal(t, manifest.Equal(object, before[input]), true)
+		assert.Equal(t, manifest.ValueEqual(document, documents[input]), true)
+		assert.Diff(t, current.Productions(input, o.loader.SelectionIndex()), productions[input])
+		assert.Diff(t, slices.Collect(manifest.References(object, manifest.ReferenceRelations)), references[input])
+		facts, oldFacts := o.store.ReferenceFacts(input, o.loader.SelectionIndex(), id), referenceFacts[input]
+		assert.Equal(t, facts.Generated, oldFacts.Generated)
+		assert.Equal(t, facts.Offline, oldFacts.Offline)
+		assert.Equal(t, facts.Private, oldFacts.Private)
+		assert.Equal(t, facts.Accepted, oldFacts.Accepted)
+		assert.Equal(t, facts.Data == nil, oldFacts.Data == nil)
+		if facts.Data != nil && oldFacts.Data != nil {
+			assert.Diff(t, facts.Data.Snapshot(), oldFacts.Data.Snapshot())
+		}
+		assert.Diff(t, facts.Materializers, oldFacts.Materializers)
+		assert.Diff(t, facts.Productions, oldFacts.Productions)
+		assert.Equal(t, len(facts.ReferenceData), len(oldFacts.ReferenceData))
+		for i := range min(len(facts.ReferenceData), len(oldFacts.ReferenceData)) {
+			next, previous := facts.ReferenceData[i], oldFacts.ReferenceData[i]
+			assert.Equal(t, next.Production, previous.Production)
+			assert.Diff(t, next.DeclaredKeys, previous.DeclaredKeys)
+			assert.Equal(t, next.OfflineData == nil, previous.OfflineData == nil)
+			if next.OfflineData != nil && previous.OfflineData != nil {
+				assert.Diff(t, next.OfflineData.Snapshot(), previous.OfflineData.Snapshot())
+			}
+			assert.Diff(t, next.Warnings, previous.Warnings)
+		}
+
+		if input.KindInfo().SourceArtifact {
+			current.GetArtifact(input, store.ArtifactContent|store.ArtifactRevision)
+		}
+		assert.Equal(t, current.MatchesContent(&captured, input), true)
+	}
+	for _, pair := range [][2]selection.SourceFacts{
+		{beforeFacts, o.loader.SourceFacts(sourceID, nil)},
+		{beforeBootstrap, o.loader.SourceFacts(manifest.BootstrapSourceID, nil)},
+		{beforeShared, o.loader.SourceFacts(shared, nil)},
+	} {
+		before, after := pair[0], pair[1]
+		assert.Equal(t, after.Comparison == before.Comparison, true)
+		assert.Equal(t, after.Input == before.Input, true)
+		assert.Equal(t, after.Initial == before.Initial, true)
+		assert.Equal(t, after.Source, before.Source)
+		assert.Equal(t, after.Origin, before.Origin)
+		assert.Equal(t, after.Path, before.Path)
+		assert.Equal(t, after.ToIndex, before.ToIndex)
+		assert.Equal(t, after.Paired, before.Paired)
+		assert.Equal(t, after.InitialKnown, before.InitialKnown)
+		assert.Equal(t, after.Pinned, before.Pinned)
+		assert.Equal(t, after.External, before.External)
+		assert.Equal(t, after.Derived, before.Derived)
+		assert.Equal(t, after.ConfiguredInput == before.ConfiguredInput, true)
+		assert.Equal(t, after.Declaration == before.Declaration, true)
+		assert.Equal(t, after.Changes == before.Changes, true)
+		assert.Equal(t, after.Delta == before.Delta, true)
+		assert.Equal(t, after.Snapshots == before.Snapshots, true)
+		assert.Equal(t, after.Declarations == before.Declarations, true)
+		assert.Diff(t, after.Files, before.Files)
+		assert.Diff(t, after.Context, before.Context)
+	}
+	third := reconcile(o.hrc, id, second)
+	assert.Equal(t, third.Outcome(), schedule.DependencyFailed)
+	assert.Equal(t, third.Valid(), true)
+	assert.Equal(t, len(third.Blocked), 0)
+	t.Logf(
+		"after source publication and execution retry: key=%+v counts=%+v",
+		work.Scope().Admission().Key,
+		work.Scope().Admission().Counts,
+	)
+	assert.Diff(t, work.Scope().Admission().Counts, counts)
+	var fresh store.ReadSet
+	fresh.Init(o.store, id, nil)
+	fresh.SetWork(work)
+	defer fresh.Close()
+	proposal, err := o.selection.Prepare(t.Context(), selection.PrepareRequest{
+		Reads: &fresh, Preparation: &third.AdmissionPreparation,
+		Generation: []store.Child{{Obj: o.store.GetObject(id), Origin: o.store.Policy(id).Origin}},
+	})
+	assert.NoError(t, err)
+	defer proposal.Retire()
+	assert.Equal(t, fresh.Valid(), true)
+	t.Logf(
+		"next equal generation: revision=%d key=%+v counts=%+v",
+		proposal.Revision,
+		work.Scope().Admission().Key,
+		work.Scope().Admission().Counts,
+	)
+	assert.Diff(t, work.Scope().Admission().Counts, counts)
+	decision := o.selection.Snapshot()
+	stale, err := o.selection.Prepare(t.Context(), selection.PrepareRequest{
+		Reads: &second.Reads, Preparation: &third.AdmissionPreparation,
+		Generation: []store.Child{{Obj: o.store.GetObject(id), Origin: o.store.Policy(id).Origin}},
+	})
+	assert.NoError(t, err)
+	_, committed, err := o.selection.Commit(t.Context(), stale, selection.Execution)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, false)
+	assert.Equal(t, o.selection.Snapshot() == decision, true)
+	assert.Diff(t, work.Scope().Admission().Counts, counts)
+}

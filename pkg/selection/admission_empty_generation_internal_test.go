@@ -63,4 +63,32 @@ func TestAdmission_EmptyGenerationDropsPreviousObjects(t *testing.T) {
 	if _, retained := preparation.closure.states[child.Named()]; retained {
 		t.Error("empty generation retains the withdrawn child's closure state")
 	}
+	empty.Retire()
+	request.Generation = []store.Child{{Obj: child, SourceSupport: manifest.BootstrapSourceID}}
+	restored, err := session.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, committed, err = session.Commit(t.Context(), restored, Execution)
+	if err != nil || !committed {
+		t.Fatalf("restored generation committed = %v, error = %v", committed, err)
+	}
+	request.Owner, request.Generation = manifest.NamedResource{}, nil
+	narrowed, err := session.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	narrowed.Retire()
+	request.Owner = parent.Named()
+	withdrawn, err := session.Prepare(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer withdrawn.Retire()
+	if len(withdrawn.Objects) != 0 {
+		t.Errorf("withdrawal after ownerless request republishes %d old objects, want 0", len(withdrawn.Objects))
+	}
+	if _, retained := preparation.closure.states[child.Named()]; retained {
+		t.Error("withdrawal after ownerless request retains the withdrawn child's closure state")
+	}
 }

@@ -391,7 +391,7 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken bool)
 		}
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Owner: selectedHR, Source: source, Phase: manifest.WorkPreparation,
-		}] = manifest.WorkCounts{Attempts: 2, Completed: 2, OwnerPrepares: 2}
+		}] = manifest.WorkCounts{Attempts: 1, Completed: 1, OwnerPrepares: 1}
 	} else {
 		chartPreparation := workCounts(side.Result.Work, chart, manifest.WorkPreparation)
 		assert.Equal(t, chartPreparation.Attempts, uint64(1))

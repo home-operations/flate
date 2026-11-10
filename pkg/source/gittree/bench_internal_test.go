@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 )
 
 // benchRepo seeds a source repo with n blobs (a 90/10 small/large mix —
@@ -118,4 +120,30 @@ func benchReadAll(b *testing.B, input *FS) {
 		return closeErr
 	})
 	assert.NoError(b, err)
+}
+
+func BenchmarkFreshInputs_FileSize(b *testing.B) {
+	for _, size := range []int{1 << 10, 128 << 10, 8 << 20} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			root := b.TempDir()
+			data := make([]byte, size)
+			for i := range data {
+				data[i] = byte((i*131 + i/251) % 253)
+			}
+			testutil.WriteFile(b, root, "file", string(data))
+			location, err := gitrepo.Locate(b.Context(), root, root)
+			assert.NoError(b, err)
+			input, err := AdmitDirectory(b.Context(), location)
+			assert.NoError(b, err)
+			selected := input.FS.(*FS)
+			kinds := map[string]fs.FileMode{"file": 0}
+			requested := []string{"file"}
+			b.ReportAllocs()
+			b.SetBytes(int64(size))
+			for b.Loop() {
+				_, err := selected.FreshInputs(b.Context(), requested, kinds)
+				assert.NoError(b, err)
+			}
+		})
+	}
 }

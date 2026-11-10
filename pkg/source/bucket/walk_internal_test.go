@@ -353,7 +353,7 @@ func (w *cancelArchiveWriter) Write(p []byte) (int, error) {
 func TestWalkBucket_Ranges(t *testing.T) {
 	t.Parallel()
 
-	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered", "probe_forbidden", "probe_limited", "probe_server"} {
+	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered", "probe_forbidden", "probe_limited", "probe_server", "mixed_etags", "untagged_ignore_cancel", "untagged_ignore_changed"} {
 		t.Run(behavior, func(t *testing.T) {
 			t.Parallel()
 			testWalkBucketRangesCase(t, &behavior)

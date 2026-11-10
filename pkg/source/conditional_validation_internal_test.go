@@ -95,8 +95,8 @@ func testAcquireConditionalValidationOwnerMissing(t *testing.T) {
 		&sourcecache.Policy{},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			annotations := map[string]string{
-				httpETagAnnotation:         `"` + manifest.Fingerprint("changed") + `"`,
-				httpLastModifiedAnnotation: "Mon, 01 Jun 2026 12:00:00 GMT",
+				"flate.http-etag":          `"` + manifest.Fingerprint("changed") + `"`,
+				"flate.http-last-modified": "Mon, 01 Jun 2026 12:00:00 GMT",
 			}
 			size, err := io.WriteString(w, "original")
 			return sourcecache.ProducerResult{Size: int64(size), Annotations: annotations}, err
@@ -280,6 +280,9 @@ func testAcquireConditionalValidationCase3CallbackCompletion(
 	}
 	if (*captures.testCaseInput.phase) == 1 && (*(*captures.testCaseInput.scenario)) == "update-304" {
 		(*captures.headers) = http.Header{"Etag": {`"rotated"`}}
+	}
+	if (*captures.testCaseInput.phase) != 0 && (*(*captures.testCaseInput.scenario)) == "retain-304" {
+		(*captures.headers) = make(http.Header)
 	}
 	if (*(*captures.testCaseInput.scenario)) == "unsolicited-304" || (*captures.testCaseInput.phase) !=
 		0 && (*(*captures.testCaseInput.scenario)) == "unvalidated-304" {

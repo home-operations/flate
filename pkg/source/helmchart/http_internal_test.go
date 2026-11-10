@@ -625,7 +625,7 @@ func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
 				})},
 			}
 			var body bytes.Buffer
-			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", &body, nil)
+			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", httpDownload{Writer: &body})
 			if status == http.StatusOK {
 				assert.FatalIf(t, err != nil || body.String() != "content",
 					"successful response: body=%q error=%v", body.String(), err)

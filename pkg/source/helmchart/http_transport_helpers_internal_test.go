@@ -18,7 +18,13 @@ func preparedHTTP(t *testing.T, f *Fetcher, fInputs testInputs, r *manifest.Helm
 
 type chartTransport func(*http.Request) (*http.Response, error)
 
-func (f chartTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func (f chartTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := f(r)
+	if response != nil && response.Request == nil {
+		response.Request = r
+	}
+	return response, err
+}
 
 func (f *operation) resolvedHTTP(r *manifest.HelmRepository) (*httpRepository, error) {
 	prepared, err := f.prepareHTTP(r)

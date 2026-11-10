@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -56,7 +55,7 @@ func walkBucket(
 	}
 	slices.SortFunc(entries, func(a, b minio.ObjectInfo) int { return cmp.Compare(a.Key, b.Key) })
 	names := make([]string, 0, len(entries))
-	h := sha256.New()
+	pairs := make([][2]string, 0, len(entries))
 	allETags := true
 	for i := range entries {
 		e := &entries[i]
@@ -70,11 +69,11 @@ func walkBucket(
 		entries[len(names)] = *e
 		names = append(names, name)
 		allETags = allETags && e.ETag != ""
-		_, _ = fmt.Fprintf(h, "%s %s\n", e.Key, e.ETag)
+		pairs = append(pairs, [2]string{e.Key, e.ETag})
 	}
 	entries = entries[:len(names)]
 	result := cache.ProducerResult{Annotations: map[string]string{
-		"flate.revision":     fmt.Sprintf("sha256:%x", h.Sum(nil)),
+		"flate.revision":     "sha256:" + manifest.Fingerprint(pairs),
 		"flate.object-count": strconv.Itoa(len(entries)),
 	}}
 	result.Unchanged = allETags && w.previous != nil &&
@@ -84,7 +83,7 @@ func walkBucket(
 		return result, nil
 	}
 	ranges := true
-	if i := slices.IndexFunc(entries, func(e minio.ObjectInfo) bool { return e.Size > chunkBytes }); i >= 0 {
+	if i := slices.IndexFunc(entries, func(e minio.ObjectInfo) bool { return bucketRangeEligible(&e) }); i >= 0 {
 		probe := &bucketChunk{work: w.work, object: &entries[i], size: 1}
 		body, header, err := probe.get(ctx, client, b.BucketName)
 		if err != nil {
@@ -254,11 +253,13 @@ func bucketEntryName(e *minio.ObjectInfo, prefix string) (string, error) {
 	return name, nil
 }
 
+func bucketRangeEligible(e *minio.ObjectInfo) bool { return e.Size > chunkBytes && e.ETag != "" }
+
 func bucketChunks(entries []minio.ObjectInfo, names []string, work *manifest.WorkRecord, ranges bool) []*bucketChunk {
 	var chunks []*bucketChunk
 	for i := range entries {
 		step := chunkBytes
-		if !ranges {
+		if !ranges || !bucketRangeEligible(&entries[i]) {
 			step = max(int64(1), entries[i].Size)
 		}
 		for start := int64(0); start == 0 || start < entries[i].Size; start += step {

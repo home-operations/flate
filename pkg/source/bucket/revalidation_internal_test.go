@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -34,11 +35,15 @@ type revalidationListing struct {
 type revalidationBucket struct {
 	listing               atomic.Pointer[revalidationListing]
 	lists, probes, bodies atomic.Int32
+	next                  *revalidationListing
+	switched              chan struct{}
+	versionGets           atomic.Int32
 }
 
 func (b *revalidationBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	listing := b.listing.Load()
-	if r.URL.Query().Has("list-type") {
+	switch {
+	case r.URL.Query().Has("list-type"):
 		b.lists.Add(1)
 		page, _ := strconv.Atoi(r.URL.Query().Get("continuation-token"))
 		if listing.failPage == page {
@@ -53,7 +58,7 @@ func (b *revalidationBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = fmt.Fprintf(
 			w,
-			`<ListBucketResult><Name>data</Name><IsTruncated>%t</IsTruncated>`,
+			`<ListBucketResult><Name>data</Name><EncodingType>url</EncodingType><IsTruncated>%t</IsTruncated>`,
 			end < len(listing.objects),
 		)
 		if end < len(listing.objects) {
@@ -63,13 +68,26 @@ func (b *revalidationBucket) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintf(
 				w,
 				`<Contents><Key>%s</Key><ETag>%s</ETag><Size>%d</Size></Contents>`,
-				object.key,
+				url.QueryEscape(object.key),
 				object.etag,
 				len(object.body),
 			)
 		}
 		_, _ = io.WriteString(w, `</ListBucketResult>`)
 		return
+	case b.next != nil && r.Header.Get("Range") != "bytes=0-0":
+		switch b.versionGets.Add(1) {
+		case 1:
+			b.listing.Store(b.next)
+			close(b.switched)
+		default:
+			select {
+			case <-b.switched:
+				listing = b.listing.Load()
+			case <-r.Context().Done():
+				return
+			}
+		}
 	}
 	key := strings.TrimPrefix(r.URL.Path, "/data/")
 	index := slices.IndexFunc(listing.objects, func(object revalidationObject) bool { return object.key == key })
@@ -102,11 +120,13 @@ func TestFetcher_Revalidation(t *testing.T) {
 	b := revalidationObject{"b.yaml", "b1", "kind: ConfigMap\nmetadata:\n  name: b\n"}
 	missing := revalidationObject{"a.yaml", "", a.body}
 	large := revalidationObject{"large", "large1", strings.Repeat("x", int(chunkBytes)+1)}
+	largeMissing := revalidationObject{"large", "", large.body}
 	for _, tc := range []struct {
 		name                            string
 		initial, updated                []revalidationObject
 		pageSize, failPage              int
 		missingPayload                  bool
+		changeDuringDownload            bool
 		wantLists, wantBodies           int32
 		changedRevision, changedContent bool
 	}{
@@ -115,18 +135,33 @@ func TestFetcher_Revalidation(t *testing.T) {
 		{name: "removed", initial: []revalidationObject{a, b}, updated: []revalidationObject{b}, failPage: -1, wantLists: 1, wantBodies: 1, changedRevision: true, changedContent: true},
 		{name: "changed_etag", initial: []revalidationObject{a}, updated: []revalidationObject{{a.key, "a2", "changed bytes"}}, failPage: -1, wantLists: 1, wantBodies: 1, changedRevision: true, changedContent: true},
 		{name: "missing_etag", initial: []revalidationObject{missing}, updated: []revalidationObject{missing}, failPage: -1, wantLists: 1, wantBodies: 1},
-		{name: "empty", failPage: -1, wantLists: 1},
+		{name: "empty", updated: []revalidationObject{{key: "directory/"}}, failPage: -1, wantLists: 1},
+		{
+			name:            "listing_framing_collision",
+			initial:         []revalidationObject{{"a", "X", "old a"}, {"b Y\nc", "Z", "old b"}},
+			updated:         []revalidationObject{{"a X\nb", "Y", "new a"}, {"c", "Z", "new c"}},
+			failPage:        -1,
+			wantLists:       1,
+			wantBodies:      2,
+			changedRevision: true,
+			changedContent:  true,
+		},
 		{name: "paginated", initial: []revalidationObject{a, b}, updated: []revalidationObject{b, a}, pageSize: 1, failPage: -1, wantLists: 2},
 		{name: "partial_listing", initial: []revalidationObject{a, b}, updated: []revalidationObject{a, b}, pageSize: 1, failPage: 1, wantLists: 2},
 		{name: "failed_listing", initial: []revalidationObject{a}, updated: []revalidationObject{a}, failPage: 0, wantLists: 1},
 		{name: "unsafe_marker", initial: []revalidationObject{a}, updated: []revalidationObject{a, {key: "../"}}, failPage: -1, wantLists: 1},
 		{name: "unusable_previous", initial: []revalidationObject{a, b}, updated: []revalidationObject{a, b}, missingPayload: true, failPage: -1, wantLists: 1, wantBodies: 2},
 		{name: "large_unchanged", initial: []revalidationObject{large}, updated: []revalidationObject{large}, failPage: -1, wantLists: 1},
+		{name: "large_missing_etag", initial: []revalidationObject{largeMissing}, updated: []revalidationObject{{largeMissing.key, "", strings.Repeat("y", len(largeMissing.body))}}, changeDuringDownload: true, failPage: -1, wantLists: 1, wantBodies: 1, changedContent: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			remote := new(revalidationBucket)
 			remote.listing.Store(&revalidationListing{objects: tc.initial, pageSize: tc.pageSize, failPage: -1})
+			if tc.changeDuringDownload {
+				remote.next = &revalidationListing{objects: tc.updated, pageSize: tc.pageSize, failPage: -1}
+				remote.switched = make(chan struct{})
+			}
 			server := httptest.NewServer(remote)
 			t.Cleanup(server.Close)
 			root := t.TempDir()
@@ -143,6 +178,13 @@ func TestFetcher_Revalidation(t *testing.T) {
 			t.Cleanup(reads.Close)
 			first, err := fetchtest.Fetch(t.Context(), f.Fetch, object, reads, &cache.Policy{MaxAge: 0}, nil)
 			assert.NoError(t, err)
+			if tc.changeDuringDownload {
+				data, readErr := fs.ReadFile(first.FS, largeMissing.key)
+				assert.NoError(t, readErr)
+				content := string(data)
+				assert.FatalIf(t, content != tc.initial[0].body && content != tc.updated[0].body,
+					"untagged acquisition published mixed versions: %d bytes", len(data))
+			}
 			assertRevalidationArtifact(t, first, &tc.initial)
 			assert.Equal(t, remote.lists.Load(), max(int32(1), int32(tc.pageSize)*int32(len(tc.initial))))
 			if tc.name == "large_unchanged" {
@@ -166,7 +208,8 @@ func TestFetcher_Revalidation(t *testing.T) {
 			assert.Equal(t, remote.lists.Load()-lists, tc.wantLists)
 			assert.Equal(t, remote.probes.Load()-probes, int32(0))
 			assert.Equal(t, remote.bodies.Load()-bodies, tc.wantBodies)
-			if tc.failPage >= 0 || tc.name == "unsafe_marker" {
+			switch {
+			case tc.failPage >= 0, tc.name == "unsafe_marker":
 				assert.FatalIf(
 					t,
 					err == nil || second != nil,
@@ -218,4 +261,7 @@ func assertRevalidationArtifact(t *testing.T, artifact *store.SourceArtifact, ob
 	assert.Diff(t, artifact.Metadata, map[string]string{"objectCount": strconv.Itoa(len(want))})
 	assert.Equal(t, artifact.Kind, manifest.KindBucket)
 	assert.FatalIf(t, artifact.Revision == "", "%s", "missing bucket revision")
+	if len(want) == 0 {
+		assert.Equal(t, artifact.Revision, "sha256:"+manifest.Fingerprint([][2]string{}))
+	}
 }

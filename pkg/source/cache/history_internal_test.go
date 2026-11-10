@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"maps"
@@ -13,10 +14,97 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"oras.land/oras-go/v2/errdef"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+//nolint:paralleltest // The test fixes the process build identity to isolate format invalidation.
+func TestProducersForPaths_FrameFormat(t *testing.T) {
+	original := processIdentity
+	processIdentity = "fixed-build"
+	t.Cleanup(func() { processIdentity = original })
+	c := cachetest.New(t, t.TempDir(), New)
+	owner := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "emitter"}
+	source := manifest.SourceIdentity{Root: "/source"}
+	evidence := []manifest.SourceEvidence{{Source: source, Path: "apps/cm.yaml"}}
+	history := RenderHistory{Owner: owner, Sources: evidence}
+	prior := history.record("accepted")
+	prior.Format = frameVersion - 1
+	metadata, err := prior.metadata()
+	assert.NoError(t, err)
+	metadata[acceptedRenderAnnotation] = "accepted"
+	_, _, id, err := c.Blob(
+		t.Context(),
+		BlobKey{Content: "prior-format"},
+		&Policy{},
+		func(_ context.Context, output ProducerInput) (ProducerResult, error) {
+			_, writeErr := io.WriteString(output, "prior frame")
+			return ProducerResult{Annotations: metadata}, writeErr
+		},
+	)
+	assert.NoError(t, err)
+	descriptor, err := c.store.Resolve(t.Context(), id)
+	assert.NoError(t, err)
+	priorLookup := "render-" + manifest.Fingerprint(struct {
+		Phase  RenderMode
+		Build  string
+		Render string
+	}{Phase: RenderAccepted, Build: processIdentity, Render: "format-test"})
+	assert.NoError(t, c.store.Tag(t.Context(), descriptor, priorLookup))
+	_, _, currentLookup, err := c.Blob(
+		t.Context(),
+		BlobKey{Content: "format-test", Render: RenderAccepted},
+		&Policy{MaxAge: Forever},
+		nil,
+	)
+	assert.Equal(t, errors.Is(err, errdef.ErrNotFound), true)
+	assert.Equal(t, currentLookup != priorLookup, true)
+	owners, err := c.ProducersForPaths(t.Context(), evidence)
+	assert.NoError(t, err)
+	assert.Equal(t, len(owners), 0)
+	frame, err := NewFrame("kustomize-output", "metadata", []byte("current frame"))
+	assert.NoError(t, err)
+	publication, err := frame.PreparePublication(t.Context(), FramePublicationInput{
+		Owner: owner, Content: "final", Complete: true,
+		Records: maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{}),
+	})
+	assert.NoError(t, err)
+	inventory := AcceptedInventory[*FramePublication]{
+		Key: "format-test", Acceptance: publication.Identity(), History: history, Content: publication,
+	}
+	var failures [2]error
+	var writers sync.WaitGroup
+	for i := range failures {
+		writers.Go(func() { failures[i] = RecordInventory(t.Context(), c, inventory) })
+	}
+	writers.Wait()
+	for _, err := range failures {
+		assert.NoError(t, err)
+	}
+	generation, _, lookup, err := c.Blob(
+		t.Context(),
+		BlobKey{Content: "format-test", Render: RenderAccepted},
+		&Policy{MaxAge: Forever},
+		nil,
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, lookup != priorLookup, true)
+	var decoded string
+	current, err := OpenFrame(t.Context(), "kustomize-output", generation, &decoded)
+	assert.NoError(t, err)
+	_, complete := current.History(owner, "final")
+	assert.Equal(t, complete, true)
+	owners, err = c.ProducersForPaths(t.Context(), evidence)
+	assert.NoError(t, err)
+	assert.Diff(t, owners[owner], evidence)
+	assert.Equal(t, len(owners), 1)
+	var stored map[string]any
+	assert.NoError(t, json.Unmarshal([]byte(metadata[historyAnnotation]), &stored))
+	assert.Equal(t, stored["Build"], any(processIdentity))
+}
 
 func TestProducersForPaths_SourcePaths(t *testing.T) {
 	t.Parallel()

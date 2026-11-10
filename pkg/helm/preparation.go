@@ -77,6 +77,7 @@ type templateRequest struct {
 
 	input   RenderOptions
 	release *manifest.HelmRelease
+	content any
 }
 
 func (c *Client) prepareTemplate(
@@ -99,7 +100,7 @@ func (c *Client) prepareTemplate(
 		previous.matchesInputs(source, hrValues)
 	if reusable && source.Content != "" {
 		input.Work.Fingerprint(previous.key)
-		return templateRequest{Preparation: *previous, input: *input, release: hr}, nil
+		return previous.request(hr, input), nil
 	}
 	loaded, err := c.describeChart(ctx, hr, source)
 	if err != nil {
@@ -125,7 +126,7 @@ func (c *Client) prepareTemplate(
 		loaded.valuesErr == nil &&
 		previous.loaded.valuesErr == nil {
 		input.Work.Fingerprint(previous.key)
-		return templateRequest{Preparation: *previous, input: *input, release: hr}, nil
+		return previous.request(hr, input), nil
 	}
 	if previous != nil {
 		previous.Retire()
@@ -172,5 +173,16 @@ func (c *Client) prepareTemplate(
 	if input.Preparation != nil {
 		*input.Preparation = prepared
 	}
-	return templateRequest{Preparation: prepared, input: *input, release: hr}, nil
+	return prepared.request(hr, input), nil
+}
+
+func (p *Preparation) request(hr *manifest.HelmRelease, input *RenderOptions) templateRequest {
+	omitted := slices.Clone(input.Omitted)
+	slices.SortFunc(omitted, manifest.NamedResource.Compare)
+	omitted = slices.Compact(omitted)
+	current := *input
+	current.Omitted = omitted
+	return templateRequest{
+		Preparation: *p, input: current, release: hr, content: hr.Content(p.key, omitted),
+	}
 }

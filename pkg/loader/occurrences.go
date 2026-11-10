@@ -799,7 +799,7 @@ func (l *Loader) readOccurrence(
 	if payload == nil {
 		return reader.parseFile(ctx, file, manifest.ParseDocOptions{})
 	}
-	data, err := payload.read()
+	data, err := payload.read(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -3,10 +3,8 @@ package helm
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"io"
 	"io/fs"
 	"maps"
 	"slices"
@@ -61,9 +59,8 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
 	frame.header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
-	frame.encoded, err = encodeFrame(frame.header, frame.output)
+	frame.stored, err = cache.NewFrame(frameDomain, frame.header, frame.output)
 	assert.NoError(t, err)
-	frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
 	original := bytes.Clone(frame.output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
 	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).output, original), true)
@@ -505,30 +502,33 @@ func testTemplateAcceptedHistoryDurableName(
 	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	invalid := (*testCaseInput).frame.header
 	tc.mutate(&invalid)
-	invalidReceipt, encodeFrameErr := encodeFrame(invalid, (*testCaseInput).frame.output)
-	assert.NoError(t, encodeFrameErr)
-	invalidFrame, encodeFrameErr := decodeFrame(invalidReceipt)
-	assert.NoError(t, encodeFrameErr)
-	accepted, encodeFrameErr := encodeAccepted((*(*testCaseInput).hr).Named(), &invalidFrame, maps.All(records))
-	assert.NoError(t, encodeFrameErr)
-	_, _, _, encodeFrameErr = isolated.cache.Blob(
+	invalidFrame, frameErr := cache.NewFrame(frameDomain, invalid, (*testCaseInput).frame.output)
+	assert.NoError(t, frameErr)
+	accepted, frameErr := invalidFrame.PreparePublication(t.Context(), cache.FramePublicationInput{
+		Owner:    (*(*testCaseInput).hr).Named(),
+		Content:  (*testCaseInput).frame.content,
+		Records:  maps.All(records),
+		Complete: true,
+	})
+	assert.NoError(t, frameErr)
+	_, _, _, frameErr = isolated.cache.Blob(
 		t.Context(),
 		(*(*testCaseInput).key),
 		&cache.Policy{MaxAge: 0},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(invalidReceipt), bytes.NewReader(accepted)))
+			_, copyErr := accepted.WriteTo(w)
 			return cache.ProducerResult{}, copyErr
 		},
 	)
-	assert.NoError(t, encodeFrameErr)
+	assert.NoError(t, frameErr)
 
-	prepared, encodeFrameErr := isolated.prepareTemplate(
+	prepared, frameErr := isolated.prepareTemplate(
 		t.Context(),
 		(*(*testCaseInput).hr),
 		nil,
 		(*testCaseInput).input,
 	)
-	assert.NoError(t, encodeFrameErr)
+	assert.NoError(t, frameErr)
 	defer func() {
 		{
 			problem := recover()
@@ -540,8 +540,8 @@ func testTemplateAcceptedHistoryDurableName(
 			)
 		}
 	}()
-	found, encodeFrameErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key, &RenderOptions{})
-	assert.NoError(t, encodeFrameErr)
+	found, frameErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key, &RenderOptions{})
+	assert.NoError(t, frameErr)
 
 	assert.FatalIf(t, found != nil, "%s", "invalid raw request metadata reused cached output")
 

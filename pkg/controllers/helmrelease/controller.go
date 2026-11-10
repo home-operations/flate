@@ -133,6 +133,7 @@ func (c *execution) render(
 		Options:                 c.Options,
 		DependencySubstitutions: c.DependencySubstitutions,
 		Sources:                 helm.NewSources(&c.run.Reads),
+		Omitted:                 omitted,
 	}
 	input.Admit = func(admission helm.RenderAdmission) (bool, error) {
 		if c.run.AdmitQualification(admission.Possible) {
@@ -256,6 +257,7 @@ func (c *Controller) PreviousRender(
 	request := helm.RenderOptions{
 		Work: reads.Work().Scope().RenderWork(), Options: c.Options,
 		DependencySubstitutions: c.DependencySubstitutions, Sources: helm.NewSources(reads), PreparationTasks: c.Tasks,
+		Omitted: omittedRefs,
 	}
 	ex.prepareRequest(hr, &request)
 	records, found := c.Helm.PreviousRender(ctx, hr, hr.Values, request)

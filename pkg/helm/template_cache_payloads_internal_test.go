@@ -29,7 +29,7 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 		recoveryKey,
 		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			writeTestRecordErr3 := writeTestRecord(
+			writeTestRecordErr3 := writeTestRecord(t.Context(),
 				w,
 				recoveryKey,
 				&renderRecord{Output: []byte("corrupt"), Analysis: inputs.loaded.analyze()},
@@ -93,7 +93,7 @@ func testTemplateCachePayloadRecovery(t *testing.T, inputs *templateCacheIntegra
 	)
 	assert.NoError(t, (*recovery.renderMapsErr))
 	var replacement renderRecord
-	assert.NoError(t, readTestRecord((*recovery.r), &replacement))
+	assert.NoError(t, readTestRecord(t.Context(), (*recovery.r), &replacement))
 
 	var decoded []map[string]any
 	decoded, (*recovery.renderMapsErr) = testutil.DecodeRender(replacement.Output)

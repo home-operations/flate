@@ -6,6 +6,8 @@ import (
 	"maps"
 	"testing"
 
+	"oras.land/oras-go/v2/errdef"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -28,7 +30,7 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	}
 	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{
-		owner: {File: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))},
+		owner: {File: string(bytes.Repeat([]byte{'x'}, (16<<20)+1))},
 	}
 	{
 		err := renderer.RecordRender(
@@ -40,9 +42,13 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 				Records: maps.All(records),
 			},
 		)
-		assert.FatalIf(t, !errors.Is(
-			err,
-			manifest.ErrFlux,
-		), "oversized accepted inventory was published: %v", err)
+		assert.NoError(t, err)
+		_, _, _, lookupErr := renderer.cache.Blob(
+			t.Context(),
+			cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted},
+			&cache.Policy{MaxAge: cache.Forever},
+			nil,
+		)
+		assert.Equal(t, errors.Is(lookupErr, errdef.ErrNotFound), true)
 	}
 }

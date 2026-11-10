@@ -587,7 +587,7 @@ func testPreflightRemoteResourcesReachableInputsCase(
 			err := preflightRemoteResources(t.Context(), cache, view, root)
 			assert.NoError(t, err)
 		}
-		snapFrame, err := decodeFrame(testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
+		snapFrame, err := testDecodeFrame(t, testRenderFrame(t, new(rec.snapshot()), testRenderEncoding(t, out)))
 		snap := snapFrame.header.Reads
 		assert.FatalIf(
 			t,

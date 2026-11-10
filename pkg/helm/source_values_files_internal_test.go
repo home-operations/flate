@@ -207,7 +207,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	assert.NoError(t, err)
 
 	var record renderRecord
-	assert.NoError(t, decodeTestRecord(data, &record))
+	assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
 	decoded, err := testutil.DecodeRender(record.Output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, first)
@@ -217,7 +217,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
 		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			writeTestRecordErr := writeTestRecord(
+			writeTestRecordErr := writeTestRecord(t.Context(),
 				w,
 				cache.BlobKey{Content: key, Render: cache.RenderAccepted},
 				&renderRecord{Output: encodedRender(t, cached), Analysis: initial.analyze()},
@@ -304,7 +304,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	assert.NoError(t, err)
 
 	var record renderRecord
-	assert.NoError(t, decodeTestRecord(data, &record))
+	assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
 	decoded, err := testutil.DecodeRender(record.Output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, first)

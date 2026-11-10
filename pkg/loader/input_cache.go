@@ -3,12 +3,8 @@ package loader
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
-	jsonv2 "encoding/json/v2"
 	"errors"
-	"fmt"
-	"io"
 	"io/fs"
 	"iter"
 	"maps"
@@ -27,7 +23,7 @@ import (
 )
 
 type inputCache struct {
-	key     string
+	lookup  cache.BlobKey
 	input   *store.SourceArtifact
 	digests map[string]string
 	types   map[string]fs.FileMode
@@ -96,14 +92,15 @@ type cachedOccurrenceFacts struct {
 
 type inputFrame struct {
 	Visits  []cachedVisit `json:"Visits,omitempty"`
-	archive *inputArchive
-	Schema  int                    `json:"Schema,omitempty"`
+	frame   *cache.Frame
 	Files   []cachedInput          `json:"Files,omitempty"`
 	Walks   []cachedWalk           `json:"Walks,omitempty"`
 	Loads   []cachedLoad           `json:"Loads,omitempty"`
 	Digests map[string]string      `json:"Digests,omitempty"`
 	Types   map[string]fs.FileMode `json:"Types,omitempty"`
 }
+
+type inputFrameContent struct{ Origin, URL, Content string }
 
 func (l *Loader) restoreCachedInputs(ctx context.Context) error {
 	if !l.documents.compact || l.Options.Cache == nil || !l.Options.Cache.CanPersistRenders() {
@@ -200,57 +197,78 @@ func (r documentReader) restoreCachedFile(absolute string) {
 // PersistInputs publishes only content-certified authored facts through the cache owner.
 func (l *Loader) PersistInputs(ctx context.Context) error {
 	states := slices.SortedFunc(maps.Values(l.inputCaches), func(a, b *inputCache) int {
-		return strings.Compare(a.key, b.key)
+		return strings.Compare(a.input.LocalPath, b.input.LocalPath)
 	})
 	for _, state := range states {
-		input := state.input
-		mounted := l.documents.artifacts[input.LocalPath]
-		if mounted == nil || parsedInputIdentity(input) != parsedInputIdentity(mounted) {
-			continue
-		}
-		frame, err := l.cacheSourceInputs(state)
-		if err != nil {
+		if err := l.persistSourceInputs(ctx, state); err != nil {
 			return err
 		}
+	}
+	return nil
+}
 
-		if frame == nil {
-			continue
-		}
-		if certifyErr := state.certify(ctx, frame); certifyErr != nil {
-			return certifyErr
-		}
+func (l *Loader) persistSourceInputs(ctx context.Context, state *inputCache) error {
+	input := state.input
+	mounted := l.documents.artifacts[input.LocalPath]
+	if mounted == nil || parsedInputIdentity(input) != parsedInputIdentity(mounted) {
+		return nil
+	}
+	frame, err := l.cacheSourceInputs(state)
+	if err != nil {
+		return err
+	}
 
-		var encoded bytes.Buffer
-		if writeErr := frame.write(&encoded); writeErr != nil {
-			return writeErr
-		}
-		_, _, _, err = l.Options.Cache.Blob(
-			ctx,
-			cache.BlobKey{Content: state.key, Render: cache.RenderAccepted},
-			&cache.Policy{},
-			func(_ context.Context, out cache.ProducerInput) (cache.ProducerResult, error) {
-				_, writeErr := out.Write(encoded.Bytes())
-				return cache.ProducerResult{}, writeErr //nolint:wrapcheck // Cache publication preserves the writer error identity.
-			},
-		)
-		if err != nil {
-			return err
-		}
-		state.walks = map[physicalContext]struct{}{}
-		for walkIndex := range frame.Walks {
-			walk := &frame.Walks[walkIndex]
-			state.walks[walk.key(input.LocalPath)] = struct{}{}
-		}
-		state.loads = map[loadContext]manifest.DocumentRole{}
-		for loadIndex := range frame.Loads {
-			load := &frame.Loads[loadIndex]
-			state.loads[load.context(input.LocalPath)] = load.Coverage
-		}
-		state.files = map[inputCoordinate]inputEvidence{}
-		for _, file := range frame.Files {
-			state.files[inputCoordinate{name: file.Name, builder: file.Builder != ""}] = inputEvidence{
-				digest: file.Digest, coverage: file.Coverage, projection: file.projectionPayload(),
-			}
+	if frame == nil {
+		return nil
+	}
+	if certifyErr := state.certify(ctx, frame); certifyErr != nil {
+		return certifyErr
+	}
+
+	content, err := frame.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	if content == nil {
+		return nil
+	}
+	_, contentKey := cache.InputFrameIdentity(input.OriginPath(input.LocalPath), input.URL, content)
+	publication, err := content.PreparePublication(ctx, cache.FramePublicationInput{
+		Owner: manifest.BootstrapSourceID,
+		Content: inputFrameContent{
+			Origin: input.OriginPath(input.LocalPath), URL: input.URL, Content: contentKey,
+		},
+		Complete: true,
+		Records:  maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{}),
+	})
+	if err != nil {
+		return err
+	}
+	if publication == nil {
+		return nil
+	}
+	//nolint:errcheck // InputFrameIdentity returns a string lookup identity.
+	lookupKey := state.lookup.Content.(string)
+	err = cache.RecordInventory(ctx, l.Options.Cache, cache.AcceptedInventory[*cache.FramePublication]{
+		Key: lookupKey, Acceptance: publication.Identity(), Content: publication,
+	})
+	if err != nil {
+		return err
+	}
+	state.walks = map[physicalContext]struct{}{}
+	for walkIndex := range frame.Walks {
+		walk := &frame.Walks[walkIndex]
+		state.walks[walk.key(input.LocalPath)] = struct{}{}
+	}
+	state.loads = map[loadContext]manifest.DocumentRole{}
+	for loadIndex := range frame.Loads {
+		load := &frame.Loads[loadIndex]
+		state.loads[load.context(input.LocalPath)] = load.Coverage
+	}
+	state.files = map[inputCoordinate]inputEvidence{}
+	for _, file := range frame.Files {
+		state.files[inputCoordinate{name: file.Name, builder: file.Builder != ""}] = inputEvidence{
+			digest: file.Digest, coverage: file.Coverage, projection: file.projectionPayload(),
 		}
 	}
 	return nil
@@ -327,10 +345,9 @@ func (l *Loader) restoreSourceInputs(ctx context.Context, input *store.SourceArt
 	if err != nil {
 		return err
 	}
+	lookup, _ := cache.InputFrameIdentity(input.OriginPath(input.LocalPath), input.URL, nil)
 	state := &inputCache{
-		key: manifest.Fingerprint(
-			struct{ Purpose, Origin, URL string }{"discovery-inputs", input.OriginPath(input.LocalPath), input.URL},
-		),
+		lookup:  lookup,
 		input:   input,
 		digests: observation.Files,
 		types:   observation.Types,
@@ -344,7 +361,7 @@ func (l *Loader) restoreSourceInputs(ctx context.Context, input *store.SourceArt
 	l.inputCaches[input.LocalPath] = state
 	generation, _, _, err := l.Options.Cache.Blob(
 		ctx,
-		cache.BlobKey{Content: state.key, Render: cache.RenderAccepted},
+		state.lookup,
 		&cache.Policy{MaxAge: cache.Forever},
 		nil,
 	)
@@ -354,9 +371,15 @@ func (l *Loader) restoreSourceInputs(ctx context.Context, input *store.SourceArt
 	if err != nil {
 		return err
 	}
-	frame, err := readInputFrame(generation)
+	frame, err := readInputFrame(ctx, generation)
 	if err != nil {
 		return err
+	}
+	_, contentKey := cache.InputFrameIdentity(input.OriginPath(input.LocalPath), input.URL, frame.frame)
+	if _, complete := frame.frame.History(manifest.BootstrapSourceID, inputFrameContent{
+		Origin: input.OriginPath(input.LocalPath), URL: input.URL, Content: contentKey,
+	}); !complete {
+		return nil
 	}
 	if err := l.restoreFrameFiles(state, frame); err != nil {
 		return err
@@ -477,7 +500,6 @@ func (l *Loader) cacheSourceInputs(state *inputCache) (*inputFrame, error) {
 		return strings.Compare(a.Builder, b.Builder)
 	})
 	frame := &inputFrame{
-		Schema:  1,
 		Files:   files,
 		Loads:   loads,
 		Walks:   walks,
@@ -490,65 +512,24 @@ func (l *Loader) cacheSourceInputs(state *inputCache) (*inputFrame, error) {
 
 // Payloads MUST remain separate from the compact index and hydrate only on demand.
 type inputPayload struct {
-	archive *inputArchive
-	offset  int64
-	size    int
-	data    []byte
+	frame  *cache.Frame
+	offset int64
+	size   int
+	data   []byte
 }
 
-func (p *inputPayload) read() ([]byte, error) {
+func (p *inputPayload) read(ctx context.Context) ([]byte, error) {
 	if p.data != nil {
 		return p.data, nil
 	}
-	if p.offset < 0 || p.size < 0 || p.offset > p.archive.size-int64(p.size) {
-		return nil, manifest.NewError(manifest.ErrFlux, nil, "discovery payload exceeds its generation")
-	}
-	input, err := p.archive.generation.Open(cache.FileName(p.archive.generation))
-	if err != nil {
-		return nil, err //nolint:wrapcheck // The cache owner retains filesystem error identity.
-	}
-	defer func() { _ = input.Close() }()
-	positioned, ok := input.(io.ReaderAt)
-	if !ok {
-		return nil, manifest.NewError(manifest.ErrFlux, nil, "discovery inputs require positioned reads")
-	}
-	data := make([]byte, p.size)
-	if _, err := positioned.ReadAt(data, p.archive.offset+p.offset); err != nil {
-		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read discovery payload: %w", err), "")
-	}
-	return data, nil
+	return p.frame.ReadPayload(ctx, p.offset, p.size)
 }
 
-func readInputFrame(generation fs.FS) (*inputFrame, error) {
-	input, err := generation.Open(cache.FileName(generation))
-	if err != nil {
-		return nil, err //nolint:wrapcheck // The cache owner retains filesystem error identity.
-	}
-	defer func() { _ = input.Close() }()
-	info, err := input.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("read discovery index: %w", err)
-	}
-	var header [8]byte
-	if _, err := io.ReadFull(input, header[:]); err != nil {
-		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read discovery index: %w", err), "")
-	}
-	encodedSize := binary.BigEndian.Uint64(header[:])
-	//nolint:gosec // The short-circuit guard makes the subtraction nonnegative.
-	if info.Size() < int64(len(header)) || encodedSize > uint64(info.Size()-int64(len(header))) {
-		return nil, manifest.NewError(manifest.ErrFlux, nil, "discovery index exceeds its generation")
-	}
-	size := int64(encodedSize) //nolint:gosec // The file-size bound keeps encodedSize within int64.
-	data := make([]byte, size)
-	if _, err := io.ReadFull(input, data); err != nil {
-		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read discovery index: %w", err), "")
-	}
+func readInputFrame(ctx context.Context, generation fs.FS) (*inputFrame, error) {
 	var frame inputFrame
-	if err := jsonv2.Unmarshal(data, &frame, json.DefaultOptionsV1()); err != nil {
-		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("decode discovery inputs: %w", err), "")
-	}
-	if frame.Schema != 1 {
-		return nil, manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: unsupported schema")
+	content, err := cache.OpenFrame(ctx, "loader-inputs", generation, &frame)
+	if err != nil {
+		return nil, err
 	}
 	for i := range frame.Walks {
 		walk := &frame.Walks[i]
@@ -557,29 +538,25 @@ func readInputFrame(generation fs.FS) (*inputFrame, error) {
 			return nil, manifest.NewError(manifest.ErrFlux, nil, "decode discovery inputs: invalid visit reference")
 		}
 	}
-	frame.archive = &inputArchive{
-		generation: generation,
-		offset:     int64(len(header)) + size,
-		size:       info.Size() - int64(len(header)) - size,
-	}
+	frame.frame = content
 	for i := range frame.Files {
 		file := &frame.Files[i]
 		for j := range file.Objects {
 			saved := &file.Objects[j]
 			if saved.Size != 0 {
-				saved.payload = &inputPayload{archive: frame.archive, offset: saved.Offset, size: saved.Size}
+				saved.payload = &inputPayload{frame: content, offset: saved.Offset, size: saved.Size}
 			}
 		}
 		if projection := file.Projection; projection != nil {
 			projection.payload = &inputPayload{
-				archive: frame.archive, offset: projection.Offset, size: projection.Size,
+				frame: content, offset: projection.Offset, size: projection.Size,
 			}
 		}
 	}
 	return &frame, nil
 }
 
-func (f *inputFrame) write(out io.Writer) error {
+func (f *inputFrame) prepare(ctx context.Context) (*cache.Frame, error) {
 	f.Visits = nil
 	visits := map[cachedVisit]int{}
 	for i := range f.Walks {
@@ -610,35 +587,15 @@ func (f *inputFrame) write(out io.Writer) error {
 		offset += int64(*reference.size)
 	}
 
-	data, err := jsonv2.Marshal(f, json.DefaultOptionsV1(), jsonv2.OmitZeroStructFields(true))
-	if err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode discovery inputs: %w", err), "")
-	}
-	var header [8]byte
-	binary.BigEndian.PutUint64(header[:], uint64(len(data)))
-	if _, err := out.Write(header[:]); err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("write discovery inputs: %w", err), "")
-	}
-	if _, err := out.Write(data); err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("write discovery inputs: %w", err), "")
-	}
+	var payload bytes.Buffer
 	for reference := range f.payloads() {
-		data, err := reference.payload.read()
+		data, err := reference.payload.read(ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if _, err := out.Write(data); err != nil {
-			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("write discovery inputs: %w", err), "")
-		}
+		payload.Write(data)
 	}
-	return nil
-}
-
-// The acquired generation owns payload lifetime across independent loader snapshots.
-type inputArchive struct {
-	generation fs.FS
-	offset     int64
-	size       int64
+	return cache.NewFrame("loader-inputs", f, payload.Bytes())
 }
 
 func (f *cachedInput) projectionPayload() *inputPayload {

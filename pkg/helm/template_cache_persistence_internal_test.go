@@ -128,7 +128,7 @@ func testTemplateCachePersistedIntegration(t *testing.T, inputs *templateCacheIn
 		alternateKey,
 		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			writeTestRecordErr2 := writeTestRecord(w, alternateKey, initial.record)
+			writeTestRecordErr2 := writeTestRecord(t.Context(), w, alternateKey, initial.record)
 			return cache.ProducerResult{}, writeTestRecordErr2
 		},
 	)

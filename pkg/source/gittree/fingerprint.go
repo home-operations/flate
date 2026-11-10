@@ -277,6 +277,7 @@ func (g *FS) fingerprintOrigin(v **gitView, subdir, origin, root *string) {
 }
 
 type fileIdentity struct {
+	buffer         []byte
 	types          map[string]fs.FileMode
 	git            *gitView
 	origin, prefix string
@@ -304,23 +305,35 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 	if identity != plumbing.ZeroHash {
 		return identity, nil
 	}
-	var data []byte
-	var err error
 	mode, observed := s.types[name]
-	if observed && mode.IsRegular() {
-		file, openErr := g.OpenRegular(name)
-		if openErr != nil {
-			return plumbing.ZeroHash, openErr
+	if !observed || !mode.IsRegular() {
+		data, err := g.ReadFile(name)
+		if err != nil {
+			return plumbing.ZeroHash, err
 		}
-		data, err = io.ReadAll(identityReader{ctx: ctx, input: file})
-		err = errors.Join(err, file.Close())
-	} else {
-		data, err = g.ReadFile(name)
+		return plumbing.ComputeHash(plumbing.BlobObject, data), nil
 	}
+	file, err := g.OpenRegular(name)
 	if err != nil {
 		return plumbing.ZeroHash, err
 	}
-	return plumbing.ComputeHash(plumbing.BlobObject, data), nil
+	info, err := file.Stat()
+	if err != nil {
+		return plumbing.ZeroHash, errors.Join(err, file.Close())
+	}
+	if s.buffer == nil {
+		const bufferSize = 32 * 1024
+		s.buffer = make([]byte, bufferSize)
+	}
+	hasher := plumbing.NewHasher(plumbing.BlobObject, info.Size())
+	n, err := io.CopyBuffer(hasher, identityReader{ctx: ctx, input: file}, s.buffer)
+	if err == nil && n != info.Size() {
+		err = &fs.PathError{Op: "read", Path: name, Err: io.ErrUnexpectedEOF}
+	}
+	if readErr := errors.Join(err, file.Close()); readErr != nil {
+		return plumbing.ZeroHash, readErr
+	}
+	return hasher.Sum(), nil
 }
 
 //nolint:containedctx // This adapter retains cancellation only for its enclosing file read.

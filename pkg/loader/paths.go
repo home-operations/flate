@@ -279,8 +279,7 @@ func (l *Loader) projectionNames(
 	child, prepared *manifest.Kustomization,
 	roots map[manifest.NamedResource][]string,
 ) (projectionNames, error) {
-	active := len(prepared.PostBuild.Substitute) != 0 ||
-		prepared.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
+	active := values.SubstitutionActive(prepared)
 	declared, err := child.RenderDocument()
 	known := err == nil && child.NamePrefix == "" && child.NameSuffix == "" && len(child.Images) == 0
 	declared, decoded := projectionPatches(declared)

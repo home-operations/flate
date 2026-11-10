@@ -61,8 +61,7 @@ func previousHistory(
 	if !found {
 		return nil, false
 	}
-	content := acceptedInput.(renderContent)
-	content.Dependencies = request.DependencySubstitutions
+	content := acceptedInput
 	return cache.RenderHistory(owner, receipt, content)
 }
 

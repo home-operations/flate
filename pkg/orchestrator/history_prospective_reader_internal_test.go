@@ -688,9 +688,8 @@ spec:
 				prepared,
 				prepared.Values,
 				helm.RenderOptions{
-					Options:                 warm.hrc.Options,
-					DependencySubstitutions: warm.dependencySubstitutions,
-					Sources:                 helm.NewSources(reads),
+					Options: warm.hrc.Options,
+					Sources: helm.NewSources(reads),
 				},
 			),
 		)

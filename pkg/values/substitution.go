@@ -5,11 +5,18 @@ import (
 	"slices"
 	"strings"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/envsubst/parse"
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// SubstitutionActive requires a non-nil Kustomization with references already expanded.
+func SubstitutionActive(ks *manifest.Kustomization) bool {
+	return ks.PostBuild != nil && len(ks.PostBuild.Substitute) != 0 ||
+		ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
+}
 
 // NeedsSubstitution reports expansion syntax or scalars requiring the Flux JSON conversion.
 func NeedsSubstitution(v any) bool {

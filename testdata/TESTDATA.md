@@ -1496,3 +1496,11 @@ Restore reuses that URL while it restores both repositories.
 CLI cases do not declare this operation and retain the socket-free harness boundary.
 The catalog also builds states for SDK cases that contain only declared edits.
 Components use consumers within the same materialized repository when repositories share one source directory.
+
+`dependency-namespaces/corrected` resolves both dependency fields through parent document substitution.
+`dependency-namespaces/missing` reports the absent substituted target and blocks child output.
+`dependency-namespaces/escaped` keeps the escaped namespace literal and reports that missing target.
+`TestE2E_DependencyNamespaces` compares two complete harness replays with concurrency 2.
+The fixture uses no network service and disables persistent caching.
+Expected output follows the declared ConfigMap and its Flux ownership labels.
+Expected diagnostics follow the missing target identity and the report formatter.

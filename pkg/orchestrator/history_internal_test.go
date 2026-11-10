@@ -505,7 +505,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		assert.Equal(t, len(before), 0)
 	} else {
 		child := testutil.KustomizationID("apps", "child")
-		assert.Diff(t, before[child].Refs, []manifest.NamedResource{testutil.KustomizationID("apps", "ready")})
+		assert.Diff(t, before[child].Refs, []manifest.NamedResource{testutil.KustomizationID("apps", "${DEP}")})
 		assert.Diff(
 			t,
 			before[child].ContentRoots,
@@ -640,17 +640,28 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 		o.store.AddObject(
 			&manifest.Kustomization{Name: "prod-ready", Namespace: "control", Path: "./empty"},
 		)
+		o.store.AddObject(
+			&manifest.Kustomization{Name: "${PREFIX:-dev-}ready", Namespace: "${TEAM:-dev}", Path: "./empty"},
+		)
 	}
 	assert.NoError(t, o.bootstrap(t.Context()))
 	o.configureControllers()
 	if (*(*testCaseInput.testCaseInput)) == "independent" {
 		assert.Equal(t, o.entryBinding.Producer, testutil.KustomizationID("apps", "owner"))
 		owner := o.store.GetObject(o.entryBinding.Producer).(*manifest.Kustomization)
-		assert.Equal(t, owner.DependsOn[0].Name, "prod-ready")
-		assert.Equal(t, owner.DependsOn[0].Namespace, "control")
-		assert.Equal(t, o.dependencySubstitutions.Resolve("${PREFIX}"), "prod-")
+		assert.Equal(t, owner.DependsOn[0].Name, "${PREFIX:-dev-}ready")
+		assert.Equal(t, owner.DependsOn[0].Namespace, "${TEAM:-dev}")
+		assert.Equal(
+			t,
+			o.index.Records[testutil.KustomizationID("control", "supplier")].Declaration.(*manifest.Kustomization).PostBuild.Substitute["PREFIX"],
+			"prod-",
+		)
 	} else {
-		assert.Equal(t, o.dependencySubstitutions.Resolve("${VALUE}"), "frozen")
+		assert.Equal(
+			t,
+			o.index.Records[testutil.KustomizationID("apps", "child")].Declaration.(*manifest.Kustomization).PostBuild.Substitute["VALUE"],
+			"frozen",
+		)
 	}
 	assert.Equal(t, (*testCaseInput.input).builds.Load() == 0, (*testCaseInput.lifetime) == "warm")
 	owner := o.entryBinding.Producer

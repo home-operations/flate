@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/envsubst"
@@ -208,6 +209,8 @@ func TestRenderRequestContent_UnprovedAlways(t *testing.T) {
 		invalid   bool
 	}{
 		{name: "nil PostBuild"},
+		{name: "empty substitutions", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{}}},
+		{name: "nonempty substitutions", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"OTHER": "first"}}, invalid: true},
 		{name: "Always empty", postBuild: &kustomizev1.PostBuild{SubstituteStrategy: kustomizev1.SubstituteStrategyAlways}, invalid: true},
 		{
 			name: "Always whole bag",
@@ -381,6 +384,101 @@ func TestShaping_ReusesPreparedDocuments(t *testing.T) {
 			assert.Equal(t, string(again.inputs[0].data), raw)
 			again.Retire()
 			assert.Equal(t, preparation.shaping == nil && again.preparation == nil, true)
+		})
+	}
+}
+
+func TestShaping_DependencySubstitutionInputs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, inline, childInline, wantName, wantNamespace string
+		references                                         bool
+	}{
+		{name: "parent inline", inline: "  postBuild: {substitute: {DEP: ready, TEAM: shared}}\n", wantName: "ready", wantNamespace: "shared"},
+		{name: "parent references", references: true, wantName: "reference-ready", wantNamespace: "reference-shared"},
+		{name: "inline precedence", references: true, inline: "  postBuild: {substitute: {DEP: ready, TEAM: shared}}\n", wantName: "ready", wantNamespace: "shared"},
+		{name: "child values excluded", childInline: "  postBuild: {substitute: {DEP: child-ready, TEAM: child-shared}}\n", wantName: "${DEP}", wantNamespace: "${TEAM}"},
+		{name: "unrelated values excluded", wantName: "${DEP}", wantNamespace: "${TEAM}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			decode := func(name, spec string) manifest.ParsedDoc {
+				t.Helper()
+				docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML(name, "apps", spec)))
+				assert.NoError(t, err)
+				parsed, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
+				assert.NoError(t, err)
+				return parsed
+			}
+			parsedParent := decode("parent", tc.inline)
+			parent := parsedParent.Object.(*manifest.Kustomization).Clone()
+			if tc.references {
+				if parent.PostBuild == nil {
+					parent.PostBuild = &kustomizev1.PostBuild{}
+				}
+				parent.PostBuild.SubstituteFrom = []manifest.SubstituteReference{
+					{Kind: "ConfigMap", Name: "first"},
+					{Kind: "ConfigMap", Name: "last"},
+				}
+			}
+			st.AddObject(parent)
+			before := parent.Clone()
+			st.AddObject(
+				&manifest.ConfigMap{
+					Name:      "first",
+					Namespace: "apps",
+					Data:      map[string]any{"DEP": "earlier", "TEAM": "earlier"},
+				},
+			)
+			last := &manifest.ConfigMap{
+				Name:      "last",
+				Namespace: "apps",
+				Data:      map[string]any{"DEP": "reference-ready", "TEAM": "reference-shared"},
+			}
+			st.AddObject(last)
+			st.AddObject(
+				decode(
+					"unrelated",
+					"  postBuild: {substitute: {DEP: unrelated-ready, TEAM: unrelated-shared}}\n",
+				).Object,
+			)
+			parsedChild := decode(
+				"child",
+				"  path: ./leaf\n  dependsOn: [{name: '${DEP}', namespace: '${TEAM}', readyExpr: 'true'}]\n"+tc.childInline,
+			)
+			original := parsedChild.Object.(*manifest.Kustomization)
+			childBefore := original.Clone()
+			originalBytes := manifest.Fingerprint(parsedChild.Document)
+			effective := parent.Clone()
+			assert.NoError(t, values.ExpandPostBuildSubstituteReference(effective, values.NewStoreProvider(st)))
+			docs := []manifest.DocOccurrence{{Document: manifest.DeepCopyMap(parsedChild.Document)}}
+			shaping := PrepareShape(&RenderRequest{Spec: effective}, docs)
+			content := manifest.Fingerprint(shaping.Content())
+			changed := parent.Clone()
+			changed.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "later", "TEAM": "later"}}
+			st.AddObject(changed)
+			changedLast := *last
+			changedLast.Data = map[string]any{"DEP": "later", "TEAM": "later"}
+			st.AddObject(&changedLast)
+			assert.NoError(t, shaping.Apply(t.Context(), ShapeOptions{}))
+			parsed, err := manifest.ParseDoc(docs[0].Document, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			child := parsed.Object.(*manifest.Kustomization)
+			assert.Equal(t, child.DependsOn[0].Name, tc.wantName)
+			assert.Equal(t, child.DependsOn[0].Namespace, tc.wantNamespace)
+			assert.Equal(t, child.DependsOn[0].ReadyExpr, "true")
+			assert.Equal(t, child.Path, "./leaf")
+			assert.Equal(t, manifest.Equal(parent, before), true)
+			assert.Equal(t, manifest.Equal(original, childBefore), true)
+			assert.Equal(t, manifest.Fingerprint(parsedChild.Document), originalBytes)
+			assert.Equal(t, manifest.Fingerprint(shaping.Content()), content)
+			assert.Diff(t, last.Data, map[string]any{"DEP": "reference-ready", "TEAM": "reference-shared"})
+			for ref := range manifest.References(child, manifest.ReferenceRelations) {
+				if ref.Use == "dependsOn" {
+					assert.Equal(t, ref.NamedResource, testutil.KustomizationID(tc.wantNamespace, tc.wantName))
+				}
+			}
 		})
 	}
 }

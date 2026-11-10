@@ -387,7 +387,7 @@ func (d *Session) preparePendingProducer(
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}
 	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered &&
-		previous.matches(ks, input, d.substitutions, nil) {
+		previous.matches(ks, input, nil) {
 		return false, nil
 	}
 	prepared, err := d.prepareDocuments(ctx, ks, input, nil)

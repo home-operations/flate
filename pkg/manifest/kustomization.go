@@ -183,29 +183,6 @@ func (k *Kustomization) SubstituteStrategy() kustomizev1.SubstituteStrategy {
 	return (kustomizev1.Kustomization{Spec: k.KustomizationSpec}).GetSubstituteStrategy()
 }
 
-func (k *Kustomization) mapDependsOn(name, namespace func(string) string) *Kustomization {
-	var out *Kustomization
-	for i, dep := range k.DependsOn {
-		resolvedName := name(dep.Name)
-		resolvedNamespace := dep.Namespace
-		if namespace != nil {
-			resolvedNamespace = namespace(dep.Namespace)
-		}
-		if resolvedName == dep.Name && resolvedNamespace == dep.Namespace {
-			continue
-		}
-		if out == nil {
-			out = k.Clone()
-		}
-		out.DependsOn[i].Name = resolvedName
-		out.DependsOn[i].Namespace = resolvedNamespace
-	}
-	if out == nil {
-		return k
-	}
-	return out
-}
-
 func (k *Kustomization) references(yield func(Reference) bool, view ReferenceView) {
 	if !k.sourceReference(yield, view) {
 		return

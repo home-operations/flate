@@ -7,7 +7,6 @@ import (
 	"maps"
 	"slices"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -47,8 +46,7 @@ func PrepareShape(request *RenderRequest, docs []manifest.DocOccurrence) *Shapin
 	}
 	p := &Shaping{
 		spec: ks, docs: docs, preparation: request.Preparation,
-		active: len(vars) > 0 ||
-			ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways,
+		active: values.SubstitutionActive(ks),
 	}
 	output := manifest.Fingerprint(docs)
 	var prepared *preparedShaping
@@ -86,7 +84,7 @@ func PrepareShape(request *RenderRequest, docs []manifest.DocOccurrence) *Shapin
 		request.Source.Input(store.ArtifactContent), request.ApplyIgnore, output,
 		request.StrictSubstitutions, request.SkipKinds,
 	}
-	p.content = renderContent{ks.Content(source, names, p.active), request.DependencySubstitutions}
+	p.content = renderContent{Manifest: ks.Content(source, names, p.active)}
 	return p
 }
 
@@ -186,8 +184,7 @@ func (p *substitutionDocument) apply(
 }
 
 type renderContent struct {
-	Manifest     any                            `json:"Manifest"`
-	Dependencies values.DependencySubstitutions `json:"Dependencies"`
+	Manifest any `json:"Manifest"`
 }
 
 // ShapeOptions supplies substitution policy and its physical work counter.

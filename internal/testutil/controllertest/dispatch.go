@@ -89,12 +89,12 @@ func NewExecution(c *base.Controller, id manifest.NamedResource) *base.Execution
 
 // Emit installs immutable fixture output without starting a reconciliation.
 func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, next *store.Emission) error {
-	children := next.Children
-	cloned := false
-	if next.Reads.Valid() {
-		var err error
-		cloned, err = keepFixtureChildren(ctx, c, id, next)
-		if err != nil {
+	if len(next.Children) != 0 && next.Reads.Valid() {
+		if _, err := c.KeepEmitted(
+			ctx,
+			id,
+			selection.PrepareRequest{Generation: next.Children, Reads: next.Reads},
+		); err != nil {
 			return err
 		}
 	}
@@ -102,9 +102,6 @@ func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, ne
 		return fmt.Errorf("emit fixture output: %w", err)
 	}
 	c.Store.RecordEmitted(id, next, nil)
-	if cloned && !next.Complete {
-		next.Children = children
-	}
 	if next.Complete {
 		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusPending {
 			message := store.ApplyingStatus(len(next.Manifests))
@@ -114,38 +111,4 @@ func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, ne
 		}
 	}
 	return nil
-}
-
-func keepFixtureChildren(
-	ctx context.Context,
-	c *base.Controller,
-	id manifest.NamedResource,
-	next *store.Emission,
-) (bool, error) {
-	children := next.Children
-	if len(children) == 0 {
-		return false, nil
-	}
-	cloned := false
-	childValues := children
-	for i := range childValues {
-		child := childValues[i]
-		if child.Obj == nil || child.Obj.Named() == id {
-			continue
-		}
-		obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
-		if obj != child.Obj {
-			if !cloned {
-				next.Children = slices.Clone(children)
-				cloned = true
-			}
-			next.Children[i].Obj = obj
-		}
-	}
-	if _, err := c.KeepEmitted(ctx, id,
-		selection.PrepareRequest{Generation: next.Children, Reads: next.Reads},
-	); err != nil {
-		return cloned, err
-	}
-	return cloned, nil
 }

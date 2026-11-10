@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -20,7 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 type historyCountingFS struct {
@@ -355,10 +353,9 @@ func (h *acceptedHistoryCase) incompatiblePolicies(t *testing.T) {
 		name   string
 		mutate func(*RenderRequest)
 	}{
-		{"dependency substitutions", func(r *RenderRequest) {
-			r.DependencySubstitutions = values.NewDependencySubstitutions([]*manifest.Kustomization{{
-				PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "effective-child"}},
-			}})
+		{"effective owner", func(r *RenderRequest) {
+			r.Spec = r.Spec.Clone()
+			r.Spec.Name = "effective-owner"
 		}},
 
 		{"strict", func(r *RenderRequest) { r.StrictSubstitutions = true }},

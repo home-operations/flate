@@ -1,7 +1,6 @@
 package values
 
 import (
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/envsubst"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -26,7 +25,7 @@ func ResolveStaticPath(path string, parent *manifest.Kustomization, provider Pro
 	if parent.PostBuild != nil {
 		variables = manifest.VarsMap(parent.PostBuild.Substitute)
 	}
-	if len(variables) == 0 && parent.SubstituteStrategy() != kustomizev1.SubstituteStrategyAlways && !unknownInputs {
+	if !SubstitutionActive(parent) && !unknownInputs {
 		return path, true
 	}
 	incomplete := false

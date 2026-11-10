@@ -1,0 +1,294 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "aff03a1dadc05630e815582e8e7aadc53239e816",
+    "paths": [
+      "pkg/discovery/depsubst_test.go",
+      "pkg/controllers/base/depsubst_internal_test.go"
+    ],
+    "reductions": "Authored offline regression for parent document substitution, exact dependency namespaces, and complete CLI outcomes."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [
+    {
+      "name": "missing",
+      "directory": "overlays/missing"
+    },
+    {
+      "name": "escaped",
+      "directory": "overlays/escaped"
+    }
+  ],
+  "cases": [
+    {
+      "name": "corrected",
+      "description": "Parent document substitution selects the shared dependency.",
+      "setup": [],
+      "env": {
+        "NO_COLOR": "1"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "child",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/corrected.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing",
+      "description": "The substituted dependency is absent and blocks the child.",
+      "setup": [
+        {
+          "overlay": "missing"
+        }
+      ],
+      "env": {
+        "NO_COLOR": "1"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "child",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/missing.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "escaped",
+      "description": "The escaped namespace stays literal after parent substitution.",
+      "setup": [
+        {
+          "overlay": "escaped"
+        }
+      ],
+      "env": {
+        "NO_COLOR": "1"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "child",
+              "--namespace",
+              "apps",
+              "--path",
+              "@@repo@@",
+              "--cache-dir",
+              "",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap",
+              "-o",
+              "json"
+            ],
+            "cache": {
+              "name": "disabled"
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/escaped.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "repo/flux/parent.yaml",
+      "cases": [
+        "corrected",
+        "missing",
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "repo/flux/ready.yaml",
+      "cases": [
+        "corrected",
+        "missing",
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "repo/ready/kustomization.yaml",
+      "cases": [
+        "corrected",
+        "missing",
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "repo/children/kustomization.yaml",
+      "cases": [
+        "corrected",
+        "missing",
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "repo/children/child.yaml",
+      "cases": [
+        "corrected",
+        "missing",
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "repo/work/kustomization.yaml",
+      "cases": [
+        "corrected",
+        "missing",
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "repo/work/cm.yaml",
+      "cases": [
+        "corrected",
+        "missing",
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "expect/corrected.stdout",
+      "cases": [
+        "corrected"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "missing",
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "corrected"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "expect/missing.stderr",
+      "cases": [
+        "missing"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "expect/escaped.stderr",
+      "cases": [
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "overlays/missing/repo/flux/parent.yaml",
+      "cases": [
+        "missing"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "overlays/escaped/repo/children/child.yaml",
+      "cases": [
+        "escaped"
+      ],
+      "purpose": "Exact local dependency namespace regression input or independently authored output expectation."
+    },
+    {
+      "path": "repo/ready/cm.yaml",
+      "cases": [
+        "corrected",
+        "missing",
+        "escaped"
+      ],
+      "purpose": "The prerequisite has real output while selected-child output excludes the prerequisite workload."
+    }
+  ]
+}

@@ -25,7 +25,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 type entrySource interface {
@@ -455,12 +454,10 @@ type Admission struct {
 	loader           *loader.Loader
 	trees            *kustomize.TreeCache
 	session          *Session
-	substitutions    values.DependencySubstitutions
 }
 
 func (d *Session) admission() *Admission {
 	if d.entryAdmission != nil {
-		d.entryAdmission.substitutions = d.substitutions
 		d.entryAdmission.entryDemand = d.requiresEntry()
 		if d.entryAdmission.entryDemand {
 			d.entryAdmission.session = d
@@ -487,7 +484,6 @@ func (d *Session) admission() *Admission {
 		loader:          d.loader,
 		trees:           d.cfg.Trees,
 		session:         d,
-		substitutions:   d.substitutions,
 	}
 	admission.requestedEntry = manifest.EntryApplication{
 		Source: manifest.BootstrapSourceID, Path: admission.entryPath(),

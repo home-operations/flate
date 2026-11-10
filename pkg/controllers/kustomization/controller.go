@@ -177,15 +177,14 @@ func (c *execution) render(
 
 	_, _, attempt = c.run.Reads.GetEmission(id)
 	request := kustomize.RenderRequest{
-		Work:                    c.run.Reads.Work().Scope().RenderWork(),
-		Source:                  source,
-		ApplyIgnore:             applyIgnore,
-		SubPath:                 ks.Path,
-		Spec:                    ks,
-		HeldSlot:                c.Tasks,
-		SkipKinds:               c.SkipKinds,
-		DependencySubstitutions: c.DependencySubstitutions,
-		StrictSubstitutions:     c.strictSubstitutions,
+		Work:                c.run.Reads.Work().Scope().RenderWork(),
+		Source:              source,
+		ApplyIgnore:         applyIgnore,
+		SubPath:             ks.Path,
+		Spec:                ks,
+		HeldSlot:            c.Tasks,
+		SkipKinds:           c.SkipKinds,
+		StrictSubstitutions: c.strictSubstitutions,
 	}
 	c.prepareRequest(&request)
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
@@ -197,11 +196,10 @@ func (c *execution) render(
 	defer shaping.Retire()
 	content := shaping.Content()
 	acceptance := kustomize.RenderAcceptance{
-		Work:                    c.run.Reads.Work().Scope().RenderWork(),
-		Owner:                   id,
-		Source:                  source.HistoryIdentity(ks.EffectiveSourceID()),
-		Content:                 content,
-		DependencySubstitutions: c.DependencySubstitutions,
+		Work:    c.run.Reads.Work().Scope().RenderWork(),
+		Owner:   id,
+		Source:  source.HistoryIdentity(ks.EffectiveSourceID()),
+		Content: content,
 	}
 	fingerprintDedupResult2, fingerprintDedupResult2Err := c.run.FingerprintDedup(ctx, id, content, &attempt)
 	fp, handled, err := fingerprintDedupResult2.Fingerprint, fingerprintDedupResult2.Reused, fingerprintDedupResult2Err
@@ -291,14 +289,13 @@ func (c *Controller) PreviousRender(
 		return history
 	}
 	request := kustomize.RenderRequest{
-		Work:                    reads.Work().Scope().RenderWork(),
-		Source:                  source,
-		ApplyIgnore:             ignore,
-		SubPath:                 prepared.Path,
-		Spec:                    prepared,
-		SkipKinds:               c.SkipKinds,
-		DependencySubstitutions: c.DependencySubstitutions,
-		StrictSubstitutions:     c.strictSubstitutions,
+		Work:                reads.Work().Scope().RenderWork(),
+		Source:              source,
+		ApplyIgnore:         ignore,
+		SubPath:             prepared.Path,
+		Spec:                prepared,
+		SkipKinds:           c.SkipKinds,
+		StrictSubstitutions: c.strictSubstitutions,
 	}
 	ex.prepareRequest(&request)
 	docs, receipt, found := c.Trees.PreviousRender(ctx, request)

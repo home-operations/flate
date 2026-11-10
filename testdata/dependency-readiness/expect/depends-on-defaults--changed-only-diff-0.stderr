@@ -1,0 +1,11 @@
+
+  ✗  orig snapshot: Kustomization  flux-system/${PREFIX:-}config  not found
+         orig snapshot: required by flux-system/consumer
+
+  ✗  current snapshot: Kustomization  flux-system/${PREFIX:-}config  not found
+         current snapshot: required by flux-system/consumer
+
+  ⚠ warnings (1)
+    [DiffSuppressed] Kustomization flux-system/consumer: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/${PREFIX:-}config: dependency not found; current: dependencies failed: Kustomization.kustomize.toolkit.fluxcd.io/flux-system/${PREFIX:-}config: dependency not found)
+
+  ✗ 2 failed · 2 blocked

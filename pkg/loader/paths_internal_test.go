@@ -161,6 +161,10 @@ func effectiveInputCases() []effectiveInputCase {
 			same:       true,
 		},
 		{name: "activation", expression: "${MISSING:=fallback}", known: true},
+		{
+			name: "Always activation", expression: "${MISSING:=fallback}",
+			postbuild: ", substituteStrategy: Always", known: true, same: true,
+		},
 		{name: "invalid syntax", expression: "${ARR[@]}"},
 		{name: "invalid names", expression: "${OTHER}"},
 		{name: "missing provider", expression: "${OTHER}"},
@@ -205,7 +209,7 @@ func (c *effectiveInputCase) files(side int) fstest.MapFS {
 	if side == 1 {
 		data = "{CHANGED: new, OTHER: same}"
 	}
-	if tc.name == "activation" && side == 0 {
+	if (tc.name == "activation" || tc.name == "Always activation") && side == 0 {
 		data = "{}"
 	}
 	if tc.name == "invalid names" {

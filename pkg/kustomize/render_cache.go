@@ -13,7 +13,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 const frameDomain = "kustomize-render"
@@ -25,19 +24,18 @@ type renderHeader struct {
 }
 
 type renderBinding struct {
-	Render       string                         `json:"Render"`
-	Source       manifest.NamedResource         `json:"Source"`
-	Kind         string                         `json:"Kind"`
-	URL          string                         `json:"URL"`
-	Path         string                         `json:"Path"`
-	Root         string                         `json:"Root"`
-	Key          string                         `json:"Key"`
-	Revision     string                         `json:"Revision"`
-	Digest       string                         `json:"Digest"`
-	Alias        bool                           `json:"Alias"`
-	Strict       bool                           `json:"Strict"`
-	Skip         []string                       `json:",omitempty"`
-	Dependencies values.DependencySubstitutions `json:"Dependencies"`
+	Render   string                 `json:"Render"`
+	Source   manifest.NamedResource `json:"Source"`
+	Kind     string                 `json:"Kind"`
+	URL      string                 `json:"URL"`
+	Path     string                 `json:"Path"`
+	Root     string                 `json:"Root"`
+	Key      string                 `json:"Key"`
+	Revision string                 `json:"Revision"`
+	Digest   string                 `json:"Digest"`
+	Alias    bool                   `json:"Alias"`
+	Strict   bool                   `json:"Strict"`
+	Skip     []string               `json:",omitempty"`
 }
 
 func (a *renderBinding) equal(b *renderBinding) bool {
@@ -48,8 +46,7 @@ func (a *renderBinding) equal(b *renderBinding) bool {
 		a.Digest == b.Digest &&
 		a.Alias == b.Alias &&
 		a.Strict == b.Strict &&
-		slices.Equal(a.Skip, b.Skip) &&
-		a.Dependencies.Equal(b.Dependencies)
+		slices.Equal(a.Skip, b.Skip)
 }
 
 type renderFrame struct {
@@ -177,11 +174,10 @@ type RenderAcceptance struct {
 	Owner   manifest.NamedResource    `json:"Owner"`
 	Receipt *manifest.RenderReceipt   `json:"Receipt"`
 	// Records MUST describe accepted output under Owner.
-	Records                 iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
-	DependencySubstitutions values.DependencySubstitutions                              `json:"DependencySubstitutions"`
-	Content                 any                                                         `json:"Content"`
-	Reads                   *store.ReadSet                                              `json:"Reads"`
-	OutputReads             *store.ReadSet                                              `json:"OutputReads"`
+	Records     iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] `json:"Records"`
+	Content     any                                                         `json:"Content"`
+	Reads       *store.ReadSet                                              `json:"Reads"`
+	OutputReads *store.ReadSet                                              `json:"OutputReads"`
 }
 
 // RecordRender MUST publish history only after the emission accepts its captured inputs.
@@ -197,16 +193,10 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 		if !validContent || !acceptance.Reads.Valid() || !acceptance.OutputReads.Valid() {
 			return nil
 		}
-		finalContent.Dependencies = acceptance.DependencySubstitutions
 	}
 	frame, ok := receipt.Value().(renderFrame)
 	if !ok || frame.header.Key == "" {
 		return manifest.NewError(manifest.ErrFlux, nil, "invalid kustomize receipt")
-	}
-
-	if !frame.binding.Dependencies.Equal(acceptance.DependencySubstitutions) {
-		frame.binding.Dependencies = acceptance.DependencySubstitutions
-		frame.header.Binding, frame.lookup, frame.stored = "", "", nil
 	}
 	var sources []manifest.SourceEvidence
 	if records != nil {

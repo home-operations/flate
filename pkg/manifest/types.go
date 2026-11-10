@@ -251,16 +251,6 @@ func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 	}
 }
 
-// MapDependsOn transforms dependency fields without mutating the object; a nil namespace preserves it.
-//
-//nolint:ireturn // The manifest contract requires polymorphic results.
-func MapDependsOn(obj BaseManifest, name, namespace func(string) string) BaseManifest {
-	if ks, ok := obj.(*Kustomization); ok {
-		return ks.mapDependsOn(name, namespace)
-	}
-	return obj
-}
-
 func credentialReferences(yield func(Reference) bool, namespace string, refs ...*LocalObjectReference) bool {
 	uses := [...]string{secretRefKey, "certSecretRef", "proxySecretRef"}
 	for i, ref := range refs {

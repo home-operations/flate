@@ -1,4 +1,4 @@
-package diffprep
+package diff
 
 import (
 	"strings"
@@ -6,8 +6,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// Documents projects selected batches without copying their immutable manifests.
-func Documents(manifests []manifest.DocumentBatch) []Doc {
+func documents(manifests []manifest.DocumentBatch) []Doc {
 	out := make([]Doc, 0, len(manifests))
 	for _, batch := range manifests {
 		parent := objectParent(batch.Parent)

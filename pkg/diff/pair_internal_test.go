@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/diffprep"
-	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -157,10 +155,10 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 	right := cmDoc(new(parent), manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
 	right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", testCaseInput.apiVersion
 	l, r := []Doc{left}, []Doc{right}
-	if got := diffprep.Prepare(
-		prepareDocs(l),
-		prepareDocs(r),
-		&diffprep.Options{},
+	if got := prepare(
+		l,
+		r,
+		&Options{},
 	).Pairs; len(
 		got,
 	) != testCaseInput.pairs {
@@ -171,8 +169,8 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 		t.Fatalf("changes = %+v, want %d", changes, testCaseInput.pairs)
 	}
 	count := 0
-	prepared := diffprep.Prepare(prepareDocs(l), prepareDocs(r), &diffprep.Options{})
-	lines, err := output.PrepareLines(prepared)
+	result := prepare(l, r, &Options{})
+	lines, err := prepareLines(result)
 	assert.NoError(t, err)
 	{
 		cValues := lines

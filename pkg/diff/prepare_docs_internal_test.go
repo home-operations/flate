@@ -1,4 +1,4 @@
-package diffprep
+package diff
 
 import (
 	"reflect"
@@ -25,7 +25,7 @@ func TestDocuments_PreservesProducerAndEmissionOrder(t *testing.T) {
 		{Parent: single, Documents: []map[string]any{{"kind": "ConfigMap"}}},
 		{Documents: []map[string]any{{"kind": "Namespace", "metadata": map[string]any{"name": "root"}}}},
 	}
-	docs := Documents(manifests)
+	docs := documents(manifests)
 	assert.FatalIf(t, len(docs) != 6, "want 6 docs, got %d", len(docs))
 	if docs[0].Parent.NamedResource != a.Named() || docs[0].Parent.Path != "./apps/a" {
 		t.Errorf("doc[0] parent = %+v; want a / ./apps/a", docs[0].Parent)
@@ -46,7 +46,7 @@ func TestDocuments_PreservesProducerAndEmissionOrder(t *testing.T) {
 		t.Fatalf("ownerless identity or attribution lost: %+v", docs[5])
 	}
 	{
-		got := Documents(manifests)
-		assert.ErrorIf(t, !reflect.DeepEqual(docs, got), "%v", "Documents must preserve the completed selection order")
+		got := documents(manifests)
+		assert.ErrorIf(t, !reflect.DeepEqual(docs, got), "%v", "documents must preserve the completed selection order")
 	}
 }

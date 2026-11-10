@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/spf13/pflag"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/pkg/diff"
 )
 
 func TestBindOutput_Usage(t *testing.T) {
@@ -19,9 +19,16 @@ func TestBindOutput_Usage(t *testing.T) {
 		want    string
 	}{
 		{
-			name:    "diff help order",
-			outputs: output.DiffFormats(),
-			want:    "Emit: human, github, diff, html, brief, gitlab, gitea, json",
+			name: "diff help order",
+			outputs: func() []output.Format {
+				values := diff.Formats()
+				formats := make([]output.Format, len(values))
+				for i, format := range values {
+					formats[i] = output.Format(format)
+				}
+				return formats
+			}(),
+			want: "Emit: human, github, diff, html, brief, gitlab, gitea, json",
 		},
 		{
 			name:    "build set",

@@ -50,7 +50,16 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, _, _, docErr := Compare(tc.orig, tc.current, selectedErr, Options{Format: FormatJSON})
+			comparison1, preparationErr1 := Compare(
+				[]Group{{Orig: tc.orig, Current: tc.current, SelectedErr: selectedErr}},
+				Options{Format: FormatJSON},
+			)
+			var comparisonOutput1 bytes.Buffer
+			writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+			_, _, _, docErr := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+				preparationErr1,
+				writeErr1,
+			)
 			_, _, imageErr := CompareImages(tc.orig, tc.current, selectedErr, false)
 			for _, err := range []error{docErr, imageErr} {
 				assert.ErrorIf(t, !errors.Is(err, selectedErr), "selected error lost: %v", err)
@@ -62,7 +71,16 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 		nil,
 		store.StatusInfo{Status: store.StatusFailed, Message: "failed"},
 	)
-	_, warnings, suppressed, err := Compare(valid, unavailable, selectedErr, Options{Format: "invalid"})
+	comparison2, preparationErr2 := Compare(
+		[]Group{{Orig: valid, Current: unavailable, SelectedErr: selectedErr}},
+		Options{Format: "invalid"},
+	)
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	_, warnings, suppressed, err := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
+	)
 	assert.ErrorIf(t, !errors.Is(err, selectedErr), "format error discarded selected error: %v", err)
 	assert.ErrorIf(t, len(warnings) != 0 ||
 		!slices.Equal(
@@ -128,10 +146,19 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 			originalRight := manifest.DeepCopyMap(right.Manifests[0].Documents[0])
 			selectedErr := errors.New("selected failure")
 			normalized := 0
-			out, warnings, suppressed, err := Compare(left, right, selectedErr, Options{
-				Format: FormatJSON, Suppressed: backing[:1],
-				Normalize: func(doc map[string]any) { normalized++; doc["kind"] = "Changed" },
-			})
+			comparison3, preparationErr3 := Compare(
+				[]Group{{Orig: left, Current: right, SelectedErr: selectedErr}},
+				Options{
+					Format: FormatJSON, Suppressed: backing[:1],
+					Normalize: func(doc map[string]any) { normalized++; doc["kind"] = "Changed" },
+				},
+			)
+			var comparisonOutput3 bytes.Buffer
+			writeErr3 := comparison3.Write(&comparisonOutput3, nil)
+			out, warnings, suppressed, err := comparisonOutput3.Bytes(), comparison3.Groups[0].Warnings, comparison3.Groups[0].Suppressed, errors.Join(
+				preparationErr3,
+				writeErr3,
+			)
 			assert.FatalIf(t, !errors.Is(err, selectedErr), "selected error lost: %v", err)
 			var document struct {
 				Suppressed []Suppression `json:"suppressed"`
@@ -337,7 +364,16 @@ func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
 	} {
 		left := selectedSnapshot(new(helmReleaseParent()), nil, store.StatusInfo{})
 		right := selectedSnapshot(new(helmReleaseParent()), hrDocs(1), unavailable)
-		out, _, _, err := Compare(left, right, nil, Options{Format: FormatDiff})
+		comparison4, preparationErr4 := Compare(
+			[]Group{{Orig: left, Current: right, SelectedErr: nil}},
+			Options{Format: FormatDiff},
+		)
+		var comparisonOutput4 bytes.Buffer
+		writeErr4 := comparison4.Write(&comparisonOutput4, nil)
+		out, _, _, err := comparisonOutput4.Bytes(), comparison4.Groups[0].Warnings, comparison4.Groups[0].Suppressed, errors.Join(
+			preparationErr4,
+			writeErr4,
+		)
 		assert.ErrorIf(
 			t,
 			err != nil || len(out) != 0,
@@ -367,7 +403,13 @@ func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
 	}
 	want, _, err := RenderDocs(left, right, opts)
 	assert.NoError(t, err)
-	got, _, _, err := Compare(selected[0], selected[1], nil, opts)
+	comparison5, preparationErr5 := Compare([]Group{{Orig: selected[0], Current: selected[1], SelectedErr: nil}}, opts)
+	var comparisonOutput5 bytes.Buffer
+	writeErr5 := comparison5.Write(&comparisonOutput5, nil)
+	got, _, _, err := comparisonOutput5.Bytes(), comparison5.Groups[0].Warnings, comparison5.Groups[0].Suppressed, errors.Join(
+		preparationErr5,
+		writeErr5,
+	)
 	assert.ErrorIf(
 		t,
 		err != nil || !bytes.Equal(got, want),
@@ -412,7 +454,16 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 	case SideBoth:
 		orig = failed
 	}
-	out, _, notes, err := Compare(orig, current, nil, Options{Format: FormatJSON})
+	comparison6, preparationErr6 := Compare(
+		[]Group{{Orig: orig, Current: current, SelectedErr: nil}},
+		Options{Format: FormatJSON},
+	)
+	var comparisonOutput6 bytes.Buffer
+	writeErr6 := comparison6.Write(&comparisonOutput6, nil)
+	out, _, notes, err := comparisonOutput6.Bytes(), comparison6.Groups[0].Warnings, comparison6.Groups[0].Suppressed, errors.Join(
+		preparationErr6,
+		writeErr6,
+	)
 	assert.FatalIf(
 		t,
 		err != nil || len(notes) != 1 || notes[0].Subject != subject || notes[0].Side != (*testCaseInput.side),

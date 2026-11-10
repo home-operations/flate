@@ -1,4 +1,4 @@
-package diffprep
+package diff
 
 import (
 	"cmp"
@@ -7,8 +7,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// Pair retains normalized sides and authored attribution for a canonical resource pair.
-type Pair struct {
+type pair struct {
 	Parent             Parent
 	Resource           manifest.NamedResource
 	APIVersion         string
@@ -21,9 +20,8 @@ type pairKey struct {
 	parent, resource manifest.NamedResource
 }
 
-// Prepare normalizes and pairs documents, retaining the last normalized duplicate.
-func Prepare(left, right []Doc, opts *Options) Prepared {
-	idx := make(map[pairKey]*Pair, len(left)+len(right))
+func prepare(left, right []Doc, opts *Options) prepared {
+	idx := make(map[pairKey]*pair, len(left)+len(right))
 	var warnings []manifest.Warning
 	add := func(side Side, d, original Doc, pos int) {
 		apiVersion := manifest.DocAPIVersion(d.Manifest)
@@ -39,7 +37,7 @@ func Prepare(left, right []Doc, opts *Options) Prepared {
 		k := pairKey{parent, resource}
 		p, ok := idx[k]
 		if !ok {
-			p = &Pair{Resource: resource, OldPos: len(left), NewPos: len(right)}
+			p = &pair{Resource: resource, OldPos: len(left), NewPos: len(right)}
 			idx[k] = p
 		}
 		p.Parent = d.Parent
@@ -50,9 +48,9 @@ func Prepare(left, right []Doc, opts *Options) Prepared {
 		}
 		if *dst != nil {
 			parent := d.Parent.String()
-			subjects := opts.Subjects[0]
+			subjects := opts.subjects[0]
 			if side == SideCurrent {
-				subjects = opts.Subjects[1]
+				subjects = opts.subjects[1]
 			}
 			if subject, ok := subjects[d.Parent.NamedResource]; ok {
 				parent = subject.String()
@@ -76,21 +74,21 @@ func Prepare(left, right []Doc, opts *Options) Prepared {
 	for i, d := range normalizedRight {
 		add(SideCurrent, d, right[i], i)
 	}
-	out := make([]Pair, 0, len(idx))
+	out := make([]pair, 0, len(idx))
 	for _, p := range idx {
 		out = append(out, *p)
 	}
-	slices.SortFunc(out, func(a, b Pair) int {
+	slices.SortFunc(out, func(a, b pair) int {
 		return cmp.Or(
 			a.Parent.Compare(b.Parent.NamedResource),
 			a.Resource.Compare(b.Resource),
 		)
 	})
 	slices.SortFunc(warnings, manifest.CompareWarning)
-	return Prepared{
+	return prepared{
 		Pairs:       out,
 		Warnings:    warnings,
-		Subjects:    opts.Subjects,
+		Subjects:    opts.subjects,
 		leftCopied:  leftCopied,
 		rightCopied: rightCopied,
 	}

@@ -10,7 +10,11 @@ import (
 	"github.com/home-operations/flate/internal/output"
 )
 
-func bindOutput(fs *pflag.FlagSet, target *string, formats ...output.Format) {
+func bindOutput[F ~string](fs *pflag.FlagSet, target *string, values ...F) {
+	formats := make([]output.Format, len(values))
+	for i, value := range values {
+		formats[i] = output.Format(value)
+	}
 	*target = string(formats[0])
 	fs.VarP(&outputValue{target: target, allowed: formats}, "output", "o", "Emit: "+joinOutputs(formats))
 }

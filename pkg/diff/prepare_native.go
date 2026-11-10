@@ -1,4 +1,4 @@
-package diffprep
+package diff
 
 import (
 	"bytes"
@@ -14,8 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// Native prepares dyff inputs and compares each canonical pair exactly once.
-func (p Prepared) Native() (dyff.Report, error) {
+func (p prepared) native() (dyff.Report, error) {
 	paired := p.Pairs
 	from, err := nativeInput("from", paired)
 	if err != nil {
@@ -26,7 +25,7 @@ func (p Prepared) Native() (dyff.Report, error) {
 		return dyff.Report{}, err
 	}
 	report := dyff.Report{From: from, To: to}
-	rank := func(p Pair) int {
+	rank := func(p pair) int {
 		if p.Old == nil {
 			return nativeAddedRank
 		}
@@ -35,7 +34,7 @@ func (p Prepared) Native() (dyff.Report, error) {
 		}
 		return 0
 	}
-	slices.SortFunc(paired, func(a, b Pair) int {
+	slices.SortFunc(paired, func(a, b pair) int {
 		return cmp.Or(cmp.Compare(rank(a), rank(b)), cmp.Compare(a.OldPos, b.OldPos), cmp.Compare(a.NewPos, b.NewPos))
 	})
 	for pIndex := range paired {
@@ -54,7 +53,7 @@ func (p Prepared) Native() (dyff.Report, error) {
 				Details: []dyff.Detail{{Kind: dyff.REMOVAL, From: from.Documents[p.OldPos]}},
 			})
 		default:
-			if p.Status() == "" {
+			if p.status() == "" {
 				continue
 			}
 			compared, err := dyff.CompareInputFiles(
@@ -84,8 +83,8 @@ func nativeWrapped(node *yamlv3.Node) ytbx.InputFile {
 	}}}
 }
 
-func nativeInput(location string, paired []Pair) (ytbx.InputFile, error) {
-	slices.SortFunc(paired, func(a, b Pair) int {
+func nativeInput(location string, paired []pair) (ytbx.InputFile, error) {
+	slices.SortFunc(paired, func(a, b pair) int {
 		if location == "from" {
 			return cmp.Compare(a.OldPos, b.OldPos)
 		}

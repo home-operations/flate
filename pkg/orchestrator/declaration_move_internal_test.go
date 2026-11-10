@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -80,21 +81,25 @@ func TestRenderTrees_UnchangedDeclarationMove(t *testing.T) {
 		selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
 
-		body, warnings, suppressed, err := diff.Compare(
-			diff.Snapshot{
-				Subjects:     selected[0].Subjects,
-				Manifests:    selected[0].Manifests,
-				ProducerKeys: selected[0].ProducerKeys,
-				Unavailable:  selected[0].Unavailable,
-			},
-			diff.Snapshot{
-				Subjects:     selected[1].Subjects,
-				Manifests:    selected[1].Manifests,
-				ProducerKeys: selected[1].ProducerKeys,
-				Unavailable:  selected[1].Unavailable,
-			},
-			selectedErr,
-			diff.Options{Format: diff.FormatJSON},
+		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+			Subjects:     selected[0].Subjects,
+			Manifests:    selected[0].Manifests,
+			ProducerKeys: selected[0].ProducerKeys,
+			Unavailable:  selected[0].Unavailable,
+		}, Current: diff.Snapshot{
+			Subjects:     selected[1].Subjects,
+			Manifests:    selected[1].Manifests,
+			ProducerKeys: selected[1].ProducerKeys,
+			Unavailable:  selected[1].Unavailable,
+		}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+
+		var comparisonOutput1 bytes.Buffer
+
+		writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+
+		body, warnings, suppressed, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+			preparationErr1,
+			writeErr1,
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, len(warnings), 0)
@@ -251,21 +256,22 @@ func testRenderTreesDeclarationMoveChangesCase(
 		)
 		selected, selectedErr, err := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 		assert.NoError(t, err)
-		body, warnings, suppressed, err := diff.Compare(
-			diff.Snapshot{
-				Subjects:     selected[0].Subjects,
-				Manifests:    selected[0].Manifests,
-				ProducerKeys: selected[0].ProducerKeys,
-				Unavailable:  selected[0].Unavailable,
-			},
-			diff.Snapshot{
-				Subjects:     selected[1].Subjects,
-				Manifests:    selected[1].Manifests,
-				ProducerKeys: selected[1].ProducerKeys,
-				Unavailable:  selected[1].Unavailable,
-			},
-			selectedErr,
-			diff.Options{Format: diff.FormatJSON},
+		comparison2, preparationErr2 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+			Subjects:     selected[0].Subjects,
+			Manifests:    selected[0].Manifests,
+			ProducerKeys: selected[0].ProducerKeys,
+			Unavailable:  selected[0].Unavailable,
+		}, Current: diff.Snapshot{
+			Subjects:     selected[1].Subjects,
+			Manifests:    selected[1].Manifests,
+			ProducerKeys: selected[1].ProducerKeys,
+			Unavailable:  selected[1].Unavailable,
+		}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+		var comparisonOutput2 bytes.Buffer
+		writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+		body, warnings, suppressed, err := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+			preparationErr2,
+			writeErr2,
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, len(warnings), 0)

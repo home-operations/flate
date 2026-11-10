@@ -20,17 +20,10 @@ type Format string
 
 // Format values understood by the -o flag.
 const (
-	FormatTable  Format = "table"
-	FormatYAML   Format = "yaml"
-	FormatJSON   Format = "json"
-	FormatName   Format = "name"
-	FormatHuman  Format = "human"
-	FormatGitHub Format = "github"
-	FormatDiff   Format = "diff"
-	FormatHTML   Format = "html"
-	FormatBrief  Format = "brief"
-	FormatGitLab Format = "gitlab"
-	FormatGitea  Format = "gitea"
+	FormatTable Format = "table"
+	FormatYAML  Format = "yaml"
+	FormatJSON  Format = "json"
+	FormatName  Format = "name"
 )
 
 // Encoder writes prepared values to one destination with resolved format and color.

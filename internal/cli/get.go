@@ -10,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/imageutil"
 	"github.com/home-operations/flate/internal/output"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
 )
@@ -273,7 +274,7 @@ func imagePayload(inv *selectedInvocation, encoder output.Encoder) selectedPaylo
 		}
 	}
 	tables, _ := prepareGetTables(inv, []output.Table{table})
-	return selectedPayload{prepare: func(names []output.Names) {
+	return selectedPayload{prepare: func(names []diff.Names) {
 		for i := range groups {
 			for _, image := range groups[i].Images {
 				groups[i].Names = append(groups[i].Names, names[i].Prefix+image)

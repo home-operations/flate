@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -389,25 +390,24 @@ func testRenderTreesClusterUnionOrder(t *testing.T, tc *struct {
 		projectedResults0, projectionErrors0 := Select(pair, errors.Join(pair[0].Err, pair[1].Err), roots, nil)
 		selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
-		changes, _, _, err := diff.Compare(
-
-			diff.Snapshot{
-				Subjects:     selected[0].Subjects,
-				Manifests:    selected[0].Manifests,
-				Unavailable:  selected[0].Unavailable,
-				ProducerKeys: selected[0].ProducerKeys,
-			},
-
-			diff.Snapshot{
-				Subjects:     selected[1].Subjects,
-				Manifests:    selected[1].Manifests,
-				Unavailable:  selected[1].Unavailable,
-				ProducerKeys: selected[1].ProducerKeys,
-			},
-			nil,
-			diff.Options{
-				Format: diff.FormatJSON,
-			},
+		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+			Subjects:     selected[0].Subjects,
+			Manifests:    selected[0].Manifests,
+			Unavailable:  selected[0].Unavailable,
+			ProducerKeys: selected[0].ProducerKeys,
+		}, Current: diff.Snapshot{
+			Subjects:     selected[1].Subjects,
+			Manifests:    selected[1].Manifests,
+			Unavailable:  selected[1].Unavailable,
+			ProducerKeys: selected[1].ProducerKeys,
+		}, SelectedErr: nil}}, diff.Options{
+			Format: diff.FormatJSON,
+		})
+		var comparisonOutput1 bytes.Buffer
+		writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+		changes, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+			preparationErr1,
+			writeErr1,
 		)
 		assert.NoError(t, err)
 		if pair[0].Absent || pair[1].Absent {

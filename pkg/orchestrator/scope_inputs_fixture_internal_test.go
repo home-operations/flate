@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -73,8 +74,22 @@ func TestRenderTrees_ScopeInputCorpus(t *testing.T) {
 				if strings.HasPrefix(name, "optional-changed-") {
 					testScopeInputManifests(t, selected, universal)
 				}
-				got, _, _, err := diff.Compare(scopeInputSnapshot(selected[0]), scopeInputSnapshot(selected[1]), nil,
-					diff.Options{Format: diff.FormatDiff})
+				comparison1, preparationErr1 := diff.Compare(
+					[]diff.Group{
+						{
+							Orig:        scopeInputSnapshot(selected[0]),
+							Current:     scopeInputSnapshot(selected[1]),
+							SelectedErr: nil,
+						},
+					},
+					diff.Options{Format: diff.FormatDiff},
+				)
+				var comparisonOutput1 bytes.Buffer
+				writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+				got, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+					preparationErr1,
+					writeErr1,
+				)
 				assert.NoError(t, err)
 				if !bytes.Equal(got, want) || run == 1 && !bytes.Equal(got, previous) {
 					t.Fatalf(
@@ -115,8 +130,18 @@ func scopeInputFullOracle(
 		assert.Equal(t, len(selected), 1)
 		universal[side] = selected[0]
 	}
-	changes, _, _, err := diff.Compare(scopeInputSnapshot(universal[0]), scopeInputSnapshot(universal[1]), nil,
-		diff.Options{Format: diff.FormatDiff})
+	comparison2, preparationErr2 := diff.Compare(
+		[]diff.Group{
+			{Orig: scopeInputSnapshot(universal[0]), Current: scopeInputSnapshot(universal[1]), SelectedErr: nil},
+		},
+		diff.Options{Format: diff.FormatDiff},
+	)
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	changes, _, _, err := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
+	)
 	assert.NoError(t, err)
 	if strings.HasPrefix(name, "chart-input-") {
 		testScopeChartOracle(t, name, universal, changes)
@@ -180,8 +205,18 @@ func testScopeChartOracle(t *testing.T, name string, universal [2]*selection.Res
 
 func testScopeChartLifecycle(t *testing.T, name string, universal [2]*selection.Result) {
 	t.Helper()
-	document, _, _, err := diff.Compare(scopeInputSnapshot(universal[0]), scopeInputSnapshot(universal[1]), nil,
-		diff.Options{Format: diff.FormatJSON})
+	comparison3, preparationErr3 := diff.Compare(
+		[]diff.Group{
+			{Orig: scopeInputSnapshot(universal[0]), Current: scopeInputSnapshot(universal[1]), SelectedErr: nil},
+		},
+		diff.Options{Format: diff.FormatJSON},
+	)
+	var comparisonOutput3 bytes.Buffer
+	writeErr3 := comparison3.Write(&comparisonOutput3, nil)
+	document, _, _, err := comparisonOutput3.Bytes(), comparison3.Groups[0].Warnings, comparison3.Groups[0].Suppressed, errors.Join(
+		preparationErr3,
+		writeErr3,
+	)
 	assert.NoError(t, err)
 	var got struct {
 		Changes []diff.Change `json:"changes"`
@@ -284,11 +319,17 @@ func testScopeInputCacheLifecycle(t *testing.T, name, layout string) {
 		selected, selectedErr, remainder := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 		assert.NoError(t, selectedErr)
 		assert.NoError(t, remainder)
-		body, _, _, err := diff.Compare(
-			scopeInputSnapshot(selected[0]),
-			scopeInputSnapshot(selected[1]),
-			nil,
+		comparison4, preparationErr4 := diff.Compare(
+			[]diff.Group{
+				{Orig: scopeInputSnapshot(selected[0]), Current: scopeInputSnapshot(selected[1]), SelectedErr: nil},
+			},
 			diff.Options{Format: diff.FormatDiff},
+		)
+		var comparisonOutput4 bytes.Buffer
+		writeErr4 := comparison4.Write(&comparisonOutput4, nil)
+		body, _, _, err := comparisonOutput4.Bytes(), comparison4.Groups[0].Warnings, comparison4.Groups[0].Suppressed, errors.Join(
+			preparationErr4,
+			writeErr4,
 		)
 		assert.NoError(t, err)
 		if run == 1 && !bytes.Equal(body, prior) {

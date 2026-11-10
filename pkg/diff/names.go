@@ -1,4 +1,4 @@
-package output
+package diff
 
 import (
 	"fmt"
@@ -12,22 +12,113 @@ type Subject struct {
 	Kind, Name string
 }
 
-// Names contains the prepared labels for one retained cluster.
+// Names labels only printed subjects in one retained cluster.
 type Names struct {
 	Prefix   string
 	Subjects map[manifest.NamedResource]Subject
 }
 
-// PrepareNames resolves cluster qualifiers and kind collisions across printed subjects.
+// PrepareNames limits collision counts to printed subjects across retained clusters.
 func PrepareNames(
 	clusters []string,
 	inventory [][]manifest.NamedResource,
 	subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity,
-) []Names {
+) *Naming {
 	occurrences := nameOccurrenceUpdater()
-
 	collectNameOccurrences(inventory, subjects, occurrences.update)
-	return prepareNames(clusters, inventory, subjects, occurrences.collisions)
+	return &Naming{
+		Groups:     prepareNames(clusters, inventory, subjects, occurrences.collisions),
+		inventory:  inventory,
+		subjects:   subjects,
+		collisions: occurrences.collisions,
+		update:     occurrences.update,
+	}
+}
+
+// Naming must restore shared occurrence counts after each temporary context.
+type Naming struct {
+	Groups      []Names
+	inventory   [][]manifest.NamedResource
+	subjects    []map[manifest.NamedResource]manifest.DiagnosticIdentity
+	occurrences []map[manifest.NamedResource]int
+	collisions  map[string]bool
+	update      func(string, string, int)
+}
+
+// Model inherits group subjects only when subjects is nil.
+func (n *Naming) Model(group int, subjects map[manifest.NamedResource]manifest.DiagnosticIdentity) Names {
+	if subjects == nil {
+		return n.Groups[group]
+	}
+	var captured map[manifest.NamedResource]manifest.DiagnosticIdentity
+	if group < len(n.subjects) {
+		captured = n.subjects[group]
+	}
+	occurrences := n.groupOccurrences(group)
+	adjustNameOccurrences(occurrences, captured, subjects, n.update)
+	prepared := prepareGroupNames(n.Groups[group].Prefix, n.inventory[group], subjects, n.collisions)
+	adjustNameOccurrences(occurrences, subjects, captured, n.update)
+	return prepared
+}
+
+// Warning preserves captured subjects without changing the group context.
+//
+//nolint:gocritic // The naming API takes an immutable warning snapshot.
+func (n *Naming) Warning(group int, warning manifest.Warning) Subject {
+	if warning.Resource == (manifest.NamedResource{}) {
+		return Subject{}
+	}
+	var captured map[manifest.NamedResource]manifest.DiagnosticIdentity
+	if group < len(n.subjects) {
+		captured = n.subjects[group]
+	}
+	prepared := manifest.DiagnosticFor(warning.Resource, nil)
+	if subject, ok := captured[warning.Resource]; ok {
+		prepared = subject
+	}
+	if warning.Subject.ID == (manifest.NamedResource{}) || warning.Subject == prepared {
+		return n.Groups[group].Subjects[warning.Resource]
+	}
+	occurrences := n.groupOccurrences(group)
+	adjustNameOccurrences(occurrences, captured, nil, n.update)
+	count := occurrences[warning.Resource]
+	n.update(warning.Resource.Kind, warning.Resource.Group, -count)
+	n.update(warning.Subject.Resource.Kind, warning.Subject.Resource.Group, count)
+	labels := subjectLabels(&warning.Subject.Resource, warning.Subject.Path, n.Groups[group].Prefix, n.collisions)
+	n.update(warning.Subject.Resource.Kind, warning.Subject.Resource.Group, -count)
+	n.update(warning.Resource.Kind, warning.Resource.Group, count)
+	adjustNameOccurrences(occurrences, nil, captured, n.update)
+	return Subject{ID: warning.Resource, Kind: labels.kind, Name: labels.name}
+}
+
+func (n *Naming) groupOccurrences(group int) map[manifest.NamedResource]int {
+	if n.occurrences == nil {
+		n.occurrences = make([]map[manifest.NamedResource]int, len(n.inventory))
+	}
+	if n.occurrences[group] == nil {
+		n.occurrences[group] = make(map[manifest.NamedResource]int, len(n.inventory[group]))
+		for _, raw := range n.inventory[group] {
+			n.occurrences[group][raw]++
+		}
+	}
+	return n.occurrences[group]
+}
+
+// Labels qualifies only collisions in ids, so hidden continuations cannot affect labels.
+func (n Names) Labels(ids []manifest.NamedResource) []string {
+	names := make([]string, 0, len(ids))
+	counts := make(map[string]int, len(ids))
+	for _, id := range ids {
+		name := n.Subjects[id].Name
+		names = append(names, name)
+		counts[name]++
+	}
+	for i, name := range names {
+		if counts[name] > 1 {
+			names[i] = n.Subjects[ids[i]].Kind + " " + name
+		}
+	}
+	return names
 }
 
 func prepareNames(

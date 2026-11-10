@@ -37,7 +37,7 @@ func TestRun_AnonymousAdmissionPreparation(t *testing.T) {
 	assert.NoError(t, err)
 	defer session.Close()
 	preparation := session.prepareRequest(&selection.PrepareRequest{Invocation: true})
-	proposal, err := session.prepare(t.Context(), preparation)
+	proposal, err := admitSelection(t.Context(), t, l, preparation)
 	assert.NoError(t, err)
 	advanced, err := session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)

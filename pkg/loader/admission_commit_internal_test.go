@@ -63,7 +63,7 @@ func TestCommit_ConstructionGuard(t *testing.T) {
 			Invocation: true,
 		})
 		assert.NoError(t, prepareErr)
-		_, committed, err = l.Options.Session.Commit(t.Context(), proposal, selection.Construction)
+		_, committed, err = l.commitSelection(t.Context(), t, proposal, selection.Construction)
 		assert.NoError(t, err)
 		proposal.Retire()
 		if committed {
@@ -103,7 +103,7 @@ func TestCommit_ConstructionGuard(t *testing.T) {
 	replaced := *source
 	replaced.Content = "replacement"
 	st.SetArtifact(manifest.BootstrapSourceID, &replaced)
-	_, committed, err = l.Options.Session.Commit(t.Context(), proposal, selection.Construction)
+	_, committed, err = l.commitSelection(t.Context(), t, proposal, selection.Construction)
 	assert.NoError(t, err)
 	assert.FatalIf(t, committed || guard.Valid(), "construction accepted a replaced source")
 	proposal.Retire()
@@ -407,7 +407,7 @@ func TestCommit_AuthoritativeEntry(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(proposal.Objects), 0)
-	_, _, err = l.Options.Session.Commit(t.Context(), proposal, selection.Construction)
+	_, _, err = l.commitSelection(t.Context(), t, proposal, selection.Construction)
 	assert.NoError(t, err)
 	assert.Equal(t, output.Valid(), true)
 	assert.Equal(t, st.GetDeclaration(child.Obj.Named()), child.Obj)

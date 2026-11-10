@@ -71,27 +71,20 @@ func Execute(tb testing.TB, l *loader.Loader, proposal *selection.Admission) {
 	if l.Options.Session == nil {
 		return
 	}
-	request := selection.PrepareRequest{Invocation: true}
+	request := selection.PrepareRequest{Invocation: true, Missing: l.Options.Missing}
 	if proposal != nil {
 		request = proposal.Request
-	}
-	for {
-		next, err := Prepare(tb.Context(), tb, l, request)
 		proposal.Retire()
-		if err != nil {
-			tb.Fatal(err)
-		}
-		var committed bool
-		proposal, committed, err = l.Options.Session.Commit(tb.Context(), next, selection.Execution)
-		if err != nil {
-			tb.Fatal(err)
-		}
-		if committed {
-			return
-		}
-		if proposal == nil {
-			tb.Fatal("fixture admission capture became invalid")
-		}
-		request = proposal.Request
+	}
+	request.Changes = l.Options.Changes
+	_, committed, err := l.Options.Session.Admit(tb.Context(), selection.AdmissionOptions{
+		Request: request,
+		Stage:   selection.Execution,
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if !committed {
+		tb.Fatal("fixture admission capture became invalid")
 	}
 }

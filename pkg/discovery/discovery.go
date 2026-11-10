@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"iter"
 	"log/slog"
 	"maps"
 	"path/filepath"
@@ -185,28 +184,27 @@ func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
 	var preparation *selection.Preparation
 	defer func() { preparation.Retire() }()
 	for {
-		proposal, err := session.prepare(
-			ctx,
-			session.prepareRequest(&selection.PrepareRequest{Invocation: true, Preparation: &preparation}),
-		)
+		request := session.prepareRequest(&selection.PrepareRequest{Invocation: true, Preparation: &preparation})
+		admitted, committed, err := cfg.Loader.Options.Session.Admit(ctx, selection.AdmissionOptions{
+			Request: request, Stage: selection.Construction,
+		})
 		if err != nil {
 			return nil, err
 		}
-		advanced, err := session.Advance(ctx, proposal)
+		if !committed {
+			continue
+		}
+		advanced, err := session.Advance(ctx, &admitted)
 		if err != nil {
 			return nil, err
 		}
 		if advanced {
 			continue
 		}
-		final, err := session.prepare(
-			ctx,
-			session.prepareRequest(&selection.PrepareRequest{Invocation: true, Preparation: &preparation}),
-		)
-		if err != nil {
-			return nil, err
-		}
-		_, committed, err := cfg.Loader.Options.Session.Commit(ctx, final, selection.Execution)
+		request = session.prepareRequest(&selection.PrepareRequest{Invocation: true, Preparation: &preparation})
+		_, committed, err = cfg.Loader.Options.Session.Admit(ctx, selection.AdmissionOptions{
+			Request: request, Stage: selection.Execution,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -520,6 +518,9 @@ func (d *Session) prepareRequest(request *selection.PrepareRequest) selection.Pr
 	previous := d.request
 	request.Changes = d.loader.Options.Changes
 	request.Missing = d.loader.Options.Missing
+	if request.ReadHistory == nil {
+		request.ReadHistory = previous.ReadHistory
+	}
 	if request.HistoryOwners == nil {
 		request.HistoryOwners = previous.HistoryOwners
 	}
@@ -560,18 +561,6 @@ func (d *Session) commitBinding(ctx context.Context, root *manifest.Kustomizatio
 		Tree: d.cfg.Work.Identity().Tree, Owner: binding.Producer, Source: binding.Source,
 	}))
 	request := d.prepareRequest(&selection.PrepareRequest{Generation: []store.Child{incoming}, Reads: binding.Reads})
-	if entry := binding.Entry; entry != nil {
-		history := map[manifest.NamedResource]struct {
-			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-			Complete bool
-		}{}
-		maps.Copy(history, request.History)
-		history[entry.Owner] = struct {
-			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-			Complete bool
-		}{Records: entry.Records, Complete: true}
-		request.History = history
-	}
 	if d.loader.Options.Session == nil {
 		if incoming.Obj != nil {
 			binding.Reads.Admit(incoming, binding.Source, manifest.NamedResource{})
@@ -581,11 +570,11 @@ func (d *Session) commitBinding(ctx context.Context, root *manifest.Kustomizatio
 		}
 		return d.admission().AcceptEntry(ctx, *binding)
 	}
-	proposal, err := d.prepare(ctx, request)
-	if err != nil {
-		return Binding{}, err
+	options := selection.AdmissionOptions{Request: request, Stage: selection.Construction}
+	if entry := binding.Entry; entry != nil {
+		options.EntryHistory.Owner, options.EntryHistory.Records = entry.Owner, entry.Records
 	}
-	_, committed, err := d.loader.Options.Session.Commit(ctx, proposal, selection.Construction)
+	_, committed, err := d.loader.Options.Session.Admit(ctx, options)
 	if err != nil {
 		return Binding{}, err
 	}

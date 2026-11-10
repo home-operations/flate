@@ -83,7 +83,7 @@ func TestSession_RefreshHistoryGuardsAttemptedAbsence(t *testing.T) {
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./before"}
 	st.AddObject(owner)
 	session := newSolverSession(t, st, nil, Request{Changed: true})
-	previous := &Admission{Needed: []manifest.NamedResource{owner.Named()}}
+	previous := &AdmissionResult{Needed: []manifest.NamedResource{owner.Named()}}
 	var preparation *Preparation
 	defer func() { preparation.Retire() }()
 	request := PrepareRequest{Preparation: &preparation}
@@ -197,7 +197,7 @@ func TestAdmission_EntryReceiptRequiresHistoricalReach(t *testing.T) {
 				assert.Equal(t, slices.Contains(proposal.Ordinary, native), false)
 				assert.Equal(t, len(request.HistoryOwners), 1)
 			}
-			_, committed, err := session.Commit(t.Context(), proposal, Construction)
+			_, committed, err := session.publishProposal(t.Context(), proposal, Construction)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 			assert.Equal(t, proposal.EntryReceipt != nil, tc.want)

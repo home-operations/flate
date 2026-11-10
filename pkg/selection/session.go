@@ -109,6 +109,7 @@ type missingPolicy interface {
 // PrepareRequest describes the evidence and selection intent for an admission proposal.
 type PrepareRequest struct {
 	Preparation   **Preparation
+	ReadHistory   func(context.Context, *Demand) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool)
 	Changes       *change.Set
 	HistoryOwners map[manifest.NamedResource][]manifest.SourceEvidence
 	Acquired      []Acquisition
@@ -127,15 +128,16 @@ type PrepareRequest struct {
 
 // Preparation MUST remain with one logical admission owner until its final consumer.
 type Preparation struct {
-	closure    admissionClosure
-	evidence   *store.ReadSet
-	completed  *Admission
-	changes    *change.Set
-	entry      *EntryRoute
-	decision   *Decision
-	invocation bool
-	acquired   map[acquisitionKey]Acquisition
-	matched    map[*store.ReadSet]bool
+	closure     admissionClosure
+	evidence    *store.ReadSet
+	completed   *Admission
+	changes     *change.Set
+	entry       *EntryRoute
+	decision    *Decision
+	invocation  bool
+	acquired    map[acquisitionKey]Acquisition
+	matched     map[*store.ReadSet]bool
+	publication uint64
 
 	producerOwner *producerObligation
 }
@@ -282,7 +284,7 @@ func (p *Preparation) acquisition(demand *Demand, reads *store.ReadSet) (Acquisi
 	return result, true
 }
 
-// Demands MUST be copied before Commit or Retire ends the proposal lifetime.
+// Demands borrow proposal storage until Retire.
 func (a *Admission) Demands() iter.Seq[Demand] {
 	return func(yield func(Demand) bool) {
 		for i := range a.demands {
@@ -290,39 +292,6 @@ func (a *Admission) Demands() iter.Seq[Demand] {
 				return
 			}
 		}
-	}
-}
-
-// Commit publishes guarded membership before admitting any object.
-func (s *Session) Commit(ctx context.Context, proposal *Admission, stage CommitStage) (*Admission, bool, error) {
-	for {
-		if err := ctx.Err(); err != nil {
-			proposal.Retire()
-			return nil, false, err //nolint:wrapcheck // Cancellation preserves the caller's error identity.
-		}
-		if !s.guardCurrent(proposal) {
-			proposal.Retire()
-			return nil, false, nil
-		}
-		if stage == Execution && len(proposal.demands) != 0 {
-			return proposal, false, nil
-		}
-		current := s.Snapshot()
-		next, included := current.include(proposal, stage == Execution)
-		if s.publish(proposal, current, next) {
-			for _, id := range included {
-				s.store.SetIncluded(id, true, next.OrdinaryDemand(id))
-			}
-			if proposal.admitObjects(ctx, s) {
-				proposal.accept(stage, next)
-				return proposal, true, nil
-			}
-		}
-		nextProposal, err := s.retry(ctx, proposal)
-		if err != nil || nextProposal == nil {
-			return nil, false, err
-		}
-		proposal = nextProposal
 	}
 }
 
@@ -335,30 +304,6 @@ func (s *Session) publish(proposal *Admission, current, next *Decision) bool {
 	}
 	s.mu.Unlock()
 	return valid
-}
-
-func (s *Session) retry(ctx context.Context, proposal *Admission) (*Admission, error) {
-	if proposal.Request.Reads != nil && !proposal.Request.Reads.Valid() {
-		proposal.Retire()
-		return nil, nil //nolint:nilnil // A stale caller cannot authorize a retry proposal.
-	}
-	request := proposal.Request
-	var local *Preparation
-	if request.Preparation == nil && proposal.local != nil {
-		local, proposal.local = proposal.local, nil
-		request.Preparation = &local
-	}
-	next, err := s.Prepare(ctx, request)
-	proposal.Retire()
-	if err != nil {
-		local.Retire()
-		return nil, err
-	}
-	if local != nil {
-		next.local = local
-		next.Request.Preparation = nil
-	}
-	return next, nil
 }
 
 func (a *Admission) accept(stage CommitStage, decision *Decision) {

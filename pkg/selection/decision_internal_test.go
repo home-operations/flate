@@ -143,7 +143,7 @@ func TestSession_StaleCaptureRejectsPublication(t *testing.T) {
 	replacement.Revision = "after"
 	session.store.SetArtifact(source, &replacement)
 	assert.Equal(t, reads.Valid(), false)
-	_, committed, err := session.Commit(t.Context(), proposal, Execution)
+	_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, false)
 	assert.Equal(t, session.Snapshot() == before, true)
@@ -286,7 +286,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 		Selected: []manifest.NamedResource{provisional}, Dirty: []manifest.NamedResource{provisional},
 		Request: PrepareRequest{Generation: []store.Child{{Obj: provisionalObject}}},
 	}), 0)
-	_, committed, err := session.Commit(t.Context(), proposal, Construction)
+	_, committed, err := session.publishProposal(t.Context(), proposal, Construction)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	construction := session.Snapshot()
@@ -302,7 +302,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, len(continuation.Needed), 0)
-	_, committed, err = session.Commit(t.Context(), continuation, Construction)
+	_, committed, err = session.publishProposal(t.Context(), continuation, Construction)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	assert.Equal(t, construction.Reconcile(provisional), true)
@@ -313,7 +313,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 		Needed: []manifest.NamedResource{settled}, Selected: []manifest.NamedResource{settled},
 		Dirty: []manifest.NamedResource{settled}, Ordinary: []manifest.NamedResource{settled},
 	}), construction.version())
-	_, committed, err = session.Commit(t.Context(), proposal, Execution)
+	_, committed, err = session.publishProposal(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	assert.Equal(t, session.Snapshot().Reconcile(provisional), false)
@@ -329,7 +329,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 		new(Admission{Needed: []manifest.NamedResource{provisional}}),
 		session.Snapshot().version(),
 	)
-	_, committed, err = session.Commit(t.Context(), proposal, Construction)
+	_, committed, err = session.publishProposal(t.Context(), proposal, Construction)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	assert.Equal(t, session.Snapshot().execution, true)
@@ -342,7 +342,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 		&Admission{Needed: []manifest.NamedResource{provisional}},
 		session.Snapshot().version(),
 	)
-	_, committed, err = session.Commit(t.Context(), proposal, Execution)
+	_, committed, err = session.publishProposal(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	assert.Equal(t, session.Snapshot().Reconcile(provisional), true)
@@ -377,7 +377,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 		proposal := publicationProposal(session, &Admission{
 			Needed: []manifest.NamedResource{object.Named()}, Ordinary: []manifest.NamedResource{object.Named()},
 		}, 0)
-		_, committed, err := session.Commit(t.Context(), proposal, Construction)
+		_, committed, err := session.publishProposal(t.Context(), proposal, Construction)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
 		construction := session.Snapshot()
@@ -392,7 +392,7 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 			Needed: []manifest.NamedResource{object.Named()}, Ordinary: []manifest.NamedResource{object.Named()},
 			Request: PrepareRequest{Invocation: true, Generation: []store.Child{{Obj: unselected}}},
 		}, construction.version())
-		_, committed, err = session.Commit(t.Context(), proposal, Execution)
+		_, committed, err = session.publishProposal(t.Context(), proposal, Execution)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
 		assert.Equal(t, session.Snapshot().Reconcile(object.Named()), true)
@@ -427,7 +427,7 @@ func TestSession_DiscardConstructionPreservesExecution(t *testing.T) {
 				Needed: []manifest.NamedResource{id}, Selected: []manifest.NamedResource{id},
 				Dirty: []manifest.NamedResource{id}, Ordinary: []manifest.NamedResource{id},
 			}), 0)
-			_, committed, err := session.Commit(t.Context(), proposal, tc.stage)
+			_, committed, err := session.publishProposal(t.Context(), proposal, tc.stage)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 			accepted := session.Snapshot()
@@ -480,11 +480,11 @@ func TestSession_ConstructionPublishesReadySupportWithPendingDemand(t *testing.T
 	id := testutil.KustomizationID("apps", "support")
 	proposal := publicationProposal(session, new(Admission{Needed: []manifest.NamedResource{id}}), 0)
 	proposal.demands = []Demand{{Identity: testutil.KustomizationID("apps", "pending")}}
-	_, committed, err := session.Commit(t.Context(), proposal, Execution)
+	_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, false)
 	assert.Equal(t, session.Snapshot().Reconcile(id), false)
-	_, committed, err = session.Commit(t.Context(), proposal, Construction)
+	_, committed, err = session.publishProposal(t.Context(), proposal, Construction)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	assert.Equal(t, session.Snapshot().Reconcile(id), true)

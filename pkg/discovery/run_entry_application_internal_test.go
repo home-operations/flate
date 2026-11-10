@@ -303,7 +303,7 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	assert.NoError(t, err)
 	input.statErr = fs.ErrPermission
 	leaf := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
-	proposal, err := prepareSelection(t.Context(), t, l,
+	proposal, err := admitSelection(t.Context(), t, l,
 		selection.PrepareRequest{Generation: []store.Child{{Obj: leaf, Entry: &manifest.EntryApplication{}}}},
 	)
 	assert.NoError(t, err)
@@ -316,14 +316,10 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	reads.Init(st, manifest.NamedResource{}, nil)
 	defer reads.Retire()
 	reads.RequireData(leaf.Named())
-	proposal, err = prepareSelection(
-		t.Context(),
-		t,
-		l,
-		selection.PrepareRequest{Generation: []store.Child{{Obj: leaf}}, Reads: &reads},
-	)
-	assert.NoError(t, err)
-	committed, err := commitSelection(t.Context(), l, proposal, selection.Execution)
+	_, committed, err := l.Options.Session.Admit(t.Context(), selection.AdmissionOptions{
+		Request: selection.PrepareRequest{Generation: []store.Child{{Obj: leaf}}, Reads: &reads},
+		Stage:   selection.Execution,
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	assert.Equal(t, l.Options.Session.Snapshot().Reconcile(leaf.Named()), true)

@@ -23,6 +23,7 @@ type (
 		comparingDeclaration                      bool
 		initialKnown, directKnown                 bool
 		captured                                  bool
+		publication                               uint64
 		affected, affectedKnown                   bool
 	}
 )
@@ -36,6 +37,7 @@ type admissionIdentity struct {
 type admissionClosure struct {
 	changes            *change.Set
 	configuredInput    *store.SourceArtifact
+	publication        uint64
 	sourceFacts        map[manifest.NamedResource]*SourceFacts
 	sourceReads        *store.ReadSet
 	candidates         [2][2][]*OccurrenceFacts
@@ -324,7 +326,11 @@ func (c *admissionClosure) matchesDeclarationContent(
 	record, _ := c.facts.SelectionIndex().Lookup(id)
 	if child := c.children[id]; child.Obj != nil {
 		indexed := record.Builder != "" && c.capturedRoot(id).PreparedRoot != ""
-		if child.SourceSupport != (manifest.NamedResource{}) || indexed {
+		if child.SourceSupport != (manifest.NamedResource{}) && record.Builder == "" {
+			// File observations MUST follow source content, independent of the effective declaration.
+			c.objects.GetArtifact(child.SourceSupport, store.ArtifactContent)
+			matched = c.proposal.reads.MatchesContent(previous, child.SourceSupport)
+		} else if child.SourceSupport != (manifest.NamedResource{}) || indexed {
 			// Admission changes the target's presence, but the source still owns its derivation.
 			current, document, output := c.objects.GetEmission(id)
 			output.Finish()

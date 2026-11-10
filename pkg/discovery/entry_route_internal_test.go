@@ -103,7 +103,7 @@ func TestEntryRoute_RejectedProposalPreservesAcceptedSupport(t *testing.T) {
 			}
 			assert.Equal(t, a.acceptedEntry, accepted)
 			assert.Equal(t, a.acceptedEntry.Root, acceptedRoot)
-			_, committed, err := l.Options.Session.Commit(t.Context(), proposal, selection.Execution)
+			committed, err := commitSelection(t.Context(), l, proposal, selection.Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 		})

@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"context"
 	"path/filepath"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -56,6 +57,8 @@ type ProducerFacts struct {
 }
 
 type census interface {
+	ResolveRoot(context.Context, *store.ReadSet, manifest.NamedResource, string) (string, bool, error)
+	OccurrenceObject(context.Context, *OccurrenceFacts, *store.SourceArtifact) (store.Child, error)
 	SelectionIndex() *manifest.DiscoveryIndex
 	Occurrence(manifest.NamedResource) (OccurrenceFacts, bool)
 	AdmissionCandidate(manifest.NamedResource) store.Child

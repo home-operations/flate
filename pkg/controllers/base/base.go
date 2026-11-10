@@ -3,7 +3,6 @@ package base
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/depwait"
@@ -77,7 +76,7 @@ func (c *Controller) Configure(opts Options) {
 
 // KeepEmitted MUST admit every child in the immutable generation before publication.
 //
-//nolint:funlen,gocritic,gocognit // One capture MUST cover the immutable generation across acquisition and publication.
+//nolint:gocritic // The admission driver MUST retain the immutable generation across retries.
 func (c *Controller) KeepEmitted(
 	ctx context.Context,
 	parent manifest.NamedResource,
@@ -97,96 +96,21 @@ func (c *Controller) KeepEmitted(
 	}
 	request.Missing = c.Missing
 	request.Owner = parent
-	var local *selection.Preparation
-	if request.Preparation == nil {
-		request.Preparation = &local
-		defer func() { local.Retire() }()
+	_, accepted, err := c.selection.Admit(ctx, selection.AdmissionOptions{
+		Request: request, Stage: selection.Execution, Authority: reads,
+	})
+	if err != nil || !accepted {
+		return false, err
 	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return false, fmt.Errorf("context: %w", err)
-		}
-		if !reads.Valid() {
-			return false, nil
-		}
-		proof := c.admissionProof(reads)
-		request.Reads = proof
-		proposal, err := c.selection.Prepare(ctx, request)
-		if err != nil {
-			proof.Retire()
-			return false, err
-		}
-		var committed bool
-		for {
-			var acquired []selection.Acquisition
-			for demand := range proposal.Demands() {
-				result := selection.Acquisition{Demand: demand, Reads: demand.Reads}
-				if demand.History && demand.Root != "" {
-					result.Root, result.Available, err = c.loader.ResolveRoot(
-						ctx,
-						demand.Reads,
-						demand.Source,
-						demand.Root,
-					)
-				} else if demand.Occurrence.Identity != (manifest.NamedResource{}) {
-					result.Child, err = c.loader.OccurrenceObject(ctx, &demand.Occurrence, demand.Artifact)
-					result.Available = result.Child.Obj != nil
-				}
-				if err != nil {
-					proposal.Retire()
-					c.Store.Retire(proof)
-					return false, err
-				}
-				acquired = append(acquired, result)
-			}
-			if len(acquired) != 0 {
-				request = proposal.Request
-				request.Acquired = acquired
-				previous := proposal
-				proposal, err = c.selection.Prepare(ctx, request)
-				previous.Retire()
-				if err != nil {
-					c.Store.Retire(proof)
-					return false, err
-				}
-				continue
-			}
-			proposal, committed, err = c.selection.Commit(ctx, proposal, selection.Execution)
-			if err != nil || committed || proposal == nil {
-				break
-			}
-		}
-		c.Store.Retire(proof)
-		if err != nil {
-			return false, err
-		}
-		if !committed {
-			continue
-		}
-		decision := c.selection.Snapshot()
-		selected := len(request.Generation) == 0
-		for _, child := range request.Generation {
-			if child.Obj != nil {
-				c.selection.Include(child.Obj.Named())
-				selected = selected || decision.Reconcile(child.Obj.Named())
-			}
-		}
-		return selected, nil
-	}
-}
-
-func (c *Controller) admissionProof(reads *store.ReadSet) *store.ReadSet {
-	proof := &store.ReadSet{}
-	proof.Init(c.Store, reads.ID(), nil)
-	proof.SetWork(reads.Work())
-	for id, qualification := range reads.Required() {
-		if qualification {
-			proof.RequireQualification(id)
-		} else {
-			proof.RequireData(id)
+	decision := c.selection.Snapshot()
+	selected := len(request.Generation) == 0
+	for _, child := range request.Generation {
+		if child.Obj != nil {
+			c.selection.Include(child.Obj.Named())
+			selected = selected || decision.Reconcile(child.Obj.Named())
 		}
 	}
-	return proof
+	return selected, nil
 }
 
 // SetPendingUnlessReady initializes progress without changing an existing condition.

@@ -273,13 +273,16 @@ func (o *Orchestrator) publishEntry(
 		}
 		return binding.Reads.Valid(), nil
 	}
-	proposal, err := o.prepareAdmission(ctx, selection.PrepareRequest{
-		Generation: []store.Child{incoming}, Reads: binding.Reads, Preparation: &o.admissionPreparation,
-	})
-	if err != nil {
-		return false, err
+	options := selection.AdmissionOptions{
+		Request: selection.PrepareRequest{
+			Generation: []store.Child{incoming}, Reads: binding.Reads, Preparation: &o.admissionPreparation,
+		},
+		Stage: selection.Execution,
 	}
-	_, committed, err := o.commitAdmission(ctx, proposal)
+	if binding.Entry != nil {
+		options.EntryHistory.Owner, options.EntryHistory.Records = binding.Entry.Owner, binding.Entry.Records
+	}
+	_, committed, err := o.prepareAdmission(ctx, options)
 	return committed && binding.Reads.Valid(), err
 }
 

@@ -54,7 +54,7 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 			assert.Equal(t, slices.Contains(proposal.Needed, child.Obj.Named()), true)
 			assert.Equal(t, len(child.Productions), 0)
 		}
-		_, committed, err := session.Commit(t.Context(), proposal, Execution)
+		_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
 		reads.Close()
@@ -93,7 +93,7 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 			assert.Equal(t, proposal.reused, false)
 			assert.Equal(t, proposal.reads == evidence, false)
 			evidence = proposal.reads
-			_, committed, err := session.Commit(t.Context(), proposal, Execution)
+			_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 			guard.Retire()
@@ -111,7 +111,7 @@ func TestAdmission_OneCapturePerGeneration(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, proposal.reused, false)
-	_, committed, err := session.Commit(t.Context(), proposal, Execution)
+	_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, false)
 	stale.Retire()

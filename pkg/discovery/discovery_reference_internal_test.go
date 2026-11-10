@@ -64,7 +64,7 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 	st.AddObject(declaration.Obj, declaration.Doc)
 	assert.Equal(t, st.GetDeclaration(parent) != nil, true)
 	assert.Equal(t, len(st.Productions(child, l.Index)) != 0, true)
-	_, err = session.Advance(t.Context(), &selection.Admission{Needed: []manifest.NamedResource{child}})
+	_, err = session.Advance(t.Context(), &selection.AdmissionResult{Needed: []manifest.NamedResource{child}})
 	assert.NoError(t, err)
 	for owner := range session.prepared {
 		assert.FatalIf(

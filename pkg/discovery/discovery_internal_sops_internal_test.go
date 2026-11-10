@@ -62,7 +62,7 @@ func TestAdvance_UnreadableInputReachesFixpoint(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	for range 3 {
-		proposal, err := prepareSelection(t.Context(), t, l,
+		proposal, err := admitSelection(t.Context(), t, l,
 			selection.PrepareRequest{Generation: nil, Reads: nil, History: nil, Invocation: true},
 		)
 		assert.NoError(t, err)

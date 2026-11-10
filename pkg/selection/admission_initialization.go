@@ -306,10 +306,13 @@ func (c *admissionClosure) retireIdentities() {
 		if c.states[identity.id].listed {
 			return false
 		}
-		if state := c.states[identity.id]; state.incoming != 0 {
+		state := c.states[identity.id]
+		// First-attempt presence MUST survive inventory pruning within one admission call.
+		if state.incoming != 0 || state.publication != 0 && state.publication == c.publication {
 			c.states[identity.id] = admissionState{
 				incoming:            state.incoming,
 				incomingProductions: state.incomingProductions,
+				publication:         state.publication,
 			}
 		} else {
 			delete(c.states, identity.id)

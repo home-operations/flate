@@ -90,34 +90,33 @@ func Require(
 			reads.RequireData(id)
 		}
 	}
-	proposal, err := session.Prepare(
-		tb.Context(),
-		selection.PrepareRequest{Reads: &reads, Missing: depwait.NewMissingPolicy(nil)},
-	)
+	_, committed, err := session.Admit(tb.Context(), selection.AdmissionOptions{
+		Request: selection.PrepareRequest{Reads: &reads, Missing: depwait.NewMissingPolicy(nil)},
+		Stage:   selection.Execution,
+	})
 	if err != nil {
 		tb.Fatal(err)
 	}
-	Commit(tb, session, proposal)
+	if !committed {
+		tb.Fatal("fixture admission did not commit")
+	}
 }
 
-// Commit requires a settled proposal without physical demands.
+// Commit MUST retire proposal payloads before the session owns publication retries.
 func Commit(tb testing.TB, session *selection.Session, proposal *selection.Admission) {
 	tb.Helper()
 	if session == nil {
 		return
 	}
-	var err error
-	if proposal == nil {
-		proposal, err = session.Prepare(
-			tb.Context(),
-			selection.PrepareRequest{Invocation: true, Missing: depwait.NewMissingPolicy(nil)},
-		)
+	request := selection.PrepareRequest{Invocation: true, Missing: depwait.NewMissingPolicy(nil)}
+	if proposal != nil {
+		request = proposal.Request
+		proposal.Retire()
 	}
-	if err != nil {
-		tb.Fatal(err)
-	}
-	defer proposal.Retire()
-	_, committed, err := session.Commit(tb.Context(), proposal, selection.Execution)
+	_, committed, err := session.Admit(tb.Context(), selection.AdmissionOptions{
+		Request: request,
+		Stage:   selection.Execution,
+	})
 	if err != nil {
 		tb.Fatal(err)
 	}

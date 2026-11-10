@@ -106,7 +106,7 @@ func TestBuiltChildren_ConstructionDeclarations(t *testing.T) {
 					Invocation: true,
 				})
 				assert.NoError(t, prepareErr)
-				_, committed, commitErr := l.Options.Session.Commit(t.Context(), proposal, selection.Construction)
+				_, committed, commitErr := l.commitSelection(t.Context(), t, proposal, selection.Construction)
 				assert.NoError(t, commitErr)
 				return committed
 			}

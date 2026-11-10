@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"context"
 	"slices"
 	"testing"
 
@@ -19,6 +20,24 @@ func (f *publicationFacts) Occurrence(manifest.NamedResource) (OccurrenceFacts, 
 
 func (f *publicationFacts) AdmissionCandidate(manifest.NamedResource) store.Child {
 	return store.Child{}
+}
+
+//nolint:gocritic // The fixture MUST retain the census result signature.
+func (f *publicationFacts) ResolveRoot(
+	context.Context,
+	*store.ReadSet,
+	manifest.NamedResource,
+	string,
+) (string, bool, error) {
+	return "", false, nil
+}
+
+func (f *publicationFacts) OccurrenceObject(
+	context.Context,
+	*OccurrenceFacts,
+	*store.SourceArtifact,
+) (store.Child, error) {
+	return store.Child{}, nil
 }
 
 //nolint:gocritic // The fixture implements the census method exactly.
@@ -63,11 +82,12 @@ func publishDecision(t *testing.T, s *Session, update *Admission, revision uint6
 	t.Helper()
 	before := s.Snapshot()
 	proposal := publicationProposal(s, update, revision)
-	result, committed, err := s.Commit(t.Context(), proposal, Execution)
-	if err != nil || !committed {
+	_, committed, err := s.publishProposal(t.Context(), proposal, Execution)
+	if err != nil {
 		t.Errorf("publication committed=%v err=%v", committed, err)
 	}
-	retry := result != proposal
+	retry := !committed
+	proposal.Retire()
 	var included []manifest.NamedResource
 	for _, bucket := range s.Snapshot().buckets {
 		for id := range bucket {
@@ -78,6 +98,26 @@ func publishDecision(t *testing.T, s *Session, update *Admission, revision uint6
 	}
 	slices.SortFunc(included, manifest.NamedResource.Compare)
 	return included, retry
+}
+
+func (s *Session) publishProposal(
+	ctx context.Context,
+	proposal *Admission,
+	stage CommitStage,
+) (*Admission, bool, error) {
+	if err := ctx.Err(); err != nil {
+		proposal.Retire()
+		return nil, false, err
+	}
+	if !s.guardCurrent(proposal) {
+		proposal.Retire()
+		return nil, false, nil
+	}
+	next, accepted := s.publishAdmission(ctx, proposal, stage)
+	if accepted {
+		proposal.accept(stage, next)
+	}
+	return proposal, accepted, nil
 }
 
 func decisionNames(d *Decision) []string {

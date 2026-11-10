@@ -64,10 +64,7 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	required.Init(st, manifest.NamedResource{}, nil)
 	defer required.Retire()
 	required.RequireData(one)
-	proposal, err := l.Options.Session.Prepare(
-		t.Context(),
-		selection.PrepareRequest{Reads: &required, Missing: l.Options.Missing},
-	)
+	proposal, err := admitSelection(t.Context(), t, l, selection.PrepareRequest{Reads: &required})
 	assert.NoError(t, err)
 	advanced, err := session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)
@@ -84,7 +81,7 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	built := l.PromotionDocuments(one)
 	assert.Equal(t, len(built), 1)
 	st.AddObject(built[0].Obj, built[0].Doc)
-	proposal, err = prepareSelection(
+	proposal, err = admitSelection(
 		t.Context(),
 		t,
 		l,
@@ -204,7 +201,7 @@ spec: {path: ./workload}
 			assert.NoError(t, err)
 			requests := 0
 			for {
-				proposal, prepareErr := prepareSelection(t.Context(), t, l,
+				proposal, prepareErr := admitSelection(t.Context(), t, l,
 					selection.PrepareRequest{Generation: nil, Reads: nil, History: nil, Invocation: true},
 				)
 				assert.NoError(t, prepareErr)

@@ -61,30 +61,11 @@ func (l *Loader) commitSelection(
 	tb testing.TB,
 	proposal *selection.Admission,
 	stage selection.CommitStage,
-) (*selection.Admission, bool, error) {
+) (selection.AdmissionResult, bool, error) {
 	tb.Helper()
-	for {
-		current, committed, err := l.Options.Session.Commit(ctx, proposal, stage)
-		if err != nil || committed || current == nil {
-			return current, committed, err
-		}
-		acquired, err := l.acquireSelection(ctx, current)
-		if err != nil {
-			current.Retire()
-			return nil, false, err
-		}
-		if len(acquired) == 0 {
-			return current, false, nil
-		}
-		request := current.Request
-		request.Acquired = acquired
-		next, err := prepareSelection(ctx, tb, l, request)
-		current.Retire()
-		if err != nil {
-			return nil, false, err
-		}
-		proposal = next
-	}
+	request := proposal.Request
+	proposal.Retire()
+	return l.Options.Session.Admit(ctx, selection.AdmissionOptions{Request: request, Stage: stage})
 }
 
 func (l *Loader) acquireSelection(ctx context.Context, proposal *selection.Admission) ([]selection.Acquisition, error) {
@@ -125,7 +106,7 @@ func requireSelection(
 	l *Loader,
 	ids []manifest.NamedResource,
 	qualification bool,
-) (*selection.Admission, bool, error) {
+) (selection.AdmissionResult, bool, error) {
 	tb.Helper()
 	var reads store.ReadSet
 	reads.Init(l.Store, manifest.NamedResource{}, nil)
@@ -137,11 +118,14 @@ func requireSelection(
 			reads.RequireData(id)
 		}
 	}
-	proposal, err := prepareSelection(tb.Context(), tb, l, selection.PrepareRequest{Reads: &reads})
-	if err != nil {
-		return nil, false, err
-	}
-	return l.commitSelection(tb.Context(), tb, proposal, selection.Execution)
+	return l.Options.Session.Admit(tb.Context(), selection.AdmissionOptions{
+		Request: selection.PrepareRequest{
+			Changes: l.Options.Changes,
+			Missing: l.Options.Missing,
+			Reads:   &reads,
+		},
+		Stage: selection.Execution,
+	})
 }
 
 func rootAtForTest(l *Loader, object manifest.BaseManifest, file string) selection.RootEvidence {

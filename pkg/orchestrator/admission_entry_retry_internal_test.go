@@ -112,12 +112,15 @@ func TestRenderTrees_EntryPublicationSourcePreparation(t *testing.T) {
 	assert.Equal(t, afterSourceFacts.Delta == beforeSourceFacts.Delta, true)
 	assert.Diff(t, slices.Collect(manifest.References(current, manifest.ReferenceRelations)), beforeRefs)
 	assert.Equal(t, caller.Valid(), true)
-	next, committed, err := o.selection.Commit(t.Context(), proposal, selection.Execution)
+	result, committed, err := o.selection.Admit(t.Context(), selection.AdmissionOptions{
+		Request: proposal.Request, Stage: selection.Execution,
+	})
+	proposal.Retire()
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
-	assert.Equal(t, next != nil, true)
-	assert.Equal(t, next.Revision > pendingRevision, true)
-	assert.Equal(t, slices.Contains(next.Needed, id), true)
+	assert.Equal(t, result.Request.Preparation == &preparation, true)
+	assert.Equal(t, result.Revision > pendingRevision, true)
+	assert.Equal(t, slices.Contains(result.Needed, id), true)
 	assert.Diff(
 		t,
 		work.Scope().Admission().Counts,
@@ -129,7 +132,7 @@ func TestRenderTrees_EntryPublicationSourcePreparation(t *testing.T) {
 	fresh.Init(o.store, id, nil)
 	fresh.SetWork(&work)
 	defer fresh.Close()
-	next, err = o.selection.Prepare(
+	next, err := o.selection.Prepare(
 		t.Context(),
 		selection.PrepareRequest{
 			Missing:     o.cfg.missing,
@@ -520,7 +523,10 @@ func TestRenderTrees_SourcePublicationKeepsHelmReleasePreparation(t *testing.T) 
 		Generation: []store.Child{{Obj: o.store.GetObject(id), Origin: o.store.Policy(id).Origin}},
 	})
 	assert.NoError(t, err)
-	_, committed, err := o.selection.Commit(t.Context(), stale, selection.Execution)
+	_, committed, err := o.selection.Admit(t.Context(), selection.AdmissionOptions{
+		Request: stale.Request, Stage: selection.Execution,
+	})
+	stale.Retire()
 	assert.NoError(t, err)
 	assert.Equal(t, committed, false)
 	assert.Equal(t, o.selection.Snapshot() == decision, true)

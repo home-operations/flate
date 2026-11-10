@@ -92,21 +92,26 @@ func (f *admissionFixture) prepare(request selection.PrepareRequest, commit bool
 		return nil
 	}
 	request.History = f.history
-	proposal, err := prepareSelection(f.tb.Context(), f.tb, f.loader, request)
-	if err != nil {
-		f.tb.Fatal(err)
-	}
-	needed := slices.Clone(proposal.Needed)
+	var needed []manifest.NamedResource
 	if commit {
-		var committed bool
-		proposal, committed, err = f.loader.commitSelection(f.tb.Context(), f.tb, proposal, selection.Execution)
+		request.Changes = f.loader.Options.Changes
+		if request.Missing == nil {
+			request.Missing = f.loader.Options.Missing
+		}
+		result, committed, err := f.loader.Options.Session.Admit(f.tb.Context(), selection.AdmissionOptions{
+			Request: request,
+			Stage:   selection.Execution,
+		})
 		if err != nil || !committed {
 			f.tb.Fatalf("fixture commit=%v: %v", committed, err)
 		}
-		needed = append(needed, proposal.Needed...)
-		slices.SortFunc(needed, manifest.NamedResource.Compare)
-		needed = slices.Compact(needed)
+		needed = result.Needed
 	} else {
+		proposal, err := prepareSelection(f.tb.Context(), f.tb, f.loader, request)
+		if err != nil {
+			f.tb.Fatal(err)
+		}
+		needed = slices.Clone(proposal.Needed)
 		f.pending = proposal
 	}
 	f.mu.Lock()

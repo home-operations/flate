@@ -45,7 +45,7 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, proposal.entry, route)
 			assert.Equal(t, proposal.entrySupported(), true)
-			refreshed, err := session.refreshHistoryTest(t.Context(), proposal, PrepareRequest{})
+			refreshed, err := session.refreshHistoryTest(t.Context(), new(proposal.result()), PrepareRequest{})
 			assert.NoError(t, err)
 			assert.Equal(t, refreshed.entry, route)
 			refreshed.Retire()
@@ -53,7 +53,7 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 			if change == "retired-declaration" {
 				proposal.Retire()
 				var committed bool
-				_, committed, err = session.Commit(t.Context(), proposal, Construction)
+				_, committed, err = session.publishProposal(t.Context(), proposal, Construction)
 				assert.NoError(t, err)
 				assert.Equal(t, committed, true)
 			}
@@ -88,7 +88,7 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 			}()
 			close(prepared)
 			<-changed
-			_, committed, err := session.Commit(t.Context(), proposal, Execution)
+			_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, false)
 			assert.Equal(t, session.Snapshot().version(), uint64(0))
@@ -101,7 +101,7 @@ func TestEntryRoute_InheritedAndGuarded(t *testing.T) {
 			} else {
 				assert.Equal(t, current.entrySupported(), true)
 			}
-			_, committed, err = session.Commit(t.Context(), current, Execution)
+			_, committed, err = session.publishProposal(t.Context(), current, Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 		})

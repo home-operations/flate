@@ -10,10 +10,10 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// RefreshHistory MUST retain the settled identities while capturing each receipt's current authority.
-func (s *Session) RefreshHistory(
+// History refresh MUST retain settled identities while capturing current receipt authority.
+func (s *Session) refreshHistory(
 	ctx context.Context,
-	previous *Admission,
+	previous *AdmissionResult,
 	request PrepareRequest, //nolint:gocritic // The proposal retains the caller's immutable request snapshot.
 ) (*Admission, error) {
 	if err := ctx.Err(); err != nil {

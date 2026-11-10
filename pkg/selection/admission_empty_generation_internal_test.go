@@ -44,7 +44,7 @@ func TestAdmission_EmptyGenerationDropsPreviousObjects(t *testing.T) {
 	if len(first.Objects) != 1 {
 		t.Fatalf("first proposal objects = %d, want 1", len(first.Objects))
 	}
-	_, committed, err := session.Commit(t.Context(), first, Execution)
+	_, committed, err := session.publishProposal(t.Context(), first, Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestAdmission_EmptyGenerationDropsPreviousObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, committed, err = session.Commit(t.Context(), restored, Execution)
+	_, committed, err = session.publishProposal(t.Context(), restored, Execution)
 	if err != nil || !committed {
 		t.Fatalf("restored generation committed = %v, error = %v", committed, err)
 	}

@@ -385,7 +385,6 @@ func (o *Orchestrator) stop() {
 	o.inputs.Close()
 	o.tasks.BlockTillDone()
 	o.sweepProbes(true)
-	o.preparation.Retire()
 	o.preparation = nil
 	o.admissionPreparation.Retire()
 	o.admissionPreparation = nil

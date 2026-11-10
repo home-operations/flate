@@ -63,7 +63,7 @@ func TestAdmission_ClosureFactsFollowEmits(t *testing.T) {
 		}
 		proposal, err := session.prepareTest(t.Context(), request)
 		assert.NoError(t, err)
-		_, committed, err := session.Commit(t.Context(), proposal, Execution)
+		_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
 		assert.Equal(t, session.Snapshot().Output(child.Named()), true)
@@ -132,7 +132,7 @@ func TestAdmission_MembershipChangeUsesSuccessorSnapshot(t *testing.T) {
 	assert.Equal(t, facts.onRoot == nil, true)
 	assert.Equal(t, proposal.Revision, before.version())
 	assert.Equal(t, slices.Contains(proposal.Selected, parent.Named()), false)
-	_, committed, err := session.Commit(t.Context(), proposal, Execution)
+	_, committed, err := session.commitSolver(t.Context(), t, proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	assert.Equal(t, session.Snapshot().Output(child.Named()), true)
@@ -167,7 +167,7 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 			}
 			proposal, err := session.prepareTest(t.Context(), request)
 			assert.NoError(t, err)
-			_, committed, err := session.Commit(t.Context(), proposal, Execution)
+			_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 			assert.Equal(t, session.Snapshot().Output(object.Named()), mode != "required")
@@ -182,7 +182,7 @@ func TestAdmission_UnchangedClosureReusesSnapshot(t *testing.T) {
 			assert.Equal(t, proposal.reused, true)
 			assert.Equal(t, len(facts.roots), 0)
 			assert.Equal(t, slices.Contains(proposal.Needed, object.Named()), true)
-			_, committed, err = session.Commit(t.Context(), proposal, Execution)
+			_, committed, err = session.publishProposal(t.Context(), proposal, Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, true)
 		})
@@ -219,7 +219,7 @@ func TestAdmission_InvocationSeesNewObjects(t *testing.T) {
 	request := PrepareRequest{Preparation: &preparation, Invocation: true}
 	proposal, err := session.prepareTest(t.Context(), request)
 	assert.NoError(t, err)
-	_, committed, err := session.Commit(t.Context(), proposal, Execution)
+	_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	late := &manifest.Kustomization{Name: "late", Namespace: "apps"}
@@ -228,7 +228,7 @@ func TestAdmission_InvocationSeesNewObjects(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, proposal.reused, false)
 	assert.Equal(t, slices.Contains(proposal.Selected, late.Named()), true)
-	_, committed, err = session.Commit(t.Context(), proposal, Execution)
+	_, committed, err = session.publishProposal(t.Context(), proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	proposal, err = session.prepareTest(t.Context(), PrepareRequest{Preparation: &preparation})
@@ -348,7 +348,7 @@ func TestAdmission_FrozenCatalogSharedAcrossEmits(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, facts.sources[manifest.BootstrapSourceID], 1)
 		clear(facts.sources)
-		_, committed, err := session.Commit(t.Context(), proposal, Execution)
+		_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, true)
 	}
@@ -408,7 +408,7 @@ func TestAdmission_HistoryRefreshReleasesUnsupportedRouteDemand(t *testing.T) {
 	producer := &manifest.HelmRelease{Name: "generator", Namespace: "apps"}
 	st.AddObject(producer)
 	application := &manifest.EntryApplication{Source: manifest.BootstrapSourceID, Path: "entry"}
-	previous := &Admission{
+	previous := &AdmissionResult{
 		Needed: []manifest.NamedResource{producer.Named()},
 		entry:  &EntryRoute{Application: application},
 	}

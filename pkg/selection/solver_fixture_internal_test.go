@@ -2,6 +2,7 @@ package selection
 
 import (
 	"context"
+	"path"
 	"path/filepath"
 	"testing"
 
@@ -31,13 +32,21 @@ func (s *Session) prepareTest(ctx context.Context, request PrepareRequest) (*Adm
 //nolint:gocritic // Test requests keep independent snapshots.
 func (s *Session) refreshHistoryTest(
 	ctx context.Context,
-	previous *Admission,
+	previous *AdmissionResult,
 	request PrepareRequest,
 ) (*Admission, error) {
 	if request.Missing == nil {
 		request.Missing = (*solverMissingPolicy)(nil)
 	}
-	return s.RefreshHistory(ctx, previous, request)
+	return s.refreshHistory(ctx, previous, request)
+}
+
+//nolint:gocritic // Test requests keep independent snapshots.
+func (s *Session) admitTest(ctx context.Context, options AdmissionOptions) (AdmissionResult, bool, error) {
+	if options.Request.Missing == nil {
+		options.Request.Missing = (*solverMissingPolicy)(nil)
+	}
+	return s.Admit(ctx, options)
 }
 
 type solverFacts struct {
@@ -65,6 +74,28 @@ func (f *solverFacts) AdmissionCandidate(id manifest.NamedResource) store.Child 
 	return f.candidates[id]
 }
 
+//nolint:gocritic // The fixture MUST retain the census result signature.
+func (f *solverFacts) ResolveRoot(
+	_ context.Context,
+	_ *store.ReadSet,
+	_ manifest.NamedResource,
+	root string,
+) (string, bool, error) {
+	return path.Clean(root), true, nil
+}
+
+func (f *solverFacts) OccurrenceObject(
+	_ context.Context,
+	occurrence *OccurrenceFacts,
+	_ *store.SourceArtifact,
+) (store.Child, error) {
+	child := f.candidates[occurrence.Identity]
+	if child.Obj == nil && f.store != nil {
+		child.Obj = f.store.GetDeclaration(occurrence.Identity)
+	}
+	return child, nil
+}
+
 //nolint:gocritic // The fixture implements the census method exactly.
 func (f *solverFacts) OccurrenceRoots(id manifest.NamedResource) (manifest.NamedResource, []string) {
 	occurrence, known := f.occurrences[id]
@@ -87,7 +118,7 @@ func (f *solverFacts) ProducerFacts(obj manifest.BaseManifest) ProducerFacts {
 	if facts, known := f.producers[obj]; known {
 		return facts
 	}
-	source, path, hasPath := obj.SourcePath()
+	source, objectPath, hasPath := obj.SourcePath()
 	return ProducerFacts{
 		Declaration: obj,
 		Occurrence: OccurrenceFacts{
@@ -96,7 +127,7 @@ func (f *solverFacts) ProducerFacts(obj manifest.BaseManifest) ProducerFacts {
 			Object:   obj,
 			Catalog:  obj,
 			Source:   source,
-			Path:     path,
+			Path:     objectPath,
 			HasPath:  hasPath,
 		},
 	}
@@ -206,30 +237,11 @@ func (s *Session) commitSolver(
 	t *testing.T,
 	proposal *Admission,
 	stage CommitStage,
-) (*Admission, bool, error) {
+) (AdmissionResult, bool, error) {
 	t.Helper()
-	for {
-		current, committed, err := s.Commit(ctx, proposal, stage)
-		if err != nil || committed || current == nil || len(current.demands) == 0 {
-			return current, committed, err
-		}
-		request := current.Request
-		request.Acquired = make([]Acquisition, 0, len(current.demands))
-		for i := range current.demands {
-			demand := current.demands[i]
-			child := solverChild(s, demand.Identity)
-			request.Acquired = append(
-				request.Acquired,
-				Acquisition{Demand: demand, Child: child, Available: child.Obj != nil, Reads: demand.Reads},
-			)
-		}
-		next, err := prepareSolver(ctx, t, s, request)
-		current.Retire()
-		if err != nil {
-			return nil, false, err
-		}
-		proposal = next
-	}
+	request := proposal.Request
+	proposal.Retire()
+	return s.admitTest(ctx, AdmissionOptions{Request: request, Stage: stage})
 }
 
 func evaluateSolver(t *testing.T, c *admissionClosure, request *PrepareRequest) (*Admission, error) {

@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"iter"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -9,6 +10,67 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestAdmission_HistoryAvailability(t *testing.T) {
+	t.Parallel()
+	owner := testutil.KustomizationID("apps", "owner")
+	child := testutil.KustomizationID("apps", "child")
+	for _, tc := range []struct {
+		name     string
+		owner    manifest.NamedResource
+		present  bool
+		records  bool
+		complete bool
+	}{
+		{name: "absent", owner: owner},
+		{name: "unavailable", owner: owner, present: true},
+		{name: "incomplete", owner: owner, present: true, records: true},
+		{name: "complete empty", owner: owner, present: true, records: true, complete: true},
+		{name: "zero owner complete empty", present: true, records: true, complete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			request := PrepareRequest{History: map[manifest.NamedResource]struct {
+				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+				Complete bool
+			}{}}
+			refs := []manifest.NamedResource{manifest.BootstrapSourceID}
+			if tc.present {
+				history := request.History[tc.owner]
+				history.Complete = tc.complete
+				if tc.records {
+					history.Records = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+						if !tc.complete {
+							yield(child, manifest.DiscoveryRecord{Refs: refs})
+						}
+					}
+				}
+				request.History[tc.owner] = history
+			}
+			st := store.New()
+			facts := &solverFacts{store: st}
+			closure := solverClosure(t, st, facts)
+			closure.history = request.History
+			closure.readHistory()
+			records, available := closure.accepted[tc.owner]
+			assert.Equal(t, available, tc.records)
+			assert.Equal(t, closure.replace[tc.owner], tc.complete)
+			assert.Equal(t, len(records) == 1, tc.records && !tc.complete)
+			if tc.records && !tc.complete {
+				record := closure.record(child)
+				assert.Diff(t, record.Refs, refs)
+				record.Refs[0] = owner
+				assert.Diff(t, refs, []manifest.NamedResource{manifest.BootstrapSourceID})
+				assert.Diff(t, records[child].Refs, refs)
+			}
+			assert.Equal(t, len(request.History) == 1, tc.present)
+			history, present := request.History[tc.owner]
+			assert.Equal(t, present, tc.present)
+			assert.Equal(t, history.Records != nil, tc.records)
+			assert.Equal(t, history.Complete, tc.complete)
+		})
+	}
+}
 
 func TestAdmission_HistoryProductionPass(t *testing.T) {
 	t.Parallel()

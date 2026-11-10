@@ -90,7 +90,7 @@ func (c *admissionClosure) producerWitness(obligation *producerObligation) (stor
 // The caller retains its logical Preparation and retires the result after consuming its demands.
 func (s *Session) RefreshProducers(
 	ctx context.Context,
-	previous *Admission,
+	previous *AdmissionResult,
 	request PrepareRequest, //nolint:gocritic // The frontier borrows the driver's immutable acquisition snapshot.
 ) (*Admission, error) {
 	if err := ctx.Err(); err != nil {

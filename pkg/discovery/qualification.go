@@ -526,21 +526,13 @@ func (w *qualificationWalk) commit(ctx context.Context, request *selection.Prepa
 	if request.Preparation == nil {
 		request.Preparation = &w.q.preparation
 	}
-	var proposal *selection.Admission
-	var err error
-	if w.q.session != nil {
-		proposal, err = w.q.session.prepare(ctx, *request)
-	} else {
-		proposal, err = w.q.loader.Options.Session.Prepare(ctx, *request)
-	}
-	if err != nil {
-		return false, err
-	}
 	stage := selection.Execution
 	if w.q.session != nil {
 		stage = selection.Construction
 	}
-	_, committed, err := w.q.loader.Options.Session.Commit(ctx, proposal, stage)
+	_, committed, err := w.q.loader.Options.Session.Admit(ctx, selection.AdmissionOptions{
+		Request: *request, Stage: stage,
+	})
 	w.q.changed = w.q.changed || request.Reads != nil && !request.Reads.Valid()
 	return committed, err
 }

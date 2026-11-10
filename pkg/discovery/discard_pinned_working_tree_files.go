@@ -185,9 +185,8 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 	return d, nil
 }
 
-// Advance prepares source-qualified declarations and packages required by admission.
-func (d *Session) Advance(ctx context.Context, admission *selection.Admission) (bool, error) {
-	defer admission.Retire()
+// Advance MUST consume only accepted observations after admission publication.
+func (d *Session) Advance(ctx context.Context, admission *selection.AdmissionResult) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("context: %w", err)
 	}
@@ -199,10 +198,8 @@ func (d *Session) Advance(ctx context.Context, admission *selection.Admission) (
 	d.entryReceiptRequest = admission.EntryReceipt
 	d.request = admission.Request
 	d.request.Generation = nil
-	// Admission can retire provisional relations, so construction MUST capture their owners first.
-	demands := slices.Collect(admission.Demands())
-	admitRequiredObjectsResult2, admitRequiredObjectsResult2Err := d.admitRequiredObjects(ctx, admission)
-	changed, refresh, err := admitRequiredObjectsResult2.changed, admitRequiredObjectsResult2.refresh, admitRequiredObjectsResult2Err
+	observed, err := d.observeRequiredObjects(ctx, admission)
+	changed, refresh := observed.changed, observed.refresh
 	if err != nil {
 		return false, err
 	}
@@ -210,30 +207,25 @@ func (d *Session) Advance(ctx context.Context, admission *selection.Admission) (
 		changed, refresh = true, true
 	}
 	root := d.cfg.Input.LocalPath
-	prepared, err := d.prepareDemandedProducers(ctx, demands, root)
+	prepared, err := d.prepareDemandedProducers(ctx, admission.Demands, root)
 	if err != nil {
 		return false, err
 	}
 	changed, refresh = changed || prepared, refresh || prepared
-	previous := admission
 	for d.request.Preparation != nil {
-		frontier, err := d.loader.Options.Session.RefreshProducers(ctx, previous, d.request)
-		if previous != admission {
-			previous.Retire()
-		}
+		frontier, err := d.loader.Options.Session.RefreshProducers(ctx, admission, d.request)
 		if err != nil {
 			return false, err
 		}
 		prepared, err = d.prepareDemandedProducers(ctx, slices.Collect(frontier.Demands()), root)
+		frontier.Retire()
 		if err != nil {
-			frontier.Retire()
 			return false, err
 		}
 		if !prepared {
-			frontier.Retire()
 			break
 		}
-		changed, refresh, previous = true, true, frontier
+		changed, refresh = true, true
 	}
 	if !refresh {
 		return changed, nil
@@ -294,10 +286,14 @@ type requiredAdmission struct {
 	refresh bool
 }
 
-func (d *Session) admitRequiredObjects(ctx context.Context, proposal *selection.Admission) (requiredAdmission, error) {
+func (d *Session) observeRequiredObjects(
+	ctx context.Context,
+	admission *selection.AdmissionResult,
+) (requiredAdmission, error) {
 	changed, refresh := false, false
-	for i := range proposal.Objects {
-		child := &proposal.Objects[i]
+	absent := 0
+	for i := range admission.Objects {
+		child := &admission.Objects[i]
 		if err := ctx.Err(); err != nil {
 			return requiredAdmission{changed: false, refresh: false}, fmt.Errorf("context: %w", err)
 		}
@@ -308,16 +304,13 @@ func (d *Session) admitRequiredObjects(ctx context.Context, proposal *selection.
 				d.cfg.Store.AddWarning(warning)
 			}
 		}
-		if child.Obj != nil && d.cfg.Store.GetObject(child.Obj.Named()) == nil {
+		if child.Obj != nil && absent < len(admission.Absent) && admission.Absent[absent] == child.Obj.Named() {
+			absent++
 			_, _, hasPath := child.Obj.SourcePath()
 			_, source := child.Obj.(entrySource)
 			changed = changed || hasPath || source || child.Entry != nil
 			refresh = refresh || hasPath || source
 		}
-	}
-	_, committed, err := d.loader.Options.Session.Commit(ctx, proposal, selection.Construction)
-	if err != nil || !committed {
-		return requiredAdmission{}, err
 	}
 	return requiredAdmission{changed: changed, refresh: refresh}, nil
 }

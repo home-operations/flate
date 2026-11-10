@@ -134,7 +134,7 @@ type Orchestrator struct {
 	selection            *selection.Session
 	loader               *loader.Loader
 	session              *discovery.Session
-	preparation          *selection.Admission
+	preparation          *selection.AdmissionResult
 	admissionPreparation *selection.Preparation
 	discoveryResult      *discovery.Result
 	probes               *base.Execution

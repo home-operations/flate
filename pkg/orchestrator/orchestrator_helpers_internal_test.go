@@ -154,19 +154,22 @@ func (o *Orchestrator) prepareBootstrap(ctx context.Context) error {
 		if err := o.lookupHistory(ctx); err != nil {
 			return err
 		}
-		proposal, err := o.prepareAdmission(
+		result, accepted, err := o.prepareAdmission(
 			ctx,
-			selection.PrepareRequest{Generation: nil, Reads: nil, History: o.history, Invocation: true},
+			selection.AdmissionOptions{
+				Request: selection.PrepareRequest{Invocation: true, Preparation: &o.admissionPreparation},
+				Stage:   selection.Construction,
+			},
 		)
-		if err != nil {
+		if err != nil || !accepted {
 			return err
 		}
-		advanced, err := o.session.Advance(ctx, proposal)
+		advanced, err := o.session.Advance(ctx, &result)
 		if err != nil {
 			return err
 		}
 		if !advanced {
-			o.preparation = proposal
+			o.preparation = &result
 			break
 		}
 	}
@@ -185,11 +188,10 @@ func (o *Orchestrator) bootstrap(ctx context.Context) error {
 		return err
 	}
 	if (o.selection != nil) && len(o.admission.EntryProducers()) == 0 {
-		proposal, err := o.prepareAdmission(ctx, selection.PrepareRequest{Invocation: true, History: o.history})
-		if err != nil {
-			return err
-		}
-		if _, _, err = o.selection.Commit(ctx, proposal, selection.Execution); err != nil {
+		if _, _, err := o.prepareAdmission(ctx, selection.AdmissionOptions{
+			Request: selection.PrepareRequest{Invocation: true, Preparation: &o.admissionPreparation},
+			Stage:   selection.Execution,
+		}); err != nil {
 			return err
 		}
 	}

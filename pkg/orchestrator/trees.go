@@ -385,22 +385,26 @@ func (r *renderInvocation) prepareSession(ctx context.Context, i int) {
 	if failure == nil {
 		o.configureControllers()
 	}
-	var proposal *selection.Admission
+	var result selection.AdmissionResult
+	var accepted bool
 	if failure == nil {
-		proposal, failure = o.prepareAdmission(
+		result, accepted, failure = o.prepareAdmission(
 			ctx,
-			selection.PrepareRequest{Invocation: true, History: o.history, Preparation: &o.admissionPreparation},
+			selection.AdmissionOptions{
+				Request: selection.PrepareRequest{Invocation: true, Preparation: &o.admissionPreparation},
+				Stage:   selection.Construction,
+			},
 		)
 	}
 	advanced := false
-	if failure == nil {
-		advanced, failure = o.session.Advance(ctx, proposal)
+	if failure == nil && accepted {
+		advanced, failure = o.session.Advance(ctx, &result)
 	}
 	if failure != nil {
 		r.recordFailure(i, failure)
 		o.stop()
-	} else if !advanced {
-		o.preparation = proposal
+	} else if accepted && !advanced {
+		o.preparation = &result
 	}
 	for range o.store.Sweep() {
 	}

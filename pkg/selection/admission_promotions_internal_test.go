@@ -77,10 +77,10 @@ func TestAdmission_ChangedPromotionsInvalidatePreparation(t *testing.T) {
 	current := session.Snapshot()
 	next, _ := current.include(proposal, true)
 	assert.Equal(t, session.publish(proposal, current, next), false)
-	proposal, committed, err := session.commitSolver(t.Context(), t, proposal, Execution)
+	result, committed, err := session.commitSolver(t.Context(), t, proposal, Execution)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
-	assert.Equal(t, slices.Contains(proposal.Needed, source.Named()), true)
+	assert.Equal(t, slices.Contains(result.Needed, source.Named()), true)
 	want := manifest.WorkCounts{Attempts: 2, Completed: 2, OwnerPrepares: 2, FileEntries: 4}
 	assert.Diff(t, work.Scope().Admission().Counts, want)
 	assert.Diff(t, preparation.closure.states[source.Named()].productions, st.Productions(source.Named(), &facts.index))

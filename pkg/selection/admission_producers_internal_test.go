@@ -35,6 +35,7 @@ func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 			closure := admissionClosure{session: session, facts: facts, proposal: previous, objects: st}
 			closure.requestProducer(consumer, &production)
 			assert.Equal(t, len(slices.Collect(previous.Demands())), 0)
+			accepted := previous.result()
 			previous.Retire()
 
 			want := false
@@ -65,7 +66,7 @@ func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 				st.AddObject(&manifest.HelmRelease{Name: consumer.Name, Namespace: consumer.Namespace})
 			}
 			request := PrepareRequest{Preparation: &preparation}
-			proposal, err := session.RefreshProducers(t.Context(), previous, request)
+			proposal, err := session.RefreshProducers(t.Context(), &accepted, request)
 			assert.NoError(t, err)
 			demands := slices.Collect(proposal.Demands())
 			assert.Equal(t, len(demands) != 0, want)
@@ -75,12 +76,13 @@ func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 				assert.Equal(t, demands[0].Witness == current, true)
 				assert.Equal(t, demands[0].Reads.Valid(), true)
 			}
+			frontierResult := proposal.result()
 			snapshot := session.Snapshot()
-			_, committed, err := session.Commit(t.Context(), proposal, Execution)
+			_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
 			assert.NoError(t, err)
 			assert.Equal(t, committed, false)
 			assert.Equal(t, session.Snapshot() == snapshot, true)
-			next, err := session.RefreshProducers(t.Context(), proposal, request)
+			next, err := session.RefreshProducers(t.Context(), &frontierResult, request)
 			assert.NoError(t, err)
 			next.Retire()
 			if route == "declaration" {
@@ -140,8 +142,9 @@ func TestAdmission_ProducerFrontierLineage(t *testing.T) {
 			previous := &Admission{preparation: preparation}
 			closure := admissionClosure{session: session, facts: facts, proposal: previous, objects: st}
 			closure.requestProducer(consumer, &production)
+			accepted := previous.result()
 			previous.Retire()
-			proposal, err := session.RefreshProducers(t.Context(), previous, PrepareRequest{Preparation: &preparation})
+			proposal, err := session.RefreshProducers(t.Context(), &accepted, PrepareRequest{Preparation: &preparation})
 			assert.NoError(t, err)
 			defer proposal.Retire()
 			assert.Equal(t, len(slices.Collect(proposal.Demands())) != 0, tc.want)
@@ -165,8 +168,10 @@ func TestAdmission_ProducerFrontierPreparation(t *testing.T) {
 			owner := (&manifest.Kustomization{Name: "factory", Namespace: "apps"}).Named()
 			consumer := (&manifest.HelmRelease{Name: "application", Namespace: "apps"}).Named()
 			closure.requestProducer(consumer, &manifest.Production{Owner: owner})
+			accepted := previous.result()
 			previous.Retire()
 			request := PrepareRequest{Preparation: &preparation}
+			acceptedResult := &accepted
 			caller := session
 			switch route {
 			case "foreign session":
@@ -178,9 +183,9 @@ func TestAdmission_ProducerFrontierPreparation(t *testing.T) {
 				defer foreign.Retire()
 				request.Preparation = &foreign
 			case "nil previous":
-				previous = nil
+				acceptedResult = nil
 			}
-			proposal, err := caller.RefreshProducers(t.Context(), previous, request)
+			proposal, err := caller.RefreshProducers(t.Context(), acceptedResult, request)
 			assert.Equal(t, err != nil, true)
 			assert.Equal(t, proposal == nil, true)
 		})
@@ -195,6 +200,7 @@ func TestAdmission_ProducerFrontierEmptyStages(t *testing.T) {
 	request := PrepareRequest{Preparation: &preparation}
 	initial, err := session.prepareTest(t.Context(), request)
 	assert.NoError(t, err)
+	initialResult := initial.result()
 	initial.Retire()
 	assert.Equal(t, len(initial.producers), 0)
 	late := &Admission{preparation: preparation}
@@ -204,7 +210,7 @@ func TestAdmission_ProducerFrontierEmptyStages(t *testing.T) {
 	closure.requestProducer(consumer, &manifest.Production{Owner: owner})
 	late.Retire()
 	assert.Equal(t, preparation.producerOwner != nil, true)
-	frontier, err := session.RefreshProducers(t.Context(), initial, request)
+	frontier, err := session.RefreshProducers(t.Context(), &initialResult, request)
 	assert.NoError(t, err)
 	assert.Equal(t, len(slices.Collect(frontier.Demands())), 0)
 	frontier.Retire()
@@ -213,8 +219,9 @@ func TestAdmission_ProducerFrontierEmptyStages(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(current.producers), 0)
 	assert.Equal(t, current.producerOwner == preparation.producerOwner, true)
+	currentResult := current.result()
 	current.Retire()
-	frontier, err = session.RefreshProducers(t.Context(), current, request)
+	frontier, err = session.RefreshProducers(t.Context(), &currentResult, request)
 	assert.NoError(t, err)
 	assert.Equal(t, len(slices.Collect(frontier.Demands())), 0)
 	frontier.Retire()
@@ -273,9 +280,10 @@ func TestAdmission_ProducerFrontierSourceDerivation(t *testing.T) {
 				owner.Name = "next-factory"
 				closure.requestProducer(consumer, &manifest.Production{Owner: owner})
 			}
+			accepted := previous.result()
 			previous.Retire()
 			snapshot := session.Snapshot()
-			proposal, err := session.RefreshProducers(ctx, previous, PrepareRequest{
+			proposal, err := session.RefreshProducers(ctx, &accepted, PrepareRequest{
 				Preparation: &preparation, Changes: changes,
 			})
 			want := manifest.WorkCounts{}

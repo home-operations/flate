@@ -132,10 +132,10 @@ func prepareSelectionForTest(
 	for _, id := range needed {
 		reads.RequireData(id)
 	}
-	proposal, err := run.prepareAdmission(t.Context(), selection.PrepareRequest{Invocation: true, Reads: &reads})
-	assert.NoError(t, err)
-	defer proposal.Retire()
-	_, committed, err := run.commitAdmission(t.Context(), proposal)
+	_, committed, err := run.prepareAdmission(t.Context(), selection.AdmissionOptions{
+		Request: selection.PrepareRequest{Invocation: true, Reads: &reads, Preparation: &run.admissionPreparation},
+		Stage:   selection.Execution,
+	})
 	assert.NoError(t, err)
 	run.Result.catalog = run.loader.DetachCatalog()
 	return !committed

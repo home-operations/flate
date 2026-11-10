@@ -64,11 +64,22 @@ func TestPrepareNeededHistory_StaticOutput(t *testing.T) {
 			reads.Init(o.store, owner.Named(), nil)
 			defer reads.Retire()
 			reads.RequireData(owner.Named())
-			proposal, err := o.prepareAdmission(t.Context(), selection.PrepareRequest{Invocation: true, Reads: &reads})
+			result, accepted, err := o.prepareAdmission(t.Context(), selection.AdmissionOptions{
+				Request: selection.PrepareRequest{
+					Invocation:  true,
+					Reads:       &reads,
+					Preparation: &o.admissionPreparation,
+				},
+				Stage: selection.Construction,
+			})
 			assert.NoError(t, err)
-			proposal, err = o.prepareHistory(t.Context(), proposal)
+			assert.Equal(t, accepted, true)
+			_, accepted, err = o.prepareAdmission(t.Context(), selection.AdmissionOptions{
+				Request: selection.PrepareRequest{Invocation: true}, Previous: &result, Stage: selection.Construction,
+			})
 			assert.NoError(t, err)
-			defer func() { proposal.Retire(); o.admissionPreparation.Retire() }()
+			assert.Equal(t, accepted, true)
+			defer o.admissionPreparation.Retire()
 			history := map[manifest.NamedResource]struct {
 				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 				Complete bool

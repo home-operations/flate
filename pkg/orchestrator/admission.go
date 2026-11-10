@@ -9,7 +9,6 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/change"
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/selection"
@@ -19,7 +18,6 @@ import (
 func (o *Orchestrator) prepareInvocation(ctx context.Context) error {
 	prepared := false
 	defer func() {
-		o.preparation.Retire()
 		o.preparation = nil
 		if !prepared {
 			o.admissionPreparation.Retire()
@@ -51,41 +49,34 @@ func (o *Orchestrator) prepareInvocation(ctx context.Context) error {
 	o.configureControllers()
 	o.loader.Options.Changes = o.cfg.ExternalChanges
 	o.loader.Options.ConfiguredInput = o.cfg.Input
-	proposal := o.preparation
-	if proposal == nil {
-		var err error
-		proposal, err = o.prepareAdmission(
-			ctx,
-			selection.PrepareRequest{Invocation: true, Preparation: &o.admissionPreparation},
-		)
-		if err != nil {
-			return err
-		}
-	} else {
-		var err error
-		proposal, err = o.prepareHistory(ctx, proposal)
-		if err != nil {
-			return err
-		}
+	options := selection.AdmissionOptions{
+		Request: selection.PrepareRequest{Invocation: true}, Previous: o.preparation, Stage: selection.Construction,
 	}
-	o.preparation = proposal
+	if options.Previous == nil {
+		options.Request.Preparation = &o.admissionPreparation
+	}
+	result, accepted, err := o.prepareAdmission(ctx, options)
+	if err != nil || !accepted {
+		return err
+	}
+	o.preparation = &result
 	for range o.store.Sweep() {
 	}
 	prepared = true
 	return nil
 }
 
-//nolint:gocritic // The driver MUST retain an independent caller request while acquiring successive proposals.
+//nolint:gocritic // Admission setup MUST leave the caller's request snapshot unchanged.
 func (o *Orchestrator) prepareAdmission(
 	ctx context.Context,
-	request selection.PrepareRequest,
-) (*selection.Admission, error) {
-	o.admissionRequest(&request)
-	proposal, err := o.selection.Prepare(ctx, request)
-	if err != nil {
-		return nil, err
+	options selection.AdmissionOptions,
+) (selection.AdmissionResult, bool, error) {
+	o.admissionRequest(&options.Request)
+	result, accepted, err := o.selection.Admit(ctx, options)
+	if accepted {
+		o.history = result.Request.History
 	}
-	return o.acquireAdmission(ctx, proposal, selection.Construction, o.selection.Prepare)
+	return result, accepted, err
 }
 
 func (o *Orchestrator) admissionRequest(request *selection.PrepareRequest) {
@@ -93,107 +84,8 @@ func (o *Orchestrator) admissionRequest(request *selection.PrepareRequest) {
 	o.loader.Options.ConfiguredInput = o.cfg.Input
 	request.Changes, request.HistoryOwners = o.cfg.ExternalChanges, o.historyOwners
 	request.Missing = o.cfg.missing
-	if request.Preparation == nil {
-		request.Preparation = &o.admissionPreparation
-	}
-	if o.history == nil {
-		o.history = map[manifest.NamedResource]struct {
-			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-			Complete bool
-		}{}
-	}
 	request.History = o.history
-}
-
-func (o *Orchestrator) prepareHistory(
-	ctx context.Context,
-	previous *selection.Admission,
-) (*selection.Admission, error) {
-	var preparation *selection.Preparation
-	defer func() { preparation.Retire() }()
-	request := selection.PrepareRequest{Invocation: true, Preparation: &preparation}
-	o.admissionRequest(&request)
-	prepare := func(ctx context.Context, request selection.PrepareRequest) (*selection.Admission, error) {
-		return o.selection.RefreshHistory(ctx, previous, request)
-	}
-	proposal, err := prepare(ctx, request)
-	previous.Retire()
-	if err != nil {
-		return nil, err
-	}
-	proposal, err = o.acquireAdmission(ctx, proposal, selection.Construction, prepare)
-	proposal.Retire()
-	return proposal, err
-}
-
-func (o *Orchestrator) acquireAdmission(
-	ctx context.Context,
-	proposal *selection.Admission,
-	stage selection.CommitStage,
-	prepare func(context.Context, selection.PrepareRequest) (*selection.Admission, error),
-) (*selection.Admission, error) {
-	for {
-		request := proposal.Request
-		request.Acquired = nil
-		progressed := false
-		var err error
-		for demand := range proposal.Demands() {
-			result := selection.Acquisition{Demand: demand, Reads: demand.Reads}
-			switch {
-			case demand.History && demand.Root == "":
-				records, complete := o.readProducerHistory(ctx, &demand)
-				o.history[demand.Identity] = struct {
-					Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-					Complete bool
-				}{records, complete}
-				result.Available = records != nil
-				request.Acquired = append(request.Acquired, result)
-			case demand.History:
-				result.Root, result.Available, err = o.loader.ResolveRoot(ctx, demand.Reads, demand.Source, demand.Root)
-				request.Acquired = append(request.Acquired, result)
-			case demand.Occurrence.Identity != (manifest.NamedResource{}):
-				result.Child, err = o.loader.OccurrenceObject(ctx, &demand.Occurrence, demand.Artifact)
-				result.Available = result.Child.Obj != nil
-				request.Acquired = append(request.Acquired, result)
-			case stage == selection.Execution:
-				request.Acquired = append(request.Acquired, result)
-			default:
-				continue
-			}
-			if err != nil {
-				proposal.Retire()
-				return nil, err
-			}
-			progressed = true
-		}
-		if !progressed {
-			return proposal, nil
-		}
-		next, err := prepare(ctx, request)
-		proposal.Retire()
-		if err != nil {
-			return nil, err
-		}
-		proposal = next
-	}
-}
-
-func (o *Orchestrator) commitAdmission(
-	ctx context.Context,
-	proposal *selection.Admission,
-) (*selection.Admission, bool, error) {
-	for {
-		var err error
-		proposal, err = o.acquireAdmission(ctx, proposal, selection.Execution, o.selection.Prepare)
-		if err != nil {
-			return nil, false, err
-		}
-		var committed bool
-		proposal, committed, err = o.selection.Commit(ctx, proposal, selection.Execution)
-		if err != nil || committed || proposal == nil {
-			return proposal, committed, err
-		}
-	}
+	request.ReadHistory = o.readProducerHistory
 }
 
 func (o *Orchestrator) readProducerHistory(
@@ -314,7 +206,6 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 		current = binding
 	}
 
-	o.setEntryHistory(current.Entry)
 	request := selection.PrepareRequest{Invocation: true, History: o.history, Reads: binding.Reads}
 	if binding.Reads != nil && root != nil && root != o.store.GetDeclaration(root.Named()) {
 		application := manifest.EntryApplication{Source: current.Source, Path: current.Path}
@@ -331,11 +222,11 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 		request.Reads = &reads
 	}
 	request.Preparation = &o.admissionPreparation
-	proposal, err := o.prepareAdmission(ctx, request)
-	if err != nil {
-		return err
+	options := selection.AdmissionOptions{Request: request, Stage: selection.Execution}
+	if current.Entry != nil {
+		options.EntryHistory.Owner, options.EntryHistory.Records = current.Entry.Owner, current.Entry.Records
 	}
-	proposal, committed, err := o.commitAdmission(ctx, proposal)
+	result, committed, err := o.prepareAdmission(ctx, options)
 	if err != nil {
 		return err
 	}
@@ -349,12 +240,12 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 		}
 	}
 
-	o.recordAdmission(proposal)
+	o.recordAdmission(&result)
 	return nil
 }
 
-func (o *Orchestrator) recordAdmission(proposal *selection.Admission) {
-	o.changeNamespaces = proposal.Namespaces
+func (o *Orchestrator) recordAdmission(result *selection.AdmissionResult) {
+	o.changeNamespaces = result.Namespaces
 	o.preparation = nil
 	o.admissionPreparation.Retire()
 	o.admissionPreparation = nil
@@ -362,7 +253,7 @@ func (o *Orchestrator) recordAdmission(proposal *selection.Admission) {
 		o.history = nil
 	}
 	o.historyOwners = nil
-	if changes := o.cfg.ExternalChanges; changes != nil && changes.Len() == 0 && len(proposal.Needed) == 0 &&
+	if changes := o.cfg.ExternalChanges; changes != nil && changes.Len() == 0 && len(result.Needed) == 0 &&
 		o.cfg.BaseInput != nil {
 		o.store.AddWarning(
 			manifest.Warning{
@@ -371,19 +262,5 @@ func (o *Orchestrator) recordAdmission(proposal *selection.Admission) {
 			},
 		)
 	}
-	slog.Debug("orchestrator: changed-only keep set", "needed", proposal.Needed)
-}
-
-func (o *Orchestrator) setEntryHistory(entry *kustomize.EntryEvidence) {
-	if entry != nil {
-		if o.history == nil {
-			o.history = map[manifest.NamedResource]struct {
-				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
-				Complete bool
-			}{}
-		}
-		history := o.history[entry.Owner]
-		history.Records, history.Complete = entry.Records, true
-		o.history[entry.Owner] = history
-	}
+	slog.Debug("orchestrator: changed-only keep set", "needed", result.Needed)
 }

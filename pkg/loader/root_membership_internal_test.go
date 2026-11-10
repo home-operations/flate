@@ -390,15 +390,10 @@ func (r *rootOwnershipReads) ListProductionCandidates(
 	prospective map[manifest.NamedResource]bool,
 ) []manifest.BaseManifest {
 	r.lists++
-	return r.admissionReader.ListProductionCandidates(group, kind, index, prospective)
-}
-
-func (r *rootOwnershipReads) ListObjects(group, kind string) []manifest.BaseManifest {
-	r.lists++
 	if group == "" && kind == "" {
 		r.wideLists++
 	}
-	return r.admissionReader.ListObjects(group, kind)
+	return r.admissionReader.ListProductionCandidates(group, kind, index, prospective)
 }
 
 func (r *rootOwnershipReads) Productions(

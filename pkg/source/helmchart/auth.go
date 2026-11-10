@@ -13,6 +13,7 @@ import (
 	"helm.sh/helm/v4/pkg/helmpath"
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
+	"github.com/home-operations/flate/internal/httpconditional"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
@@ -132,6 +133,6 @@ func (f *Fetcher) connectHTTP(r *httpRepository) error {
 	if err != nil {
 		return err
 	}
-	r.client = &http.Client{Transport: tr}
+	r.client = &http.Client{Transport: tr, CheckRedirect: httpconditional.Redirect}
 	return nil
 }

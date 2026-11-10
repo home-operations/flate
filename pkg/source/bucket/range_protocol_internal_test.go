@@ -154,7 +154,7 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 			gets:       &gets,
 			sizes:      &sizes,
 			data:       &data,
-			desc:       &desc,
+			desc:       &desc.Descriptor,
 		},
 	)
 	if shouldReturn {

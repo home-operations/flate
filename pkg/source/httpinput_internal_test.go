@@ -155,7 +155,7 @@ func testAcquireConditionalValidationCompletion(t *testing.T) {
 		}
 		closeTestHTTPInputs(t, c)
 	}
-	for _, scenario := range []string{"etag", "last-modified", "both", "none", "clear", "update-304", "missing", "unsolicited-304", "unvalidated-304", "unauthorized", "close-304"} {
+	for _, scenario := range []string{"etag", "last-modified", "both", "none", "clear", "update-304", "retain-304", "missing", "unsolicited-304", "unvalidated-304", "unauthorized", "close-304"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			testAcquireConditionalValidationCase3(t, &scenario)

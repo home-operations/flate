@@ -11,9 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/httpconditional"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/task"
@@ -40,24 +39,9 @@ type remoteWorkers struct {
 	drain chan struct{}
 }
 
-const (
-	httpOriginalURLAnnotation  = "flate.http-original-url"
-	httpETagAnnotation         = "flate.http-etag"
-	httpLastModifiedAnnotation = "flate.http-last-modified"
-)
-
 // NewHTTPInputs borrows the nonnil storage owner, Network and task service.
 func NewHTTPInputs(owner *cache.Cache, network *Network, tasks *task.Service) HTTPInputs {
-	client := &http.Client{Transport: network}
-	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		const maxRedirects = 10
-		if len(via) >= maxRedirects {
-			return errors.New("stopped after 10 redirects")
-		}
-		req.Header.Del("If-None-Match")
-		req.Header.Del("If-Modified-Since")
-		return nil
-	}
+	client := &http.Client{Transport: network, CheckRedirect: httpconditional.Redirect}
 	return HTTPInputs{owner: owner, tasks: tasks, httpClient: client}
 }
 
@@ -191,15 +175,7 @@ func (h *HTTPInputs) httpGetURL(
 	if err != nil {
 		return cache.ProducerResult{}, fmt.Errorf("create source HTTP request: %w", err)
 	}
-	if previous != nil && previous.Annotations[httpOriginalURLAnnotation] == "true" {
-		if etag := previous.Annotations[httpETagAnnotation]; etag != "" {
-			req.Header.Set("If-None-Match", etag)
-		}
-		if modified := previous.Annotations[httpLastModifiedAnnotation]; modified != "" {
-			req.Header.Set("If-Modified-Since", modified)
-		}
-	}
-	if req.Header.Get("If-None-Match") != "" || req.Header.Get("If-Modified-Since") != "" {
+	if httpconditional.Apply(req, previous) {
 		work := w.Work().Validate()
 		work.Add(&manifest.WorkCounts{Attempts: 1})
 		defer func() { work.Finish(resultErr) }()
@@ -209,7 +185,10 @@ func (h *HTTPInputs) httpGetURL(
 		return cache.ProducerResult{}, err //nolint:wrapcheck // The HTTP client already returns a URL error identifying method and target, including net.Error behavior.
 	}
 	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
-	result, err = httpResponseMetadata(req, resp, previous)
+	if resp.StatusCode != http.StatusNotModified && (resp.StatusCode < 200 || resp.StatusCode > 299) {
+		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
+	}
+	result.Descriptor, result.Unchanged, err = httpconditional.Metadata(req, resp, previous)
 	if err != nil {
 		return cache.ProducerResult{}, err
 	}
@@ -270,39 +249,6 @@ func (k *remoteKey) normalize() {
 	} else {
 		k.retry.Jitter = max(0, min(1, k.retry.Jitter))
 	}
-}
-
-func httpResponseMetadata(
-	req *http.Request,
-	resp *http.Response,
-	previous *ocispec.Descriptor,
-) (cache.ProducerResult, error) {
-	var result cache.ProducerResult
-	switch {
-	case resp.StatusCode == http.StatusNotModified && previous != nil &&
-		(resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != ""):
-		result.Descriptor, result.Unchanged = *previous, true
-	case resp.StatusCode < 200 ||
-		resp.StatusCode > 299:
-		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
-	default:
-
-		result.Annotations = make(map[string]string)
-		requestURL, responseURL := *req.URL, *resp.Request.URL
-		if requestURL.User != nil && responseURL.User != nil && *requestURL.User == *responseURL.User {
-			responseURL.User = requestURL.User
-		}
-		if requestURL == responseURL {
-			result.Annotations[httpOriginalURLAnnotation] = "true"
-		}
-	}
-
-	for _, validator := range [...]struct{ header, annotation string }{{"ETag", httpETagAnnotation}, {"Last-Modified", httpLastModifiedAnnotation}} {
-		if _, supplied := resp.Header[http.CanonicalHeaderKey(validator.header)]; supplied {
-			result.Annotations[validator.annotation] = resp.Header.Get(validator.header)
-		}
-	}
-	return result, nil
 }
 
 // HTTPRequest carries one remote input and its caller's execution facts.

@@ -110,16 +110,7 @@ func testReconcileParentUpdateDuringRenderCase(
 	)
 	_, wantFingerprint, err := renderWithAdmissionResult1.documents, renderWithAdmissionResult1.fingerprint, renderWithAdmissionResult1Err
 	assert.FatalIf(t, err != nil, "%v", err)
-	if (*testCaseInput) == "capture" {
-		pause := sync.OnceFunc(func() { close(started); tasks.YieldSlot(func() { <-resume }) })
-		c.Configure(
-			base.Options{
-				PreflightFailure: func(manifest.NamedResource) (string, bool) { pause(); return "", false },
-			},
-		)
-	} else {
-		c.Configure(base.Options{})
-	}
+	c.Configure(base.Options{})
 	c.StartLifecycle()
 	var runState *execution
 	var accepted atomic.Pointer[store.Emission]
@@ -345,6 +336,10 @@ func startReplacementRender(t *testing.T, scope *replacementRenderInputs) {
 	t.Helper()
 	(*scope.tasks).Go(t.Context(), "render", func(context.Context) {
 		defer close((*scope.rendered))
+		if (*(*scope.testCaseInput)) == "capture" {
+			close((*scope.started))
+			(*scope.tasks).YieldSlot(func() { <-(*scope.resume) })
+		}
 		(*scope.runState) = (*scope.c).newExecution((*scope.id))
 		defer (*scope.runState).run.Close()
 		if (*(*scope.testCaseInput)) == "capture" {

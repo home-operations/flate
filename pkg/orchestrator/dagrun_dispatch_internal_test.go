@@ -323,7 +323,7 @@ data: {key: fixed}
 			wantUnresolved = false
 		}
 	case "preflight failure":
-		opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
+		s.SetPreflight(rs.Named(), "cycle")
 	case "filter skip":
 		opts.Loader, opts.Session = admissiontest.New(
 			t,

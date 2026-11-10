@@ -407,10 +407,3 @@ func (o *Orchestrator) replacePreflightFailures(failures map[manifest.NamedResou
 	o.preflightFailures = maps.Clone(failures)
 	return cleared
 }
-
-func (o *Orchestrator) preflightFailure(id manifest.NamedResource) (string, bool) {
-	o.preflightMu.RLock()
-	defer o.preflightMu.RUnlock()
-	msg, ok := o.preflightFailures[id]
-	return msg, ok
-}

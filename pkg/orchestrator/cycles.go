@@ -12,53 +12,68 @@ func (o *Orchestrator) failDependsOnCycles() {
 }
 
 func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
-	obj, policy := o.store.Lookup(id)
-	if obj == nil || !policy.Reconcile {
-		o.depGraph.ReplaceEdges(id, nil)
+	for {
+		obj, policy := o.store.Lookup(id)
+		var buf [8]manifest.NamedResource
+		var deps []manifest.NamedResource
+		if obj != nil && policy.Reconcile {
+			deps = sameKindDepTargets(obj, buf[:0])
+		}
+		o.depGraph.ReplaceEdges(id, deps)
 		o.syncPreflightFailures()
-		return
+		current, currentPolicy := o.store.Lookup(id)
+		if current == obj && currentPolicy == policy {
+			return
+		}
 	}
-	var buf [8]manifest.NamedResource
-	deps := sameKindDepTargets(obj, buf[:0])
-	o.depGraph.ReplaceEdges(id, deps)
-	o.syncPreflightFailures()
 }
 
 func (o *Orchestrator) syncPreflightFailures() {
-	paths := o.depGraph.Failures()
-	var failures map[manifest.NamedResource]string
-	if len(paths) != 0 || o.entryBinding.Failure != nil {
-		failures = make(map[manifest.NamedResource]string, len(paths))
-	}
-	if o.entryBinding.Failure != nil {
-		failures[o.entryBinding.Producer] = o.entryBinding.Failure.Error()
-	}
-	for id, cycle := range paths {
-		failures[id] = cycle.diagnostic(o)
-	}
-	o.preflightMu.Lock()
-	cleared := o.replacePreflightFailures(failures)
-	o.preflightMu.Unlock()
-	unique := make(map[*dependencyCycle]struct{})
-	for _, cycle := range paths {
-		unique[cycle] = struct{}{}
-	}
-	for cycle := range unique {
-		o.store.AddWarning(
-			manifest.Warning{
-				Related:  cycle.path,
-				Category: manifest.WarnDependencyCycle,
-				Message:  "dependency cycle detected",
-				Detail:   []string{cycle.diagnostic(o)},
-			},
-		)
-	}
+	var previous map[manifest.NamedResource]string
+	for {
+		paths := o.depGraph.Failures()
+		var failures map[manifest.NamedResource]string
+		if len(paths) != 0 || o.entryBinding.Failure != nil {
+			failures = make(map[manifest.NamedResource]string, len(paths))
+		}
+		if o.entryBinding.Failure != nil {
+			failures[o.entryBinding.Producer] = o.entryBinding.Failure.Error()
+		}
+		for id, cycle := range paths {
+			failures[id] = cycle.diagnostic(o)
+		}
+		o.preflightMu.Lock()
+		cleared := o.replacePreflightFailures(failures)
+		o.preflightMu.Unlock()
+		unique := make(map[*dependencyCycle]struct{})
+		for _, cycle := range paths {
+			unique[cycle] = struct{}{}
+		}
+		for cycle := range unique {
+			o.store.AddWarning(
+				manifest.Warning{
+					Related:  cycle.path,
+					Category: manifest.WarnDependencyCycle,
+					Message:  "dependency cycle detected",
+					Detail:   []string{cycle.diagnostic(o)},
+				},
+			)
+		}
 
-	for id, message := range failures {
-		o.store.SetPreflight(id, message)
-	}
-	for _, id := range cleared {
-		o.store.SetPreflight(id, "")
+		for id, message := range failures {
+			o.store.SetPreflight(id, message)
+		}
+		for _, id := range cleared {
+			o.store.SetPreflight(id, "")
+		}
+		// A newer publisher can clear the shared map before these stale writes finish.
+		for id := range previous {
+			o.store.SetPreflight(id, failures[id])
+		}
+		if o.depGraph.failuresCurrent(paths) {
+			return
+		}
+		previous = failures
 	}
 }
 

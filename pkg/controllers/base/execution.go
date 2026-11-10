@@ -49,13 +49,6 @@ type Execution struct {
 // The execution MUST remain live until its registrations and output borrowers retire.
 func (e *Execution) Init(c *Controller, id manifest.NamedResource) {
 	c.selection.Include(id)
-	if c.preflight != nil {
-		message, failed := c.preflight(id)
-		if !failed {
-			message = ""
-		}
-		c.Store.SetPreflight(id, message)
-	}
 	e.Controller = c
 	e.Reads.Init(c.Store, id, nil)
 	e.Reads.BeginExecution(nil)

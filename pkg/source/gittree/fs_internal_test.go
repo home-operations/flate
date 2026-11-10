@@ -103,6 +103,11 @@ func (f *policyReadFS) ReadFile(name string) ([]byte, error) {
 func TestNew_EntryPolicy(t *testing.T) {
 	t.Parallel()
 	t.Run("git ignored membership", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitIgnoredMembership(t) })
+	t.Run("git capture observations", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitCaptureObservations(t) })
+	t.Run(
+		"git membership replacements",
+		func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitMembershipReplacements(t) },
+	)
 	t.Run("git rule capture", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitRuleCapture(t) })
 	t.Run("git and flux policy", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitAndFluxPolicy(t) })
 	t.Run("git admission routes", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitAdmissionRoutes(t) })

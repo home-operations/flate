@@ -1,14 +1,18 @@
 package gittree
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/utils/merkletrie"
@@ -19,7 +23,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 )
 
-//nolint:gocognit,wrapcheck // Native capture keeps its index, submodule, and ignore decisions in one admission lifetime and preserves their error identities.
+//nolint:funlen,gocognit,wrapcheck // Native capture keeps its index, submodule, and ignore decisions in one admission lifetime and preserves their error identities.
 func captureMembership(ctx context.Context, location *gitrepo.Location) (membership, error) {
 	if err := ctx.Err(); err != nil {
 		return membership{}, err
@@ -27,8 +31,18 @@ func captureMembership(ctx context.Context, location *gitrepo.Location) (members
 	if location == nil || location.Repository == nil {
 		return membership{captured: true}, nil
 	}
+	root, err := os.OpenRoot(location.RepositoryRoot)
+	if err != nil {
+		return membership{}, err
+	}
+	defer func() { _ = root.Close() }()
 	// The protected worktree hides .git/info/exclude from the native rule reader.
-	patterns, err := gitignore.ReadPatterns(osfs.New(location.RepositoryRoot, osfs.WithBoundOS()), nil)
+	observed := &membershipFilesystem{
+		Filesystem:  &membershipRoot{Filesystem: osfs.New(location.RepositoryRoot, osfs.WithBoundOS()), root: root},
+		ctx:         ctx,
+		directories: make(map[string]membershipDirectory),
+	}
+	patterns, err := gitignore.ReadPatterns(observed, nil)
 	if err != nil {
 		return membership{}, err
 	}
@@ -42,7 +56,11 @@ func captureMembership(ctx context.Context, location *gitrepo.Location) (members
 	if err != nil {
 		return membership{}, err
 	}
-	worktree, err := location.Repository.Worktree()
+	repo, err := git.Open(location.Repository.Storer, observed)
+	if err != nil {
+		return membership{}, err
+	}
+	worktree, err := repo.Worktree()
 	if err != nil {
 		return membership{}, err
 	}
@@ -58,17 +76,12 @@ func captureMembership(ctx context.Context, location *gitrepo.Location) (members
 	for _, module := range status {
 		submodules[module.Path] = cmp.Or(module.Current, module.Expected)
 	}
-	current := merklefs.NewRootNodeWithOptions(worktree.Filesystem, submodules, merklefs.Options{Index: idx})
+	current := merklefs.NewRootNode(worktree.Filesystem, submodules)
 	changes, err := merkletrie.DiffTreeContext(
 		ctx,
 		merkleindex.NewRootNode(idx),
 		current,
-		func(a, b noder.Hasher) bool {
-			// Upstream directories have unknown hashes and MUST be traversed.
-			var unknown [24]byte
-			left, right := a.Hash(), b.Hash()
-			return !bytes.Equal(left, unknown[:]) && !bytes.Equal(right, unknown[:]) && bytes.Equal(left, right)
-		},
+		membershipEqual,
 	)
 	if err != nil {
 		return membership{}, errors.Join(err, ctx.Err())
@@ -102,4 +115,106 @@ func captureMembership(ctx context.Context, location *gitrepo.Location) (members
 		ignored[filepath.ToSlash(name)] = struct{}{}
 	}
 	return membership{ignored: ignored, captured: true}, ctx.Err()
+}
+
+//nolint:errcheck // Upstream comparison supplies noder.Path values implementing noder.Noder.
+func membershipEqual(a, b noder.Hasher) bool {
+	// Membership MUST descend through either directory without reading file contents.
+	return !a.(noder.Noder).IsDir() &&
+		!b.(noder.Noder).IsDir()
+}
+
+type membershipFilesystem struct {
+	billy.Filesystem
+
+	ctx         context.Context //nolint:containedctx // The upstream filesystem interface has no context parameter; this adapter never leaves capture.
+	directories map[string]membershipDirectory
+}
+
+type membershipDirectory struct {
+	entries []fs.FileInfo
+	err     error
+}
+
+//nolint:wrapcheck // Capture-local I/O preserves filesystem error identities.
+func (f *membershipFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
+	if err := f.ctx.Err(); err != nil {
+		return nil, err
+	}
+	name = f.Join(".", name)
+	if directory, ok := f.directories[name]; ok {
+		return directory.entries, directory.err
+	}
+	entries, err := f.Filesystem.ReadDir(name)
+	f.directories[name] = membershipDirectory{entries: entries, err: err}
+	return entries, err
+}
+
+//nolint:ireturn,wrapcheck // The billy filesystem contract requires billy.File and preserves filesystem error identities.
+func (f *membershipFilesystem) Open(name string) (billy.File, error) {
+	if err := f.ctx.Err(); err != nil {
+		return nil, err
+	}
+	name = f.Join(".", name)
+	if name != "." && len(f.directories) != 0 {
+		directory := "."
+		for part := range strings.SplitSeq(name, string(filepath.Separator)) {
+			entries, err := f.ReadDir(directory)
+			if err != nil {
+				return nil, err
+			}
+			if !slices.ContainsFunc(entries, func(entry fs.FileInfo) bool { return entry.Name() == part }) {
+				return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+			}
+			directory = f.Join(directory, part)
+		}
+	}
+	if err := f.ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.Filesystem.Open(name)
+}
+
+//nolint:wrapcheck // Capture-local metadata preserves filesystem error identities.
+func (f *membershipFilesystem) Lstat(name string) (fs.FileInfo, error) {
+	if err := f.ctx.Err(); err != nil {
+		return nil, err
+	}
+	name = f.Join(".", name)
+	directory, ok := f.directories[filepath.Dir(name)]
+	if name == "." || !ok {
+		return f.Filesystem.Lstat(name)
+	}
+	if directory.err != nil {
+		return nil, directory.err
+	}
+	base := filepath.Base(name)
+	for _, entry := range directory.entries {
+		if entry.Name() == base {
+			return entry, nil
+		}
+	}
+	return nil, &fs.PathError{Op: "lstat", Path: name, Err: fs.ErrNotExist}
+}
+
+type membershipRoot struct {
+	billy.Filesystem
+
+	root *os.Root
+}
+
+//nolint:wrapcheck // Capture-local directory reads preserve OS error identities.
+func (f *membershipRoot) ReadDir(name string) ([]fs.FileInfo, error) {
+	directory, err := f.root.Open(cmp.Or(name, "."))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = directory.Close() }()
+	// The native tree needs FileInfo without resolving each entry through its full path.
+	entries, err := directory.Readdir(-1)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(entries, func(a, b fs.FileInfo) int { return strings.Compare(a.Name(), b.Name()) })
+	return entries, nil
 }

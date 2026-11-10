@@ -45,14 +45,6 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	if err != nil {
 		return nil, nil, "", warnings, err
 	}
-	if localErr := s.acquireBodies(ctx, entries, candidates); localErr != nil {
-		return nil, nil, "", warnings, localErr
-	}
-	routing := slices.Sorted(maps.Keys(candidates))
-	backing := s.repo.Storer.(*filesystem.Storage).Filesystem() //nolint:errcheck // The repository uses filesystem storage.
-	if s.base.backing != nil {
-		backing = s.base.backing
-	}
 	// go-git initializes its pack index without synchronization, before readers share it.
 	if localErr := s.current.Location().Repository.Storer.HasEncodedObject(
 		plumbing.ZeroHash,
@@ -60,14 +52,8 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 		!errors.Is(localErr, plumbing.ErrObjectNotFound) {
 		return nil, nil, "", warnings, fmt.Errorf("hasencodedobject: %w", localErr)
 	}
-	opts := gittree.ViewOptions{
-		Location: s.current.Location(),
-		Content:  s.content,
-		Mode:     gittree.Direct,
-		Current:  s.current,
-		Changes:  routing,
-	}
-	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, opts)
+	routing := slices.Sorted(maps.Keys(candidates))
+	baseline, identity, err := s.reader(ctx, entries, routing)
 	if err != nil {
 		return baseline, nil, "", warnings, err
 	}
@@ -97,18 +83,60 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 		return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, err
 	}
 	selected := changes.Paths()
+	for _, input := range []*gittree.FS{baseline, s.current} {
+		policy, policyErr := input.SourcePolicy(ctx)
+		if policyErr != nil {
+			return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, policyErr
+		}
+		for _, file := range policy.Evidence() {
+			if _, candidate := candidates[file.Path]; candidate {
+				selected = append(selected, file.Path)
+			}
+		}
+	}
+	slices.Sort(selected)
+	selected = slices.Compact(selected)
 	if !slices.Equal(routing, selected) {
-		opts.Changes = selected
-		baseline, _, err = gittree.New(ctx, backing, s.base.Hash, opts)
-		if err != nil {
-			return baseline, nil, "", warnings, err
+		replacement, _, readerErr := s.reader(ctx, entries, selected)
+		if readerErr != nil {
+			return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, readerErr
 		}
-		if _, err := baseline.SourcePolicy(ctx); err != nil {
-			return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, err
-		}
+		baseline = replacement
 		original.FS = baseline
 	}
 	return baseline, changes, identity, warnings, nil
+}
+
+func (s selection) reader(
+	ctx context.Context,
+	entries map[string]object.TreeEntry,
+	routing []string,
+) (*gittree.FS, string, error) {
+	bodies := make(map[string]bool, len(routing))
+	for _, name := range routing {
+		bodies[name] = false
+	}
+	if err := s.acquireBodies(ctx, entries, bodies); err != nil {
+		return nil, "", err
+	}
+	backing := s.repo.Storer.(*filesystem.Storage).Filesystem() //nolint:errcheck // The repository uses filesystem storage.
+	if s.base.backing != nil {
+		backing = s.base.backing
+	}
+	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{
+		Location: s.current.Location(),
+		Content:  s.content,
+		Mode:     gittree.Direct,
+		Current:  s.current,
+		Changes:  routing,
+	})
+	if err != nil {
+		return baseline, "", err
+	}
+	if _, err := baseline.SourcePolicy(ctx); err != nil {
+		return &gittree.FS{Warnings: baseline.Warnings}, "", err
+	}
+	return baseline, identity, nil
 }
 
 func (s selection) baseEntries(ctx context.Context) (map[string]object.TreeEntry, *gitindex.Index, error) {

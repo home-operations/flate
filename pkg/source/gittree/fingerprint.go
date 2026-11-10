@@ -180,13 +180,7 @@ func (c *contentFingerprint) initialize(ctx context.Context, g *FS, fresh bool, 
 
 	selectedPolicy := selectedSourcePolicy(policy, v, native, inventory.files)
 	if requested != nil {
-		selected := make(map[string]string, len(requested))
-		for _, name := range requested {
-			if _, known := inventory.files[name]; known {
-				selected[name] = ""
-			}
-		}
-		inventory.files = selected
+		inventory.files = selectFiles(inventory.files, requested)
 	}
 	if !selectedPolicy {
 		sourceignore.Select(policy, inventory.files, inventory.ignores)
@@ -318,7 +312,7 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 		if openErr != nil {
 			return plumbing.ZeroHash, openErr
 		}
-		data, err = io.ReadAll(file)
+		data, err = io.ReadAll(identityReader{ctx: ctx, input: file})
 		err = errors.Join(err, file.Close())
 	} else {
 		data, err = g.ReadFile(name)
@@ -329,13 +323,31 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 	return plumbing.ComputeHash(plumbing.BlobObject, data), nil
 }
 
+//nolint:containedctx // This adapter retains cancellation only for its enclosing file read.
+type identityReader struct {
+	ctx   context.Context
+	input io.Reader
+}
+
+//nolint:wrapcheck // io.Reader MUST preserve EOF and cancellation identities.
+func (r identityReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.input.Read(p)
+	if cancelErr := r.ctx.Err(); cancelErr != nil {
+		return n, cancelErr
+	}
+	return n, err
+}
+
 type fingerprintInventory struct {
 	types   map[string]fs.FileMode
 	files   map[string]string
 	ignores []string
 }
 
-// InputObservations borrows current file identities and node kinds from one source observation.
+// InputObservations borrows selected identities and node kinds from one admitted view.
 // Both maps MUST remain read-only.
 type InputObservations struct {
 	Files map[string]string
@@ -343,23 +355,37 @@ type InputObservations struct {
 }
 
 // FreshInputs MUST observe mutable bytes and membership without prior operation memos or Git stat evidence.
+// A nil observation refreshes membership and policy; captured node kinds retain the caller's admitted selection.
 // A nil request observes every file. An explicit request reads only those bodies while retaining complete node membership.
-func (g *FS) FreshInputs(ctx context.Context, requested []string) (InputObservations, error) {
+func (g *FS) FreshInputs(
+	ctx context.Context,
+	requested []string,
+	observed map[string]fs.FileMode,
+) (InputObservations, error) {
+	if observed != nil {
+		files := make(map[string]string, len(observed))
+		for name, mode := range observed {
+			if mode.IsRegular() && !g.excludes(name) {
+				files[name] = ""
+			}
+		}
+		files = selectFiles(files, requested)
+		inventory := fingerprintInventory{files: files, types: observed}
+		if err := g.identifyFiles(ctx, inventory, true); err != nil {
+			return InputObservations{}, err
+		}
+		return InputObservations{
+			Files: files,
+			Types: observed,
+		}, ctx.Err() //nolint:wrapcheck // Preserve cancellation from this final observation.
+	}
 	if view, ok := g.view.(*gitView); ok && view.identity != "" {
 		if _, err := ContentFingerprint(ctx, g); err != nil {
 			return InputObservations{}, err
 		}
 		evidence := g.content.Load()
 		files := g.FileDigests()
-		if requested != nil {
-			selected := make(map[string]string, len(requested))
-			for _, name := range requested {
-				if digest, known := files[name]; known {
-					selected[name] = digest
-				}
-			}
-			files = selected
-		}
+		files = selectFiles(files, requested)
 		return InputObservations{Files: files, Types: evidence.types}, nil
 	}
 	input, err := g.freshInput(ctx)
@@ -372,6 +398,19 @@ func (g *FS) FreshInputs(ctx context.Context, requested []string) (InputObservat
 		return InputObservations{}, evidence.err
 	}
 	return InputObservations{Files: *evidence.files.Load(), Types: evidence.types}, nil
+}
+
+func selectFiles(files map[string]string, requested []string) map[string]string {
+	if requested == nil {
+		return files
+	}
+	selected := make(map[string]string, len(requested))
+	for _, name := range requested {
+		if digest, known := files[name]; known {
+			selected[name] = digest
+		}
+	}
+	return selected
 }
 
 func (g *FS) freshInput(ctx context.Context) (*FS, error) {

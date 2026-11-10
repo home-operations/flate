@@ -2,7 +2,6 @@ package change
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -13,10 +12,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-git/go-git/v5/plumbing"
+
 	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -356,9 +358,10 @@ func detect(
 }
 
 type hashJob struct {
-	name    string
-	present [2]bool
-	changed bool
+	name         string
+	present      [2]bool
+	changed      bool
+	readRequired bool
 }
 
 type scannedInputs struct{ before, after fileScan }
@@ -423,18 +426,43 @@ func hashJobs(ctx context.Context, inputs [2]*store.SourceArtifact, jobs []hashJ
 }
 
 func (j *hashJob) compare(ctx context.Context, inputs [2]*store.SourceArtifact) error {
-	var sums [2][sha256.Size]byte
+	var identities [2]string
 	for side, input := range inputs {
 		if !j.present[side] {
 			continue
 		}
-		sum, err := hashFile(ctx, input.FS, j.name)
+		if j.readRequired {
+			sum, err := hashFile(ctx, input.FS, j.name)
+			if err != nil {
+				return err
+			}
+			identities[side] = string(sum[:])
+			continue
+		}
+		source, native := input.FS.(*gittree.FS)
+		if !native {
+			var err error
+			source, _, err = gittree.New(
+				ctx,
+				nil,
+				plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS},
+			)
+			if err != nil {
+				return err
+			}
+		}
+		observed, err := source.FreshInputs(ctx, []string{j.name}, map[string]fs.FileMode{j.name: 0})
 		if err != nil {
 			return err
 		}
-		sums[side] = sum
+		identity, present := observed.Files[j.name]
+		if !present {
+			return fmt.Errorf("read %s: %w", j.name, fs.ErrNotExist)
+		}
+		identities[side] = identity
 	}
-	j.changed = j.changed || sums[0] != sums[1]
+	j.changed = j.changed || identities[0] != identities[1]
 	return nil
 }
 
@@ -621,7 +649,10 @@ func compareScannedFiles(scanned *scannedInputs, evidence comparisonEvidence) fi
 		changed := !sameMode(left.mode, right.mode) || left.size != right.size
 		switch {
 		case uncertain:
-			out.jobs = append(out.jobs, hashJob{name: name, present: [2]bool{true, true}, changed: changed})
+			out.jobs = append(
+				out.jobs,
+				hashJob{name: name, present: [2]bool{true, true}, changed: changed, readRequired: true},
+			)
 		case changed || evidence.digests[0] != nil && evidence.digests[0][name] != evidence.digests[1][name]:
 			out.paths[name] = struct{}{}
 		case evidence.digests[0] == nil && !evidence.contentEqual:
@@ -651,7 +682,7 @@ func (c *fileComparison) addOneSided(name string, present [2]bool, evidence comp
 	c.paths[name] = struct{}{}
 	c.oneSided = append(c.oneSided, name)
 	if evidence.candidates[name] && !declaresInputs(name) {
-		c.jobs = append(c.jobs, hashJob{name: name, present: present, changed: true})
+		c.jobs = append(c.jobs, hashJob{name: name, present: present, changed: true, readRequired: true})
 	}
 }
 

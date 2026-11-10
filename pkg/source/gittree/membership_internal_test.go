@@ -132,9 +132,16 @@ func TestFS_ExcludedDirectoryMembership(t *testing.T) {
 						assert.NoError(t, readErr)
 						assert.Equal(t, string(data), name)
 					}
-					observed, observeErr := view.FreshInputs(t.Context(), nil)
+					observed, observeErr := view.FreshInputs(t.Context(), nil, nil)
 					assert.NoError(t, observeErr)
 					assert.Equal(t, len(observed.Files), 3)
+					captured, captureErr := view.FreshInputs(
+						t.Context(),
+						nil,
+						map[string]fs.FileMode{".cache/payload": 0, "noise": 0},
+					)
+					assert.NoError(t, captureErr)
+					assert.Equal(t, len(captured.Files), 0)
 				}
 			}
 		})

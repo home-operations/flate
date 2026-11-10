@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
@@ -17,18 +18,36 @@ import (
 )
 
 const (
-	frameVersion     = 1
-	framePrefix      = "flatefr1"
-	framePrefixSize  = 12
-	frameHeaderLimit = 16 << 20
-	inputFrameDomain = "loader-inputs"
+	frameVersion        = 1
+	framePrefix         = "flatefr1"
+	framePrefixSize     = 12
+	frameHeaderLimit    = 16 << 20
+	frameIdentityBuffer = 4 << 10
+	inputFrameDomain    = "loader-inputs"
 )
 
 type frameEnvelope struct {
-	Domain   string          `json:"Domain"`
-	Metadata json.RawMessage `json:"Metadata"`
-	Size     int64           `json:"Size"`
-	Payload  string          `json:"Payload"`
+	Domain   string        `json:"Domain"`
+	Metadata frameMetadata `json:"Metadata"`
+	Size     int64         `json:"Size"`
+	Payload  string        `json:"Payload"`
+}
+
+type frameMetadata struct {
+	json.RawMessage
+
+	// header MUST be the immutable decoder input before unmarshaling.
+	header []byte
+}
+
+func (m *frameMetadata) UnmarshalJSONFrom(input *jsontext.Decoder) error {
+	value, err := input.ReadValue()
+	if err != nil {
+		return fmt.Errorf("read cache metadata: %w", err)
+	}
+	end := input.InputOffset()
+	m.RawMessage = m.header[end-int64(len(value)) : end]
+	return nil
 }
 
 // Frame retains immutable metadata and the acquired generation, never a mutable lookup.
@@ -59,9 +78,10 @@ func NewFrame(domain string, metadata any, payload []byte) (*Frame, error) {
 		payload = []byte{}
 	}
 	envelope := frameEnvelope{
-		Domain: domain, Metadata: data, Size: int64(len(payload)), Payload: manifest.Fingerprint(payload),
+		Domain: domain, Metadata: frameMetadata{RawMessage: data}, Size: int64(len(payload)),
+		Payload: manifest.Fingerprint(payload),
 	}
-	data, err = json.Marshal(envelope)
+	data, err = json.Marshal(&envelope)
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode cache frame: %w", err), "")
 	}
@@ -118,7 +138,7 @@ func OpenFrame(ctx context.Context, domain string, generation fs.FS, metadata an
 		}
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read cache envelope: %w", err), "")
 	}
-	var envelope frameEnvelope
+	envelope := frameEnvelope{Metadata: frameMetadata{header: data}}
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("decode cache envelope: %w", err), "")
 	}
@@ -128,7 +148,7 @@ func OpenFrame(ctx context.Context, domain string, generation fs.FS, metadata an
 	if envelope.Size < 0 || envelope.Size > math.MaxInt64-int64(len(header)) || envelope.Payload == "" {
 		return nil, manifest.NewError(manifest.ErrFlux, nil, "invalid cache payload length or identity")
 	}
-	if err := json.Unmarshal(envelope.Metadata, metadata); err != nil {
+	if err := json.Unmarshal(envelope.Metadata.RawMessage, metadata); err != nil {
 		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("decode cache metadata: %w", err), "")
 	}
 	frame := &Frame{
@@ -235,10 +255,46 @@ func (f *Frame) readPayload(offset int64, size int) ([]byte, error) {
 }
 
 func frameIdentity(envelope []byte) string {
-	return manifest.Fingerprint(struct {
+	return manifest.Fingerprint(&struct {
 		Version  int
-		Envelope json.RawMessage
+		Envelope frameIdentityJSON
 	}{Version: frameVersion, Envelope: envelope})
+}
+
+// RawMessage marshaling buffers the complete envelope before flushing to the hash.
+type frameIdentityJSON []byte
+
+func (v frameIdentityJSON) MarshalJSONTo(output *jsontext.Encoder) error {
+	if len(v) <= frameIdentityBuffer {
+		if err := output.WriteValue(jsontext.Value(v)); err != nil {
+			return fmt.Errorf("write cache envelope: %w", err)
+		}
+		return nil
+	}
+	// Identity errors discard the hash, so native validation can proceed token by token.
+	if err := jsonv2.Unmarshal(
+		v, (*frameIdentityTokens)(output), json.DefaultOptionsV1(), json.ReportErrorsWithLegacySemantics(false),
+	); err != nil {
+		return fmt.Errorf("stream cache envelope: %w", err)
+	}
+	return nil
+}
+
+type frameIdentityTokens jsontext.Encoder
+
+func (o *frameIdentityTokens) UnmarshalJSONFrom(input *jsontext.Decoder) error {
+	for {
+		token, err := input.ReadToken()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read cache envelope token: %w", err)
+		}
+		if err := (*jsontext.Encoder)(o).WriteToken(token); err != nil {
+			return fmt.Errorf("write cache envelope token: %w", err)
+		}
+	}
 }
 
 // InputFrameIdentity separates stable source lookup from certified frame content.

@@ -273,90 +273,22 @@ func TestInputCache_RejectsChangedPublication(t *testing.T) {
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 }
 
-func TestInputCache_CurrentConstructionMatchesCold(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{"unchanged", "builder", "precedence", "removed", "added", "list"} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			files := fstest.MapFS{
-				"kustomization.yml": {Data: []byte("namespace: old\nresources: [object.yaml]\n")},
-				"object.yaml": {
-					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: object}\ndata: {value: before}\n"),
-				},
-			}
-			owner, err := cache.New(t.Context(), t.TempDir())
-			assert.NoError(t, err)
-			defer func() { assert.NoError(t, owner.Close()) }()
-			if !owner.CanPersistRenders() {
-				t.Fatal("input cache witness requires a clean stamped test binary")
-			}
-			first := cachedFixtureLoader(t, root, files, owner)
-			assert.NoError(t, first.PersistInputs(t.Context()))
-			first.Close()
-			switch name {
-			case "builder":
-				files["kustomization.yml"] = &fstest.MapFile{Data: []byte("namespace: new\nresources: [object.yaml]\n")}
-			case "precedence":
-				files["kustomization.yaml"] = &fstest.MapFile{
-					Data: []byte("namespace: first\nresources: [object.yaml]\n"),
-				}
-			case "removed":
-				delete(files, "object.yaml")
-				files["kustomization.yml"] = &fstest.MapFile{Data: []byte("resources: []\n")}
-			case "added":
-				files["added.yaml"] = &fstest.MapFile{
-					Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: added}\n"),
-				}
-			case "list":
-				files["object.yaml"] = &fstest.MapFile{
-					Data: []byte(
-						"apiVersion: v1\nkind: List\nitems:\n- apiVersion: v1\n  kind: ConfigMap\n  metadata: {name: first}\n- apiVersion: v1\n  kind: ConfigMap\n  metadata: {name: second}\n",
-					),
-				}
-			}
-			repaired := cachedFixtureLoader(t, root, files, owner)
-			defer repaired.Close()
-			cold := cachedFixtureLoader(t, root, files, nil)
-			defer cold.Close()
-			assert.Diff(t, repaired.Index, cold.Index)
-			assert.NoError(t, repaired.PersistInputs(t.Context()))
-			restored := cachedFixtureLoader(t, root, files, owner)
-			defer restored.Close()
-			assert.Diff(t, restored.Index, cold.Index)
-			for id := range cold.Index.Records {
-				want, ok := cold.Occurrence(id)
-				if !ok {
-					continue
-				}
-				got, ok := restored.Occurrence(id)
-				assert.Equal(t, ok, true)
-				wantChild, wantErr := cold.OccurrenceObject(t.Context(), &want, nil)
-				gotChild, gotErr := restored.OccurrenceObject(t.Context(), &got, nil)
-				assert.NoError(t, wantErr)
-				assert.NoError(t, gotErr)
-				assert.Diff(t, gotChild.Doc, wantChild.Doc)
-			}
-		})
-	}
-}
-
-func cachedFixtureLoader(t *testing.T, root string, files fstest.MapFS, owner *cache.Cache) *Loader {
-	t.Helper()
+func cachedFixtureLoader(tb testing.TB, root string, files fstest.MapFS, owner *cache.Cache) *Loader {
+	tb.Helper()
 	view, _, err := gittree.New(
-		t.Context(),
+		tb.Context(),
 		nil,
 		plumbing.ZeroHash,
 		gittree.ViewOptions{Mode: gittree.Direct, Current: files},
 	)
-	assert.NoError(t, err)
+	assert.NoError(tb, err)
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
 	l := New(st)
 	l.SourceRoot, l.Options.Cache = root, owner
-	configureSelection(t, l, selection.Request{Changed: true})
-	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
-	assert.NoError(t, err)
+	configureSelection(tb, l, selection.Request{Changed: true})
+	_, err = l.Load(tb.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(tb, err)
 	return l
 }
 

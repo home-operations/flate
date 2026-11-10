@@ -386,12 +386,9 @@ func (a *Admission) proposeEntry(ctx context.Context, reads *store.ReadSet) (*ma
 	}
 	binding := Binding{Source: manifest.BootstrapSourceID, Key: key, Path: relative, Reads: reads, Entry: receipt}
 	if root != nil {
-		binding.Producer, binding.Source, binding.Path = root.Named(), root.SourceID(), manifest.NormalizeClaimBase(
+		binding.Producer, binding.Source, binding.Path = root.Named(), root.EffectiveSourceID(), manifest.NormalizeClaimBase(
 			root.Path,
 		)
-		if binding.Source.Kind == "" || binding.Source.Name == "" {
-			binding.Source = manifest.BootstrapSourceID
-		}
 	}
 	if len(q.matches) > 1 && slices.ContainsFunc(q.matches, func(evidence applicationEvidence) bool {
 		return evidence.owner != (manifest.NamedResource{}) &&
@@ -552,9 +549,14 @@ func (d *Session) entryReceipt(ctx context.Context, a *Admission, input *store.S
 		manifest.NamedResource{},
 	)
 	a.entryRequest = kustomize.RenderRequest{
-		Work: d.cfg.Work.RenderWork(), Source: input, ApplyIgnore: true, SubPath: root.Path,
-		StrictSubstitutions: d.cfg.StrictSubstitutions, SkipKinds: d.cfg.SkipKinds,
-		DependencySubstitutions: d.substitutions, Preparation: &a.entryPreparation,
+		Work:                    d.cfg.Work.RenderWork(),
+		Source:                  input,
+		ApplyIgnore:             kustomize.ApplySourceIgnore(root, input),
+		SubPath:                 root.Path,
+		StrictSubstitutions:     d.cfg.StrictSubstitutions,
+		SkipKinds:               d.cfg.SkipKinds,
+		DependencySubstitutions: d.substitutions,
+		Preparation:             &a.entryPreparation,
 	}
 	q.previous = d.cfg.Trees.PreviousEntry(ctx, a.entryRequest)
 	a.publishEntry(nil, manifest.NamedResource{})

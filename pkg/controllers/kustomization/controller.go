@@ -199,7 +199,7 @@ func (c *execution) render(
 	acceptance := kustomize.RenderAcceptance{
 		Work:                    c.run.Reads.Work().Scope().RenderWork(),
 		Owner:                   id,
-		Source:                  source.HistoryIdentity(ks.SourceID()),
+		Source:                  source.HistoryIdentity(ks.EffectiveSourceID()),
 		Content:                 content,
 		DependencySubstitutions: c.DependencySubstitutions,
 	}

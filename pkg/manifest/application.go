@@ -21,11 +21,7 @@ func (k *Kustomization) EntryApplication() (EntryApplication, bool) {
 	if k.IsFragment() || k.Named().ReportHidden() {
 		return EntryApplication{}, false
 	}
-	source := k.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = BootstrapSourceID
-	}
-	return EntryApplication{Source: source, Path: k.Path}, true
+	return EntryApplication{Source: k.EffectiveSourceID(), Path: k.Path}, true
 }
 
 // EntryApplication projects a FluxInstance sync through the operator source contract.

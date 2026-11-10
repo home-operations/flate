@@ -57,7 +57,7 @@ func TestFilter_ProducedTargetsWithoutObjects(t *testing.T) {
 
 func TestAddEmitted_EffectiveSourceRoots(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"bootstrap", "alias", "pinned", "paired_pinned", "paired_alias", "external", "parent_segments", "resolved_component", "changed_component"} {
+	for _, mode := range []string{"bootstrap", "implicit", "alias", "pinned", "paired_pinned", "paired_alias", "external", "parent_segments", "resolved_component", "changed_component"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			testAddEmittedEffectiveSourceRootsCase(t, &mode)
@@ -398,7 +398,8 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 		path = "apps/../../base"
 		changed = "base/config.yaml"
 	}
-	if (*testCaseInput) != "bootstrap" && (*testCaseInput) != "parent_segments" {
+	local := (*testCaseInput) == "bootstrap" || (*testCaseInput) == "implicit" || (*testCaseInput) == "parent_segments"
+	if !local {
 		src := &manifest.GitRepository{Name: "input", Namespace: "apps"}
 		st.AddObject(src)
 		source = src.Named()
@@ -433,6 +434,9 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 			Namespace: source.Namespace,
 		},
 	}
+	if (*testCaseInput) == "implicit" {
+		child.SourceRef = kustomizev1.CrossNamespaceSourceReference{}
+	}
 	if (*testCaseInput) == "resolved_component" || (*testCaseInput) == "changed_component" {
 		child.Path = "apps/app"
 		child.Components = []string{"../../components/common"}
@@ -463,9 +467,9 @@ func testAddEmittedEffectiveSourceRootsCase(t *testing.T, testCaseInput *string,
 	f.AddEmitted(testutil.KustomizationID("apps", "dependency"), new(store.Child{Obj: child}), f.objs)
 	assert.Equal(
 		t,
-		f.Reconcile(child.Named()), (*testCaseInput) ==
-			"bootstrap" || (*testCaseInput) == "alias" || (*testCaseInput) == "parent_segments" || (*testCaseInput) == "paired_pinned" || (*testCaseInput) == "paired_alias" || (*testCaseInput) ==
-			"changed_component",
+		f.Reconcile(child.Named()), local || slices.Contains(
+			[]string{"alias", "paired_pinned", "paired_alias", "changed_component"}, *testCaseInput,
+		),
 	)
 	sibling := *child
 	sibling.Name, sibling.Path = "unrelated", "elsewhere"

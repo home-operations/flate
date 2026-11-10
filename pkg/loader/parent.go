@@ -144,7 +144,7 @@ func (r *documentReader) qualifyClaims(
 	var qualified []qualifiedClaim
 	var components map[manifest.NamedResource][]string
 	for i, ks := range kss {
-		view := source(ks.SourceID())
+		view := source(ks.EffectiveSourceID())
 		root := view.root
 		if view.external {
 			continue

@@ -206,7 +206,78 @@ func TestCommit_RequiredClosureRetries(t *testing.T) {
 
 func TestCommit_OrdinaryNativeRoots(t *testing.T) {
 	t.Parallel()
+	for _, name := range []string{"explicit", "implicit"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			testCommitOrdinaryNativeRoots(t, name == "implicit")
+		})
+	}
+}
+
+func TestFinalizeIndex_AuthoredSourceScan(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, content string
+		alias         bool
+	}{
+		{name: "empty"},
+		{name: "ordinary", content: "ordinary-source"},
+		{name: "alias", content: "alias-source", alias: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for _, name := range []string{"explicit", "implicit"} {
+				sourceRef := ""
+				if name == "explicit" {
+					sourceRef = "  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
+				}
+				testutil.WriteFile(t, root, "shared/"+name+".yaml",
+					testutil.KustomizationYAML(name, "apps", "  path: ./shared\n"+sourceRef))
+			}
+			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [explicit.yaml, implicit.yaml]\n")
+			st := store.New()
+			admitForTest(st, root)
+			source := *st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+			source.Content, source.InputAlias = tc.content, tc.alias
+			st.SetArtifact(manifest.BootstrapSourceID, &source)
+			l := New(st)
+			l.SourceRoot = root
+			configureSelection(t, l, selection.Request{Changed: true})
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			explicit := testutil.KustomizationID("apps", "explicit")
+			implicit := testutil.KustomizationID("apps", "implicit")
+			assert.Diff(t, l.Index.Claims, map[string][]manifest.NamedResource{"shared/": {implicit}})
+			assert.Equal(t, slices.ContainsFunc(l.scopes.contributions, func(c scopeContribution) bool {
+				return c.owner == explicit
+			}), false)
+			assert.Equal(t, slices.ContainsFunc(l.scopes.contributions, func(c scopeContribution) bool {
+				return c.owner == implicit
+			}), true)
+
+			_, err = l.Load(t.Context(), root+"/shared", explicit, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			assert.Diff(t, l.Index.Claims, map[string][]manifest.NamedResource{"shared/": {explicit, implicit}})
+			assert.Equal(t, slices.ContainsFunc(l.scopes.contributions, func(c scopeContribution) bool {
+				return c.owner == explicit
+			}), true)
+		})
+	}
+}
+
+func testCommitOrdinaryNativeRoots(t *testing.T, implicit bool) {
+	t.Helper()
 	root := t.TempDir()
+	path := "./shared"
+	sourceRef := "  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
+	if implicit {
+		sourceRef = ""
+		path = "./workload"
+		testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: [../shared/cm.yaml]\n")
+	}
 	for _, name := range []string{"a", "b"} {
 		testutil.WriteFile(
 			t,
@@ -215,7 +286,7 @@ func TestCommit_OrdinaryNativeRoots(t *testing.T) {
 			testutil.KustomizationYAML(
 				name,
 				"apps",
-				"  path: ./shared\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				"  path: "+path+"\n"+sourceRef,
 			),
 		)
 	}

@@ -12,10 +12,11 @@ import (
 )
 
 func (l *Loader) visitKustomizationScope(repoRoot string, ks *manifest.Kustomization, i int) {
-	scope := l.scopes.sources[l.scopes.inputs[i].source]
+	input := l.scopes.inputs[i]
+	scope := l.scopes.sources[input.source]
 	ref := scope.id
 	root, pinned, external := scope.root, scope.pinned, scope.external
-	if ref.Name != "" && !external && !scope.ready {
+	if input.scanRequired && !external && !scope.ready {
 		return
 	}
 	if ks.IsFragment() {
@@ -38,11 +39,8 @@ func (l *Loader) visitKustomizationScope(repoRoot string, ks *manifest.Kustomiza
 		namespace: ks.TargetNamespace,
 		fallback:  ks.TargetNamespace,
 		owner:     ks.Named(),
-		source:    ks.SourceID(),
+		source:    ks.EffectiveSourceID(),
 		input:     i + 1,
-	}
-	if v.source.Name == "" || v.source.Kind == "" {
-		v.source = manifest.BootstrapSourceID
 	}
 	if !new(l.documents).scopeCoordinates(&v, repoRoot, pinned) {
 		return

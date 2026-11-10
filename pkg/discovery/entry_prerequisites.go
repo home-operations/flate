@@ -37,10 +37,7 @@ func (e *entryPrerequisites) eligible(owner *manifest.Kustomization, children []
 	}
 	e.seen = map[manifest.NamedResource]bool{}
 
-	e.source = owner.SourceID()
-	if e.source.Name == "" || e.source.Kind == "" {
-		e.source = manifest.BootstrapSourceID
-	}
+	e.source = owner.EffectiveSourceID()
 	return !e.prerequisites(owner)
 }
 

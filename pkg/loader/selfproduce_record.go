@@ -137,10 +137,7 @@ func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilde
 		p.Path = ""
 	}
 	if ks, ok := b.store.Get[*manifest.Kustomization](pr.visit.owner); ok {
-		p.Source = ks.SourceID()
-		if p.Source.Name == "" || p.Source.Kind == "" {
-			p.Source = manifest.BootstrapSourceID
-		}
+		p.Source = ks.EffectiveSourceID()
 	}
 	if !slices.Contains(r.Productions, p) {
 		r.Productions = append(r.Productions, p)

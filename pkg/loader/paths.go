@@ -387,10 +387,7 @@ func (l *Loader) projectPathRoots(
 ) bool {
 	owner := record.Parent
 	path, known := values.ResolveStaticPath(child.Path, parent, provider)
-	source := child.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
-	}
+	source := child.EffectiveSourceID()
 	if known {
 		if path == child.Path {
 			return false
@@ -401,10 +398,7 @@ func (l *Loader) projectPathRoots(
 			source: slices.Collect(manifest.RenderRoots(&projected)),
 		}
 	} else {
-		source = parent.SourceID()
-		if source.Name == "" || source.Kind == "" {
-			source = manifest.BootstrapSourceID
-		}
+		source = parent.EffectiveSourceID()
 		record.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
 		producer := l.Index.Records[owner]
 		producer.StaticOutput = false

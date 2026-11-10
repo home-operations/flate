@@ -141,7 +141,7 @@ func (d *Session) loadSourcePath(
 	}
 	return d.loadAt(ctx, dir, total, &sourceLoad{
 		owner:    owner,
-		work:     d.cfg.Work.Source(expansion.ks.SourceID()).Record(manifest.WorkPreparation, dir),
+		work:     d.cfg.Work.Source(expansion.ks.EffectiveSourceID()).Record(manifest.WorkPreparation, dir),
 		artifact: expansion.source,
 	})
 }

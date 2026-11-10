@@ -284,7 +284,7 @@ func (l *Loader) prepareIndexScopes(repoRoot string, freeze bool) {
 		l.ensureScopes()
 		if repoRoot != "" {
 			for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
-				state := l.sourceState(ks.SourceID(), repoRoot)
+				state := l.sourceState(ks.EffectiveSourceID(), repoRoot)
 				scope := l.scopeSource(new(state))
 				l.scopes.sources[scope].ready = true
 			}

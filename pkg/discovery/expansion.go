@@ -52,7 +52,7 @@ func (d *Session) enqueueExpansions(
 	for i := range kustomizations {
 		child := &kustomizations[i]
 		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
-		art, _ := d.cfg.Store.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
+		art, _ := d.cfg.Store.GetArtifact(ks.EffectiveSourceID(), store.ArtifactContent).(*store.SourceArtifact)
 		key := sourceExpansion{ks: ks, source: art}
 		pending = append(pending, key)
 	}
@@ -72,9 +72,9 @@ func (d *Session) loadExpansions(
 		if ks.IsFragment() {
 			continue
 		}
-		sourceViewResult1 := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
+		sourceViewResult1 := loader.SourceView(d.cfg.Store, ks.EffectiveSourceID(), repoRoot)
 		sourceRoot, _, external := sourceViewResult1.Path, sourceViewResult1.Pinned, sourceViewResult1.External
-		if external && d.cfg.Store.GetObject(ks.SourceID()) == nil {
+		if external && d.cfg.Store.GetObject(ks.EffectiveSourceID()) == nil {
 			next = append(next, key)
 			continue
 		}

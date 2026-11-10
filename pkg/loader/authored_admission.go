@@ -65,10 +65,10 @@ func (l *Loader) allowAuthoredObjects(
 	for id := range objects {
 		child := objects[id]
 		r := next[id]
-		evidence := scopes[r.Path].evidence(l, id, &r)
-		evidence.scope.Records = next
-		evidence.scope.NamespaceEligible = manifest.AdmitsRoot(child.Obj)
-		evidence.scope.Candidate = true
+		view := l.physicalView()
+		evidence := view.rootScope(l, &rootScopeInput{
+			identity: id, record: r, admission: scopes[r.Path], declaration: child.Obj, candidate: true, records: next,
+		})
 		allowed.set(id, &evidence)
 	}
 }
@@ -88,10 +88,10 @@ func (l *Loader) allowAuthoredRecords(
 		if !known {
 			scope = l.rootAdmission(record.Path, record.File, id.KindInfo().Structural)
 		}
-		evidence := scope.evidence(l, id, &record)
-		evidence.scope.Records = next
-		object := l.catalogObject(id, &record)
-		evidence.scope.NamespaceEligible = object != nil && manifest.AdmitsRoot(object)
+		view := l.physicalView()
+		evidence := view.rootScope(l, &rootScopeInput{
+			identity: id, record: record, admission: scope, records: next,
+		})
 		allowed.set(id, &evidence)
 	}
 }

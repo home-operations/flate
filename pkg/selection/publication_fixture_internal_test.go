@@ -30,7 +30,7 @@ func (f *publicationFacts) PreparedObject(manifest.NamedResource, *store.ReadSet
 	return store.Child{}, false
 }
 
-func (f *publicationFacts) RootEvidence(manifest.NamedResource, *store.ReadSet) RootEvidence {
+func (f *publicationFacts) RootEvidence(manifest.NamedResource, *store.ReadSet, bool) RootEvidence {
 	return RootEvidence{}
 }
 

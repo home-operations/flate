@@ -17,6 +17,7 @@ type rootInventory struct {
 	occurrences map[rootCoordinate]*rootEvidence
 	identities  map[manifest.NamedResource]*rootEvidence
 	currentOnly manifest.DiscoveryIndex
+	prepared    map[manifest.NamedResource]bool
 }
 
 func (r *rootInventory) lookup(id manifest.NamedResource) (*rootEvidence, bool) {

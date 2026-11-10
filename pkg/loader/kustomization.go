@@ -20,40 +20,41 @@ import (
 // document caches a directory document or parsed file objects by source-view path.
 // Consumers MUST never mutate its objects. Pointer fields precede flags to keep map values inline.
 type document struct {
-	deferred      *cachedInput
-	projection    *projectionInputs
-	parsed        *parsedDocument
-	body          *types.Kustomization
-	file          string
-	sourceRoot    string
-	coverage      manifest.DocumentRole
-	possible      bool
-	objects       []parsedObject
-	decodeErr     error
-	built         []store.Child
-	builtInput    *BuiltInput
-	lookup        map[manifest.NamedResource]store.Child
-	pathInputs    map[manifest.NamedResource]manifest.Data
-	plugins       *[]pluginInputs
-	rootOwners    []selection.RootOwnerFacts
-	rootPeers     [][]manifest.NamedResource
-	selected      bool
-	eligible      selection.RootEligibility
-	rootKnown     bool
-	rootAdmitted  bool
-	rootNative    bool
-	terminal      bool
-	loaded        bool
-	scanExcluded  bool
-	bootstrap     bool
-	initial       bool
-	traversed     bool
-	adHoc         bool
-	buildExcluded bool
-	incoming      bool
-	edgesKnown    bool
-	pathState     pathState
-	searched      bool
+	deferred         *cachedInput
+	projection       *projectionInputs
+	parsed           *parsedDocument
+	body             *types.Kustomization
+	file             string
+	sourceRoot       string
+	coverage         manifest.DocumentRole
+	possible         bool
+	objects          []parsedObject
+	decodeErr        error
+	built            []store.Child
+	builtInput       *BuiltInput
+	lookup           map[manifest.NamedResource]store.Child
+	pathInputs       map[manifest.NamedResource]manifest.Data
+	plugins          *[]pluginInputs
+	rootApplications map[manifest.NamedResource]rootApplication
+	rootOwners       []selection.RootOwnerFacts
+	rootPeers        [][]manifest.NamedResource
+	selected         bool
+	eligible         selection.RootEligibility
+	rootKnown        bool
+	rootAdmitted     bool
+	rootNative       bool
+	terminal         bool
+	loaded           bool
+	scanExcluded     bool
+	bootstrap        bool
+	initial          bool
+	traversed        bool
+	adHoc            bool
+	buildExcluded    bool
+	incoming         bool
+	edgesKnown       bool
+	pathState        pathState
+	searched         bool
 }
 
 type parsedObject struct {

@@ -10,7 +10,7 @@ import (
 
 type projectionFacts interface {
 	CatalogObject(manifest.NamedResource) manifest.BaseManifest
-	RootEvidence(manifest.NamedResource, *store.ReadSet) RootEvidence
+	RootEvidence(manifest.NamedResource, *store.ReadSet, bool) RootEvidence
 	SourceExternal(manifest.NamedResource, *store.ReadSet) bool
 }
 
@@ -140,7 +140,7 @@ func (s *selectionSide) catalogObject(id manifest.NamedResource) manifest.BaseMa
 
 func (s *selectionSide) rootEvidence(id manifest.NamedResource, _ *manifest.DiscoveryRecord) RootEvidence {
 	if s.run.Facts != nil {
-		return s.run.Facts.RootEvidence(id, &s.reads)
+		return s.run.Facts.RootEvidence(id, &s.reads, true)
 	}
 	return RootEvidence{}
 }

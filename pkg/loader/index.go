@@ -64,6 +64,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 	}
 	l.Store.SetDiscoveryIndex(l.Index)
 	if freeze {
+		l.capturePreparedRoots()
 		l.frozen = true
 	}
 	l.scopeRoots = l.scopes.rootFacts
@@ -72,6 +73,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 }
 
 func (l *Loader) freezeConstruction() {
+	l.capturePreparedRoots()
 	l.seedSourceAuthority()
 	l.inputReaders = map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, object := range l.Store.Objects() {
@@ -87,6 +89,18 @@ func (l *Loader) freezeConstruction() {
 		}
 	}
 	l.publishFrozenRecords()
+}
+
+func (l *Loader) capturePreparedRoots() {
+	if len(l.builtRoots) == 0 {
+		return
+	}
+	// Detached membership MUST retain the frozen fact without borrowing build captures.
+	l.roots.prepared = make(map[manifest.NamedResource]bool, len(l.builtRoots))
+	for id := range l.builtRoots {
+		record, _ := l.Index.Lookup(id)
+		l.roots.prepared[id] = l.registeredRoot(id, &record) != ""
+	}
 }
 
 func (l *Loader) seedSourceAuthority() {
@@ -217,7 +231,8 @@ func (l *Loader) Close() {
 			files[root] = document{
 				eligible: doc.eligible, rootKnown: doc.rootKnown, rootAdmitted: doc.rootAdmitted,
 				rootOwners: doc.rootOwners, rootPeers: doc.rootPeers, rootNative: doc.rootNative,
-				terminal: doc.terminal, loaded: doc.loaded, bootstrap: doc.bootstrap, initial: doc.initial,
+				rootApplications: doc.rootApplications,
+				terminal:         doc.terminal, loaded: doc.loaded, bootstrap: doc.bootstrap, initial: doc.initial,
 			}
 		}
 	}

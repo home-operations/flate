@@ -24,21 +24,25 @@ import (
 )
 
 //nolint:funlen,gocognit,wrapcheck // Native capture keeps its index, submodule, and ignore decisions in one admission lifetime and preserves their error identities.
-func captureMembership(ctx context.Context, location *gitrepo.Location) (membership, error) {
+func captureMembership(ctx context.Context, location *gitrepo.Location, directory string) (membership, error) {
 	if err := ctx.Err(); err != nil {
 		return membership{}, err
 	}
 	if location == nil || location.Repository == nil {
-		return membership{captured: true}, nil
+		return membership{directory: directory, captured: true}, nil
 	}
 	root, err := os.OpenRoot(location.RepositoryRoot)
 	if err != nil {
 		return membership{}, err
 	}
 	defer func() { _ = root.Close() }()
+	input := &FS{membership: membership{directory: directory}}
 	// The protected worktree hides .git/info/exclude from the native rule reader.
 	observed := &membershipFilesystem{
-		Filesystem:  &membershipRoot{Filesystem: osfs.New(location.RepositoryRoot, osfs.WithBoundOS()), root: root},
+		Filesystem: input.memberFilesystem(
+			&membershipRoot{Filesystem: osfs.New(location.RepositoryRoot, osfs.WithBoundOS()), root: root},
+			location.ContentRoot,
+		),
 		ctx:         ctx,
 		directories: make(map[string]membershipDirectory),
 	}
@@ -50,7 +54,7 @@ func captureMembership(ctx context.Context, location *gitrepo.Location) (members
 		return membership{}, ctxErr
 	}
 	if len(patterns) == 0 {
-		return membership{captured: true}, nil
+		return membership{directory: directory, captured: true}, nil
 	}
 	idx, err := location.Repository.Storer.Index()
 	if err != nil {
@@ -114,7 +118,7 @@ func captureMembership(ctx context.Context, location *gitrepo.Location) (members
 		}
 		ignored[filepath.ToSlash(name)] = struct{}{}
 	}
-	return membership{ignored: ignored, captured: true}, ctx.Err()
+	return membership{directory: directory, ignored: ignored, captured: true}, ctx.Err()
 }
 
 //nolint:errcheck // Upstream comparison supplies noder.Path values implementing noder.Noder.

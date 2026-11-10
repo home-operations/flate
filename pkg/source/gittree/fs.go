@@ -183,11 +183,10 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}
 	}
 	if liveWorktree && !opts.membership.captured {
-		captured, err := captureMembership(ctx, opts.Location)
+		captured, err := captureMembership(ctx, opts.Location, opts.membership.directory)
 		if err != nil {
 			return nil, "", err
 		}
-		captured.directory = opts.membership.directory
 		opts.membership = captured
 	}
 	if liveWorktree && opts.Mode == Direct {
@@ -265,6 +264,9 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	combined.view = input
 	combined.location = opts.Location
 	combined.membership = opts.membership
+	if opts.Worktree != nil {
+		input.worktree = combined.FS.memberFilesystem(opts.Worktree, opts.Worktree.Root())
+	}
 	input.newStorer = func() storer.EncodedObjectStorer {
 		upper := filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
 		if native && current.backing != nil {
@@ -383,7 +385,7 @@ func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 	if err := ctx.Err(); err != nil {
 		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
-	if g.worktree == nil {
+	if g.current != nil {
 		return g.walkCurrent(ctx, prefix)
 	}
 	entries, err := g.worktree.ReadDir(filepath.FromSlash(prefix))
@@ -698,6 +700,7 @@ func (o *ViewOptions) refreshCurrent(
 	switch v := current.view.(type) {
 	case *localView:
 		current = current.OperationView()
+		current.membership = o.membership
 		current.location = o.Location
 	case *gitView:
 		if v.refresh != nil {

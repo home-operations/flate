@@ -1,6 +1,7 @@
 package gittree
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -84,7 +85,7 @@ func (g *FS) identifyFiles(ctx context.Context, inventory fingerprintInventory, 
 		}
 		prefix = filepath.ToSlash(prefix)
 		nodes["."] = merklefs.NewRootNodeWithOptions(
-			osfs.New(g.location.RepositoryRoot, osfs.WithBoundOS()),
+			g.memberFilesystem(osfs.New(g.location.RepositoryRoot, osfs.WithBoundOS()), root),
 			nil,
 			merklefs.Options{Index: idx},
 		)
@@ -388,7 +389,7 @@ func (g *FS) FreshInputs(
 		files = selectFiles(files, requested)
 		return InputObservations{Files: files, Types: evidence.types}, nil
 	}
-	input, err := g.freshInput(ctx)
+	input, err := g.freshInput(ctx, g.membership.directory)
 	if err != nil {
 		return InputObservations{}, err
 	}
@@ -413,20 +414,24 @@ func selectFiles(files map[string]string, requested []string) map[string]string 
 	return selected
 }
 
-func (g *FS) freshInput(ctx context.Context) (*FS, error) {
+func (g *FS) freshInput(ctx context.Context, directory string) (*FS, error) {
+	directory = cmp.Or(directory, g.membership.directory)
 	switch v := g.view.(type) {
 	case *localView:
-		captured, err := captureMembership(ctx, g.location)
+		captured, err := captureMembership(ctx, g.location, directory)
 		if err != nil {
 			return nil, err
 		}
-		captured.directory = g.membership.directory
 		input := newLocal(v.root, true, &localPolicy{})
 		input.location = g.location
 		input.membership = captured
 		return input, nil
 	case *scopedView:
-		parent, err := v.parent.freshInput(ctx)
+		parentDirectory := ""
+		if directory != "" {
+			parentDirectory = path.Join(v.path, directory)
+		}
+		parent, err := v.parent.freshInput(ctx, parentDirectory)
 		if err != nil {
 			return nil, err
 		}
@@ -441,11 +446,12 @@ func (g *FS) freshInput(ctx context.Context) (*FS, error) {
 		}
 		opts := *v.refresh
 		opts.membership = g.membership
+		opts.membership.directory = directory
 		opts.membership.captured = false
 		opts.policy = nil
 		if current, ok := opts.Current.(*FS); ok {
 			var err error
-			opts.Current, err = current.freshInput(ctx)
+			opts.Current, err = current.freshInput(ctx, directory)
 			if err != nil {
 				return nil, err
 			}
@@ -453,6 +459,8 @@ func (g *FS) freshInput(ctx context.Context) (*FS, error) {
 		input, _, err := New(ctx, v.backing, v.commit, opts)
 		return input, err
 	default:
-		return &FS{view: g.view, location: g.location, membership: g.membership, snapshot: &localPolicy{}}, nil
+		selected := g.membership
+		selected.directory = directory
+		return &FS{view: g.view, location: g.location, membership: selected, snapshot: &localPolicy{}}, nil
 	}
 }

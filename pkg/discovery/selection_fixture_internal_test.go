@@ -65,7 +65,7 @@ func rootAtForTest(l *loader.Loader, object manifest.BaseManifest, file string) 
 	if !known || record.Path != file {
 		return selection.RootEvidence{}
 	}
-	return l.RootEvidence(object.Named(), nil)
+	return l.RootEvidence(object.Named(), nil, true)
 }
 
 func qualifyForTest(t *testing.T, l *loader.Loader, ids ...manifest.NamedResource) {

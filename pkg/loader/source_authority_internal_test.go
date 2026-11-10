@@ -122,7 +122,11 @@ func TestRootAdmission_ReaderOwnership(t *testing.T) {
 			record := manifest.DiscoveryRecord{Path: "child.yaml", File: "child.yaml", Authored: id}
 			scope := l.rootAdmission(record.Path, record.File, true)
 			assert.Equal(t, len(scope.peers), len(scope.owners))
-			evidence := scope.evidence(l, id, &record)
+			view := l.physicalView()
+			evidence := view.rootScope(l, &rootScopeInput{
+				identity: id, record: record, admission: scope,
+				declaration: &manifest.Kustomization{Name: id.Name, Namespace: id.Namespace},
+			})
 			assert.Equal(t, selection.Root(evidence.view()).Admitted, tc.admitted)
 		})
 	}

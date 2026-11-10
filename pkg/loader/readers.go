@@ -271,11 +271,22 @@ func (rf *readerFinalizer) admitRecord(id manifest.NamedResource, r *manifest.Di
 	}
 	kind := id.KindInfo()
 	if kind.Discovery {
-		if _, known := rf.loader.roots.lookup(id); known {
+		if previous, known := rf.loader.roots.lookup(id); known {
+			prepared := r.Builder != "" && rf.loader.registeredRoot(id, r) != ""
+			if previous.scope.Prepared != prepared {
+				evidence := *previous
+				evidence.scope.Prepared = prepared
+				rf.loader.roots.set(id, &evidence)
+			}
+			rf.loader.retainRootApplication(id, r.Path, &previous.scope)
 			return
 		}
-		evidence := rf.loader.rootAdmission(r.Path, r.File, kind.Structural).evidence(rf.loader, id, r)
+		view := rf.loader.physicalView()
+		evidence := view.rootScope(rf.loader, &rootScopeInput{
+			identity: id, record: *r, admission: rf.loader.rootAdmission(r.Path, r.File, kind.Structural),
+		})
 		rf.loader.roots.set(id, &evidence)
+		rf.loader.retainRootApplication(id, r.Path, &evidence.scope)
 		return
 	}
 	doc := rf.loader.documents.cache[r.Path]
@@ -284,10 +295,23 @@ func (rf *readerFinalizer) admitRecord(id manifest.NamedResource, r *manifest.Di
 	}
 	scope := rf.loader.rootAdmission(r.Path, r.File, false)
 	doc.rootOwners, doc.rootPeers, doc.rootNative = scope.owners, scope.peers, rf.loader.nativeOperand(r.Path)
-	evidence := scope.evidence(rf.loader, id, r)
+	view := rf.loader.physicalView()
+	evidence := view.rootScope(rf.loader, &rootScopeInput{identity: id, record: *r, admission: scope})
 	doc.rootAdmitted = selection.Root(evidence.view()).Admitted
 	doc.rootKnown = true
 	rf.loader.documents.cache[r.Path] = doc
+}
+
+func (l *Loader) retainRootApplication(id manifest.NamedResource, file string, scope *selection.RootScopeFacts) {
+	if !scope.Application {
+		return
+	}
+	doc := l.documents.cache[file]
+	if doc.rootApplications == nil {
+		doc.rootApplications = map[manifest.NamedResource]rootApplication{}
+	}
+	doc.rootApplications[id] = rootApplication{local: scope.LocalApplication, sameOrigin: scope.SameEntryOrigin}
+	l.documents.cache[file] = doc
 }
 
 func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
@@ -334,10 +358,10 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 		return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
 			return owner.Owner != (manifest.NamedResource{}) &&
 				(owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
-					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !selection.Root(rf.loader.RootEvidence(id, nil)).Admitted)
+					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted)
 		})
 	})
-	if rf.loader.documents.compact && selection.Root(rf.loader.RootEvidence(id, nil)).Admitted {
+	if rf.loader.documents.compact && selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
 		{
 			pValues := r.Productions
 			for pIndex := range pValues {
@@ -374,7 +398,7 @@ func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifes
 	kind := id.KindInfo()
 	if rf.loader.documents.compact && kind.Parent && !selection.Root(rf.loader.roots.get(id).view()).Independent &&
 		r.Parent == (manifest.NamedResource{}) &&
-		!selection.Root(rf.loader.RootEvidence(id, nil)).Admitted {
+		!selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
 		var owner manifest.NamedResource
 		multiple := false
 		{

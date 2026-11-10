@@ -364,6 +364,10 @@ func testAdmissionClosedRootFrontierCase(t *testing.T, testCaseInput *string,
 			scope:    selection.RootScopeFacts{NamespaceEligible: true, Candidate: true},
 		},
 	)
+	if l.candidates == nil {
+		l.candidates = map[manifest.NamedResource]store.Child{}
+	}
+	l.candidates[provider] = providerChild
 	st.AddObjects(
 		[]manifest.BaseManifest{
 			providerChild.Obj,

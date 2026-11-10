@@ -413,7 +413,8 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 			}
 			admission := l.rootAdmission(visit.file, visit.coordinate, false)
 			record := manifest.DiscoveryRecord{Path: visit.file, File: visit.coordinate}
-			evidence := admission.evidence(l, manifest.NamedResource{}, &record)
+			view := l.physicalView()
+			evidence := view.rootScope(l, &rootScopeInput{record: record, admission: admission})
 			failures = append(failures, selection.EntryFailure{
 				File:       l.fileCoordinate(new(l.documents).localPath(visit.file)),
 				Coordinate: visit.coordinate,
@@ -598,47 +599,9 @@ func (l *Loader) IsFileIndexed(id manifest.NamedResource) bool {
 //
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
-	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
-		return l.nativeEntry
-	}
+	view := l.physicalView()
 	record, _ := l.Index.Lookup(id)
-	return l.catalogObject(id, &record)
-}
-
-//nolint:ireturn // The manifest contract requires polymorphic results.
-func (l *Loader) catalogObject(id manifest.NamedResource, record *manifest.DiscoveryRecord) manifest.BaseManifest {
-	if record.Builder != "" && record.Declaration != nil {
-		return manifest.CatalogObject(record.Declaration, id)
-	}
-	if occurrence, ok := l.catalogOccurrence(id); ok && occurrence.facts.catalog != nil {
-		obj := occurrence.object
-		if obj == nil {
-			obj = occurrence.facts.catalog
-		}
-		if obj.Named() == id {
-			return obj
-		}
-		return manifest.CatalogObject(obj, id)
-	}
-	obj := l.candidates[id].Obj
-	if obj == nil {
-		obj = l.IndexedObject(id, *record).Obj
-	}
-	if obj == nil {
-		obj = l.Store.GetObject(id)
-	}
-	if obj == nil {
-		return nil
-	}
-	if snapshot := l.producerFacts[producerBucket(obj)].Load(); snapshot != nil {
-		if cached, known := (*snapshot)[obj]; known && cached.facts.catalog != nil {
-			obj = cached.facts.catalog
-			if obj.Named() == id {
-				return obj
-			}
-		}
-	}
-	return manifest.CatalogObject(obj, id)
+	return view.object(id, &record, l)
 }
 
 func (l *Loader) appendCachedPathObjects(objects []authoredOccurrence) []authoredOccurrence {

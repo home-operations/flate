@@ -52,32 +52,6 @@ func (e *rootEvidence) view() selection.RootEvidence {
 	}
 }
 
-func (a rootAdmission) evidence(l *Loader, id manifest.NamedResource, record *manifest.DiscoveryRecord) rootEvidence {
-	if record.Builder != "" && l.registeredRoot(id, record) != "" {
-		if previous, known := l.roots.lookup(id); known {
-			return *previous
-		}
-	}
-	occurrence := l.initialOccurrence(id, record)
-	evidence := rootEvidence{
-		identity:   id,
-		occurrence: occurrence,
-		record:     selection.RootRecordFrom(record),
-		scope:      l.rootScopeFacts(id, record, &a),
-	}
-	if !l.documents.cache[record.Path].initial {
-		if previous, known := l.roots.lookup(id); known {
-			evidence.initialScope = new(previous.scope)
-			evidence.initialOccurrence = new(occurrenceView(previous.currentOccurrence()))
-			if selection.Root(previous.view()).Independent {
-				evidence.current = new(evidence.occurrence)
-				evidence.occurrence = previous.occurrence
-			}
-		}
-	}
-	return evidence
-}
-
 func (l *Loader) initialOccurrence(id manifest.NamedResource, record *manifest.DiscoveryRecord) authoredOccurrence {
 	occurrence, _ := l.occurrence(id)
 	origin := new(l.documents).localPath(record.Path)
@@ -204,14 +178,14 @@ func (q *rootQuery) entryRoot(
 	original *rootEvidence,
 ) (selection.OccurrenceFacts, bool) {
 	l, objects := q.loader, q.objects
-	evidence := l.rootFacts(id)
+	view := l.physicalView()
+	evidence := view.rootFacts(id, l, nil)
 	if original != nil {
 		evidence.Scope, evidence.Occurrence = original.scope, occurrenceView(original.currentOccurrence())
 		evidence.InitialScope, evidence.InitialOccurrence = original.initialScope, original.initialOccurrence
 	}
 	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
 		evidence.Occurrence = selection.OccurrenceFacts{Identity: id, Object: l.nativeEntry, Catalog: l.nativeEntry}
-		evidence.Scope.NativeEntry, evidence.Scope.NamespaceEligible = true, true
 	}
 	classification := evidence
 	classification.Captured = false
@@ -357,7 +331,8 @@ func (q *rootQuery) admitsRoot(obj manifest.BaseManifest, file string) bool {
 	if objects == nil {
 		objects = q.loader.Store
 	}
-	evidence := q.loader.rootFacts(obj.Named())
+	view := q.loader.physicalView()
+	evidence := view.rootFacts(obj.Named(), q.loader, obj)
 	if q.objects == nil && !q.loader.frozen {
 		return selection.Root(evidence).Admitted
 	}
@@ -441,8 +416,11 @@ func (l *Loader) classifyPackages(packages []PackageEvidence) {
 			}
 			file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
 			record := manifest.DiscoveryRecord{Authored: occurrence.Authored, Path: file, File: l.fileCoordinate(file)}
-			evidence := l.rootAdmission(file, record.File, occurrence.Identity.KindInfo().Structural).
-				evidence(l, occurrence.Identity, &record)
+			view := l.physicalView()
+			evidence := view.rootScope(l, &rootScopeInput{
+				identity: occurrence.Identity, record: record,
+				admission: l.rootAdmission(file, record.File, occurrence.Identity.KindInfo().Structural),
+			})
 			evidence.occurrence = physicalOccurrence(occurrence)
 			evidence.current = nil
 			evidence.scope.PackageKnown, evidence.scope.PackagePaths = true, paths

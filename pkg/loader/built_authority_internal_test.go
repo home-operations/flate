@@ -3,11 +3,14 @@ package loader
 import (
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -202,7 +205,7 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 			if invalidation == "native_source" {
 				var before store.ReadSet
 				before.Init(st, manifest.NamedResource{}, nil)
-				facts := l.RootEvidence(children[0].Obj.Named(), &before)
+				facts := l.RootEvidence(children[0].Obj.Named(), &before, true)
 				assert.Equal(t, facts.PreparedRoot, packageRoot)
 				assert.Equal(t, facts.Scope.Prepared, true)
 				assert.Equal(t, selection.Root(facts).Independent, true)
@@ -232,7 +235,7 @@ func TestBuiltChildren_InvalidatedPreparation(t *testing.T) {
 			if invalidation == "native_source" {
 				var after store.ReadSet
 				after.Init(st, manifest.NamedResource{}, nil)
-				facts := l.RootEvidence(children[0].Obj.Named(), &after)
+				facts := l.RootEvidence(children[0].Obj.Named(), &after, true)
 				assert.Equal(t, facts.Record.Builder != "", true)
 				assert.Equal(t, facts.PreparedRoot, "")
 				assert.Equal(t, facts.Scope.Prepared, false)
@@ -384,7 +387,7 @@ func TestRootEvidence_CapturesRequestedBuiltChild(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(st, testutil.KustomizationID("apps", "binding"), nil)
 	defer reads.Retire()
-	facts := l.RootEvidence(children[0].Obj.Named(), &reads)
+	facts := l.RootEvidence(children[0].Obj.Named(), &reads, true)
 	assert.Equal(t, facts.BuiltCurrent, true)
 	assert.Equal(t, facts.BuiltChild.Obj, children[0].Obj)
 	captured := slices.Collect(reads.Inputs())
@@ -398,7 +401,7 @@ func TestRootEvidence_CapturesRequestedBuiltChild(t *testing.T) {
 	var fresh store.ReadSet
 	fresh.Init(st, testutil.KustomizationID("apps", "binding"), nil)
 	defer fresh.Retire()
-	assert.Equal(t, l.RootEvidence(children[0].Obj.Named(), &fresh).BuiltCurrent, false)
+	assert.Equal(t, l.RootEvidence(children[0].Obj.Named(), &fresh, true).BuiltCurrent, false)
 }
 
 // A prepared producer's directory probes must not claim unrelated descendant content.
@@ -448,4 +451,93 @@ func TestRegisterBuilt_DirectoryReadsDoNotOwnDescendants(t *testing.T) {
 	assert.Equal(t, slices.Contains(readers, manifest.FileReader{
 		Reader: parent.Named(), Source: manifest.BootstrapSourceID, Exact: true,
 	}), true)
+}
+
+func TestRootEvidence_PreparedNativeOwnerAfterClose(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: []\n")
+	st := store.New()
+	admitForTest(st, root)
+	owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "parent", manifest.NamedResource{})
+	st.AddObject(owner)
+	l := New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: true})
+	packageRoot := filepath.Join(root, "parent")
+	_, err := l.Load(t.Context(), packageRoot, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	children := builtObjectsForTest(t, testutil.KustomizationYAML("child", "apps", "  path: ./entry\n"))
+	l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
+		Root: packageRoot, Owner: owner.Named(), Source: manifest.BootstrapSourceID,
+	}), children)
+	id := children[0].Obj.Named()
+	construction := l.RootEvidence(id, nil, true)
+	assert.Equal(t, construction.Captured, false)
+	assert.Equal(t, construction.Scope.Prepared, true)
+	assert.Equal(t, construction.BuiltChild.Obj, children[0].Obj)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	st.SetDiscoveryIndex(l.Index)
+	var before store.ReadSet
+	before.Init(st, manifest.NamedResource{}, nil)
+	defer before.Retire()
+	evidence := l.RootEvidence(id, &before, true)
+	assert.Equal(t, evidence.Scope.Prepared, true)
+	assert.Equal(t, evidence.PreparedRoot, packageRoot)
+	assert.Equal(t, evidence.BuiltChild.Obj, children[0].Obj)
+	assert.Equal(t, selection.Root(evidence).Independent, true)
+	input := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	replacement := *input
+	replacement.Content = "replacement"
+	st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+	var replacedReads store.ReadSet
+	replacedReads.Init(st, manifest.NamedResource{}, nil)
+	defer replacedReads.Retire()
+	replaced := l.RootEvidence(id, &replacedReads, true)
+	assert.Equal(t, replaced.Scope.Prepared, true)
+	assert.Equal(t, replaced.PreparedRoot, "")
+	assert.Equal(t, replaced.BuiltCurrent, false)
+	catalog := l.DetachCatalog()
+	defer catalog.Close()
+	var replacedCatalogReads store.ReadSet
+	replacedCatalogReads.Init(st, manifest.NamedResource{}, nil)
+	defer replacedCatalogReads.Retire()
+	replacedCatalog := catalog.RootEvidence(id, &replacedCatalogReads, true)
+	assert.Equal(t, replacedCatalog.Scope.Prepared, true)
+	assert.Equal(t,
+		cmp.Diff(
+			selection.Root(replaced), selection.Root(replacedCatalog),
+			cmp.Exporter(func(reflect.Type) bool { return true }),
+		),
+		"",
+	)
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l.Close()
+	var after store.ReadSet
+	after.Init(st, manifest.NamedResource{}, nil)
+	defer after.Retire()
+	detached := catalog.RootEvidence(id, &after, true)
+	assert.Equal(t, detached.Scope.Prepared, true)
+	assert.Equal(t, selection.Root(detached).Independent, true)
+	assert.Equal(t,
+		cmp.Diff(
+			selection.Root(evidence), selection.Root(detached),
+			cmp.Exporter(func(reflect.Type) bool { return true }),
+		),
+		"",
+	)
+	// Detached reporting cannot borrow retired build captures or prepare new objects.
+	assert.Equal(t, detached.PreparedRoot, "")
+	assert.Equal(t, detached.BuiltChild.Obj, manifest.BaseManifest(nil))
+	assert.Equal(t, detached.BuiltCurrent, false)
+	evidence.PreparedRoot, evidence.BuiltChild, evidence.BuiltCurrent = "", store.Child{}, false
+	assert.Equal(t,
+		cmp.Diff(
+			evidence, detached,
+			cmp.Exporter(func(reflect.Type) bool { return true }),
+		),
+		"",
+	)
+	assert.Equal(t, after.Valid(), true)
 }

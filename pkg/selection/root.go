@@ -47,6 +47,12 @@ func classifyRoot(evidence *RootEvidence) RootResult {
 
 func classifyAuthoredRoot(evidence *RootEvidence) RootResult {
 	scope := &evidence.Scope
+	// An authored root MUST have an indexed effective identity after projection.
+	projected := evidence.Record.Authored != (manifest.NamedResource{}) &&
+		evidence.Identity != evidence.Record.Authored && scope.Records != nil
+	if _, indexed := scope.Records[evidence.Identity]; projected && !indexed {
+		return RootResult{}
+	}
 	owner := scopeOwner(evidence.Identity, evidence.Record.Authored, scope)
 	admitted := scope.Eligibility != RootInactive && owner == (manifest.NamedResource{})
 	if scope.Eligibility != RootInactive && evidence.Identity.KindInfo().Discovery && !scope.EntryKustomize &&

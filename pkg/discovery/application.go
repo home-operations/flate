@@ -459,7 +459,7 @@ func (a *Admission) reuseEntry(
 			Named() {
 		record, indexed := a.qualification.loader.Index.Lookup(candidate.Named())
 		if indexed && reads.Policy(candidate.Named()).Origin != manifest.SuppliedDeclaration &&
-			!selection.Root(a.qualification.loader.RootEvidence(candidate.Named(), nil)).InitialEntry &&
+			!selection.Root(a.qualification.loader.RootEvidence(candidate.Named(), nil, true)).InitialEntry &&
 			(record.Builder == "" && record.Authored != candidate.Named() || record.Builder != "" && record.File == record.Builder) {
 			return false
 		}

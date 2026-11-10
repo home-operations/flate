@@ -51,6 +51,11 @@ func TestBuildChangeFilter_EffectiveSubstitutionHistory(t *testing.T) {
 	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
 		t.Skip(reason)
 	}
+	for _, regime := range []string{"present", "missing", "stale", "shallow"} {
+		t.Run("dependency namespaces/"+regime, func(t *testing.T) {
+			testDependencyNamespaceHistory(t, regime)
+		})
+	}
 	for _, tc := range effectiveHistoryCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			testBuildChangeFilterEffectiveSubstitutionHistoryCase(

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"iter"
 	"maps"
 	"os"
 	"path/filepath"
@@ -25,7 +26,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestPreviousRender_SourceBinding(t *testing.T) {
@@ -160,11 +160,11 @@ func TestRenderKey_DependsOnProjection(t *testing.T) {
 	spec := &manifest.Kustomization{Name: "emitter", Namespace: "apps", Path: "."}
 	spec.DependsOn = []kustomizev1.DependencyReference{{Name: "${PREFIX:-dev-}ready", Namespace: "${TEAM:-apps}"}}
 	req := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
-	snapshot := values.NewDependencySubstitutions([]*manifest.Kustomization{{
+	parent := &manifest.Kustomization{
 		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"PREFIX": "prod-", "TEAM": "control"}},
-	}})
+	}
 	projected := req
-	projected.Spec = manifest.MapDependsOn(spec, snapshot.Resolve, snapshot.Resolve).(*manifest.Kustomization)
+	projected.Spec = shapeDependency(t, parent, spec).Object.(*manifest.Kustomization)
 	cache := newTestTreeCache(t, t.TempDir())
 	before, err := cache.prepareRender(t.Context(), &req)
 	assert.NoError(t, err)
@@ -210,21 +210,34 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	}
 	root := testutil.WriteTree(
 		t,
-		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")},
+		map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("${DEP}")},
 	)
 	cacheDir := t.TempDir()
 	renderer := newTestTreeCache(t, cacheDir)
 	spec := &manifest.Kustomization{
-		Name: "owner", Namespace: "apps", Path: ".", DependsOn: []kustomizev1.DependencyReference{{Name: "${DEP}"}},
+		Name:      "owner",
+		Namespace: "apps",
+		Path:      ".",
+		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "before"}},
+		DependsOn: []kustomizev1.DependencyReference{{Name: "${DEP}"}},
 	}
 	req := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
-	_, pending, err := Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
+	rawDocs, pending, err := Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
+	initialContent := PrepareShape(&req, rawDocs).Content()
+	history := func(request *RenderRequest) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+		docs, receipt, found := renderer.PreviousRender(t.Context(), *request)
+		if !found {
+			return nil, false
+		}
+		content := PrepareShape(request, docs).Content()
+		return renderer.RenderHistory(spec.Named(), receipt, content)
+	}
 	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
 		Owner:   spec.Named(),
 		Receipt: pending,
 		Records: emptyRenderInventory,
-		Content: acceptedInput,
+		Content: initialContent,
 	}))
 	renderer = newTestTreeCache(t, cacheDir)
 	_, pending, found := renderer.PreviousRender(t.Context(), req)
@@ -236,7 +249,7 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 		"%s",
 		"warm receipt lacks publication memos",
 	)
-	_, complete := before.stored.History(spec.Named(), acceptedInput)
+	_, complete := before.stored.History(spec.Named(), initialContent)
 	assert.Equal(t, complete, true)
 	beforeWire, err := testEncodeFrame(t, &before.header, before.output)
 	assert.NoError(t, err)
@@ -252,40 +265,32 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	assert.NoError(t, err)
 	pending = manifest.NewRenderReceipt(before, equalRenderFrame)
 	wire, output := bytes.Clone(beforeWire), bytes.Clone(before.output)
-	final := values.NewDependencySubstitutions([]*manifest.Kustomization{{
-		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "ready"}},
-	}})
 	projected := req
-	projected.Spec = manifest.MapDependsOn(spec, final.Resolve, nil).(*manifest.Kustomization)
-	projected.DependencySubstitutions = final
+	projected.Spec = spec.Clone()
+	projected.Spec.PostBuild.Substitute["DEP"] = "ready"
+	finalContent := PrepareShape(&projected, rawDocs).Content()
 	{
-		_, complete := previousHistory(t.Context(), renderer, &projected, spec.Named())
+		_, complete := history(&projected)
 		assert.FatalIf(t, complete, "%s", "unaccepted snapshot supplied history")
 	}
 	acceptance := RenderAcceptance{
-		Owner:                   spec.Named(),
-		Receipt:                 pending,
-		Records:                 emptyRenderInventory,
-		DependencySubstitutions: final,
-		Content:                 acceptedInput,
+		Owner:   spec.Named(),
+		Receipt: pending,
+		Records: emptyRenderInventory,
+		Content: finalContent,
 	}
 	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
 	{
-		records, complete := previousHistory(
-			t.Context(),
-			renderer,
-			&projected,
-			spec.Named(),
-		)
+		records, complete := history(&projected)
 		assert.FatalIf(t, !complete ||
 			records == nil, "%s", "final projected binding missed accepted history")
 	}
 	{
-		_, complete := previousHistory(t.Context(), renderer, &req, spec.Named())
+		_, complete := history(&req)
 		assert.FatalIf(t, complete, "%s", "displaced snapshot retained history")
 	}
 	original := pending.Value().(renderFrame)
-	assert.Equal(t, original.binding.Dependencies.Equal(before.binding.Dependencies), true)
+	assert.Equal(t, original.binding.equal(&before.binding), true)
 	assert.Equal(t, original.header.Binding, before.header.Binding)
 	originalPublication, err := original.stored.PreparePublication(t.Context(), sourcecache.FramePublicationInput{
 		Owner: spec.Named(), Content: acceptedInput, Records: emptyRenderInventory, Complete: true,

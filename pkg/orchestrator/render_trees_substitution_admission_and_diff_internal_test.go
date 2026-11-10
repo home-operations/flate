@@ -18,6 +18,12 @@ import (
 
 func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 	t.Parallel()
+	for _, regime := range []string{"missing", "shallow"} {
+		t.Run("dependency namespaces/"+regime, func(t *testing.T) {
+			t.Parallel()
+			testDependencyNamespaceHistory(t, regime)
+		})
+	}
 
 	baseRoot, headRoot := t.TempDir(), t.TempDir()
 	for i, root := range []string{baseRoot, headRoot} {

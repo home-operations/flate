@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -20,7 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestTemplate_AcceptedHistory(t *testing.T) {
@@ -255,9 +253,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		name   string
 		mutate func(*RenderOptions)
 	}{
-		{"dependency substitutions", func(r *RenderOptions) {
-			r.DependencySubstitutions = values.NewDependencySubstitutions([]*manifest.Kustomization{{PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "effective-child"}}}})
-		}},
+		{"effective Kubernetes version", func(r *RenderOptions) { r.KubeVersion = "1.99.0" }},
 		{"skip kinds", func(o *RenderOptions) { o.SkipKinds = []string{manifest.KindKustomization} }},
 		{"source binding", func(o *RenderOptions) {
 			changed := *o.Sources.LocalSourceArtifact((*testCaseInput.hr).ChartSource(), store.ArtifactContent)

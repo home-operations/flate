@@ -3,6 +3,7 @@ package discovery
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/selection"
 
@@ -44,7 +47,7 @@ func TestEntryFrontier_PreparedConstructionDeclarations(t *testing.T) {
 				result, err := Run(t.Context(), fixture.cfg)
 				assert.NoError(t, err)
 				assertPreparedConstructionBinding(t, &result.Binding, fixture.cfg.Store, tc.dependencies)
-				fixture.assertSubstitutions(t, result.DependencySubstitutions.Resolve)
+				fixture.assertSubstitutions(t)
 				var reads store.ReadSet
 				reads.Init(fixture.cfg.Store, fixture.parent.Named(), nil)
 				defer reads.Retire()
@@ -56,6 +59,70 @@ func TestEntryFrontier_PreparedConstructionDeclarations(t *testing.T) {
 			assertConstructionHasNoOutput(t, fixture.cfg.Store, fixture.parent)
 			assert.Equal(t, strings.Count(logs.String(), `"msg":"kustomize: build"`), 2)
 			assert.Equal(t, fixture.fetches.Load(), int32(0))
+		})
+	}
+}
+
+func TestEntryFrontier_ParentDependencyNamespace(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, dependency, namespace, wantName, wantNamespace, disabled string
+		postBuild                                                      *kustomizev1.PostBuild
+	}{
+		{name: "enabled", dependency: "${DEP}", namespace: "${TEAM}", wantName: "ready", wantNamespace: "shared", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "ready", "TEAM": "shared"}}},
+		{name: "disabled annotation", dependency: "${DEP}", namespace: "${TEAM}", wantName: "${DEP}", wantNamespace: "${TEAM}", disabled: "annotations", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "ready", "TEAM": "shared"}}},
+		{name: "disabled label", dependency: "${DEP}", namespace: "${TEAM}", wantName: "${DEP}", wantNamespace: "${TEAM}", disabled: "labels", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "ready", "TEAM": "shared"}}},
+		{name: "inactive", dependency: "${DEP:-ready}", namespace: "${TEAM:-shared}", wantName: "${DEP:-ready}", wantNamespace: "${TEAM:-shared}"},
+		{name: "always", dependency: "${DEP:-ready}", namespace: "${TEAM:-shared}", wantName: "ready", wantNamespace: "shared", postBuild: &kustomizev1.PostBuild{SubstituteStrategy: kustomizev1.SubstituteStrategyAlways}},
+		{name: "escaped", dependency: "$${DEP:-ready}", namespace: "$${TEAM:-shared}", wantName: "${DEP:-ready}", wantNamespace: "${TEAM:-shared}", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "ready", "TEAM": "shared"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newPreparedConstructionFixture(t, false)
+			parent := f.parent.Clone()
+			parent.PostBuild = tc.postBuild
+			f.parent = parent
+			f.cfg.Store.AddObject(parent)
+			body := testutil.KustomizationYAML("applier", "apps", fmt.Sprintf(
+				"  path: ./unpatched\n  dependsOn: [{name: %q, namespace: %q, readyExpr: 'true'}]\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				tc.dependency,
+				tc.namespace,
+			))
+			if tc.disabled != "" {
+				body = strings.Replace(
+					body,
+					"spec:\n",
+					"  "+tc.disabled+": {kustomize.toolkit.fluxcd.io/substitute: disabled}\nspec:\n",
+					1,
+				)
+			}
+			f.cfg.Input.FS.(fstest.MapFS)["parent/applier.yaml"] = &fstest.MapFile{Data: []byte(body)}
+			d := newDiscoverer(&f.cfg)
+			d.loader.SourceRoot = f.cfg.Input.LocalPath
+			assert.NoError(t, d.loadManifests(t.Context(), f.cfg.Input.LocalPath, false))
+			assertConstructionHasNoOutput(t, f.cfg.Store, parent)
+			assert.NoError(t, d.prepareProducer(t.Context(), parent, f.cfg.Input, nil))
+			prepared := d.prepared[parent.Named()]
+			assert.FatalIf(t, len(prepared.children) != 1, "prepared children=%+v", prepared.children)
+			child := prepared.children[0].Obj.(*manifest.Kustomization)
+			assert.Equal(t, child.DependsOn[0].Name, tc.wantName)
+			assert.Equal(t, child.DependsOn[0].Namespace, tc.wantNamespace)
+			assert.Equal(t, child.DependsOn[0].ReadyExpr, "true")
+			for ref := range manifest.References(child, manifest.ReferenceRelations) {
+				if ref.Use == "dependsOn" {
+					assert.Equal(t, ref.NamedResource, testutil.KustomizationID(tc.wantNamespace, tc.wantName))
+				}
+			}
+			record, indexed := d.loader.Index.Lookup(child.Named())
+			assert.Equal(t, indexed, true)
+			assert.Equal(t, record.Declaration, prepared.children[0].Obj)
+			assert.Equal(t, record.BuilderOwner, parent.Named())
+			assertConstructionHasNoOutput(t, f.cfg.Store, parent)
+			assert.Equal(t, string(f.cfg.Input.FS.(fstest.MapFS)["parent/applier.yaml"].Data), body)
+			before := manifest.Fingerprint(prepared.children[0].Doc)
+			assert.NoError(t, d.acceptPrepared(t.Context()))
+			assert.Equal(t, manifest.Fingerprint(prepared.children[0].Doc), before)
+			assertConstructionHasNoOutput(t, f.cfg.Store, parent)
 		})
 	}
 }
@@ -76,7 +143,7 @@ func newPreparedConstructionFixture(t *testing.T, inputs bool) *preparedConstruc
 	if inputs {
 		resources += ", config.yaml, follow.yaml"
 		patch = "      - op: replace\n        path: /spec/dependsOn/0/name\n        value: prod-config\n"
-		dependency = "  dependsOn: [{name: unpatched}]\n"
+		dependency = "  dependsOn: [{name: unpatched, namespace: '${TEAM}'}]\n"
 	}
 	source := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 		"parent/kustomization.yaml": {
@@ -98,7 +165,7 @@ func newPreparedConstructionFixture(t *testing.T, inputs bool) *preparedConstruc
 	if inputs {
 		files := source.FS.(fstest.MapFS)
 		files["parent/config.yaml"] = &fstest.MapFile{
-			Data: []byte(testutil.KustomizationYAML("prod-config", "apps", "  path: ./config\n")),
+			Data: []byte(testutil.KustomizationYAML("prod-config", "shared", "  path: ./config\n")),
 		}
 		files["parent/follow.yaml"] = &fstest.MapFile{
 			Data: []byte(testutil.KustomizationYAML("follow", "apps", "  path: ./followed\n")),
@@ -114,7 +181,7 @@ func newPreparedConstructionFixture(t *testing.T, inputs bool) *preparedConstruc
 			testutil.KustomizationYAML(
 				"parent",
 				"apps",
-				"  path: ./parent\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				"  path: ./parent\n  postBuild: {substitute: {TEAM: shared}}\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
 			),
 		),
 		manifest.RequiredDocuments,
@@ -159,7 +226,7 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 	d := newDiscoverer(&f.cfg)
 	d.loader.SourceRoot = f.cfg.Input.LocalPath
 	assert.NoError(t, d.loadManifests(t.Context(), f.cfg.Input.LocalPath, false))
-	f.assertSubstitutions(t, d.substitutions.Resolve)
+	f.assertSubstitutions(t)
 	assert.Equal(t, f.cfg.Store.GetObject(testutil.KustomizationID("apps", "applier")), nil)
 	assertConstructionHasNoOutput(t, f.cfg.Store, f.parent)
 	assert.NoError(t, d.prepareProducer(t.Context(), f.parent, f.cfg.Input, nil))
@@ -198,6 +265,12 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 	if f.dependencies {
 		obj := children[applier].Obj.(*manifest.Kustomization)
 		assert.Equal(t, obj.DependsOn[0].Name, "prod-config")
+		assert.Equal(t, obj.DependsOn[0].Namespace, "shared")
+		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+			if ref.Use == "dependsOn" {
+				assert.Equal(t, ref.NamedResource, testutil.KustomizationID("shared", "prod-config"))
+			}
+		}
 	}
 	assertConstructionHasNoOutput(t, f.cfg.Store, f.parent)
 	d.loader.Admit(f.cfg.Input.LocalPath)
@@ -225,7 +298,7 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 		d.loader.Options.Session = nil
 		assert.NoError(t, err)
 		defer proposal.Retire()
-		assert.Equal(t, slices.Contains(proposal.Needed, testutil.KustomizationID("apps", "prod-config")), true)
+		assert.Equal(t, slices.Contains(proposal.Needed, testutil.KustomizationID("shared", "prod-config")), true)
 		assert.Equal(t, slices.Contains(proposal.Needed, testutil.KustomizationID("apps", "unpatched")), false)
 	}
 	assert.NoError(t, d.loadManifests(t.Context(), f.cfg.Input.LocalPath, true))
@@ -237,12 +310,16 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 	assertPreparedConstructionBinding(t, &d.binding, f.cfg.Store, f.dependencies)
 }
 
-func (f *preparedConstructionFixture) assertSubstitutions(t *testing.T, resolve func(string) string) {
+func (f *preparedConstructionFixture) assertSubstitutions(t *testing.T) {
 	t.Helper()
 	if !f.dependencies {
 		return
 	}
-	assert.Equal(t, resolve("${PREFIX:-dev-}config"), "prod-config")
+	assert.Equal(
+		t,
+		f.cfg.Loader.CatalogObject(testutil.KustomizationID("apps", "supplier")).(*manifest.Kustomization).PostBuild.Substitute["PREFIX"],
+		"prod-",
+	)
 	supplier, present := f.cfg.Loader.Index.Lookup(testutil.KustomizationID("apps", "supplier"))
 	assert.FatalIf(
 		t,
@@ -265,6 +342,7 @@ func assertPreparedConstructionBinding(t *testing.T, binding *Binding, st *store
 	if inputs {
 		assert.FatalIf(t, len(applier.DependsOn) != 1, "effective dependency missing: %+v", applier.DependsOn)
 		assert.Equal(t, applier.DependsOn[0].Name, "prod-config")
+		assert.Equal(t, applier.DependsOn[0].Namespace, "shared")
 	} else {
 		assert.Equal(t, len(applier.DependsOn), 0)
 	}

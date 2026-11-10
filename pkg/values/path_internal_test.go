@@ -64,3 +64,35 @@ func TestResolveStaticPath_ParentSubstitutions(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveStaticPath_Activation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		postBuild *kustomizev1.PostBuild
+		want      string
+		known     bool
+	}{
+		{name: "nil PostBuild", want: "./${ROOT:-apps/red}", known: true},
+		{name: "empty substitutions", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{}}, want: "./${ROOT:-apps/red}", known: true},
+		{name: "nonempty substitutions", postBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"ROOT": "apps/blue"}}, want: "./apps/blue", known: true},
+		{name: "Always empty", postBuild: &kustomizev1.PostBuild{SubstituteStrategy: kustomizev1.SubstituteStrategyAlways}, want: "./apps/red", known: true},
+		{
+			name: "unknown inputs",
+			postBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+				{Kind: manifest.KindConfigMap, Name: "missing"},
+			}},
+			want: "./apps/red",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", PostBuild: tc.postBuild}
+			before := parent.Clone()
+			got, known := ResolveStaticPath("./${ROOT:-apps/red}", parent, &sliceProvider{})
+			assert.Equal(t, known, tc.known)
+			assert.Equal(t, got, tc.want)
+			assert.Equal(t, manifest.Equal(parent, before), true)
+		})
+	}
+}

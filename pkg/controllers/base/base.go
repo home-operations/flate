@@ -13,7 +13,6 @@ import (
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 // Controller owns shared reconciliation lifecycle, dependency gates and publication.
@@ -28,9 +27,7 @@ type Controller struct {
 	// SkipKinds is the immutable visible-output exclusion list.
 	SkipKinds []string
 
-	// DependencySubstitutions binds emitted dependency projection to accepted history.
-	DependencySubstitutions values.DependencySubstitutions
-	existence               depwait.ExistenceLookup
+	existence depwait.ExistenceLookup
 	// AllowMissingKinds permits unavailable Helm valuesFrom kinds and absent CRDs.
 	AllowMissingKinds []string
 	allowMissingCRDs  bool
@@ -59,8 +56,6 @@ type Options struct {
 	Loader *loader.Loader
 	// SkipKinds is the immutable visible-output exclusion list.
 	SkipKinds []string
-	// DependencySubstitutions is the frozen discovered lookup used before child publication.
-	DependencySubstitutions values.DependencySubstitutions
 	// Session owns restricted reconciliation membership.
 	Session *selection.Session
 	// Index contains immutable source-qualified discovery evidence.
@@ -78,7 +73,6 @@ type Options struct {
 //nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
-	c.DependencySubstitutions = opts.DependencySubstitutions
 	c.selection = opts.Session
 	c.loader = opts.Loader
 	c.SkipKinds = opts.SkipKinds

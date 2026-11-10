@@ -55,7 +55,7 @@ func (p *Preparation) matchesOwner(client *Client, declaration *manifest.HelmRel
 		return false
 	}
 	binding := p.binding
-	binding.Options, binding.Dependencies = request.Options, request.DependencySubstitutions
+	binding.Options = request.Options
 	binding.Policy = declaration.HistoryPolicy()
 	return p.binding.same(&binding)
 }
@@ -139,18 +139,17 @@ func (c *Client) prepareTemplate(
 	key := computeTemplateKey(&loaded, hrValues, opts, hr)
 	input.Work.Fingerprint(key)
 	binding := templateBinding{
-		Policy:       hr.HistoryPolicy(),
-		Source:       hr.ChartSource(),
-		Kind:         loaded.artifact.Kind,
-		URL:          loaded.artifact.URL,
-		Path:         loaded.artifact.LocalPath,
-		Root:         loaded.artifact.LocalRoot,
-		Key:          loaded.artifact.Key,
-		Revision:     loaded.artifact.Revision,
-		Digest:       loaded.artifact.Digest,
-		Alias:        loaded.artifact.InputAlias,
-		Options:      input.Options,
-		Dependencies: input.DependencySubstitutions,
+		Policy:   hr.HistoryPolicy(),
+		Source:   hr.ChartSource(),
+		Kind:     loaded.artifact.Kind,
+		URL:      loaded.artifact.URL,
+		Path:     loaded.artifact.LocalPath,
+		Root:     loaded.artifact.LocalRoot,
+		Key:      loaded.artifact.Key,
+		Revision: loaded.artifact.Revision,
+		Digest:   loaded.artifact.Digest,
+		Alias:    loaded.artifact.InputAlias,
+		Options:  input.Options,
 	}
 	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(&binding) {
 		binding = loaded.record.binding

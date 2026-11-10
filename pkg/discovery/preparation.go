@@ -4,7 +4,6 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func (q *entryQualification) close() {
@@ -48,7 +47,6 @@ func (p *declarationPreparation) retire(st *store.Store) {
 	p.retireSupport(st)
 	p.work, p.owner, p.source, p.receipt, p.content = nil, nil, nil, nil, nil
 	p.children, p.warnings = nil, nil
-	p.substitutions = values.DependencySubstitutions{}
 	p.complete, p.registered, p.err = false, false, nil
 }
 

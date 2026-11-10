@@ -472,7 +472,7 @@ func (a *Admission) reuseEntry(
 			return false
 		}
 	}
-	eligibility := entryPrerequisites{loader: a.loader, reads: reads, substitutions: a.substitutions}
+	eligibility := entryPrerequisites{loader: a.loader, reads: reads}
 	return eligibility.eligible(candidate, nil)
 }
 
@@ -549,14 +549,13 @@ func (d *Session) entryReceipt(ctx context.Context, a *Admission, input *store.S
 		manifest.NamedResource{},
 	)
 	a.entryRequest = kustomize.RenderRequest{
-		Work:                    d.cfg.Work.RenderWork(),
-		Source:                  input,
-		ApplyIgnore:             kustomize.ApplySourceIgnore(root, input),
-		SubPath:                 root.Path,
-		StrictSubstitutions:     d.cfg.StrictSubstitutions,
-		SkipKinds:               d.cfg.SkipKinds,
-		DependencySubstitutions: d.substitutions,
-		Preparation:             &a.entryPreparation,
+		Work:                d.cfg.Work.RenderWork(),
+		Source:              input,
+		ApplyIgnore:         kustomize.ApplySourceIgnore(root, input),
+		SubPath:             root.Path,
+		StrictSubstitutions: d.cfg.StrictSubstitutions,
+		SkipKinds:           d.cfg.SkipKinds,
+		Preparation:         &a.entryPreparation,
 	}
 	q.previous = d.cfg.Trees.PreviousEntry(ctx, a.entryRequest)
 	a.publishEntry(nil, manifest.NamedResource{})

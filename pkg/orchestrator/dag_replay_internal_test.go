@@ -183,12 +183,17 @@ func ksYAML(name, path, dependsOn string) string {
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	dir := t.TempDir()
-	produced := ksYAML("produced", "produced", "")
+	produced := ksYAML("produced", "produced", "") + "  dependsOn: [{name: ready, namespace: '${TEAM}'}]\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(produced))
 	}))
 	t.Cleanup(srv.Close)
-	testutil.WriteFile(t, dir, "flux/producer.yaml", ksYAML("producer", "producer", ""))
+	testutil.WriteFile(
+		t,
+		dir,
+		"flux/producer.yaml",
+		ksYAML("producer", "producer", "")+"  postBuild: {substitute: {TEAM: shared}}\n",
+	)
 	testutil.WriteFile(t, dir, "flux/consumer.yaml", ksYAML("consumer", "consumer", "produced"))
 	testutil.WriteFile(t, dir, "producer/kustomization.yaml", "resources:\n- "+srv.URL+"/produced.yaml\n")
 	testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
@@ -206,10 +211,12 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: produced}\ndata: {k: v}\n",
 	)
 
+	testutil.WriteFile(t, dir, "flux/ready.yaml", testutil.KustomizationYAML("ready", "shared", "  path: ./ready\n"))
+	testutil.WriteFile(t, dir, "ready/kustomization.yaml", "resources: []\n")
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 4})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		err := o.bootstrap(context.Background())
+		err := o.bootstrap(t.Context())
 		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 	{
@@ -217,7 +224,7 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 		assert.FatalIf(t, ok, "consumer should wait for rendered dependency, not fail preflight: %s", msg)
 	}
 	{
-		err := o.run(context.Background())
+		err := o.run(t.Context())
 		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 	for _, name := range []string{"produced", "consumer", "producer"} {
@@ -231,6 +238,36 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 			ok,
 		)
 	}
+	ready, ok := o.Store().GetStatus(testutil.KustomizationID("shared", "ready"))
+	assert.Equal(t, ok, true)
+	assert.Equal(t, ready.Status, store.StatusReady)
+	child := o.Store().GetObject(testutil.KustomizationID("flux-system", "produced")).(*manifest.Kustomization)
+	assert.Equal(t, child.DependsOn[0].Name, "ready")
+	assert.Equal(t, child.DependsOn[0].Namespace, "shared")
+
+	t.Run("escaped namespace", func(t *testing.T) {
+		escapedRoot := t.TempDir()
+		testutil.CopyTree(t, dir, escapedRoot)
+		escapedBody := strings.Replace(produced, "${TEAM}", "$${TEAM}", 1)
+		escapedServer := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(escapedBody)) }),
+		)
+		t.Cleanup(escapedServer.Close)
+		testutil.WriteFile(
+			t,
+			escapedRoot,
+			"producer/kustomization.yaml",
+			"resources: ["+escapedServer.URL+"/produced.yaml]\n",
+		)
+		escaped, err := newTestOrchestrator(t, Tree{Path: escapedRoot}, Config{Concurrency: 2})
+		assert.NoError(t, err)
+		result, _ := escaped.render(t.Context(), t)
+		id := testutil.KustomizationID("flux-system", "produced")
+		child := escaped.Store().GetObject(id).(*manifest.Kustomization)
+		assert.Equal(t, child.DependsOn[0].Namespace, "${TEAM}")
+		assert.Equal(t, result.Failed[id].Status, store.StatusFailed)
+		assert.Equal(t, strings.Contains(result.Failed[id].String(), "${TEAM}/ready"), true)
+	})
 }
 
 // TestDAG_DanglingDependencyCascadesAndTerminates verifies the structural

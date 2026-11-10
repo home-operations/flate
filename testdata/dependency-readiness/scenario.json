@@ -633,7 +633,7 @@
             "expect": {
               "stdout": "expect/depends-on-defaults--supplied-values-prefix-config-0.stdout",
               "stderr": "expect/depends-on-defaults--supplied-values-prefix-config-0.stderr",
-              "code": 0
+              "code": 1
             }
           }
         }
@@ -683,7 +683,7 @@
             "expect": {
               "stdout": "expect/depends-on-defaults--supplied-values-prefix-dev-config-0.stdout",
               "stderr": "expect/depends-on-defaults--supplied-values-prefix-dev-config-0.stderr",
-              "code": 0
+              "code": 1
             }
           }
         }
@@ -738,7 +738,7 @@
             "expect": {
               "stdout": "expect/depends-on-defaults--changed-only-build-0.stdout",
               "stderr": "expect/depends-on-defaults--changed-only-build-0.stderr",
-              "code": 0
+              "code": 1
             }
           }
         }
@@ -795,7 +795,7 @@
             "expect": {
               "stdout": "expect/depends-on-defaults--changed-only-diff-0.stdout",
               "stderr": "expect/depends-on-defaults--changed-only-diff-0.stderr",
-              "code": 0
+              "code": 1
             }
           }
         }
@@ -845,7 +845,7 @@
             "expect": {
               "stdout": "expect/depends-on-defaults--emitted-child-default-only-0.stdout",
               "stderr": "expect/depends-on-defaults--emitted-child-default-only-0.stderr",
-              "code": 0
+              "code": 1
             }
           }
         }
@@ -895,7 +895,7 @@
             "expect": {
               "stdout": "expect/depends-on-defaults--emitted-child-discovered-supplier-0.stdout",
               "stderr": "expect/depends-on-defaults--emitted-child-discovered-supplier-0.stderr",
-              "code": 0
+              "code": 1
             }
           }
         }

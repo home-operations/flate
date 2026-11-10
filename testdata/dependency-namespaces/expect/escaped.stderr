@@ -1,0 +1,5 @@
+
+  ✗  Kustomization  ${TEAM}/ready  not found
+         required by apps/child
+
+  ✗ 1 failed · 1 blocked

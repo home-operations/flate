@@ -258,15 +258,15 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 
 	{
 		got := s.GetObject(child.Named()).(*manifest.Kustomization).DependsOn[0].Name
-		assert.FatalIf(t, got != "dev-config", "admitted dependency = %q, want dev-config", got)
+		assert.FatalIf(t, got != "${PREFIX:-dev-}config", "admitted dependency = %q, want literal dependency", got)
 	}
 
 	attempt.Children, attempt.Complete, attempt.Fingerprint = children, true, manifest.Fingerprint("inputs")
 	(&Execution{Controller: c}).emit(t.Context(), parent.Named(), &attempt, nil)
 	checkPayload()
 
-	assert.FatalIf(t, attempt.Children[0].Obj == children[0].Obj ||
-		attempt.Children[0].Obj.(*manifest.Kustomization).DependsOn[0].Name != "dev-config" ||
+	assert.FatalIf(t, attempt.Children[0].Obj != children[0].Obj ||
+		attempt.Children[0].Obj.(*manifest.Kustomization).DependsOn[0].Name != "${PREFIX:-dev-}config" ||
 		attempt.Footprint() == nil, "%v", "completed emission did not return its substituted accepted inventory")
 
 	{

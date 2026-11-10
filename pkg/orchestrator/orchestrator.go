@@ -29,7 +29,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 //nolint:gochecknoglobals // The immutable render-kind registry is computed once before parallel rendering.
@@ -141,11 +140,10 @@ type Orchestrator struct {
 		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 		Complete bool
 	}
-	historyOwners           map[manifest.NamedResource][]manifest.SourceEvidence
-	cache                   *sourcecache.Cache
-	inputs                  source.HTTPInputs
-	unsubStatus             store.Unsubscribe
-	dependencySubstitutions values.DependencySubstitutions
+	historyOwners map[manifest.NamedResource][]manifest.SourceEvidence
+	cache         *sourcecache.Cache
+	inputs        source.HTTPInputs
+	unsubStatus   store.Unsubscribe
 
 	// repoRoot anchors fresh claims for post-render orphan reporting, including
 	// Kustomizations admitted after static discovery is published.
@@ -338,7 +336,6 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	o.index = res.Index
 	o.entryBinding = res.Binding
 	o.admission = res.Admission
-	o.dependencySubstitutions = res.DependencySubstitutions
 	if o.entryBinding.Failure != nil && slog.Default().Enabled(ctx, slog.LevelDebug) {
 		slog.DebugContext(
 			ctx,

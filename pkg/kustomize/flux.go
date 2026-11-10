@@ -22,7 +22,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 // RenderRequest carries the authoritative source and its mount label. Label is
@@ -50,8 +49,6 @@ type RenderRequest struct {
 	StrictSubstitutions bool `json:"StrictSubstitutions"`
 	// SkipKinds binds the effective emitted-kind policy to accepted history.
 	SkipKinds []string `json:"SkipKinds"`
-	// DependencySubstitutions binds emitted dependency projection to accepted history.
-	DependencySubstitutions values.DependencySubstitutions `json:"DependencySubstitutions"`
 }
 
 // Render returns unstamped renderer documents from an admitted source and a private overlay.
@@ -139,8 +136,7 @@ func (p *Preparation) Take(previous *Preparation, cache *TreeCache, request *Ren
 
 func (p *Preparation) matchesOwner(cache *TreeCache, request *RenderRequest) bool {
 	owner := p.spec == request.Spec || p.spec != nil && request.Spec != nil && manifest.Equal(p.spec, request.Spec)
-	policy := p.binding.Strict == request.StrictSubstitutions && slices.Equal(p.binding.Skip, request.SkipKinds) &&
-		p.binding.Dependencies.Equal(request.DependencySubstitutions)
+	policy := p.binding.Strict == request.StrictSubstitutions && slices.Equal(p.binding.Skip, request.SkipKinds)
 	location := p.label == request.Label && p.subPath == request.SubPath && p.applyIgnore == request.ApplyIgnore
 	return p.cache == cache && owner && policy && location
 }
@@ -237,7 +233,6 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 
 			req.StrictSubstitutions,
 			slices.Clone(req.SkipKinds),
-			req.DependencySubstitutions,
 		},
 	}
 	if req.Preparation != nil {

@@ -318,7 +318,6 @@ func (w *qualificationWalk) root(ctx context.Context, root *selection.Occurrence
 	if object == nil {
 		return nil, nil
 	}
-	object = manifest.MapDependsOn(object, w.admission.substitutions.Resolve, w.admission.substitutions.Resolve)
 	evidence := &applicationEvidence{object: object}
 	if record, ok := w.q.loader.Index.Lookup(root.Identity); ok && record.Declaration != nil {
 		evidence.document = w.q.loader.IndexedObject(root.Identity, record).Doc
@@ -693,7 +692,7 @@ func (w *qualificationWalk) prepare(
 		return nil
 	}
 	prepared, known := w.q.session.prepared[ks.Named()]
-	reused := known && prepared.registered && prepared.matches(ks, input, w.q.session.substitutions, support)
+	reused := known && prepared.registered && prepared.matches(ks, input, support)
 	if err := w.q.session.prepareProducer(ctx, ks, input, support); err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("context: %w", ctx.Err())

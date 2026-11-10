@@ -22,11 +22,15 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 		"entry/kustomization.yaml": {Data: []byte("resources: [owner.yaml, sibling.yaml]\n")},
 		"entry/owner.yaml": {
 			Data: []byte(
-				testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n  dependsOn: [{name: sibling}]\n"),
+				testutil.KustomizationYAML(
+					"owner",
+					"apps",
+					"  path: ./entry\n  dependsOn: [{name: sibling, namespace: '${TEAM}'}]\n",
+				),
 			),
 		},
 		"entry/sibling.yaml": {
-			Data: []byte(testutil.KustomizationYAML("sibling", "apps", "  path: ./sibling\n")),
+			Data: []byte(testutil.KustomizationYAML("sibling", "${TEAM}", "  path: ./sibling\n")),
 		},
 		"sibling/kustomization.yaml": {Data: []byte("resources: []\n")},
 	}}
@@ -36,6 +40,14 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, d.loadManifests(t.Context(), root, true))
 	assert.Equal(t, d.binding.Producer.ReportHidden(), true)
+	owner := d.loader.CatalogObject(testutil.KustomizationID("apps", "owner"))
+	assert.FatalIf(t, owner == nil, "owner construction declaration missing")
+	for ref := range manifest.References(owner, manifest.ReferenceRelations) {
+		if ref.Use == "dependsOn" {
+			assert.Equal(t, ref.NamedResource, testutil.KustomizationID("${TEAM}", "sibling"))
+		}
+	}
+	assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent), nil)
 }
 
 func TestEntryQualification_OrderedPrefixAndReplacement(t *testing.T) {

@@ -16,7 +16,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 type chartFileContent struct {
@@ -123,18 +122,17 @@ type renderHeader struct {
 }
 
 type templateBinding struct {
-	Policy       manifest.HelmReleaseHistoryPolicy `json:"Policy"`
-	Source       manifest.NamedResource            `json:"Source"`
-	Kind         string                            `json:"Kind"`
-	URL          string                            `json:"URL"`
-	Path         string                            `json:"Path"`
-	Root         string                            `json:"Root"`
-	Key          string                            `json:"Key"`
-	Revision     string                            `json:"Revision"`
-	Digest       string                            `json:"Digest"`
-	Alias        bool                              `json:"Alias"`
-	Options      Options                           `json:"Options"`
-	Dependencies values.DependencySubstitutions    `json:"Dependencies"`
+	Policy   manifest.HelmReleaseHistoryPolicy `json:"Policy"`
+	Source   manifest.NamedResource            `json:"Source"`
+	Kind     string                            `json:"Kind"`
+	URL      string                            `json:"URL"`
+	Path     string                            `json:"Path"`
+	Root     string                            `json:"Root"`
+	Key      string                            `json:"Key"`
+	Revision string                            `json:"Revision"`
+	Digest   string                            `json:"Digest"`
+	Alias    bool                              `json:"Alias"`
+	Options  Options                           `json:"Options"`
 }
 
 func (a *templateBinding) same(b *templateBinding) bool {
@@ -143,8 +141,7 @@ func (a *templateBinding) same(b *templateBinding) bool {
 		a.Key != b.Key ||
 		a.Revision != b.Revision ||
 		a.Digest != b.Digest ||
-		a.Alias != b.Alias ||
-		!a.Dependencies.Equal(b.Dependencies) {
+		a.Alias != b.Alias {
 		return false
 	}
 	x, y := a.Options, b.Options

@@ -7,7 +7,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 // RenderOptions supplies one render's captured sources and template settings.
@@ -22,11 +21,9 @@ type RenderOptions struct {
 	Sources Sources              `json:"Sources"`
 	// PreparationTasks gates history decoding outside a task body.
 	// Callers already holding a task slot MUST leave it nil.
-	PreparationTasks *task.Service `json:"-"`
-	// DependencySubstitutions binds emitted dependency projection to accepted history.
-	DependencySubstitutions values.DependencySubstitutions      `json:"DependencySubstitutions"`
-	Omitted                 []manifest.NamedResource            `json:"Omitted"`
-	Admit                   func(RenderAdmission) (bool, error) `json:"Admit"`
+	PreparationTasks *task.Service                       `json:"-"`
+	Omitted          []manifest.NamedResource            `json:"Omitted"`
+	Admit            func(RenderAdmission) (bool, error) `json:"Admit"`
 }
 
 // RenderAdmission carries accepted cache evidence bound to the current request.

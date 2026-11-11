@@ -114,6 +114,72 @@ func TestBindEntry_EvidenceAuthority(t *testing.T) {
 	}
 }
 
+func TestBindEntry_HistoryAuthority(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		accepted bool
+	}{
+		{name: "unsupported_history"},
+		{name: "accepted_history", accepted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const repo = "/virtual/entry-evidence-benchmark"
+			input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{}}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			owner := &manifest.Kustomization{Name: "applier", Namespace: "apps", Path: "./entry"}
+			record := entryHistoryFixture(t, st, tc.accepted)
+			a := &Admission{input: input, path: filepath.Join(repo, "entry")}
+			a.AddHistory(st, owner.Named(), record)
+			root, binding, err := a.BindEntry(t.Context(), st)
+			assert.NoError(t, err)
+			if !tc.accepted {
+				assert.Equal(t, root, (*manifest.Kustomization)(nil))
+				assert.Equal(t, binding, Binding{})
+				return
+			}
+			defer st.Retire(binding.Reads)
+			assert.FatalIf(t, root == nil, "accepted history lost its entry")
+			parent := testutil.KustomizationID("apps", "history-owner")
+			literal := manifest.NewEntryKustomization(
+				manifest.BootstrapSourceID,
+				"entry",
+				manifest.NamedResource{},
+			).Named()
+			assert.Equal(t, root.Named(), owner.Named())
+			assert.Equal(t, binding.Producer, owner.Named())
+			assert.Equal(t, binding.Path, "entry")
+			assert.Equal(t, st.EmissionOwner(root.Named()), parent)
+			assert.Equal(t, root.Named() == parent, false)
+			assert.Equal(t, root.Named() == literal, false)
+		})
+	}
+}
+
+func entryHistoryFixture(tb testing.TB, st *store.Store, accepted bool) manifest.DiscoveryRecord {
+	tb.Helper()
+	record := manifest.DiscoveryRecord{
+		Application: `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"applier","namespace":"apps"},"spec":{"path":"./entry"}}`,
+	}
+	if !accepted {
+		return record
+	}
+	var document map[string]any
+	assert.NoError(tb, json.Unmarshal([]byte(record.Application), &document))
+	parsed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	assert.NoError(tb, err)
+	parent := &manifest.Kustomization{Name: "history-owner", Namespace: "apps", Path: "./generator"}
+	st.AddObject(parent)
+	st.RecordEmitted(
+		parent.Named(),
+		&store.Emission{Children: []store.Child{{Obj: parsed.Object, Doc: document}}, Complete: true},
+		nil,
+	)
+	return record
+}
+
 func TestBindEntry_ReemittedPublication(t *testing.T) {
 	t.Parallel()
 	const repo = "/virtual/reemitted-publication"

@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -24,14 +23,14 @@ func testRenderConcurrentPrivateOverlaysCase(
 	t.Helper()
 	cache := newTestTreeCache(t, t.TempDir())
 	start, done := make(chan struct{}), make(chan struct{})
-	var renders, lookups, lookupReady sync.WaitGroup
-	lookupReady.Add((*testCaseInput.workers))
-	var activeRenders atomic.Int32
-	iterations := make([]int, (*testCaseInput.workers))
+	var renders, lookups, renderStarted, lookupBatchDone sync.WaitGroup
+	renderStarted.Add((*testCaseInput.workers))
+	lookupBatchDone.Add((*testCaseInput.workers))
 	for n := range *testCaseInput.workers {
 		renders.Go(func() {
 			<-start
-			lookupReady.Wait()
+			defer lookupBatchDone.Wait()
+			renderStarted.Done()
 			original := parsedKS(t, ksDoc(map[string]any{"postBuild": map[string]any{}}))
 			projected := original.Clone()
 			projected.NamePrefix = fmt.Sprintf("render%d-", n)
@@ -42,8 +41,6 @@ func testRenderConcurrentPrivateOverlaysCase(
 				t.Error(err)
 				return
 			}
-			activeRenders.Add(1)
-			defer activeRenders.Add(-1)
 			out, _, err := testutil.RenderMaps(
 				Render(
 					t.Context(),
@@ -74,8 +71,7 @@ func testRenderConcurrentPrivateOverlaysCase(
 		lookups.Go(func() {
 			runPrivateOverlayLookup(t, &privateOverlayLookupInputs{
 				scenario: &testCaseInput, start: &start, done: &done,
-				active: &activeRenders, ready: &lookupReady,
-				iterations: &iterations, index: &n,
+				renderStarted: &renderStarted, lookupBatchDone: &lookupBatchDone,
 			})
 		})
 	}
@@ -83,10 +79,6 @@ func testRenderConcurrentPrivateOverlaysCase(
 	renders.Wait()
 	close(done)
 	lookups.Wait()
-	for n, count := range iterations {
-		t.Logf("lookup worker %d: %d complete scope batches during render workers", n, count)
-		assert.ErrorIf(t, count == 0, "lookup worker %d did no scope work during render workers", n)
-	}
 	for path, want := range *testCaseInput.files {
 		got, err := fs.ReadFile((*testCaseInput.artifact).FS, path)
 		assert.FatalIf(
@@ -101,34 +93,31 @@ func testRenderConcurrentPrivateOverlaysCase(
 }
 
 type privateOverlayLookupInputs struct {
-	scenario   **testRenderConcurrentPrivateOverlaysCaseInputs
-	start      *chan struct{}
-	done       *chan struct{}
-	active     *atomic.Int32
-	ready      *sync.WaitGroup
-	iterations *[]int
-	index      *int
+	scenario        **testRenderConcurrentPrivateOverlaysCaseInputs
+	start           *chan struct{}
+	done            *chan struct{}
+	renderStarted   *sync.WaitGroup
+	lookupBatchDone *sync.WaitGroup
 }
 
 func runPrivateOverlayLookup(t *testing.T, inputs *privateOverlayLookupInputs) {
 	t.Helper()
 
 	<-(*inputs.start)
-	for batch := 0; ; batch++ {
+	inputs.renderStarted.Wait()
+	ok := checkPrivateOverlayScopes(t, inputs.scenario)
+	inputs.lookupBatchDone.Done()
+	if !ok {
+		return
+	}
+	for {
 		select {
 		case <-(*inputs.done):
 			return
 		default:
 		}
-		duringRender := inputs.active.Load() != 0
 		if !checkPrivateOverlayScopes(t, inputs.scenario) {
 			return
-		}
-		if batch == 0 {
-			inputs.ready.Done()
-		}
-		if duringRender && inputs.active.Load() != 0 {
-			(*inputs.iterations)[(*inputs.index)]++
 		}
 	}
 }

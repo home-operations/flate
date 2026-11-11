@@ -337,15 +337,16 @@ func TestRender_ConcurrentPrivateOverlays(t *testing.T) {
 		for _, workers := range []int{2, 4} {
 			t.Run(fmt.Sprintf("%s/workers%d", name, workers), func(t *testing.T) {
 				t.Parallel()
-				testRenderConcurrentPrivateOverlaysCase(
-					t,
-					&testRenderConcurrentPrivateOverlaysCaseInputs{
-						scopeCases: &scopeCases,
-						files:      &files,
-						artifact:   &artifact,
-						workers:    &workers,
-					},
-				)
+				input := &testRenderConcurrentPrivateOverlaysCaseInputs{
+					scopeCases: &scopeCases,
+					files:      &files,
+					artifact:   &artifact,
+					workers:    &workers,
+				}
+				testRenderConcurrentPrivateOverlaysCase(t, input, true)
+				if name == "immutable" {
+					testRenderConcurrentPrivateOverlaysCase(t, input, false)
+				}
 			},
 			)
 		}

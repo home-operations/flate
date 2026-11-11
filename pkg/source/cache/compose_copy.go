@@ -1,7 +1,8 @@
-package artifactgenerator
+package cache
 
 import (
 	"archive/tar"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -10,48 +11,22 @@ import (
 	"io/fs"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
-	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
 )
 
-const strategyExtract = "Extract"
-
-type sourceSelection struct {
-	alias   string
-	pattern string
-}
-
-func sourcePath(value string) (sourceSelection, error) {
-	alias, pattern, ok := strings.Cut(value, "/")
-	if !ok || !strings.HasPrefix(alias, "@") || !aliasName.MatchString(strings.TrimPrefix(alias, "@")) {
-		return sourceSelection{alias: "", pattern: ""}, fmt.Errorf("invalid source %q", value)
+func (e *composition) apply(ctx context.Context, builder *tree.Builder, op *Copy) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context: %w", err)
 	}
-	if _, err := safepath.ArchiveName(pattern); pattern != "" && err != nil {
-		return sourceSelection{alias: "", pattern: ""}, err
-	}
-	return sourceSelection{alias: alias[1:], pattern: pattern}, nil
-}
-
-func destinationPath(value string) (string, error) {
-	destination, ok := strings.CutPrefix(value, "@artifact/")
-	if !ok {
-		return "", fmt.Errorf("invalid destination %q", value)
-	}
-	if destination == "" {
-		return ".", nil
-	}
-	return safepath.ArchiveName(destination)
-}
-
-func (e *evaluation) apply(ctx context.Context, builder *tree.Builder, op operation) error {
 	plan, err := e.prepareCopy(op)
 	if err != nil {
 		return err
@@ -76,31 +51,38 @@ func (e *evaluation) apply(ctx context.Context, builder *tree.Builder, op operat
 }
 
 type copyPlan struct {
-	evaluation                        *evaluation
-	op                                operation
-	input                             *store.SourceArtifact
-	alias, pattern, destination, root string
-	glob                              bool
-	matches                           []string
+	owner                      *Cache
+	work                       manifest.AcquisitionWork
+	maxAge                     time.Duration
+	op                         *Copy
+	input                      fs.FS
+	pattern, destination, root string
+	glob                       bool
+	matches                    []string
 }
 
-func (e *evaluation) prepareCopy(op operation) (copyPlan, error) {
-	sourcePathResult1, sourcePathResult1Err := sourcePath(op.From)
-	alias, pattern, err := sourcePathResult1.alias, sourcePathResult1.pattern, sourcePathResult1Err
-	if err != nil {
+func (e *composition) prepareCopy(op *Copy) (copyPlan, error) {
+	if op.Input < 0 || op.Input >= len(e.request.Inputs) {
+		return copyPlan{}, fmt.Errorf("invalid input index %d", op.Input)
+	}
+	input := e.request.Inputs[op.Input].FS
+	if input == nil {
+		return copyPlan{}, fmt.Errorf("missing input filesystem %d", op.Input)
+	}
+	switch op.Mode {
+	case CopyFiles, MergeYAML:
+	case ExtractArchive:
+		if op.ExtractContent == nil {
+			return copyPlan{}, fmt.Errorf("extraction requires content identity")
+		}
+	default:
+		return copyPlan{}, fmt.Errorf("unsupported copy mode %d", op.Mode)
+	}
+	pattern := cmp.Or(op.From, ".")
+	if _, err := safepath.ArchiveName(pattern); err != nil {
 		return copyPlan{}, err
 	}
-	if pattern == "" {
-		pattern = "."
-	}
-	if localErr := validateGlob(pattern); localErr != nil {
-		return copyPlan{}, localErr
-	}
-	input := e.inputs[alias]
-	if input == nil {
-		return copyPlan{}, fmt.Errorf("unknown source alias %q", alias)
-	}
-	destination, err := destinationPath(op.To)
+	destination, err := safepath.ArchiveName(op.To)
 	if err != nil {
 		return copyPlan{}, err
 	}
@@ -117,24 +99,28 @@ func (e *evaluation) prepareCopy(op operation) (copyPlan, error) {
 	}
 	matches := []string{path.Clean(pattern)}
 	if glob {
-		if op.Strategy == strategyExtract {
-			matches, err = doublestar.Glob(input.FS, pattern, doublestar.WithFailOnIOErrors())
+		if op.Mode == ExtractArchive {
+			matches, err = doublestar.Glob(input, pattern, doublestar.WithFailOnIOErrors())
 		} else {
-			matches, err = fs.Glob(input.FS, pattern)
+			matches, err = fs.Glob(input, pattern)
 		}
 		if err != nil {
 			return copyPlan{}, fmt.Errorf("glob: %w", err)
 		}
 	}
-	return copyPlan{e, op, input, alias, pattern, destination, root, glob, matches}, nil
+	return copyPlan{
+		owner: e.owner, work: e.work, maxAge: e.maxAge,
+		op: op, input: input, pattern: pattern, destination: destination,
+		root: root, glob: glob, matches: matches,
+	}, nil
 }
 
 func (p *copyPlan) apply(ctx context.Context, builder *tree.Builder, name string) error {
-	info, err := fs.Stat(p.input.FS, name)
+	info, err := fs.Stat(p.input, name)
 	if err != nil {
 		return fmt.Errorf("stat: %w", err)
 	}
-	if p.op.Strategy == strategyExtract {
+	if p.op.Mode == ExtractArchive {
 		lower := strings.ToLower(name)
 		if info.IsDir() || !strings.HasSuffix(lower, ".tar.gz") && !strings.HasSuffix(lower, ".tgz") {
 			if p.glob {
@@ -142,13 +128,13 @@ func (p *copyPlan) apply(ctx context.Context, builder *tree.Builder, name string
 			}
 			return fmt.Errorf("extract requires a tarball, got %q", name)
 		}
-		return p.evaluation.extract(ctx, builder, archiveSelection{p.alias, name, p.destination})
+		return p.extract(ctx, builder, name)
 	}
 	target := p.copyDestination(builder, name, info)
 	if info.IsDir() {
-		return p.copyDirectory(ctx, builder, operation{From: name, To: target})
+		return p.copyDirectory(ctx, builder, &Copy{From: name, To: target})
 	}
-	return copyFile(ctx, p.input.FS, builder, operation{From: name, To: target, Strategy: p.op.Strategy})
+	return copyFile(ctx, p.input, builder, &Copy{From: name, To: target, Mode: p.op.Mode})
 }
 
 func (p *copyPlan) copyDestination(builder *tree.Builder, name string, info fs.FileInfo) string {
@@ -167,8 +153,8 @@ func (p *copyPlan) copyDestination(builder *tree.Builder, name string, info fs.F
 	return target
 }
 
-func (p *copyPlan) copyDirectory(ctx context.Context, builder *tree.Builder, selection operation) error {
-	err := fs.WalkDir(p.input.FS, selection.From, func(current string, entry fs.DirEntry, err error) error {
+func (p *copyPlan) copyDirectory(ctx context.Context, builder *tree.Builder, selection *Copy) error {
+	err := fs.WalkDir(p.input, selection.From, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -186,7 +172,7 @@ func (p *copyPlan) copyDirectory(ctx context.Context, builder *tree.Builder, sel
 		if entry.IsDir() {
 			return ensureDirectory(builder, to)
 		}
-		return copyFile(ctx, p.input.FS, builder, operation{From: current, To: to})
+		return copyFile(ctx, p.input, builder, &Copy{From: current, To: to})
 	})
 	if err != nil {
 		return fmt.Errorf("walkdir: %w", err)
@@ -224,7 +210,7 @@ func ensureDirectory(builder *tree.Builder, name string) error {
 	return builder.Mount(name, empty)
 }
 
-func copyFile(ctx context.Context, input fs.FS, builder *tree.Builder, op operation) error {
+func copyFile(ctx context.Context, input fs.FS, builder *tree.Builder, op *Copy) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context: %w", err)
 	}
@@ -240,9 +226,9 @@ func copyFile(ctx context.Context, input fs.FS, builder *tree.Builder, op operat
 		return fmt.Errorf("readfile: %w", err)
 	}
 	mode := info.Mode()
-	if previous, err := fs.Stat(builder, op.To); op.Strategy == strategyExtract && err == nil {
+	if previous, err := fs.Stat(builder, op.To); op.Mode == ExtractArchive && err == nil {
 		mode = previous.Mode()
-	} else if op.Strategy == "Merge" && err == nil {
+	} else if op.Mode == MergeYAML && err == nil {
 		base, err := loadYAML(ctx, builder, op.To)
 		if err != nil {
 			return err
@@ -284,28 +270,23 @@ func loadYAML(ctx context.Context, input fs.FS, name string) (map[string]any, er
 	}
 }
 
-type archiveSelection struct{ Alias, Path, Destination string }
-
-func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selection archiveSelection) error {
-	input := e.inputs[selection.Alias]
-	key := cache.ArchiveKey{Policy: "extract", Content: struct {
-		Namespace string
-		Inputs    []inputIdentity
-		Selection archiveSelection
-	}{"artifactgenerator/extract/v1", e.identity, selection}}
-	extracted, _, _, err := e.owner.Acquire(
+func (p *copyPlan) extract(ctx context.Context, builder *tree.Builder, name string) error {
+	input := p.input
+	work := p.work
+	key := ArchiveKey{Policy: extractPolicy, Content: p.op.ExtractContent(name, p.destination)}
+	extracted, _, _, err := p.owner.Acquire(
 		ctx,
 		key,
-		&cache.Policy{MaxAge: e.maxAge, Work: &e.work},
-		func(_ context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
-			file, err := input.FS.Open(selection.Path)
+		&Policy{MaxAge: p.maxAge, Work: &work},
+		func(_ context.Context, target ProducerInput) (ProducerResult, error) {
+			file, err := input.Open(name)
 			if err != nil {
-				return cache.ProducerResult{}, fmt.Errorf("open: %w", err)
+				return ProducerResult{}, fmt.Errorf("open: %w", err)
 			}
 			defer func() { _ = file.Close() }()
 			compressed, err := gzip.NewReader(file)
 			if err != nil {
-				return cache.ProducerResult{}, fmt.Errorf("newreader: %w", err)
+				return ProducerResult{}, fmt.Errorf("newreader: %w", err)
 			}
 			defer func() { _ = compressed.Close() }()
 			_, err = io.Copy( //nolint:gosec // Flux archive extraction has no uncompressed size limit.
@@ -313,15 +294,15 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 				compressed,
 			)
 			if err != nil {
-				return cache.ProducerResult{}, fmt.Errorf("copy: %w", err)
+				return ProducerResult{}, fmt.Errorf("copy: %w", err)
 			}
-			return cache.ProducerResult{}, nil
+			return ProducerResult{}, nil
 		},
 	)
 	if err != nil {
 		return err
 	}
-	if directoryErr := ensureDirectory(builder, selection.Destination); directoryErr != nil {
+	if directoryErr := ensureDirectory(builder, p.destination); directoryErr != nil {
 		return directoryErr
 	}
 	err = fs.WalkDir(extracted, ".", func(name string, entry fs.DirEntry, err error) error {
@@ -334,11 +315,11 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 		if name == "." {
 			return nil
 		}
-		target := path.Join(selection.Destination, name)
+		target := path.Join(p.destination, name)
 		if entry.IsDir() {
 			return ensureDirectory(builder, target)
 		}
-		return copyFile(ctx, extracted, builder, operation{From: name, To: target, Strategy: strategyExtract})
+		return copyFile(ctx, extracted, builder, &Copy{From: name, To: target, Mode: ExtractArchive})
 	})
 	if err != nil {
 		return fmt.Errorf("walkdir: %w", err)
@@ -346,15 +327,16 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 	return nil
 }
 
-func (e *evaluation) produce(
-	ctx context.Context,
-	req *request,
-	target cache.ProducerInput,
-) error {
+func (e *composition) produce(ctx context.Context, target ProducerInput) error {
 	builder := tree.NewBuilder(nil)
-	for _, op := range req.Output.Copy {
+	for i := range e.request.Copies {
+		op := &e.request.Copies[i]
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context: %w", err)
+		}
 		if err := e.apply(ctx, builder, op); err != nil {
-			return err
+			return manifest.NewError(manifest.ErrInput,
+				fmt.Errorf("copy %d %q to %q: %w", i, op.From, op.To, err), err.Error())
 		}
 	}
 	writer := tar.NewWriter(target)

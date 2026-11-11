@@ -42,10 +42,9 @@ func (r *RawObject) producerNeedsCandidates() bool {
 	if !r.isArtifactGenerator() {
 		return false
 	}
-	entries, _ := r.Spec["artifacts"].([]any)
-	for _, entry := range entries {
-		m, _ := entry.(map[string]any)
-		if name, _ := m[nameKey].(string); strings.ContainsAny(name, "{}") {
+	view := r.artifactGeneratorView()
+	for _, entry := range view.entries("artifacts") {
+		if strings.ContainsAny(view.child(entry).str(nameKey), "{}") {
 			return true
 		}
 	}

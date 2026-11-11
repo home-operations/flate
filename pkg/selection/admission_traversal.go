@@ -107,14 +107,7 @@ func (c *admissionClosure) readerEmissionAllowed(id, readerID manifest.NamedReso
 	if object == nil {
 		object = c.catalogObject(readerID)
 	}
-	if producer, ok := object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok {
-		if !producer.EmissionPolicy().MatchesNamespace(id) {
-			return false
-		}
-	}
-	return true
+	return object == nil || object.EmissionPolicy().MatchesNamespace(id)
 }
 
 func (c *admissionClosure) selectIncomingProducers(

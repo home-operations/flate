@@ -28,8 +28,7 @@ func supplyEnv(input string) ([]string, error) {
 
 func (c *commonFlags) loadInputs(ctx context.Context, stdin io.Reader) error {
 	for _, kind := range c.allowMissingKinds {
-		if kind != manifest.KindSecret && kind != manifest.KindConfigMap &&
-			kind != manifest.KindCustomResourceDefinition {
+		if !(manifest.NamedResource{Kind: kind}).KindInfo().Data && kind != manifest.KindCustomResourceDefinition {
 			return manifest.NewError(manifest.ErrInput, nil,
 				fmt.Sprintf("--allow-missing-kinds: unsupported kind %q", kind))
 		}

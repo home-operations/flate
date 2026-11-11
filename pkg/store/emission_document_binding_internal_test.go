@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
@@ -56,6 +58,107 @@ func TestGetEmission_AuthoritativeDocument(t *testing.T) {
 
 func TestGetEmission_SelectedBinding(t *testing.T) {
 	t.Parallel()
+	for _, kind := range []string{manifest.KindGitRepository, manifest.KindHelmRepository} {
+		t.Run("template/"+kind, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			parsed, err := manifest.ParseDoc(map[string]any{
+				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
+				"metadata": map[string]any{"name": "consumer", "namespace": "apps"},
+				"spec": map[string]any{"chart": map[string]any{"spec": map[string]any{
+					"chart": "app", "sourceRef": map[string]any{"kind": kind, "name": "backing"},
+				}}},
+			}, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			s.AddObject(parsed.Object, parsed.Document)
+			refs := slices.Collect(manifest.References(parsed.Object, manifest.ReferenceRelations))
+			chart, backing := refs[0].NamedResource, refs[1].NamedResource
+			input := &SourceArtifact{Key: "backing"}
+			s.SetArtifact(backing, input)
+			if kind == manifest.KindHelmRepository {
+				child, parseErr := manifest.ParseDoc(map[string]any{
+					"apiVersion": manifest.SourceDomain + "/v1",
+					"kind":       chart.Kind,
+					"metadata":   map[string]any{"name": chart.Name, "namespace": chart.Namespace},
+					"spec": map[string]any{
+						"chart":     "app",
+						"sourceRef": map[string]any{"kind": kind, "name": "backing"},
+					},
+				}, manifest.ParseDocOptions{})
+				assert.NoError(t, parseErr)
+				s.RecordEmitted(
+					parsed.Object.Named(),
+					&Emission{Children: []Child{{Obj: child.Object, Doc: child.Document}}},
+					nil,
+				)
+				s.SetArtifact(chart, &SourceArtifact{Key: "own output"})
+			}
+			_, _, attempt := s.GetEmission(parsed.Object.Named())
+			defer attempt.Finish()
+			assert.Equal(t, attempt.binding.source == chart, false)
+			if kind == manifest.KindGitRepository {
+				assert.Equal(t, attempt.binding.source, backing)
+				assert.Equal(t, attempt.binding.artifact, input)
+			}
+		})
+	}
+
+	for _, use := range []string{"chart", "artifact"} {
+		t.Run(use, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Name:      "first",
+				Namespace: "apps",
+			}
+			var obj manifest.BaseManifest = &manifest.HelmRelease{
+				Name: "consumer", Namespace: "apps",
+				ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name},
+			}
+			if use == "artifact" {
+				obj = &manifest.RawObject{
+					APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator",
+					Name: "consumer", Namespace: "apps",
+					Spec: map[string]any{"sources": []any{
+						map[string]any{"kind": source.Kind, "name": source.Name},
+						map[string]any{"kind": source.Kind, "name": "second"},
+					}},
+				}
+			}
+			first, second := &SourceArtifact{Key: "first"}, &SourceArtifact{Key: "second"}
+			s.SetArtifact(source, first)
+			other := source
+			other.Name = "second"
+			s.SetArtifact(other, second)
+			s.AddObject(obj)
+			var reads ReadSet
+			reads.Init(s, obj.Named(), nil)
+			defer reads.Retire()
+			_, _, attempt := reads.GetEmission(obj.Named())
+			defer attempt.Finish()
+			assert.Equal(t, attempt.binding.source, source)
+			assert.Equal(t, attempt.binding.artifact, first)
+			attempt.Children, attempt.Complete = []Child{emissionChild("partial", "first")}, true
+			s.RecordEmitted(obj.Named(), &attempt, nil)
+			var partialReads ReadSet
+			partialReads.Init(s, obj.Named(), nil)
+			defer partialReads.Retire()
+			_, _, partial := partialReads.GetEmission(obj.Named())
+			defer partial.Finish()
+			partial.Complete = false
+			s.RecordEmitted(obj.Named(), &partial, nil)
+			replacement := &SourceArtifact{Key: "replacement"}
+			s.SetArtifact(source, replacement)
+			_, _, rebound := s.GetEmission(obj.Named())
+			defer rebound.Finish()
+			assert.Equal(t, rebound.binding.source, source)
+			assert.Equal(t, rebound.binding.artifact, replacement)
+			assert.Equal(t, len(rebound.Children), 0)
+		})
+	}
+
 	s := New()
 	parent := ownerID("parent")
 	s.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
@@ -80,7 +183,7 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 	}
 	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: first}, nil)
 	_, _, attempt := s.GetEmission(obj.Named())
-	defer attempt.Finish()
+	t.Cleanup(attempt.Finish)
 	attempt.Fingerprint, attempt.Complete = "success", true
 	s.RecordEmitted(obj.Named(), &attempt, nil)
 	accepted := s.GetArtifact(obj.Named(), ArtifactContent)
@@ -91,7 +194,7 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 		nil,
 	)
 	_, doc, equivalent := s.GetEmission(obj.Named())
-	defer equivalent.Finish()
+	t.Cleanup(equivalent.Finish)
 	assert.FatalIf(t, equivalent.inputHead.binding != first || !manifest.ValueEqual(doc, child.Doc) ||
 		func() bool { output, ok := equivalent.Replay("success"); return !ok || output.Fingerprint != "success" }() ||
 		s.GetArtifact(
@@ -100,7 +203,7 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 		) != accepted, "%s", "equivalent declaration storage invalidated accepted work")
 	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: second}, nil)
 	_, doc, rebound := s.GetEmission(obj.Named())
-	defer rebound.Finish()
+	t.Cleanup(rebound.Finish)
 	assert.FatalIf(
 		t,
 		rebound.inputHead.binding != second || !manifest.ValueEqual(doc, child.Doc) || rebound.Fingerprint != "" ||

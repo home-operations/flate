@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestArtifactGenerator_Validation(t *testing.T) {
@@ -45,6 +46,20 @@ func TestArtifactGenerator_Validation(t *testing.T) {
 		{"source_name_required", func(_, source, _, _ map[string]any) { delete(source, "name") }, false},
 		{"namespace_at_cap", func(_, source, _, _ map[string]any) { source["namespace"] = strings.Repeat("a", 63) }, true},
 		{"namespace_over_cap", func(_, source, _, _ map[string]any) { source["namespace"] = strings.Repeat("a", 64) }, false},
+		{"null_namespace", func(_, source, _, _ map[string]any) { source["namespace"] = nil }, false},
+		{"namespace_type", func(_, source, _, _ map[string]any) { source["namespace"] = 1 }, false},
+		{"null_source", func(spec, _, _, _ map[string]any) { spec["sources"] = []any{nil} }, false},
+		{"copy_type", func(_, _, output, _ map[string]any) { output["copy"] = "invalid" }, false},
+		{"copy_entry_type", func(_, _, output, _ map[string]any) { output["copy"] = []any{"invalid"} }, false},
+		{"exclude_type", func(_, _, _, op map[string]any) { op["exclude"] = "invalid" }, false},
+		{"exclude_entry_type", func(_, _, _, op map[string]any) { op["exclude"] = []any{1} }, false},
+		{"metadata_string_map", func(spec, _, _, _ map[string]any) {
+			spec["commonMetadata"] = map[string]any{"labels": map[string]string{"app": "test"}}
+		}, true},
+		{"metadata_type", func(spec, _, _, _ map[string]any) { spec["commonMetadata"] = "invalid" }, false},
+		{"metadata_value_type", func(spec, _, _, _ map[string]any) {
+			spec["commonMetadata"] = map[string]any{"labels": map[string]any{"app": 1}}
+		}, false},
 		{"explicit_empty_namespace", func(_, source, _, _ map[string]any) { source["namespace"] = "" }, false},
 		{"unsupported_kind", func(_, source, _, _ map[string]any) { source["kind"] = "HelmRepository" }, false},
 		{"oci_source", func(_, source, _, _ map[string]any) { source["kind"] = "OCIRepository" }, true},
@@ -139,8 +154,17 @@ func testArtifactGeneratorValidationCase(t *testing.T, testCaseInput *struct {
 	output := map[string]any{"name": "output", "copy": []any{op}}
 	spec := map[string]any{"sources": []any{source}, "artifacts": []any{output}}
 	testCaseInput.edit(spec, source, output, op)
-	_, err := decodeSpec(spec)
-	assert.FatalIf(t, (err == nil) != testCaseInput.valid, "decodeSpec() = %v; valid=%v", err, testCaseInput.valid)
+	decoded, err := (&manifest.RawObject{Spec: spec}).ArtifactGeneratorSpec()
+	if err == nil {
+		err = validateSpec(&decoded)
+	}
+	assert.FatalIf(
+		t,
+		(err == nil) != testCaseInput.valid,
+		"specification validation = %v; valid=%v",
+		err,
+		testCaseInput.valid,
+	)
 	assert.FatalIf(t, (testCaseInput.name == "from_required" || testCaseInput.name == "to_required") &&
 		!strings.Contains(
 			err.Error(),

@@ -276,7 +276,7 @@ func (c *admissionClosure) incomingContentSource(
 ) manifest.NamedResource {
 	source := manifest.BootstrapSourceID
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if ref.Use == sourceReferenceUse {
+		if ref.BindsSource() {
 			source = ref.NamedResource
 			break
 		}

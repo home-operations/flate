@@ -204,7 +204,7 @@ func newHistoryEvaluation(t *testing.T, cfg historyEvaluationConfig) *historyEva
 	}
 	ids := []manifest.NamedResource{manifest.BootstrapSourceID}
 	for _, object := range cfg.inventory.Objects() {
-		if object.Named().Group == manifest.SourceDomain {
+		if manifest.KindOf(object).IsSource() {
 			ids = append(ids, object.Named())
 		}
 	}
@@ -285,6 +285,15 @@ func TestHistory_SourceRootReplacement(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
+			generator := &manifest.RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator",
+				Name: "generator", Namespace: "apps",
+				Spec: map[string]any{"sources": []any{
+					map[string]any{"kind": manifest.KindGitRepository, "name": "content"},
+					map[string]any{"kind": manifest.KindGitRepository, "name": "unused"},
+				}},
+			}
+			st.AddObject(generator)
 			source := (&manifest.GitRepository{Name: "content", Namespace: "apps"}).Named()
 			owner := testutil.KustomizationID("apps", "emitter")
 			child := testutil.KustomizationID("apps", "child")
@@ -299,6 +308,7 @@ func TestHistory_SourceRootReplacement(t *testing.T) {
 				sources: map[manifest.NamedResource]SourceFacts{source: {Source: source, Input: input}},
 			}
 			c := solverClosure(t, st, facts)
+			assert.Diff(t, slices.Collect(c.sources(generator.Named())), []manifest.NamedResource{source})
 			var reads store.ReadSet
 			reads.Init(st, manifest.NamedResource{}, nil)
 			defer reads.Retire()

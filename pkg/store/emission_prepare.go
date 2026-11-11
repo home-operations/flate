@@ -116,7 +116,7 @@ func sameMembership(a, b *Emission) bool {
 					x.child.Obj,
 					y.child.Obj,
 					[2]map[string]any{x.child.Doc, y.child.Doc},
-					ownershipLabel,
+					manifest.IsOwnershipLabel,
 				) ||
 				!slices.EqualFunc(
 					x.targets,
@@ -180,24 +180,11 @@ func semanticEqual(a, b Child) bool {
 		}
 		al, _ := am["labels"].(map[string]any)
 		bl, _ := bm["labels"].(map[string]any)
-		if !manifest.MapEqualExcept(al, bl, ownershipLabel) {
+		if !manifest.MapEqualExcept(al, bl, manifest.IsOwnershipLabel) {
 			return false
 		}
 	}
 	return true
-}
-
-func ownershipLabel(key string) bool {
-	switch key {
-	case "kustomize.toolkit.fluxcd.io/name",
-		"kustomize.toolkit.fluxcd.io/namespace",
-		"helm.toolkit.fluxcd.io/name",
-		"helm.toolkit.fluxcd.io/namespace",
-		"resourceset.fluxcd.controlplane.io/name",
-		"resourceset.fluxcd.controlplane.io/namespace":
-		return true
-	}
-	return false
 }
 
 //nolint:gocritic // Immutable value inputs preserve snapshot semantics.
@@ -217,7 +204,7 @@ func semanticObjectsEqual(a, b Child) bool {
 	if !maps.Equal(am.GetAnnotations(), bm.GetAnnotations()) {
 		return false
 	}
-	if !manifest.MapEqualExcept(am.GetLabels(), bm.GetLabels(), ownershipLabel) {
+	if !manifest.MapEqualExcept(am.GetLabels(), bm.GetLabels(), manifest.IsOwnershipLabel) {
 		return false
 	}
 	ad, aerr := json.Marshal(a.Obj)

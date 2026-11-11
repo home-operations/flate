@@ -60,6 +60,35 @@ func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
 
 func TestFilter_AcceptedChildren(t *testing.T) {
 	t.Parallel()
+	for _, parent := range []manifest.BaseManifest{
+		&manifest.RawObject{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization, Name: "owner"},
+		&manifest.RawObject{APIVersion: manifest.HelmReleaseDomain + "/v2", Kind: manifest.KindHelmRelease, Name: "owner"},
+		&manifest.RawObject{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "owner"},
+	} {
+		t.Run("raw_"+parent.Named().Kind, func(t *testing.T) {
+			t.Parallel()
+			document := map[string]any{
+				"apiVersion": "v1",
+				"kind":       manifest.KindConfigMap,
+				"metadata":   map[string]any{"name": "child"},
+			}
+			result := ParseChildren(
+				parent,
+				[]manifest.DocOccurrence{{Document: document}},
+				manifest.ParseDocOptions{DefaultNamespace: "default"},
+				nil,
+			)
+			assert.Equal(t, len(result.Failures), 0)
+			assert.Equal(t, len(result.Children), 1)
+			assert.Equal(t, result.Children[0].Obj.Named().Namespace, "default")
+			assert.Equal(t, manifest.KindOf(parent).Parent, false)
+		})
+	}
+	assert.Equal(
+		t,
+		len(ParseChildren(nil, nil, manifest.ParseDocOptions{DefaultNamespace: "default"}, nil).Children),
+		0,
+	)
 	for _, phase := range []string{"initial", "runtime", "unselected", "declaration", "file_indexed"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()

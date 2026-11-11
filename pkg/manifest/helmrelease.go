@@ -66,7 +66,7 @@ type chartSourceInputs struct {
 }
 
 func (h *HelmChart) sourceInputs(files []string) chartSourceInputs {
-	if h.Source.Group != SourceDomain {
+	if !h.Source.KindInfo().IsSource() {
 		return chartSourceInputs{}
 	}
 	if !h.UsesSourceValuesFiles() {
@@ -488,6 +488,7 @@ func (h *HelmRelease) chartReferences(yield func(Reference) bool) bool {
 				NamespaceDefault: h.Chart.Source.Namespace == "",
 				NamedResource:    backing.Source,
 				Use:              sourceKey,
+				bindsSource:      true,
 				Content:          true,
 				Files:            files,
 				ChartPath:        chartPath,
@@ -525,6 +526,7 @@ func (h *HelmRelease) declaredChartReference(source, declared NamedResource) Ref
 		NamespaceDefault: namespaceDefault,
 		NamedResource:    declared,
 		Use:              chartKey,
+		bindsSource:      h.ChartRef != nil,
 		Content:          true,
 		Gate:             stage,
 		Artifact:         artifact,

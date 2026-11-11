@@ -17,6 +17,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -135,6 +136,49 @@ func TestResolveEntrySources_Content(t *testing.T) {
 
 func TestResolveEntrySources_IndexedDeclarations(t *testing.T) {
 	t.Parallel()
+	for _, stored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing chart/stored=%t", stored), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(
+				t,
+				root,
+				"release.yaml",
+				"apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: release, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: missing}}\n",
+			)
+			st := store.New()
+			l := loader.New(st)
+			l.SourceRoot = root
+			requester := &manifest.HelmRelease{
+				Name: "release", Namespace: "apps",
+				ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "missing"},
+			}
+			d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st}, loader: l}
+			_, err := d.resolveEntrySources(t.Context(), false)
+			assert.NoError(t, err)
+			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			l.Admit(root)
+			assert.Equal(t, st.GetObject(requester.Named()) == nil, true)
+			if stored {
+				st.AddObject(requester)
+			}
+			groups := map[manifest.NamedResource]*entrySourceGroup{}
+			d.addMissingSources(groups)
+			chartSource := requester.ChartSource()
+			group, found := groups[chartSource]
+			assert.Equal(t, found, true)
+			if stored {
+				assert.Diff(t, group.refs, []manifest.NamedResource{requester.Named()})
+			}
+			count, err := d.resolveEntrySources(t.Context(), true)
+			assert.NoError(t, err)
+			assert.Equal(t, count, 0)
+			assert.Equal(t, st.GetObject(chartSource) == nil, true)
+			assert.Equal(t, st.GetArtifact(chartSource, store.ArtifactContent) == nil, true)
+		})
+	}
+
 	t.Run("git changed only", func(t *testing.T) {
 		t.Parallel()
 		kind, independent := manifest.KindOCIRepository, false
@@ -142,7 +186,7 @@ func TestResolveEntrySources_IndexedDeclarations(t *testing.T) {
 			kind: &kind, independent: &independent, changed: true,
 		})
 	})
-	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindHelmRepository, manifest.KindBucket} {
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindHelmRepository, manifest.KindBucket, manifest.KindHelmChart} {
 		for _, independent := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/independent=%t", kind, independent), func(t *testing.T) {
 				t.Parallel()
@@ -227,6 +271,9 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 	if (*testCaseInput.kind) == manifest.KindHelmRepository {
 		spec = "{url: 'https://fixture.invalid/charts', interval: 5m}"
 	}
+	if (*testCaseInput.kind) == manifest.KindHelmChart {
+		spec = "{chart: app, sourceRef: {kind: HelmRepository, name: repository}, interval: 5m}"
+	}
 	if (*testCaseInput.kind) == manifest.KindBucket {
 		spec = "{endpoint: fixture.invalid, bucketName: published, interval: 5m}"
 	}
@@ -275,6 +322,12 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 		requester, err = parseDocResult.Object, parseDocResultErr
 
 		assert.FatalIf(t, err != nil, "%v", err)
+	}
+	if (*testCaseInput.kind) == manifest.KindHelmChart {
+		requester = &manifest.HelmRelease{
+			Name: "requester", Namespace: "apps",
+			ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
+		}
 	}
 	cfg := Config{
 		Path:     filepath.Join(root, "entry"),

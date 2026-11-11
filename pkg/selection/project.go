@@ -328,10 +328,8 @@ func (b *batchSelection) selectedOutput(id manifest.NamedResource) bool {
 
 func (b *batchSelection) selectDocuments(scoped bool) {
 	var policy manifest.EmissionPolicy
-	if producer, ok := b.object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok {
-		policy = producer.EmissionPolicy()
+	if manifest.KindOf(b.object).Parent {
+		policy = b.object.EmissionPolicy()
 	}
 	if policy.DocumentScope {
 		b.selectScopedDocuments(scoped)

@@ -117,6 +117,36 @@ func (r *ResourceSet) EmissionPolicy() EmissionPolicy {
 	return p
 }
 
+// EmissionPolicy must not apply child overlays to fetched repository content.
+func (*GitRepository) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not apply child overlays to fetched OCI content.
+func (*OCIRepository) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not apply child overlays to a chart index.
+func (*HelmRepository) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not apply child overlays to a fetched chart.
+func (*HelmChartSource) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not apply child overlays to external artifact content.
+func (*ExternalArtifact) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not apply child overlays to fetched bucket content.
+func (*Bucket) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not grant child admission to input providers.
+func (*ResourceSetInputProvider) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not grant child admission to data objects.
+func (*ConfigMap) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not grant child admission to data objects.
+func (*Secret) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
+// EmissionPolicy must not grant typed producer overlays to raw declarations.
+func (*RawObject) EmissionPolicy() EmissionPolicy { return EmissionPolicy{} }
+
 // MatchesNamespace reports whether the target can belong to the producer's namespace projection.
 //
 //nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.

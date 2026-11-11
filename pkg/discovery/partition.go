@@ -179,7 +179,7 @@ func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []selec
 			references = occurrenceReferences(visit.occurrence)
 		}
 		for ref := range references {
-			if !entrySourceReference(&ref) || ref.NamedResource == application.Source {
+			if !ref.IsSource() || !ref.NamedResource.KindInfo().IsSource() || ref.NamedResource == application.Source {
 				continue
 			}
 			if _, sourceErr := p.source(ctx, root, &visit, ref.NamedResource); sourceErr != nil {
@@ -234,10 +234,8 @@ func (p *entryPlanner) follow(
 	pinned := p.session.pinnedWorkingTreeClaims(p.session.cfg.Input.LocalPath, []selection.OccurrenceFacts{*occurrence})
 	root.pinned = append(root.pinned, pinned.claims...)
 	key := occurrenceProjection{path: absolute}
-	if producer, ok := object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok {
-		key.namespace = producer.EmissionPolicy().Namespace
+	if manifest.KindOf(object).Parent {
+		key.namespace = object.EmissionPolicy().Namespace
 	}
 	children, known := p.projections[key]
 	if !known {
@@ -287,19 +285,19 @@ func (p *entryPlanner) source(
 	for i := range p.session.cfg.Declarations {
 		declaration := &p.session.cfg.Declarations[i]
 		if declaration.Obj.Named() == id {
-			group.evidence = store.Child{Obj: declaration.Obj, Doc: declaration.Doc, Origin: declaration.Origin}
+			group.object, group.document = declaration.Obj, declaration.Doc
 		}
 	}
-	if group.evidence.Obj == nil && selected != nil {
+	if group.object == nil && selected != nil {
 		coordinate.declaration = selected.Declaration
 		coordinate.root = ""
 		child, err := p.object(ctx, selected)
 		if err != nil {
 			return entryResolution{}, err
 		}
-		group.evidence = child
-	} else if group.evidence.Obj == nil && id == application.Source {
-		group.evidence.Obj = application.Declaration
+		group.object, group.document = child.Obj, child.Doc
+	} else if group.object == nil && id == application.Source {
+		group.object = application.Declaration
 		if application.Declaration != nil {
 			coordinate.declaration = visit.occurrence.Declaration
 			coordinate.root = ""

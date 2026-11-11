@@ -10,6 +10,37 @@ import (
 
 func TestWorkSnapshot_FinalAndRetired(t *testing.T) {
 	t.Parallel()
+	t.Run("artifact attribution", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		var root manifest.WorkRecorder
+		s.SetWorkTree(manifest.TreeID{Side: manifest.TreeHead}, root.Scope())
+		owner := &manifest.RawObject{
+			APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator",
+			Name: "generator", Namespace: "apps",
+			Spec: map[string]any{"sources": []any{
+				map[string]any{"kind": manifest.KindGitRepository, "name": "first"},
+				map[string]any{"kind": manifest.KindOCIRepository, "name": "second"},
+			}},
+		}
+		s.AddObject(owner)
+		var reads ReadSet
+		reads.Init(s, owner.Named(), nil)
+		defer reads.Retire()
+		reads.BeginExecution(nil)
+		reads.Work().Scope().Record(manifest.WorkEvaluation, "artifact").Add(&manifest.WorkCounts{Completed: 1})
+		want := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Name:      "first",
+			Namespace: "apps",
+		}
+		for _, record := range s.WorkSnapshot() {
+			if record.Key.Phase == manifest.WorkEvaluation {
+				assert.Equal(t, record.Key.Source, want)
+			}
+		}
+	})
 	s := New()
 	tree := manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}
 	var root manifest.WorkRecorder

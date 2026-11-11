@@ -108,6 +108,7 @@ type BaseManifest interface {
 	ChartDisplaySource() (NamedResource, bool)
 	Suspended() bool
 	ReferenceCapacity() ReferenceLimits
+	EmissionPolicy() EmissionPolicy
 	kind() KindInfo
 	catalog(NamedResource) BaseManifest
 	producerTargets([]NamedResource) []ProducerTarget
@@ -185,6 +186,7 @@ type Reference struct {
 	NamespaceDefault bool
 	// Acquisition leaves unknown input proof to the source acquisition policy.
 	Acquisition bool
+	bindsSource bool
 }
 
 // Clone owns the mutable containers borrowed by a reference.
@@ -207,13 +209,25 @@ func (r Reference) ContentInput() bool {
 	return r.Content || r.Use == substituteFromKey && r.Name != ""
 }
 
-// AffectedInput reports whether changed content can affect the consumer.
+// IsSource classifies relation use without implying a publication binding.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
+func (r Reference) IsSource() bool {
+	return r.Use == sourceKey || r.Use == chartKey || r.Use == "artifact"
+}
+
+// BindsSource excludes a producer's generated chart from its backing inputs.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
+func (r Reference) BindsSource() bool {
+	return r.bindsSource
+}
+
+// AffectedInput includes source relations even when they carry no content edge.
 //
 //nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) AffectedInput() bool {
-	return r.ContentInput() || r.Use == sourceKey || r.Use == "artifact" || r.Use == chartKey ||
-		r.Use == "valuesFrom" ||
-		r.Use == "inputsFrom"
+	return r.ContentInput() || r.IsSource() || r.Use == "valuesFrom" || r.Use == "inputsFrom"
 }
 
 // References yields dependencies in source-field order for the selected view without deduplication.

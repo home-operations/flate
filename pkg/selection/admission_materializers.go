@@ -323,10 +323,7 @@ func (c *admissionClosure) collectObjectMaterializers(
 }
 
 func isMaterializerObject(object manifest.BaseManifest) bool {
-	_, ok := object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
-	return ok
+	return manifest.KindOf(object).Parent
 }
 
 func (c *admissionClosure) prioritizeOpaqueMaterializers(

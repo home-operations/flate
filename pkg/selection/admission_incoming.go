@@ -214,18 +214,20 @@ func (c *admissionClosure) namespaceProductionDemand(id manifest.NamedResource) 
 	if _, _, applies := object.SourcePath(); !applies {
 		return false
 	}
-	if producer, ok := object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok &&
+	namespaceSelected := manifest.KindOf(object).Parent &&
 		slices.ContainsFunc(c.session.request.Roots, func(root manifest.NamedResource) bool {
-			return root.Name == "" && root.Namespace != "" && producer.EmissionPolicy().MatchesNamespace(root)
-		}) &&
-		slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
-			return p.Owner != (manifest.NamedResource{}) && c.role(p.Owner).needed
-		}) && (!c.session.request.Changed || c.affected(id, c.object(id)) || c.changedInput(id, id)) {
-		return true
+			return root.Name == "" && root.Namespace != "" && object.EmissionPolicy().MatchesNamespace(root)
+		})
+	if !namespaceSelected {
+		return false
 	}
-	return false
+	neededProducer := slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
+		return p.Owner != (manifest.NamedResource{}) && c.role(p.Owner).needed
+	})
+	if !neededProducer {
+		return false
+	}
+	return !c.session.request.Changed || c.affected(id, c.object(id)) || c.changedInput(id, id)
 }
 
 func (c *admissionClosure) coveredDeclarations(

@@ -77,13 +77,18 @@ func TestComposition_IdentityFacts(t *testing.T) {
 				},
 			}
 			req := request{
-				Output: output{Name: "artifact", Revision: "@repo", OriginRevision: "@repo", Copy: []operation{
-					{
-						From: "@repo/file",
-						To:   "@artifact/out",
+				Output: manifest.ArtifactGeneratorOutput{
+					Name:           "artifact",
+					Revision:       "@repo",
+					OriginRevision: "@repo",
+					Copy: []manifest.ArtifactGeneratorCopy{
+						{
+							From: "@repo/file",
+							To:   "@artifact/out",
+						},
+						{From: "@repo/*.tgz", To: "@artifact/extracted", Strategy: "Extract"},
 					},
-					{From: "@repo/*.tgz", To: "@artifact/extracted", Strategy: "Extract"},
-				}},
+				},
 				Captures: map[string]string{"App": "app"},
 			}
 			baseline, err := e.composition(id, &req)
@@ -140,7 +145,7 @@ func TestComposition_Lowering(t *testing.T) {
 			"unused": fstest.MapFS{"file": {Data: []byte("unused")}},
 		},
 	}
-	req := request{Output: output{Copy: []operation{
+	req := request{Output: manifest.ArtifactGeneratorOutput{Copy: []manifest.ArtifactGeneratorCopy{
 		{From: "@first/dir/", To: "@artifact/out/", Exclude: []string{"skip"}},
 		{From: "@second/file", To: "@artifact/value", Strategy: "Overwrite"},
 		{From: "@first/overlay", To: "@artifact/value", Strategy: "Merge"},

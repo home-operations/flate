@@ -577,8 +577,8 @@ func (rf *readerFinalizer) observeChart(
 		rf.loader.recordReader(v.coordinate, v.localCoordinate(), new(reader))
 	}
 	namespace := reader.Reader.Namespace
-	if producer, ok := rf.object(reader.Reader).(emissionProducer); ok {
-		namespace = producer.EmissionPolicy().Namespace
+	if object := rf.object(reader.Reader); manifest.KindOf(object).Parent {
+		namespace = object.EmissionPolicy().Namespace
 	}
 	key := [2]string{location, namespace}
 	refs, seen := rf.templateRefs[key]

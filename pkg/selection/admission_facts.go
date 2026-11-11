@@ -219,8 +219,6 @@ func containsPath(root, target string) bool {
 
 func escapedPath(relative string) bool { return !filepath.IsLocal(relative) }
 
-const sourceReferenceUse = "source"
-
 func (s *Session) catalogEntry(
 	id manifest.NamedResource,
 	record *manifest.DiscoveryRecord,

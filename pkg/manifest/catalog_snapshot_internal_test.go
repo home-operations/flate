@@ -4,6 +4,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/assert"
 )
 
@@ -90,11 +92,13 @@ func TestCatalogCodec_ChartForms(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, Equal(catalog, restored), true)
 			assert.Equal(t, restored.Named(), id)
-			assert.Diff(
-				t,
-				slices.Collect(References(restored, ReferenceAll)),
+			if diff := cmp.Diff(
 				slices.Collect(References(catalog, ReferenceAll)),
-			)
+				slices.Collect(References(restored, ReferenceAll)),
+				cmp.AllowUnexported(Reference{}),
+			); diff != "" {
+				t.Errorf("catalog references (-want +got):\n%s", diff)
+			}
 			again, err := EncodeCatalog(restored)
 			assert.NoError(t, err)
 			assert.Diff(t, again, encoded)

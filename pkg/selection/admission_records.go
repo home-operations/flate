@@ -191,10 +191,7 @@ func (c *admissionClosure) coversDeclaration(owner *RootCoveringOwner, id manife
 	if owner.Object == nil || owner.Input == nil {
 		return false
 	}
-	producer, ok := owner.Object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
-	if !ok || !producer.EmissionPolicy().MatchesNamespace(id) {
+	if !manifest.KindOf(owner.Object).Parent || !owner.Object.EmissionPolicy().MatchesNamespace(id) {
 		return false
 	}
 	return c.completeCoversDeclaration(id, owner)

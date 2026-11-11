@@ -330,6 +330,7 @@ func TestProducerTargets_CandidateRequirement(t *testing.T) {
 		{name: "nil"},
 		{name: "typed", obj: &Kustomization{}},
 		{name: "fixed", obj: &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Spec: map[string]any{"artifacts": []any{map[string]any{"name": "literal"}}}}},
+		{name: "malformed_copy", obj: &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Spec: map[string]any{"artifacts": []any{map[string]any{"name": "app-{app}", "copy": "invalid"}}}}, want: true},
 		{name: "dynamic", obj: &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Spec: map[string]any{"artifacts": []any{map[string]any{"name": "app-{app}"}}}}, want: true},
 		{name: "foreign", obj: &RawObject{APIVersion: "example.com/v1", Kind: "ArtifactGenerator", Spec: map[string]any{"artifacts": []any{map[string]any{"name": "app-{app}"}}}}},
 	} {

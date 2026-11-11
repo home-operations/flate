@@ -61,10 +61,7 @@ func (a *Admission) AddApplication(_ *store.Store, obj manifest.BaseManifest) {
 		}
 	}
 	_, application := manifest.ApplicationFor(obj)
-	_, producer := obj.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
-	if !application && !producer {
+	if !application && !manifest.KindOf(obj).Parent {
 		return
 	}
 	for {
@@ -461,9 +458,7 @@ func (w *qualificationWalk) execution(
 		return nil, nil
 	}
 	application, applies := manifest.ApplicationFor(evidence.object)
-	_, produces := evidence.object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
+	produces := manifest.KindOf(evidence.object).Parent
 	_, _, renders := evidence.object.SourcePath()
 	if !produces && !applies || manifest.KindOf(evidence.object).Structural && !renders {
 		return nil, nil
@@ -729,7 +724,11 @@ func (w *qualificationWalk) preparationSupport(
 func (w *qualificationWalk) await(evidence *applicationEvidence, id manifest.NamedResource) {
 	if w.q.closed {
 		w.q.pending = w.admission.entryBound.Load()
-		return
+		decision := w.q.loader.Options.Session.Snapshot()
+		if w.q.pending || evidence.owner == (manifest.NamedResource{}) ||
+			!decision.Reconcile(evidence.owner) || decision.OrdinaryDemand(evidence.owner) {
+			return
+		}
 	}
 	if id == manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.admission.entryPath(), manifest.NamedResource{}).
 		Named() {

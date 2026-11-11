@@ -583,10 +583,8 @@ func (c *admissionClosure) selectInitialState(id manifest.NamedResource, state *
 
 func (c *admissionClosure) recordInitialEntry(id manifest.NamedResource, entry *manifest.NamedResource) {
 	if id.ReportHidden() {
-		if producer, ok := c.object(id).(interface {
-			EmissionPolicy() manifest.EmissionPolicy
-		}); ok {
-			policy := producer.EmissionPolicy()
+		if object := c.object(id); manifest.KindOf(object).Parent {
+			policy := object.EmissionPolicy()
 			if policy.DocumentScope {
 				*entry = id
 			}

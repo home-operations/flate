@@ -337,9 +337,10 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 
 func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
 	t.Parallel()
+	root := t.TempDir()
 	l := New(store.New())
 	{
-		err := l.FinalizeIndex(t.Context(), "", true)
+		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
 	}
 	assert.FatalIf(
@@ -348,6 +349,10 @@ func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
 		"%s",
 		"unobserved bootstrap census is complete",
 	)
+	assert.Equal(t, l.SourceRoot, root)
+	facts := l.SourceFacts(manifest.BootstrapSourceID, nil)
+	assert.Equal(t, facts.Origin, root)
+	assert.Equal(t, facts.ToIndex, ".")
 }
 
 func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {

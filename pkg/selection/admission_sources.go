@@ -229,7 +229,7 @@ func (c *admissionClosure) yieldObjectSources(
 	yield func(manifest.NamedResource) bool,
 ) {
 	for ref := range manifest.References(c.object(id), manifest.ReferenceRelations) {
-		if ref.Use == sourceReferenceUse {
+		if ref.BindsSource() {
 			yield(ref.NamedResource)
 			return
 		}

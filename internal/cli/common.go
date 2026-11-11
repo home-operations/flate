@@ -168,12 +168,11 @@ func bindBase(fs *pflag.FlagSet, f *commonFlags) {
 func (c *commonFlags) roots(name string, kinds ...string) []manifest.NamedResource {
 	roots := make([]manifest.NamedResource, len(kinds))
 	for i, kind := range kinds {
-		roots[i] = manifest.NamedResource{Kind: kind, Namespace: c.namespace, Name: name}
-		for info := range manifest.Kinds() {
-			if info.Kind == kind {
-				roots[i].Group = info.Group
-				break
-			}
+		roots[i] = manifest.NamedResource{
+			Group:     manifest.GroupForKind(kind),
+			Kind:      kind,
+			Namespace: c.namespace,
+			Name:      name,
 		}
 	}
 	return roots

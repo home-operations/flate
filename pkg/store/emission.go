@@ -325,7 +325,7 @@ func footprintReferenceRoots(record *manifest.DiscoveryRecord, entry *admission)
 	for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
 		if ref.Name != "" {
 			record.Refs = append(record.Refs, ref.NamedResource)
-			if ref.Use == sourceReferenceUse {
+			if ref.BindsSource() {
 				source = ref.NamedResource
 			}
 		}

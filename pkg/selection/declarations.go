@@ -13,7 +13,7 @@ func Declarations(documents []store.Child) iter.Seq[store.Child] {
 		for i := range documents {
 			child := &documents[i]
 			info := manifest.KindOf(child.Obj)
-			if info.Tracked && (info.Group == manifest.SourceDomain || !info.Runnable) && !yield(*child) {
+			if info.Tracked && (info.IsSource() || !info.Runnable) && !yield(*child) {
 				return
 			}
 		}

@@ -240,10 +240,7 @@ func (l *Loader) entryRootAvailable(
 			return false
 		}
 	}
-	_, producer := object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
-	if producer || application {
+	if manifest.KindOf(object).Parent || application {
 		return true
 	}
 	output, _ := objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)

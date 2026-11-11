@@ -44,11 +44,11 @@ func TestEvaluate(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name       string
-		operations []operation
+		operations []manifest.ArtifactGeneratorCopy
 		invalid    bool
 	}{
-		{"unknown_alias", []operation{{From: "@absent/file", To: "@artifact/file"}}, true},
-		{"destination_prefix", []operation{{From: "@repo/app/file", To: "file"}}, true},
+		{"unknown_alias", []manifest.ArtifactGeneratorCopy{{From: "@absent/file", To: "@artifact/file"}}, true},
+		{"destination_prefix", []manifest.ArtifactGeneratorCopy{{From: "@repo/app/file", To: "file"}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -58,7 +58,10 @@ func TestEvaluate(t *testing.T) {
 					"repo": fstest.MapFS{"app/file": {Data: []byte("file")}},
 				},
 			}
-			_, err := e.composition(manifest.NamedResource{}, &request{Output: output{Copy: tc.operations}})
+			_, err := e.composition(
+				manifest.NamedResource{},
+				&request{Output: manifest.ArtifactGeneratorOutput{Copy: tc.operations}},
+			)
 			assert.FatalIf(t, (err != nil) != tc.invalid, "evaluate() = %v; invalid=%v", err, tc.invalid)
 		})
 	}
@@ -85,9 +88,11 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 	}
 	selection := archiveSelection{Alias: "repo", Path: "archive.tgz", Destination: "out"}
 	req := request{
-		Output: output{
+		Output: manifest.ArtifactGeneratorOutput{
 			Name: "artifact",
-			Copy: []operation{{From: "@repo/archive.tgz", To: "@artifact/out", Strategy: strategyExtract}},
+			Copy: []manifest.ArtifactGeneratorCopy{
+				{From: "@repo/archive.tgz", To: "@artifact/out", Strategy: strategyExtract},
+			},
 		},
 	}
 	req.work.Scope = scope

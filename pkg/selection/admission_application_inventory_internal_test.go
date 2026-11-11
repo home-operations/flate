@@ -47,10 +47,8 @@ func applicationOccurrence(object manifest.BaseManifest, root string) Occurrence
 		Roots: slices.Collect(manifest.RenderRoots(object)), Targets: targets, AuthoredTargets: targets,
 	}
 	occurrence.Structural, _ = occurrence.Catalog.(*manifest.Kustomization)
-	if producer, ok := object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok {
-		policy := producer.EmissionPolicy()
+	if manifest.KindOf(object).Parent {
+		policy := object.EmissionPolicy()
 		occurrence.Policy = &policy
 	}
 	return occurrence

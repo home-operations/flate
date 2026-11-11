@@ -25,7 +25,7 @@ func (o DeclarationOrigin) Policy(id NamedResource, obj BaseManifest) Declaratio
 	return DeclarationPolicy{
 		Origin:    o,
 		Root:      o == RepositoryDeclaration,
-		Reconcile: info.Runnable && (o == RepositoryDeclaration || info.Group == SourceDomain),
+		Reconcile: info.Runnable && (o == RepositoryDeclaration || info.IsSource()),
 		Report:    o == RepositoryDeclaration && !id.ReportHidden(),
 	}
 }

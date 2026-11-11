@@ -166,7 +166,7 @@ func TestFrame_Malformed(t *testing.T) {
 func rewriteFrameEnvelope(t *testing.T, data []byte, mutate func(*frameEnvelope)) []byte {
 	t.Helper()
 	size := int(binary.BigEndian.Uint32(data[8:12]))
-	var envelope frameEnvelope
+	envelope := frameEnvelope{Metadata: frameMetadata{header: data[12 : 12+size]}}
 	assert.NoError(t, json.Unmarshal(data[12:12+size], &envelope))
 	mutate(&envelope)
 	header, err := json.Marshal(envelope)
@@ -191,6 +191,24 @@ func TestFrameHistory_MalformedTail(t *testing.T) {
 	publication, err := frame.PreparePublication(t.Context(), input)
 	assert.NoError(t, err)
 	raw := frameBytes(t, frame, FramePublicationInput{})
+	t.Run("metadata with unchanged tail", func(t *testing.T) {
+		t.Parallel()
+		wire := append(bytes.Clone(raw), publication.tail...)
+		mutated := rewriteFrameEnvelope(t, wire, func(envelope *frameEnvelope) {
+			envelope.Metadata.RawMessage = json.RawMessage(`"metadatz"`)
+		})
+		assert.Equal(t, len(mutated), len(wire))
+		assert.Diff(t, mutated[len(raw):], publication.tail)
+		var metadata string
+		acquired, openErr := OpenFrame(t.Context(), "domain", frameGeneration(mutated), &metadata)
+		assert.NoError(t, openErr)
+		assert.Equal(t, metadata, "metadatz")
+		_, complete := acquired.History(owner, "final")
+		assert.Equal(t, complete, false)
+		data, payloadErr := acquired.Payload(t.Context())
+		assert.NoError(t, payloadErr)
+		assert.Equal(t, string(data), "output")
+	})
 	for _, tc := range []struct {
 		name   string
 		mutate func(*acceptedRender)
@@ -660,7 +678,8 @@ func TestFrame_CompactBacking(t *testing.T) {
 	}
 	metadata["key"] = "mutated"
 	assert.Equal(t, string(frame.payload), "original")
-	assert.Equal(t, string(frame.envelope.Metadata), `{"key":"original"}`)
+	assert.Equal(t, string(frame.envelope.Metadata.RawMessage), `{"key":"original"}`)
+	assert.Equal(t, string(acquired.envelope.Metadata.RawMessage), `{"key":"original"}`)
 	data, err := acquired.Payload(t.Context())
 	assert.NoError(t, err)
 	assert.Equal(t, string(data), "original")

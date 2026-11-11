@@ -68,11 +68,21 @@ type inputIdentity struct {
 }
 
 type evaluation struct {
-	work     manifest.AcquisitionWork
-	owner    *cache.Cache
-	inputs   map[string]*store.SourceArtifact
+	inputs   map[string]fs.FS
 	identity []inputIdentity
 	maxAge   time.Duration
+	// Source syntax is independent of input generations and output placement.
+	lastFrom      string
+	lastSelection sourceSelection
+	// Projections are borrowed only until Compose returns; outputs reconcile serially.
+	projectedInputs  []cache.CompositionInput
+	projectedCopies  []cache.Copy
+	projectedContent struct {
+		Namespace string
+		Generator manifest.NamedResource
+		Request   request
+		Inputs    []inputIdentity
+	}
 }
 
 func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, level manifest.DrainLevel) error {
@@ -107,8 +117,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if err != nil {
 		return err
 	}
-	generatorInputsResult1 := c.generatorInputs(raw, &spec)
-	localEvaluation, views := generatorInputsResult1.evaluation, generatorInputsResult1.views
+	localEvaluation := c.generatorInputs(raw, &spec)
 	content := struct {
 		Generator manifest.NamedResource
 		Spec      specification
@@ -130,7 +139,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if handled || err != nil {
 		return err
 	}
-	requests, err := expand(ctx, &spec, views)
+	requests, err := expand(ctx, &spec, localEvaluation.inputs)
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("expand outputs: %w", err), "")
 	}
@@ -192,19 +201,11 @@ func validateGenerator(
 	return raw, nil
 }
 
-type generatorInputSet struct {
-	evaluation evaluation
-	views      map[string]fs.FS
-}
-
-func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification) generatorInputSet {
+func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification) evaluation {
 	localEvaluation := evaluation{
-		work:   manifest.AcquisitionWork{Scope: c.run.Reads.Work().Scope()},
-		owner:  c.cache,
-		inputs: make(map[string]*store.SourceArtifact, len(spec.Sources)),
+		inputs: make(map[string]fs.FS, len(spec.Sources)),
 		maxAge: cache.Forever,
 	}
-	views := make(map[string]fs.FS, len(spec.Sources))
 	selections := generatorReadSelections(spec)
 	for ref := range manifest.References(raw, manifest.ReferenceRelations) {
 		alias := spec.Sources[ref.Position].Alias
@@ -214,7 +215,7 @@ func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification
 			read |= store.ArtifactRevision
 			c.run.Reads.GetArtifact(ref.NamedResource, read)
 		}
-		localEvaluation.inputs[alias], views[alias] = artifact, artifact.FS
+		localEvaluation.inputs[alias] = artifact.FS
 		localEvaluation.identity = append(
 			localEvaluation.identity,
 			inputIdentity{Alias: alias, Source: ref.NamedResource, Input: artifact.Input(read)},
@@ -223,7 +224,7 @@ func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification
 			localEvaluation.maxAge = 0
 		}
 	}
-	return generatorInputSet{evaluation: localEvaluation, views: views}
+	return localEvaluation
 }
 
 func generatorReadSelections(spec *specification) map[string]store.ArtifactRead {
@@ -252,29 +253,14 @@ type generatorPublication struct {
 }
 
 func (p *generatorPublication) generatedSource(ctx context.Context, req *request) (*store.SourceArtifact, error) {
-	key := cache.ArchiveKey{Policy: "fixed", Content: struct {
-		Namespace string
-		Generator manifest.NamedResource
-		Request   request
-		Inputs    []inputIdentity
-	}{"artifactgenerator/output/v1", p.id, *req, p.evaluation.identity}}
-	localEvaluation := p.evaluation
-	input, descriptor, keyID, err := p.execution.cache.Acquire(
+	composition, err := p.evaluation.composition(p.id, req)
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("evaluate %s: %w", req.Output.Name, err), "")
+	}
+	input, descriptor, keyID, err := p.execution.cache.Compose(
 		ctx,
-		key,
+		composition,
 		&cache.Policy{MaxAge: p.evaluation.maxAge, Work: &req.work},
-		func(ctx context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
-			var identity string
-			if acquisition := target.Work().Physical(); acquisition != nil {
-				identity = acquisition.Key.Input
-				acquisition.Add(&manifest.WorkCounts{LocalAcquisitions: 1})
-			}
-			work := req.work.Scope.Record(manifest.WorkEvaluation, identity)
-			work.Add(&manifest.WorkCounts{Attempts: 1})
-			err := localEvaluation.produce(ctx, req, target)
-			work.Finish(err)
-			return cache.ProducerResult{}, err
-		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("evaluate %s: %w", req.Output.Name, err)
@@ -296,10 +282,11 @@ func (p *generatorPublication) generatedSource(ctx context.Context, req *request
 		Revision: "latest@" + digest,
 	}
 	if alias := strings.TrimPrefix(req.Output.Revision, "@"); alias != "" {
-		payload.Revision = p.evaluation.inputs[alias].Revision
+		payload.Revision = p.evaluation.identity[p.evaluation.inputIndex(alias)].Input.Revision
 	}
-	if source := p.evaluation.inputs[strings.TrimPrefix(req.Output.OriginRevision, "@")]; source != nil {
-		origin := source.Metadata["org.opencontainers.image.revision"]
+	if position := p.evaluation.inputIndex(strings.TrimPrefix(req.Output.OriginRevision, "@")); position >= 0 {
+		source := &p.evaluation.identity[position].Input
+		origin := source.Origin
 		if origin == "" {
 			origin = source.Revision
 		}

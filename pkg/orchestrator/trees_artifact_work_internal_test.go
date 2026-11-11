@@ -70,6 +70,12 @@ func TestRenderTrees_ArtifactInputCurrentSelection(t *testing.T) {
 			if record.Key.Owner == consumer && record.Key.Phase == manifest.WorkKustomize {
 				assert.Equal(t, record.Key.Source, artifact)
 			}
+			if record.Key.Owner == generator &&
+				(record.Key.Phase == manifest.WorkEvaluation || record.Key.Phase == manifest.WorkAcquisition) {
+				assert.Equal(t, record.Key.Source, manifest.NamedResource{
+					Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "missing",
+				})
+			}
 			if record.Key.Owner == generator && record.Key.Phase == manifest.WorkAcquisition {
 				assert.Equal(t, record.Key.Input, payload.Key)
 			}

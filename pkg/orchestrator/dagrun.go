@@ -123,7 +123,7 @@ func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
 		return false
 	}
 	info := manifest.KindOf(obj)
-	return o.store.Policy(obj.Named()).Reconcile && (info.Group != manifest.SourceDomain || o.src.Owns(obj.Named()))
+	return o.store.Policy(obj.Named()).Reconcile && (!info.IsSource() || o.src.Owns(obj.Named()))
 }
 
 func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {

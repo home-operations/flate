@@ -495,11 +495,9 @@ func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, originalValue *sto
 	same := false
 	original := *originalValue
 	input := *inputValue
-	if producer, ok := l.Store.GetObject(input.Owner).(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok {
+	if object := l.Store.GetObject(input.Owner); manifest.KindOf(object).Parent {
 		doc := manifest.DeepCopyMap(original.Doc)
-		producer.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
+		object.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
 		parsed, err := manifest.ParseDoc(
 			doc,
 			manifest.ParseDocOptions{},

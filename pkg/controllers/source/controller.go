@@ -105,7 +105,7 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 		return false
 	}
 	obj := c.Store.GetObject(id)
-	return obj == nil && id.Group == manifest.SourceDomain || manifest.KindOf(obj).Runnable
+	return obj == nil && id.KindInfo().IsSource() || manifest.KindOf(obj).Runnable
 }
 
 // ReconcileNode returns the captured assessment of a source acquisition.

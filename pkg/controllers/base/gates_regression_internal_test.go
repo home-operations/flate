@@ -389,10 +389,7 @@ func TestStamp_CommonMetadataIntroducesHook(t *testing.T) {
 
 func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 	t.Parallel()
-	for _, producer := range []interface {
-		manifest.BaseManifest
-		EmissionPolicy() manifest.EmissionPolicy
-	}{
+	for _, producer := range []manifest.BaseManifest{
 		&manifest.Kustomization{Name: "owner", Namespace: "apps", TargetNamespace: "target"},
 		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps", TargetNamespace: "target"},
 		&manifest.ResourceSet{Name: "owner", Namespace: "target"},
@@ -447,10 +444,7 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 
 func TestEmit_KindExclusionPolicy(t *testing.T) {
 	t.Parallel()
-	for _, producer := range []interface {
-		manifest.BaseManifest
-		EmissionPolicy() manifest.EmissionPolicy
-	}{
+	for _, producer := range []manifest.BaseManifest{
 		&manifest.Kustomization{Name: "owner", Namespace: "apps"},
 		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps"},
 		&manifest.ResourceSet{Name: "owner", Namespace: "apps"},

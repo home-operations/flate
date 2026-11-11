@@ -53,6 +53,55 @@ func TestGetDeclaration_CoveredAuthority(t *testing.T) {
 
 func TestRecordEmitted_ReplacedInputRejected(t *testing.T) {
 	t.Parallel()
+	t.Run("artifact source replacement", func(t *testing.T) {
+		t.Parallel()
+		st := New()
+		input := &manifest.RawObject{
+			APIVersion: "source.extensions.fluxcd.io/v1beta1",
+			Kind:       "ArtifactGenerator",
+			Name:       "producer",
+			Namespace:  "apps",
+			Spec: map[string]any{
+				"sources": []any{map[string]any{"kind": manifest.KindGitRepository, "name": "source"}},
+			},
+		}
+		source := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Name:      "source",
+			Namespace: "apps",
+		}
+		st.AddObject(input)
+		st.SetArtifact(source, &SourceArtifact{Key: "first"})
+		var reads ReadSet
+		reads.Init(st, input.Named(), nil)
+		defer reads.Retire()
+		_, _, stale := reads.GetEmission(input.Named())
+		defer stale.Finish()
+		stale.Children, stale.Complete, stale.Fingerprint = []Child{emissionChild("stale", "first")}, true, "stale"
+		second := &SourceArtifact{Key: "second"}
+		captured, replaced := make(chan struct{}), make(chan struct{})
+		tasks := task.NewBounded(2)
+		tasks.Go(t.Context(), "publish", func(context.Context) {
+			close(captured)
+			tasks.YieldSlot(func() { <-replaced })
+			st.RecordEmitted(input.Named(), &stale, nil)
+			assert.Equal(t, reads.Valid(), false)
+		})
+		tasks.Go(t.Context(), "replace", func(context.Context) {
+			tasks.YieldSlot(func() { <-captured })
+			st.SetArtifact(source, second)
+			close(replaced)
+		})
+		tasks.BlockTillDone()
+		assert.Equal(t, tasks.Failures(), int64(0))
+		_, _, retained := st.GetEmission(input.Named())
+		defer retained.Finish()
+		assert.Equal(t, len(retained.Children), 0)
+		assert.Equal(t, retained.binding.source, source)
+		assert.Equal(t, retained.binding.artifact, second)
+	})
+
 	for _, route := range []string{"entry_stable", "entry_replacement", "locked_stable", "locked_replacement"} {
 		for _, loss := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/loss_%t", route, loss), func(t *testing.T) {

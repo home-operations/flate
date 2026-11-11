@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -133,7 +135,11 @@ spec:
 		)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		assert.Equal(t, l.scopes, nil)
-		assert.Diff(t, slices.Collect(l.References(id)), before)
+		assert.Equal(
+			t,
+			cmp.Diff(before, slices.Collect(l.References(id)), cmp.AllowUnexported(manifest.Reference{})),
+			"",
+		)
 		assert.Equal(t, l.CatalogObject(id).Named(), id)
 		_, authored := l.occurrence(id)
 		assert.Equal(t, authored, false)

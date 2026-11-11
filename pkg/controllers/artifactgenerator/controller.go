@@ -109,7 +109,10 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if disabled {
 		return nil
 	}
-	spec, err := decodeSpec(raw.Spec)
+	spec, err := raw.ArtifactGeneratorSpec()
+	if err == nil {
+		err = validateSpec(&spec)
+	}
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("generator spec: %w", err), "")
 	}
@@ -120,7 +123,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	localEvaluation := c.generatorInputs(raw, &spec)
 	content := struct {
 		Generator manifest.NamedResource
-		Spec      specification
+		Spec      manifest.ArtifactGeneratorSpec
 		UID       string
 		Disabled  bool
 		Inputs    []inputIdentity
@@ -201,7 +204,7 @@ func validateGenerator(
 	return raw, nil
 }
 
-func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification) evaluation {
+func (c *execution) generatorInputs(raw *manifest.RawObject, spec *manifest.ArtifactGeneratorSpec) evaluation {
 	localEvaluation := evaluation{
 		inputs: make(map[string]fs.FS, len(spec.Sources)),
 		maxAge: cache.Forever,
@@ -227,7 +230,7 @@ func (c *execution) generatorInputs(raw *manifest.RawObject, spec *specification
 	return localEvaluation
 }
 
-func generatorReadSelections(spec *specification) map[string]store.ArtifactRead {
+func generatorReadSelections(spec *manifest.ArtifactGeneratorSpec) map[string]store.ArtifactRead {
 	selections := make(map[string]store.ArtifactRead, len(spec.Sources))
 	for _, output := range spec.Artifacts {
 		if alias := strings.TrimPrefix(output.Revision, "@"); alias != "" {
@@ -244,7 +247,7 @@ type generatorPublication struct {
 	execution  *execution
 	id         manifest.NamedResource
 	raw        *manifest.RawObject
-	spec       *specification
+	spec       *manifest.ArtifactGeneratorSpec
 	uid        string
 	evaluation *evaluation
 	attempt    *store.Emission

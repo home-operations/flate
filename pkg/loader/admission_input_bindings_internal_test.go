@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -211,6 +212,14 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 	changes, stores, roots, source := optionalSupplierPair(t, "apps")
 	changes, err := change.Qualify(t.Context(), changes, [2]*store.Store{stores[0], stores[1]}, manifest.WorkScope{})
 	assert.NoError(t, err)
+	support := &manifest.ConfigMap{Name: "support", Namespace: "infra"}
+	stores[1].AddObject(support)
+	var acquisition store.ReadSet
+	acquisition.Init(stores[1], source.Named(), nil)
+	defer acquisition.Retire()
+	acquisition.GetObject(support.Named())
+	original := stores[1].GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+	stores[1].SetArtifact(source.Named(), original.WithReads(&acquisition))
 	l := New(stores[1])
 	l.SourceRoot = roots[1]
 	l.Options.Changes = changes
@@ -254,8 +263,52 @@ func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 		assert.Equal(t, slices.Contains(slices.Collect(captured[i].Inputs()), source.Named()), true)
 		assert.Equal(t, captured[i].Valid(), true)
 	}
+	published := l.sourceBinding(source.Named())
+	assert.Equal(t, published.paired, true)
+	initial := *published
+	initial.files = slices.Clone(initial.files)
+	stores[1].AddObject(&manifest.ConfigMap{
+		Name: support.Name, Namespace: support.Namespace, Data: map[string]any{"value": "changed"},
+	})
+	assert.Equal(t, input.Reads.Valid(), false)
+	assert.Equal(t, stores[1].GetArtifact(source.Named(), store.ArtifactContent), store.Artifact(input))
+	invalidated := l.SourceFacts(source.Named(), nil)
+	assert.Equal(t, invalidated.Input, input)
+	assert.Equal(t, invalidated.Initial, input)
+	assert.Equal(t, invalidated.Paired, false)
+	assert.Equal(t, invalidated.Derived, true)
+	assert.Equal(t, l.sourceBinding(source.Named()) == published, false)
+	var refreshed [2]store.ReadSet
+	var workers sync.WaitGroup
+	start := make(chan struct{})
+	for i := range refreshed {
+		id := manifest.NamedResource{Kind: manifest.KindKustomization, Name: fmt.Sprintf("refresh-%d", i)}
+		refreshed[i].Init(stores[1], id, nil)
+		t.Cleanup(refreshed[i].Retire)
+		workers.Go(func() {
+			<-start
+			facts := l.SourceFacts(source.Named(), &refreshed[i])
+			assert.Equal(t, facts.Paired, false)
+			assert.Equal(t, facts.Input, (*store.SourceArtifact)(nil))
+			assert.Equal(t, facts.Initial, input)
+			assert.Equal(t, sourceCaptures(&refreshed[i])[source.Named()], 1)
+			assert.Equal(t, slices.Contains(slices.Collect(refreshed[i].Inputs()), source.Named()), true)
+		})
+	}
+	close(start)
+	workers.Wait()
+	assert.Equal(t, published.input, initial.input)
+	assert.Equal(t, published.initial, initial.initial)
+	assert.Equal(t, published.initialKnown, initial.initialKnown)
+	assert.Equal(t, published.declaration, initial.declaration)
+	assert.Equal(t, published.delta, initial.delta)
+	assert.Equal(t, published.snapshots, initial.snapshots)
+	assert.Equal(t, published.declarations, initial.declarations)
+	assert.Equal(t, published.paired, initial.paired)
+	assert.Equal(t, published.filesKnown, initial.filesKnown)
+	assert.Diff(t, published.files, initial.files)
 	replacement := *input
-	replacement.Key, replacement.Content = "replacement", "replacement"
+	replacement.Key, replacement.Content, replacement.Reads = "replacement", "replacement", nil
 	stores[1].SetArtifact(source.Named(), &replacement)
 	for i := range captured {
 		assert.Equal(t, captured[i].Valid(), false)

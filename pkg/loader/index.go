@@ -20,6 +20,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 	if l.documents.compact && l.frozen {
 		return nil
 	}
+	if l.SourceRoot == "" {
+		l.SourceRoot = repoRoot
+	}
 	l.mountSources()
 	if freeze {
 		if err := l.PersistInputs(ctx); err != nil {
@@ -103,25 +106,39 @@ func (l *Loader) capturePreparedRoots() {
 	}
 }
 
+// Source initialization MUST run at a serial construction boundary.
 func (l *Loader) seedSourceAuthority() {
 	if l.frozen {
 		return
 	}
 	l.side, l.sideKnown = l.comparisonSide()
-	seed := func(source manifest.NamedResource) {
-		l.SourceFacts(source, nil)
-		previous := l.sourceBinding(source)
-		if previous == nil {
-			return
-		}
-		evidence := *previous
-		if !evidence.initialKnown {
-			evidence.initial, _ = l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-			evidence.initialKnown = true
-			l.publishSource(source, &evidence)
+	for i := range l.bindings {
+		for binding := l.bindings[i].Load(); binding != nil; binding = binding.next {
+			binding.visited = false
 		}
 	}
+	var binding *sourceBinding
+	seed := func(source manifest.NamedResource) {
+		binding = findSourceBinding(l.sourceBucket(source).Load(), source)
+		if binding != nil && binding.visited {
+			return
+		}
+		facts := l.admissionSourceFacts(source, nil, true)
+		binding = findSourceBinding(l.sourceBucket(facts.Source).Load(), facts.Source)
+		binding.visited = true
+	}
 	seed(manifest.BootstrapSourceID)
+	//nolint:gocritic // Source references MUST be read without a second map lookup.
+	for _, record := range l.Index.Records {
+		for _, ref := range record.Refs {
+			if binding.source == ref {
+				continue
+			}
+			if ref.KindInfo().IsSource() {
+				seed(ref)
+			}
+		}
+	}
 	for source := range l.Index.CompleteSources {
 		seed(source)
 	}
@@ -201,16 +218,20 @@ func (l *Loader) sweepSourceBindings() {
 		if bindings == nil {
 			continue
 		}
-		for id := range *bindings {
-			evidence := *(*bindings)[id].Load()
-			input, _ := l.Store.GetArtifact(id, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
-			if evidence.matchesInputs(input, l.Store.GetObject(id)) {
+		for binding := bindings; binding != nil; binding = binding.next {
+			evidence := binding.current.Load()
+			if !evidence.bound {
 				continue
 			}
-			evidence.bound, evidence.paired, evidence.filesKnown = false, false, false
-			evidence.input, evidence.declaration, evidence.files = nil, nil, nil
-			evidence.delta = nil
-			(*bindings)[id].Store(&evidence)
+			input, _ := l.Store.GetArtifact(binding.source, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
+			if evidence.matchesInputs(input, l.Store.GetObject(binding.source)) {
+				continue
+			}
+			next := *evidence
+			next.bound, next.paired, next.filesKnown = false, false, false
+			next.input, next.declaration, next.files = nil, nil, nil
+			next.delta = nil
+			binding.current.Store(&next)
 		}
 	}
 }

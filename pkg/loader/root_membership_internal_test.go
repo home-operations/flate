@@ -193,7 +193,7 @@ func TestRootQuery_ReusesOwnership(t *testing.T) {
 	normal := rootQuery{loader: l}
 	l.SourceFacts(manifest.BootstrapSourceID, nil)
 	bindings := l.sourceBucket(manifest.BootstrapSourceID).Load()
-	if bindings == nil || len(*bindings) == 0 {
+	if bindings == nil {
 		t.Fatal("source lookup did not retain comparisons in the source owner")
 	}
 	assert.Equal(t, normal.admitsRoot(object, record.Path), true)
@@ -208,7 +208,7 @@ func TestRootQuery_ReusesOwnership(t *testing.T) {
 	query := rootQuery{loader: l, objects: reads}
 	l.SourceFacts(manifest.BootstrapSourceID, nil)
 	bindings = l.sourceBucket(manifest.BootstrapSourceID).Load()
-	if bindings == nil || len(*bindings) == 0 {
+	if bindings == nil {
 		t.Fatal("source lookup did not retain comparisons before rejection")
 	}
 	assert.Equal(t, query.admitsRoot(object, record.Path), false)

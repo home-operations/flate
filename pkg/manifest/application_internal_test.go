@@ -5,6 +5,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/apis/meta"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -83,11 +85,13 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 			assert.Equal(t, present, true)
 			assert.Diff(t, slices.Collect(SourceRoots(object)), []string{"clusters"})
 			assert.Equal(t, len(slices.Collect(RenderRoots(object))), 0)
-			assert.Diff(
-				t,
+			if diff := cmp.Diff(
+				[]Reference{{NamedResource: application.Source, Use: "source", Content: true, bindsSource: true}},
 				slices.Collect(References(object, ReferenceRelations)),
-				[]Reference{{NamedResource: application.Source, Use: "source", Content: true}},
-			)
+				cmp.AllowUnexported(Reference{}),
+			); diff != "" {
+				t.Errorf("application references (-want +got):\n%s", diff)
+			}
 			assert.Diff(t, object.Spec, before)
 		})
 	}

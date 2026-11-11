@@ -110,10 +110,8 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 	facts.targets = append(facts.targets, generated...)
 	facts.catalog = manifest.CatalogObject(obj, obj.Named())
 	facts.structural, _ = facts.catalog.(*manifest.Kustomization)
-	if producer, ok := obj.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok {
-		policy := producer.EmissionPolicy()
+	if manifest.KindOf(obj).Parent {
+		policy := obj.EmissionPolicy()
 		facts.policy = &manifest.EmissionPolicy{
 			Namespace:         policy.Namespace,
 			InternalNamespace: policy.InternalNamespace,

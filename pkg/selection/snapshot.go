@@ -65,10 +65,8 @@ func (s *Snapshot) CollectEmissions() {
 	for _, emission := range s.Emissions {
 		id := emission.Emitter.Named()
 		var documentScope bool
-		if producer, ok := emission.Emitter.(interface {
-			EmissionPolicy() manifest.EmissionPolicy
-		}); ok {
-			documentScope = producer.EmissionPolicy().DocumentScope
+		if manifest.KindOf(emission.Emitter).Parent {
+			documentScope = emission.Emitter.EmissionPolicy().DocumentScope
 		}
 		for _, document := range emission.Documents {
 			if !documentScope && !s.Decision.Output(id) && !s.Decision.Reconcile(document.Identity) {

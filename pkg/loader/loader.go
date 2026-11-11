@@ -79,7 +79,7 @@ type Loader struct {
 	scopeRoots            []selection.NativeRootFacts
 	catalog               *Catalog
 	locations             map[manifest.NamedResource]authoredOccurrence
-	bindings              [64]atomic.Pointer[map[manifest.NamedResource]*atomic.Pointer[admissionSource]]
+	bindings              [64]atomic.Pointer[sourceBinding]
 	inputReaders          map[manifest.NamedResource][]manifest.NamedResource
 	inputObjects          map[manifest.NamedResource][]manifest.NamedResource
 	templateProjections   map[manifest.NamedResource]manifest.TemplateProjection
@@ -144,7 +144,7 @@ func (l *Loader) Sources(ctx context.Context) iter.Seq2[store.Child, error] {
 	return func(yield func(store.Child, error) bool) {
 		//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 		for id, r := range l.Index.Files() {
-			if info := id.KindInfo(); info.Group != manifest.SourceDomain || !info.Discovery {
+			if info := id.KindInfo(); !info.IsSource() || !info.Discovery {
 				continue
 			}
 			if l.documents.cache[r.Path].eligible == selection.RootInactive {
@@ -540,8 +540,7 @@ func discoveryReference(refValue *manifest.Reference) bool {
 
 	return ref.Use == "valuesFrom" ||
 		ref.Use == "substituteFrom" && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
-		(ref.Use == sourceReferenceUse || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" &&
-			ref.Name != ""
+		ref.IsSource() && ref.Kind != "" && ref.Name != ""
 }
 
 func (l *Loader) fileCoordinate(absPath string) string {
@@ -616,10 +615,6 @@ func (l *Loader) replayFile(ctx context.Context, fileValue *fileAdmission, reade
 	}
 	return n, nil
 }
-
-const (
-	sourceReferenceUse = "source"
-)
 
 func (l *Loader) recordLoadedObjects(path string, objs []parsedObject) int {
 	count := 0

@@ -15,6 +15,7 @@ func assertReferenceEdges(t *testing.T, got, want []Reference) {
 		diff := cmp.Diff(
 			want,
 			got,
+			cmp.AllowUnexported(Reference{}),
 			cmpopts.IgnoreFields(DependencyRef{}, "Artifact", "ArtifactOnly", "ChartSource"),
 			cmpopts.IgnoreFields(
 				Reference{},

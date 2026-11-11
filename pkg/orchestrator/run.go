@@ -372,10 +372,8 @@ func (o *Orchestrator) collectionParent(
 }
 
 func emissionOwnership(obj manifest.BaseManifest, parentAttributed bool) bool {
-	if producer, ok := obj.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	}); ok {
-		return parentAttributed || producer.EmissionPolicy().DocumentScope
+	if manifest.KindOf(obj).Parent {
+		return parentAttributed || obj.EmissionPolicy().DocumentScope
 	}
 	return parentAttributed
 }

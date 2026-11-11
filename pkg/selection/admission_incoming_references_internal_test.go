@@ -90,6 +90,19 @@ func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 			)
 			assert.Equal(t, session.Snapshot().Reconcile(stale.ChartSource()), false)
 			assert.Equal(t, session.Snapshot().Reconcile(child.ChartSource()), true)
+			sourceClosure := solverClosure(t, st, facts)
+			sourceClosure.generation = []store.Child{{Obj: child}}
+			sourceClosure.states[child.Named()] = admissionState{incoming: 1}
+			assert.Diff(
+				t,
+				slices.Collect(sourceClosure.sources(child.Named())),
+				[]manifest.NamedResource{child.ChartSource()},
+			)
+			assert.Equal(
+				t,
+				sourceClosure.incomingContentSource(child, &manifest.DiscoveryRecord{}),
+				child.ChartSource(),
+			)
 			sentinel := testutil.KustomizationID("apps", "sentinel")
 			incoming := &manifest.Kustomization{Name: sentinel.Name, Namespace: sentinel.Namespace}
 			proposal, err = prepareSolver(

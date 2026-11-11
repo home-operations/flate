@@ -146,7 +146,7 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 							old.child.Obj,
 							entry.child.Obj,
 							[2]map[string]any{old.child.Doc, entry.child.Doc},
-							ownershipLabel,
+							manifest.IsOwnershipLabel,
 						) ||
 					!old.binding.equal(&entry.binding) ||
 					!slices.Equal(old.child.Productions, entry.child.Productions) ||

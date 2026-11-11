@@ -33,10 +33,11 @@ type artifactToken struct {
 const artifactMatchBudget = 4096
 
 func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget {
-	entries, _ := r.Spec["artifacts"].([]any)
+	view := r.artifactGeneratorView()
+	entries := view.entries("artifacts")
 	var targets []ProducerTarget
 	var captures []string
-	pattern, _ := r.Spec["pathPattern"].(string)
+	pattern := view.str("pathPattern")
 	if len(candidates) != 0 && pattern != "" {
 		alias, path, ok := strings.Cut(pattern, "/")
 		if ok && strings.HasPrefix(alias, "@") && len(alias) > 1 {
@@ -44,8 +45,7 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 		}
 	}
 	for _, entry := range entries {
-		m, _ := entry.(map[string]any)
-		name, _ := m[nameKey].(string)
+		name := view.child(entry).str(nameKey)
 		if name == "" {
 			continue
 		}
@@ -159,21 +159,23 @@ func artifactMatch(tokens []artifactToken, name string, bound []string, budget *
 
 func (r *RawObject) references(yield func(Reference) bool) {
 	if application, valid := r.EntryApplication(); valid {
-		if !yield(Reference{NamedResource: application.Source, Use: sourceKey, Content: true}) {
+		if !yield(Reference{NamedResource: application.Source, Use: sourceKey, Content: true, bindsSource: true}) {
 			return
 		}
 	}
 	if !r.isArtifactGenerator() {
 		return
 	}
-	sources, _ := r.Spec["sources"].([]any)
-	for i, source := range sources {
-		fields, _ := source.(map[string]any)
-		kind, _ := fields[kindKey].(string)
-		name, _ := fields[nameKey].(string)
-		namespace, _ := fields[namespaceKey].(string)
+	view := r.artifactGeneratorView()
+	for i, entry := range view.entries("sources") {
+		source := view.source(entry)
 		id := Resolve(
-			NamedResource{Group: referenceGroup(kind, ""), Kind: kind, Name: name, Namespace: namespace},
+			NamedResource{
+				Group:     referenceGroup(source.Kind, ""),
+				Kind:      source.Kind,
+				Name:      source.Name,
+				Namespace: source.Namespace,
+			},
 			"",
 			r.Namespace,
 		)
@@ -181,6 +183,7 @@ func (r *RawObject) references(yield func(Reference) bool) {
 			Reference{
 				NamedResource:  id,
 				Use:            "artifact",
+				bindsSource:    true,
 				Position:       i,
 				Content:        true,
 				Gate:           GateArtifacts,

@@ -293,6 +293,11 @@ func (f *consumedFixture) assertRecordedWork(t *testing.T) map[manifest.WorkPhas
 	}
 	gotWork := map[manifest.NamedResource]map[manifest.WorkPhase]manifest.WorkCounts{}
 	generatorKeys := make(map[manifest.WorkPhase]map[string]bool)
+	selectedBindingKey := ""
+	if change == "selected-binding" {
+		current := st.GetArtifact(outputID, store.ArtifactContent).(*store.SourceArtifact)
+		selectedBindingKey = current.Key
+	}
 
 	records := st.WorkSnapshot()
 	for i := range records {
@@ -301,30 +306,33 @@ func (f *consumedFixture) assertRecordedWork(t *testing.T) map[manifest.WorkPhas
 		switch record.Key.Phase {
 		case manifest.WorkAcquisition, manifest.WorkEvaluation, manifest.WorkKustomize, manifest.WorkHelm,
 			manifest.WorkPostRender, manifest.WorkSubstitution, manifest.WorkCache:
-			id := record.Key.Owner
-			if gotWork[id] == nil {
-				gotWork[id] = make(map[manifest.WorkPhase]manifest.WorkCounts)
-			}
-			counts := gotWork[id][record.Key.Phase]
-			counts.Add(&record.Counts)
-			gotWork[id][record.Key.Phase] = counts
-			assert.Equal(t, record.Key.Input != "", true)
-			if id == generatorID {
-				assert.Equal(t, record.Key.Source, manifest.BootstrapSourceID)
-				if generatorKeys[record.Key.Phase] == nil {
-					generatorKeys[record.Key.Phase] = map[string]bool{}
-				}
-				generatorKeys[record.Key.Phase][record.Key.Input] = true
-			} else {
-				assert.Equal(t, record.Key.Source, outputID)
-			}
-
-		case manifest.WorkAdmission,
-			manifest.WorkPreparation,
-			manifest.WorkValidation,
-			manifest.WorkIndexDecode,
-			manifest.WorkChartDecode:
+		case manifest.WorkAdmission, manifest.WorkPreparation, manifest.WorkValidation,
+			manifest.WorkIndexDecode, manifest.WorkChartDecode:
+			continue
+		default:
+			continue
 		}
+		id := record.Key.Owner
+		if gotWork[id] == nil {
+			gotWork[id] = make(map[manifest.WorkPhase]manifest.WorkCounts)
+		}
+		counts := gotWork[id][record.Key.Phase]
+		counts.Add(&record.Counts)
+		gotWork[id][record.Key.Phase] = counts
+		assert.Equal(t, record.Key.Input != "", true)
+		if id != generatorID {
+			assert.Equal(t, record.Key.Source, outputID)
+			continue
+		}
+		source := f.repo
+		if change == "selected-binding" && record.Key.Input == selectedBindingKey {
+			source = f.rebound
+		}
+		assert.Equal(t, record.Key.Source, source)
+		if generatorKeys[record.Key.Phase] == nil {
+			generatorKeys[record.Key.Phase] = map[string]bool{}
+		}
+		generatorKeys[record.Key.Phase][record.Key.Input] = true
 	}
 	phaseCounts1 := make(map[manifest.WorkPhase]manifest.WorkCounts)
 	phaseCounts1[manifest.WorkAcquisition] = manifest.WorkCounts{

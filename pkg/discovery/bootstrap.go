@@ -143,9 +143,10 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 }
 
 type entrySourceGroup struct {
-	scoped   bool
+	object   manifest.BaseManifest
+	document map[string]any
 	refs     []manifest.NamedResource
-	evidence store.Child
+	scoped   bool
 	required bool
 }
 
@@ -172,7 +173,7 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 	slices.SortFunc(ids, manifest.NamedResource.Compare)
 	for _, id := range ids {
 		group := groups[id]
-		added, err := d.resolveEntrySource(ctx, admission, id, &group)
+		added, err := d.resolveEntrySource(ctx, admission, id, group)
 		if err != nil {
 			return 0, err
 		}
@@ -208,22 +209,35 @@ func (d *Session) resolveBootstrapInput(ctx context.Context) (*store.SourceArtif
 	return bootstrap, nil
 }
 
-func addEntrySource(groups map[manifest.NamedResource]entrySourceGroup, id, requester manifest.NamedResource) {
+func entrySourceGroupFor(
+	groups map[manifest.NamedResource]*entrySourceGroup,
+	id manifest.NamedResource,
+) *entrySourceGroup {
 	group := groups[id]
+	if group == nil {
+		group = &entrySourceGroup{}
+		groups[id] = group
+	}
+	return group
+}
+
+func addEntrySource(groups map[manifest.NamedResource]*entrySourceGroup, id, requester manifest.NamedResource) {
+	group := entrySourceGroupFor(groups, id)
 	group.required = true
 	if requester != (manifest.NamedResource{}) && !slices.Contains(group.refs, requester) {
 		group.refs = append(group.refs, requester)
 	}
-	groups[id] = group
 }
 
 func (d *Session) entrySourceGroups(
 	ctx context.Context,
 	allowMissing bool,
-) (map[manifest.NamedResource]entrySourceGroup, error) {
-	groups := map[manifest.NamedResource]entrySourceGroup{manifest.BootstrapSourceID: {required: true}}
+) (map[manifest.NamedResource]*entrySourceGroup, error) {
+	// Sparse group maps MUST hold pointers to avoid reserving inline storage for empty slots.
+	groups := map[manifest.NamedResource]*entrySourceGroup{}
+	addEntrySource(groups, manifest.BootstrapSourceID, manifest.NamedResource{})
 	for kind := range manifest.Kinds() {
-		if kind.Group != manifest.SourceDomain {
+		if !kind.IsSource() {
 			continue
 		}
 		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
@@ -243,7 +257,7 @@ func (d *Session) entrySourceGroups(
 
 func (d *Session) addLoadedSources(
 	ctx context.Context,
-	groups map[manifest.NamedResource]entrySourceGroup,
+	groups map[manifest.NamedResource]*entrySourceGroup,
 	allowMissing bool,
 ) error {
 	if d.loader == nil {
@@ -255,9 +269,8 @@ func (d *Session) addLoadedSources(
 			return err
 		}
 		id := child.Obj.Named()
-		group := groups[id]
-		group.evidence = child
-		groups[id] = group
+		group := entrySourceGroupFor(groups, id)
+		group.object, group.document = child.Obj, child.Doc
 		if restricted {
 			if selection.Root(d.loader.RootEvidence(id, nil, true)).Admitted {
 				addEntrySource(groups, id, manifest.NamedResource{})
@@ -274,7 +287,8 @@ func (d *Session) addLoadedSources(
 				continue
 			}
 			ref, _, _ := child.SourcePath()
-			if allowMissing || groups[ref].evidence.Obj != nil || d.cfg.Store.GetObject(ref) != nil {
+			group := groups[ref]
+			if allowMissing || group != nil && group.object != nil || d.cfg.Store.GetObject(ref) != nil {
 				addEntrySource(groups, ref, child.Identity)
 			}
 		}
@@ -282,18 +296,14 @@ func (d *Session) addLoadedSources(
 	return nil
 }
 
-func entrySourceReference(ref *manifest.Reference) bool {
-	return ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact")
-}
-
-func (d *Session) addMissingSources(groups map[manifest.NamedResource]entrySourceGroup) {
+func (d *Session) addMissingSources(groups map[manifest.NamedResource]*entrySourceGroup) {
 	for kind := range manifest.Kinds() {
 		if !kind.Runnable {
 			continue
 		}
 		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-				if entrySourceReference(&ref) {
+				if ref.IsSource() && ref.NamedResource.KindInfo().IsSource() {
 					addEntrySource(groups, ref.NamedResource, obj.Named())
 				}
 			}
@@ -302,7 +312,7 @@ func (d *Session) addMissingSources(groups map[manifest.NamedResource]entrySourc
 	d.addMissingIndexedSources(groups)
 }
 
-func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]entrySourceGroup) {
+func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]*entrySourceGroup) {
 	if d.loader == nil {
 		return
 	}
@@ -314,7 +324,7 @@ func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]ent
 			continue
 		}
 		for ref := range d.loader.References(id) {
-			if entrySourceReference(&ref) {
+			if ref.IsSource() && ref.NamedResource.KindInfo().IsSource() {
 				addEntrySource(groups, ref.NamedResource, manifest.NamedResource{})
 			}
 		}
@@ -327,29 +337,29 @@ func (d *Session) entrySourceObject(
 	group *entrySourceGroup,
 ) manifest.BaseManifest {
 	if group.scoped {
-		if group.evidence.Obj != nil {
-			d.cfg.Store.AddObject(group.evidence.Obj, group.evidence.Doc)
+		if group.object != nil {
+			d.cfg.Store.AddObject(group.object, group.document)
 		}
-		return group.evidence.Obj
+		return group.object
 	}
 	restricted := d.loader != nil && d.loader.Options.Session != nil
 	obj := d.cfg.Store.GetObject(id)
 	if previous, seen := d.resolvedSources.snapshot()[id]; restricted && seen && previous.synthetic &&
 		obj == previous.object &&
-		group.evidence.Obj != nil {
-		obj = group.evidence.Obj
+		group.object != nil {
+		obj = group.object
 	}
 	if obj != nil {
 		return obj
 	}
-	obj = group.evidence.Obj
+	obj = group.object
 	independentlyAdmitted := false
 	if restricted && obj != nil {
 		independentlyAdmitted = selection.Root(d.loader.RootEvidence(id, nil, true)).Admitted
 	}
 	if obj != nil &&
 		(independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool { return d.cfg.Store.GetObject(requester) != nil })) {
-		d.cfg.Store.AddObject(obj, group.evidence.Doc)
+		d.cfg.Store.AddObject(obj, group.document)
 	}
 	return obj
 }
@@ -551,7 +561,7 @@ func (a *Admission) resolve(
 ) (entryResolution, error) {
 	bootstrap := a.input
 	candidate := entryResolution{object: obj, input: bootstrap, synthetic: obj == nil}
-	if obj == nil {
+	if obj == nil && id.CanBindLocal() {
 		obj, _ = id.BindLocal(bootstrap.LocalPath)
 	}
 	behavior, ok := obj.(entrySource)

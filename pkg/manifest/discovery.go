@@ -35,7 +35,7 @@ func (p Production) Materializer(target NamedResource) NamedResource {
 	if p.Declaration != (NamedResource{}) && p.File != "" && !filepath.IsLocal(p.File) {
 		return NamedResource{}
 	}
-	if target.Group == SourceDomain && p.Declaration == (NamedResource{}) && (p.Path != "" || p.File != "") {
+	if target.KindInfo().IsSource() && p.Declaration == (NamedResource{}) && (p.Path != "" || p.File != "") {
 		return NamedResource{}
 	}
 	return p.Owner

@@ -1,8 +1,8 @@
 package loader
 
 import (
+	"cmp"
 	"hash/maphash"
-	"maps"
 	"path/filepath"
 	"sync/atomic"
 
@@ -28,14 +28,28 @@ type admissionSource struct {
 	side                     manifest.TreeSide
 }
 
-// SourceFacts borrows comparison facts while capturing current source authority.
+type sourceBinding struct {
+	source  manifest.NamedResource
+	next    *sourceBinding
+	current atomic.Pointer[admissionSource]
+	// visited MUST remain exclusive to serial source initialization.
+	visited bool
+}
+
+// SourceFacts MUST capture current reads before reusing source evidence.
 func (l *Loader) SourceFacts(source manifest.NamedResource, reads *store.ReadSet) selection.SourceFacts {
-	if source == (manifest.NamedResource{}) {
-		source = manifest.BootstrapSourceID
-	}
+	return l.admissionSourceFacts(source, reads, false)
+}
+
+func (l *Loader) admissionSourceFacts(
+	source manifest.NamedResource,
+	reads *store.ReadSet,
+	initialize bool,
+) selection.SourceFacts {
+	source = cmp.Or(source, manifest.BootstrapSourceID)
 	changes, snapshots, declarations := l.Options.Changes.ForSource(source)
 	side, sideKnown := l.comparisonSide()
-	evidence := &admissionSource{
+	evidence := admissionSource{
 		source: source, changes: changes, snapshots: snapshots, declarations: declarations,
 		frozen: l.frozen, sideKnown: sideKnown, side: side,
 	}
@@ -49,18 +63,20 @@ func (l *Loader) SourceFacts(source manifest.NamedResource, reads *store.ReadSet
 	delta := changes
 	input, _ := objects.GetArtifact(source, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
 	declaration := objects.GetObject(source)
+	evidence.input, evidence.declaration = input, declaration
 	if cached := l.sourceBinding(source); cached != nil {
-		if cached.matchesComparison(l, evidence) && cached.matchesInputs(input, declaration) {
-			*evidence = *cached
-			return l.sourceViewFacts(evidence, false)
+		if cached.reusable(l, &evidence, initialize) {
+			evidence = *cached
+			return l.sourceViewFacts(&evidence, false)
 		}
 		evidence.initial, evidence.initialKnown = cached.initial, cached.initialKnown
 	}
 
-	derived := true
-	defer func() { l.publishSource(source, evidence) }()
-	evidence.declaration = declaration
-	evidence.delta, evidence.input, evidence.bound, evidence.paired = delta, input, true, false
+	if initialize && !evidence.initialKnown {
+		evidence.initial, evidence.initialKnown = input, true
+	}
+	defer l.publishSource(source, &evidence)
+	evidence.delta, evidence.bound, evidence.paired = delta, true, false
 	evidence.origin = l.SourceRoot
 	if input != nil {
 		evidence.origin = input.OriginPath(input.LocalPath)
@@ -81,23 +97,23 @@ func (l *Loader) SourceFacts(source manifest.NamedResource, reads *store.ReadSet
 		}
 		if bound && input.Reads.Valid() {
 			evidence.paired = true
-			return l.sourceViewFacts(evidence, derived)
+			return l.sourceViewFacts(&evidence, true)
 		}
 	}
 	if source == manifest.BootstrapSourceID {
-		return l.sourceViewFacts(evidence, derived)
+		return l.sourceViewFacts(&evidence, true)
 	}
 	location := sourceView(source, l.SourceRoot, input, declaration)
 	if !location.Pinned && !location.External {
 		delta, _, _ = l.Options.Changes.ForSource(manifest.BootstrapSourceID)
 		evidence.delta = delta
-		return l.sourceViewFacts(evidence, derived)
+		return l.sourceViewFacts(&evidence, true)
 	}
 	evidence.delta = nil
-	return l.sourceViewFacts(evidence, derived)
+	return l.sourceViewFacts(&evidence, true)
 }
 
-func (e *admissionSource) matchesComparison(l *Loader, current *admissionSource) bool {
+func (e *admissionSource) reusable(l *Loader, current *admissionSource, initialize bool) bool {
 	comparison := e.bound && e.changes == current.changes
 	if !e.paired && e.source != manifest.BootstrapSourceID {
 		location := sourceView(e.source, l.SourceRoot, e.input, e.declaration)
@@ -106,9 +122,11 @@ func (e *admissionSource) matchesComparison(l *Loader, current *admissionSource)
 			comparison = comparison && e.delta == delta
 		}
 	}
-	inputs := e.snapshots == current.snapshots && e.declarations == current.declarations
+	inputs := e.snapshots == current.snapshots && e.declarations == current.declarations &&
+		e.matchesInputs(current.input, current.declaration)
 	interpretation := e.frozen == current.frozen && e.sideKnown == current.sideKnown && e.side == current.side
-	return comparison && inputs && interpretation
+	initialized := !initialize || e.initialKnown
+	return comparison && inputs && interpretation && initialized
 }
 
 func (e *admissionSource) matchesInputs(input *store.SourceArtifact, declaration manifest.BaseManifest) bool {
@@ -119,24 +137,17 @@ func (l *Loader) publishSource(source manifest.NamedResource, evidence *admissio
 	bucket := l.sourceBucket(source)
 	for {
 		previous := bucket.Load()
-		if previous != nil {
-			if slot := (*previous)[source]; slot != nil {
-				slot.Store(new(*evidence))
-				return
-			}
+		if binding := findSourceBinding(previous, source); binding != nil {
+			binding.current.Store(new(*evidence))
+			return
 		}
-		// Runtime discoveries MUST NOT copy the catalog to cache one source.
+		// Frozen membership MUST NOT expand for runtime discoveries.
 		if l.frozen {
 			return
 		}
-		next := make(map[manifest.NamedResource]*atomic.Pointer[admissionSource])
-		if previous != nil {
-			maps.Copy(next, *previous)
-		}
-		slot := new(atomic.Pointer[admissionSource])
-		slot.Store(new(*evidence))
-		next[source] = slot
-		if bucket.CompareAndSwap(previous, &next) {
+		next := &sourceBinding{source: source, next: previous}
+		next.current.Store(new(*evidence))
+		if bucket.CompareAndSwap(previous, next) {
 			return
 		}
 	}
@@ -186,9 +197,16 @@ func (l *Loader) sourceViewFacts(e *admissionSource, derived bool) selection.Sou
 }
 
 func (l *Loader) sourceBinding(source manifest.NamedResource) *admissionSource {
-	if bindings := l.sourceBucket(source).Load(); bindings != nil {
-		if slot := (*bindings)[source]; slot != nil {
-			return slot.Load()
+	if binding := findSourceBinding(l.sourceBucket(source).Load(), source); binding != nil {
+		return binding.current.Load()
+	}
+	return nil
+}
+
+func findSourceBinding(binding *sourceBinding, source manifest.NamedResource) *sourceBinding {
+	for ; binding != nil; binding = binding.next {
+		if binding.source == source {
+			return binding
 		}
 	}
 	return nil
@@ -199,6 +217,6 @@ var sourceBindingSeed = maphash.MakeSeed()
 
 func (l *Loader) sourceBucket(
 	source manifest.NamedResource,
-) *atomic.Pointer[map[manifest.NamedResource]*atomic.Pointer[admissionSource]] {
+) *atomic.Pointer[sourceBinding] {
 	return &l.bindings[maphash.Comparable(sourceBindingSeed, source)%uint64(len(l.bindings))]
 }

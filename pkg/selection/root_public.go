@@ -87,10 +87,8 @@ func coveringRoot(facts *RootEvidence, candidate *RootCoveringOwner) bool {
 		}) {
 		return false
 	}
-	producer, produces := candidate.Object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
-	if !produces || !producer.EmissionPolicy().MatchesNamespace(facts.Identity) {
+	if !manifest.KindOf(candidate.Object).Parent ||
+		!candidate.Object.EmissionPolicy().MatchesNamespace(facts.Identity) {
 		return false
 	}
 	return rootCoversPath(facts, candidate)

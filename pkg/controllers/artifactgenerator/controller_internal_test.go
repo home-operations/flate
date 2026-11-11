@@ -233,6 +233,8 @@ func TestArtifactGenerator_Disabled(t *testing.T) {
 
 	generatorForTestResult2 := generatorForTest(t, nil)
 	obj, doc := generatorForTestResult2.object, generatorForTestResult2.document
+	obj.Spec["pathPattern"] = 12
+	doc["spec"].(map[string]any)["pathPattern"] = 12
 	doc["metadata"].(map[string]any)["annotations"] = map[string]any{
 		"source.extensions.fluxcd.io/reconcile": "DiSaBlEd",
 	}
@@ -257,7 +259,10 @@ func TestArtifactGenerator_Disabled(t *testing.T) {
 	assert.FatalIf(t, emissions.Load() != 0, "%v", "disabled generator published an artifact")
 
 	{
-		_, err := decodeSpec(obj.Spec)
+		decoded, err := obj.ArtifactGeneratorSpec()
+		if err == nil {
+			err = validateSpec(&decoded)
+		}
 		assert.FatalIf(t, err == nil, "%v", "disabled fixture should be invalid when enabled")
 	}
 }
@@ -599,7 +604,16 @@ func assertGeneratorWork(
 	for i := range summary {
 		record := &summary[i]
 		assert.Equal(t, record.Key.Tree, manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead})
-		assert.Equal(t, record.Key.Source, manifest.BootstrapSourceID)
+		source := manifest.BootstrapSourceID
+		if record.Key.Phase != manifest.WorkAdmission {
+			source = manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Namespace: "apps",
+				Name:      "repo",
+			}
+		}
+		assert.Equal(t, record.Key.Source, source)
 		if record.Key.Phase != manifest.WorkAdmission {
 			assert.Equal(t, record.Key.Owner, id)
 		}

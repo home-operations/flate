@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/pkg/controllers/base"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -110,7 +112,15 @@ func TestRenderTrees_EntryPublicationSourcePreparation(t *testing.T) {
 	assert.Equal(t, afterSourceFacts.Input == beforeSourceFacts.Input, true)
 	assert.Equal(t, afterSourceFacts.Declaration == beforeSourceFacts.Declaration, true)
 	assert.Equal(t, afterSourceFacts.Delta == beforeSourceFacts.Delta, true)
-	assert.Diff(t, slices.Collect(manifest.References(current, manifest.ReferenceRelations)), beforeRefs)
+	assert.Equal(
+		t,
+		cmp.Diff(
+			beforeRefs,
+			slices.Collect(manifest.References(current, manifest.ReferenceRelations)),
+			cmp.AllowUnexported(manifest.Reference{}),
+		),
+		"",
+	)
 	assert.Equal(t, caller.Valid(), true)
 	result, committed, err := o.selection.Admit(t.Context(), selection.AdmissionOptions{
 		Request: proposal.Request, Stage: selection.Execution,
@@ -431,7 +441,15 @@ func TestRenderTrees_SourcePublicationKeepsHelmReleasePreparation(t *testing.T) 
 		assert.Equal(t, manifest.Equal(object, before[input]), true)
 		assert.Equal(t, manifest.ValueEqual(document, documents[input]), true)
 		assert.Diff(t, current.Productions(input, o.loader.SelectionIndex()), productions[input])
-		assert.Diff(t, slices.Collect(manifest.References(object, manifest.ReferenceRelations)), references[input])
+		assert.Equal(
+			t,
+			cmp.Diff(
+				references[input],
+				slices.Collect(manifest.References(object, manifest.ReferenceRelations)),
+				cmp.AllowUnexported(manifest.Reference{}),
+			),
+			"",
+		)
 		facts, oldFacts := o.store.ReferenceFacts(input, o.loader.SelectionIndex(), id), referenceFacts[input]
 		assert.Equal(t, facts.Generated, oldFacts.Generated)
 		assert.Equal(t, facts.Offline, oldFacts.Offline)

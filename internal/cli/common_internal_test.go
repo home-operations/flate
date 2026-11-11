@@ -571,3 +571,29 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	assert.Diff(t, side.Unrelated, []manifest.Warning{base})
 	assert.Diff(t, side.External, []manifest.Warning{detail})
 }
+
+func TestCommonFlags_Roots(t *testing.T) {
+	t.Parallel()
+	flags := commonFlags{namespace: "apps"}
+	assert.Diff(
+		t,
+		flags.roots(
+			"selected",
+			manifest.KindKustomization,
+			manifest.KindGitRepository,
+			manifest.KindConfigMap,
+			"Unknown",
+		),
+		[]manifest.NamedResource{
+			{
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Namespace: "apps",
+				Name:      "selected",
+			},
+			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "selected"},
+			{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"},
+			{Kind: "Unknown", Namespace: "apps", Name: "selected"},
+		},
+	)
+}

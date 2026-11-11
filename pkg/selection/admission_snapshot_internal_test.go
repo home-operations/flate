@@ -558,6 +558,55 @@ func (f *countedAdmissionFacts) OccurrenceRoots(id manifest.NamedResource) (mani
 
 func TestAdmission_RecordProjectsOnlyConsumedContentRoots(t *testing.T) {
 	t.Parallel()
+	for _, use := range []string{"chart", "artifact"} {
+		t.Run(use, func(t *testing.T) {
+			t.Parallel()
+			source := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Name:      "first",
+				Namespace: "apps",
+			}
+			other := source
+			other.Name = "second"
+			var obj manifest.BaseManifest = &manifest.HelmRelease{
+				Name: "consumer", Namespace: "apps",
+				ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name},
+			}
+			if use == "artifact" {
+				obj = &manifest.RawObject{
+					APIVersion: "source.extensions.fluxcd.io/v1beta1",
+					Kind:       "ArtifactGenerator",
+					Name:       "consumer",
+					Namespace:  "apps",
+					Spec: map[string]any{"sources": []any{
+						map[string]any{"kind": source.Kind, "name": source.Name},
+						map[string]any{"kind": other.Kind, "name": other.Name},
+					}},
+				}
+			}
+			st := store.New()
+			c := solverClosure(t, st, &solverFacts{store: st})
+			c.generation = []store.Child{{Obj: obj}}
+			c.states[obj.Named()] = admissionState{incoming: 1}
+			record := manifest.DiscoveryRecord{Refs: []manifest.NamedResource{other}}
+			var sources []manifest.NamedResource
+			c.yieldObjectSources(obj.Named(), &record, func(id manifest.NamedResource) bool {
+				sources = append(sources, id)
+				return true
+			})
+			assert.Diff(t, sources, []manifest.NamedResource{source})
+			assert.Equal(t, c.incomingContentSource(obj, &record), source)
+			assert.Equal(t, c.incomingContentSource(nil, &record), other)
+			sources = nil
+			c.yieldObjectSources(manifest.NamedResource{}, &record, func(id manifest.NamedResource) bool {
+				sources = append(sources, id)
+				return true
+			})
+			assert.Diff(t, sources, []manifest.NamedResource{other})
+		})
+	}
+
 	st := store.New()
 	id := (&manifest.Kustomization{Name: "child", Namespace: "apps"}).Named()
 	parent := (&manifest.Kustomization{Name: "parent", Namespace: "apps"}).Named()

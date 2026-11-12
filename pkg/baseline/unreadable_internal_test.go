@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -26,6 +27,14 @@ func TestAutoResolve_UnreadableCheckoutRetainsError(t *testing.T) {
 	} else {
 		assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "fixture read failed unexpectedly: %v", err)
 	}
-	_, err := AutoResolve(t.Context(), root, base.String(), cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    root,
+			Base:    base.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.FatalIf(t, !errors.Is(err, fs.ErrPermission), "checkout read error lost: %v", err)
 }

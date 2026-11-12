@@ -11,13 +11,14 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -111,9 +112,12 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 	statementInput.cfg.Cache = cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(
 		t.Context(),
-		(*statementInput.headRoot),
-		old.String(),
-		statementInput.cfg.Cache,
+		baseline.Config{
+			Network: networktest.New(t),
+			Path:    (*statementInput.headRoot),
+			Base:    old.String(),
+			Cache:   statementInput.cfg.Cache,
+		},
 	)
 	assert.NoError(t, err)
 	statementInput.cfg.Input, statementInput.cfg.BaseInput = selected.Source, selected.BaseInput
@@ -245,9 +249,12 @@ func pinnedSourceAdmittedViews(t *testing.T, statementInput *testRenderTreesAdmi
 	statementInput.cfg.Cache = cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(
 		t.Context(),
-		(*statementInput.headRoot),
-		baseHash.String(),
-		statementInput.cfg.Cache,
+		baseline.Config{
+			Network: networktest.New(t),
+			Path:    (*statementInput.headRoot),
+			Base:    baseHash.String(),
+			Cache:   statementInput.cfg.Cache,
+		},
 	)
 	assert.NoError(t, err)
 	statementInput.cfg.BaseInput, statementInput.cfg.Input = selected.BaseInput, selected.Source

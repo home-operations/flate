@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -9,38 +10,26 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/transport"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/cli"
 	"github.com/home-operations/flate/internal/testutil"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 )
-
-type entrySourceTransport struct {
-	transport.Transport
-
-	calls atomic.Int64
-}
-
-//nolint:ireturn // The upstream transport requires its session interface.
-func (t *entrySourceTransport) NewUploadPackSession(
-	*transport.Endpoint,
-	transport.AuthMethod,
-) (transport.UploadPackSession, error) {
-	t.calls.Add(1)
-	return nil, transport.ErrRepositoryNotFound
-}
 
 func TestE2E_DeclaredEntrySource(t *testing.T) {
 	t.Setenv("FLATE_CACHE_DIR", "")
-	counter := &entrySourceTransport{}
-	previous := client.Protocols["git"]
-	client.InstallProtocol("git", counter)
-	t.Cleanup(func() { client.InstallProtocol("git", previous) })
+	var attempts atomic.Int64
+	routes := sourcegit.Transports{
+		"git": func(context.Context, sourcegit.TransportRequest) (sourcegit.Connection, error) {
+			attempts.Add(1)
+			return nil, transport.ErrRepositoryNotFound
+		},
+	}
 	for _, declarationPath := range []string{"entry", "entry/config"} {
 		t.Run(declarationPath, func(t *testing.T) {
 			root := t.TempDir()
@@ -109,11 +98,11 @@ func TestE2E_DeclaredEntrySource(t *testing.T) {
 				code := cli.Run([]string{
 					"build", "ks", "cluster-apps", "--path", filepath.Join(root, "entry"), "-n", "flux-system",
 					"--concurrency", "2", "--no-progress",
-				}, &stdout, &stderr)
+				}, &stdout, &stderr, cli.RunConfig{GitTransports: routes})
 				assert.Equal(t, code, 0)
 				assert.Equal(t, stdout.String(), want)
 				assert.Equal(t, stderr.String(), "")
-				assert.Equal(t, counter.calls.Load(), int64(0))
+				assert.Equal(t, attempts.Load(), int64(0))
 			}
 		})
 	}
@@ -160,7 +149,7 @@ spec:
 		code := cli.Run([]string{
 			"test", "all", "--path", filepath.Join(root, "clusters", "prod"),
 			"--concurrency=2", "--no-progress", "--log-level=error",
-		}, &stdout, &stderr)
+		}, &stdout, &stderr, cli.RunConfig{})
 		got := entrySourceTestOutput(stdout.String())
 		assert.Equal(t, code, 0)
 		assert.Equal(t, got, want)
@@ -260,7 +249,7 @@ spec:
 				code := cli.Run([]string{
 					"test", "all", "--path", filepath.Join(root, entry),
 					"--concurrency=2", "--no-progress", "--log-level=error",
-				}, &stdout, &stderr)
+				}, &stdout, &stderr, cli.RunConfig{})
 				got := entrySourceTestOutput(stdout.String())
 				assert.Equal(t, code, 1)
 				assert.Equal(t, got, tc.want)

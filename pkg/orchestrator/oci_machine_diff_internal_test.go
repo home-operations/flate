@@ -10,10 +10,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/selection"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -209,7 +210,10 @@ spec:
 	cache, err := sourcecache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
 	defer cache.Close()
-	inputs, err := baseline.AutoResolve(t.Context(), filepath.Join(root, "entry"), "HEAD", cache)
+	inputs, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: filepath.Join(root, "entry"), Base: "HEAD", Cache: cache},
+	)
 	assert.NoError(t, err)
 	trees := []Tree{
 		{

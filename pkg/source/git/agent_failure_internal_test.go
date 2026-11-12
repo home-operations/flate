@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
-	gitlib "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	gitlib "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -28,8 +27,7 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-//nolint:paralleltest // The test replaces go-git protocol registration and restores it afterward.
-//nolint:paralleltest // The test replaces process-wide go-git protocol registration.
+//nolint:paralleltest // The test changes HOME for SSH credentials.
 func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
 	for _, phase := range []string{"view", "publication"} {
 		t.Run(phase, func(t *testing.T) {
@@ -50,13 +48,16 @@ func TestFetcher_AmbientSubmodulesShareAttempt(t *testing.T) {
 	t.Setenv("HOME", homeDir)
 	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
 	root, leaf := t.TempDir(), t.TempDir()
+	tr := &testutil.GitSSH{Host: host, Allowed: key.PublicKey(), Roots: []string{root, leaf}}
+	address := testutil.LocalGitSSH(t, tr)
+	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{address}, host.PublicKey())+"\n")
 	mustInitRepo(t, leaf)
 	mustInitRepoWithFiles(
 		t,
 		root,
 		map[string]string{
 			"hello.txt":   "parent",
-			".gitmodules": "[submodule \"lib\"]\n\tpath = lib\n\turl = ssh://git@fixture" + leaf + "\n",
+			".gitmodules": "[submodule \"lib\"]\n\tpath = lib\n\turl = ssh://git@" + address + leaf + "\n",
 		},
 	)
 	repository, err := gitlib.PlainOpen(root)
@@ -77,23 +78,19 @@ func TestFetcher_AmbientSubmodulesShareAttempt(t *testing.T) {
 		},
 	)
 	assert.NoError(t, err)
-	tr := &agentAuthentication{Transport: server.DefaultServer, host: host.PublicKey(), allowed: key.PublicKey()}
-	previous := client.Protocols["ssh"]
-	client.InstallProtocol("ssh", tr)
-	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
-	repo := gitRepoWithSecret("modules", "ssh://git@fixture"+root, "auth")
+	repo := gitRepoWithSecret("modules", "ssh://git@"+address+root, "auth")
 	repo.RecurseSubmodules = true
 	reads := (testInputs{}).readSet(repo)
 	defer reads.Close()
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	_, err = fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "prepare = %v", err)
 	artifact, err := fetchtest.Retry(t.Context(), missing.RetryAmbient)
 	assert.NoError(t, err)
 	<-closed
-	if opened.Load() != 1 || tr.authenticated.Load() < 2 {
-		t.Fatalf("attempt sharing: opened=%d authenticated=%d", opened.Load(), tr.authenticated.Load())
+	if opened.Load() != 1 || tr.Authenticated.Load() < 2 {
+		t.Fatalf("attempt sharing: opened=%d authenticated=%d", opened.Load(), tr.Authenticated.Load())
 	}
 	data, err := fs.ReadFile(artifact.FS, "lib/hello.txt")
 	assert.NoError(t, err)
@@ -127,8 +124,7 @@ func testFetcherAmbientPostAuthenticationFailureCase(
 		tree, err := commit.Tree()
 		assert.NoError(t, err)
 		tree.Entries[0].Name = ".."
-		encoded := repository.Storer.NewEncodedObject()
-		assert.NoError(t, tree.Encode(encoded))
+		var encoded plumbing.EncodedObject = testutil.GitMalformedTree(t, tree, 0)
 		commit.TreeHash, err = repository.Storer.SetEncodedObject(encoded)
 		assert.NoError(t, err)
 		encoded = repository.Storer.NewEncodedObject()
@@ -137,20 +133,19 @@ func testFetcherAmbientPostAuthenticationFailureCase(
 		assert.NoError(t, err)
 		assert.NoError(t, repository.Storer.SetReference(plumbing.NewHashReference(head.Name(), hash)))
 	}
-	tr := &agentAuthentication{
-		Transport: server.DefaultServer,
-		host:      host.PublicKey(),
-		allowed:   key.PublicKey(),
+	tr := &testutil.GitSSH{
+		Host:    host,
+		Roots:   []string{root},
+		Allowed: key.PublicKey(),
 	}
-	previous := client.Protocols["ssh"]
-	client.InstallProtocol("ssh", tr)
-	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
+	address := testutil.LocalGitSSH(t, tr)
+	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{address}, host.PublicKey())+"\n")
 	cacheDir := t.TempDir()
-	f := &Fetcher{Cache: cachetest.New(t, cacheDir, sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, cacheDir, sourcecache.New)}
 	if (*phase) == "publication" {
 		blobDir := filepath.Join(cacheDir, "oci", "blobs", "sha256")
 		assert.NoError(t, os.MkdirAll(blobDir, 0o750))
-		tr.afterAuth = func() error {
+		tr.AfterAuth = func() error {
 			if err := os.Rename(blobDir, blobDir+".held"); err != nil {
 				return err
 			}
@@ -158,7 +153,7 @@ func testFetcherAmbientPostAuthenticationFailureCase(
 		}
 		defer func() { _ = os.Remove(blobDir); _ = os.Rename(blobDir+".held", blobDir) }()
 	}
-	repo := gitRepoWithSecret("failure", "ssh://git@fixture"+root, "auth")
+	repo := gitRepoWithSecret("failure", "ssh://git@"+address+root, "auth")
 	reads := (testInputs{}).readSet(repo)
 	defer reads.Close()
 	_, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
@@ -170,7 +165,7 @@ func testFetcherAmbientPostAuthenticationFailureCase(
 		"view" &&
 		!errors.Is(err, manifest.ErrInput), "ambient %s failure = %v, %v", (*phase), artifact, err)
 	<-closed
-	if opened.Load() != 1 || tr.authenticated.Load() == 0 {
-		t.Fatalf("post-auth failure: opened=%d authenticated=%d", opened.Load(), tr.authenticated.Load())
+	if opened.Load() != 1 || tr.Authenticated.Load() == 0 {
+		t.Fatalf("post-auth failure: opened=%d authenticated=%d", opened.Load(), tr.Authenticated.Load())
 	}
 }

@@ -390,7 +390,7 @@ func benchmarkWorkRun(b *testing.B, tc *workBenchCase, peakArm bool) {
 		}
 		b.StartTimer()
 		started = time.Now()
-		code := Run(args, &stdout, &stderr)
+		code := Run(args, &stdout, &stderr, RunConfig{})
 		elapsed := time.Since(started)
 		b.StopTimer()
 		if peakArm {
@@ -449,7 +449,7 @@ func (tc *workBenchCase) validateRun(
 	if tc.edited != 0 {
 		proofArgs = append(append([]string{}, args...), "--log-level", "debug")
 	}
-	if code := Run(proofArgs, stdout, stderr); code != 0 {
+	if code := Run(proofArgs, stdout, stderr, RunConfig{}); code != 0 {
 		b.Fatalf("prevalidation exit=%d: %s", code, stderr)
 	}
 	want := sha256.Sum256(stdout.Bytes())
@@ -564,7 +564,7 @@ func prepareWorkBench(b *testing.B, tc *workBenchCase) workBenchPreparation {
 				"4",
 			},
 			io.Discard,
-			&stderr,
+			&stderr, RunConfig{},
 		); code != 0 {
 			if tc.before != nil {
 				b.Fatalf("accepted BASE seed: %s", &stderr)

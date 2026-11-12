@@ -1,23 +1,17 @@
 package git
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
-	"net"
 	"os"
 	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/store"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/server"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
@@ -32,128 +26,12 @@ import (
 func localGitSSH(t *testing.T, root string, allowed ssh.PublicKey) (string, *atomic.Int32) {
 	t.Helper()
 	_, host := testSSHIdentity(t)
-	var authenticated atomic.Int32
-	config := &ssh.ServerConfig{
-		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			if !bytes.Equal(key.Marshal(), allowed.Marshal()) {
-				return nil, transport.ErrAuthorizationFailed
-			}
-			return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
-		},
-	}
-	config.AddHostKey(host)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	assert.NoError(t, err)
+	fixture := &testutil.GitSSH{Host: host, Allowed: allowed, Roots: []string{root}}
+	address := testutil.LocalGitSSH(t, fixture)
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
-	testutil.WriteFile(
-		t,
-		homeDir,
-		".ssh/known_hosts",
-		knownhosts.Line([]string{listener.Addr().String()}, host.PublicKey())+"\n",
-	)
-	endpoint, err := transport.NewEndpoint(filepath.Join(root, ".git"))
-	assert.NoError(t, err)
-	var workers sync.WaitGroup
-	workers.Go(func() {
-		acceptGitSSH(t, listener, &testGitSSHServer{
-			root: &root, config: &config, endpoint: &endpoint, workers: &workers, authenticated: &authenticated,
-		})
-	})
-	t.Cleanup(func() { _ = listener.Close(); workers.Wait() })
-	return "ssh://git@" + listener.Addr().String() + root, &authenticated
-}
-
-type testGitSSHServer struct {
-	root          *string
-	config        **ssh.ServerConfig
-	endpoint      **transport.Endpoint
-	workers       *sync.WaitGroup
-	authenticated *atomic.Int32
-}
-
-func acceptGitSSH(t *testing.T, listener net.Listener, fixture *testGitSSHServer) {
-	t.Helper()
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		fixture.workers.Go(func() { serveGitSSH(t, conn, fixture) })
-	}
-}
-
-func serveGitSSH(t *testing.T, conn net.Conn, fixture *testGitSSHServer) {
-	t.Helper()
-	defer conn.Close()
-	connection, channels, requests, err := ssh.NewServerConn(conn, *fixture.config)
-	if err != nil {
-		return
-	}
-	fixture.authenticated.Add(1)
-	defer connection.Close()
-	fixture.workers.Go(func() { ssh.DiscardRequests(requests) })
-	for incoming := range channels {
-		if incoming.ChannelType() != "session" {
-			_ = incoming.Reject(ssh.UnknownChannelType, "session required")
-			continue
-		}
-		channel, requests, err := incoming.Accept()
-		if err != nil {
-			return
-		}
-		fixture.workers.Go(func() { serveGitSSHSession(t, channel, requests, fixture) })
-	}
-}
-
-func serveGitSSHSession(t *testing.T, channel ssh.Channel, requests <-chan *ssh.Request, fixture *testGitSSHServer) {
-	t.Helper()
-	defer channel.Close()
-	for {
-		request, ok := <-requests
-		if !ok {
-			return
-		}
-		var command struct{ Command string }
-		if request.Type != "exec" || ssh.Unmarshal(request.Payload, &command) != nil ||
-			command.Command != fmt.Sprintf("git-upload-pack '%s'", *fixture.root) {
-			_ = request.Reply(false, nil)
-			continue
-		}
-		_ = request.Reply(true, nil)
-		break
-	}
-	session, err := server.DefaultServer.NewUploadPackSession(*fixture.endpoint, nil)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	defer session.Close()
-	refs, err := session.AdvertisedReferencesContext(t.Context())
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if encodeErr := refs.Encode(channel); encodeErr != nil {
-		t.Error(encodeErr)
-		return
-	}
-	input := packp.NewUploadPackRequest()
-	if decodeErr := input.Decode(channel); decodeErr != nil {
-		t.Error(decodeErr)
-		return
-	}
-	response, err := session.UploadPack(t.Context(), input)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	defer response.Close()
-	if err := response.Encode(channel); err != nil {
-		t.Error(err)
-		return
-	}
-	_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{address}, host.PublicKey())+"\n")
+	return "ssh://git@" + address + root, &fixture.Authenticated
 }
 
 //nolint:paralleltest // Credential fixture helpers change the process environment.
@@ -201,7 +79,7 @@ func testFetcherLocalAgentSSHCase(t *testing.T, shape *string,
 	}
 	reads := inputs.readSet(repo)
 	defer reads.Close()
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
 	if (*shape) == "explicit rejected" {
 		if err == nil || errors.Is(err, manifest.ErrMissingSecret) != ((*shape) == "absent") ||

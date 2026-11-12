@@ -21,7 +21,7 @@ import (
 func runCLI(t *testing.T, args ...string) cliResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Run(args, &stdout, &stderr)
+	code := Run(args, &stdout, &stderr, RunConfig{})
 	return cliResult{stdout: stdout.String(), stderr: stderr.String(), code: code}
 }
 
@@ -580,7 +580,7 @@ func TestRun_TestAll_ReturnsStdoutWriteError(t *testing.T) {
 	path := writeUnreadableSecretFixture(t)
 	want := errors.New("stdout closed")
 	var stderr bytes.Buffer
-	code := Run([]string{"test", "all", "--path", path}, failingWriter{err: want}, &stderr)
+	code := Run([]string{"test", "all", "--path", path}, failingWriter{err: want}, &stderr, RunConfig{})
 	assert.FatalIf(t, code == 0, "%v", "expected non-zero for stdout write failure")
 	assert.ErrorIf(
 		t,

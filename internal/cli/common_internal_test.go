@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -148,9 +148,11 @@ func TestOutputValue_Validates(t *testing.T) {
 
 func writeBaselineGit(t *testing.T, root string, urls ...string) {
 	t.Helper()
-	{
-		_, err := git.PlainInit(root, false)
-		assert.FatalIf(t, err != nil && !errors.Is(err, git.ErrRepositoryAlreadyExists), "%v", err)
+	_, err := git.PlainOpen(root)
+	if errors.Is(err, git.ErrRepositoryNotExists) {
+		testutil.GitInit(t, root)
+	} else {
+		assert.NoError(t, err)
 	}
 	var cfg strings.Builder
 	for i, url := range urls {
@@ -184,7 +186,7 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 		{name: "no repositories"},
 		{name: "no remotes", currentGit: true, baseline: "empty"},
 		{name: "baseline only", baseline: "different", want: []string{baselineURL}},
-		{name: "optional current open", brokenCurrent: true, baseline: "different", want: []string{baselineURL}},
+		{name: "optional current marker inspection", brokenCurrent: true, baseline: "different", want: []string{baselineURL}},
 		{name: "linked worktree", currentGit: true, baseline: "linked", want: []string{baselineURL}},
 		{name: "nested scan", currentGit: true, baseline: "nested", want: []string{baselineURL}},
 		{name: "sorted remotes", currentGit: true, baseline: "sorted", want: []string{currentURL, baselineURL}},
@@ -199,7 +201,7 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 
 			case tc.brokenCurrent:
 
-				testutil.WriteFile(t, current, ".git", "gitdir: missing\n")
+				assert.NoError(t, os.Symlink(".git", filepath.Join(current, ".git")))
 			}
 			scan := orig
 			switch tc.baseline {
@@ -259,7 +261,7 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	assert.Equal(t, c.pathRoot, "")
 	assert.Equal(t, c.pathOrigRoot, "")
 	assert.Equal(t, c.pathOrigSelfURLs == nil, true)
-	testutil.WriteFile(t, root, ".git/config", "[core]\nrepositoryformatversion = 0\n")
+	testutil.WriteFile(t, root, ".git/config", "[core]\nrepositoryformatversion = 0\n[commit]\ngpgSign = false\n")
 	testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{
 		AllowEmptyCommits: true,
 		Author:            &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
@@ -387,7 +389,7 @@ func TestBindCommon_ChartDigestTrackingOverride(t *testing.T) {
 			if !tc.setEnv {
 				assert.NoError(t, os.Unsetenv(key))
 			}
-			root := New("test")
+			root := New("test", RunConfig{})
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
 			var f commonFlags

@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"strings"
 	"testing"
 
@@ -15,9 +16,9 @@ import (
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
+	gitssh "github.com/go-git/go-git/v6/plumbing/transport/ssh"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
@@ -358,9 +359,9 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	)
 }
 
-func testEndpoint(t *testing.T, url string) *transport.Endpoint {
+func testEndpoint(t *testing.T, url string) *neturl.URL {
 	t.Helper()
-	endpoint, err := transport.NewEndpoint(url)
+	endpoint, err := transport.ParseURL(url)
 	assert.NoError(t, err)
 	return endpoint
 }
@@ -503,7 +504,7 @@ func testFetcherSecretReferencesCase(t *testing.T, inputs *testFetcherSecretRefe
 	if inputs.tc.ssh {
 		repo.URL = "ssh://git@host/repo"
 	}
-	var auth transport.AuthMethod
+	var auth any
 	var err error
 	owner, secretName := repo.Named(), "creds"
 	switch {
@@ -538,7 +539,7 @@ func testFetcherSecretReferencesCase(t *testing.T, inputs *testFetcherSecretRefe
 
 type secretReferenceResult struct {
 	repo       *manifest.GitRepository
-	auth       transport.AuthMethod
+	auth       any
 	err        error
 	owner      manifest.NamedResource
 	secretName string

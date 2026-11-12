@@ -1,5 +1,5 @@
 
-  ✗  GitRepository  flux-system/second  couldn't find remote ref "refs/tags/unavailable"
+  ✗  GitRepository  flux-system/second  couldn't find remote ref: refs/tags/unavailable
          blocks flux-system/b-second
   ✗  Kustomization  flux-system/a-held  kustomize build ./held: accumulating resources: accumulating resources from 'extra.yaml': MalformedYAMLError: yaml: line 1: did not find expected ',' or '}' in File: extra.yaml
 

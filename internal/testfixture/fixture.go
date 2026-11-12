@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
 )
 
 const (
@@ -108,6 +108,10 @@ func (f *Fixture) restore(tb testing.TB) {
 		f.copyRepository(tb, r, target)
 		repo, err := git.PlainInit(target, false)
 		must(tb, err)
+		cfg, err := repo.Config()
+		must(tb, err)
+		cfg.Commit.GpgSign = config.OptBoolFalse
+		must(tb, repo.SetConfig(cfg))
 		f.repositories[r.Name] = repo
 		for _, remote := range r.Remotes {
 			_, err := repo.CreateRemote(

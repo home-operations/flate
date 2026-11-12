@@ -12,12 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
@@ -597,7 +598,10 @@ spec: {url: https://example.test/cluster.git}
 	var err error
 	if repo != nil {
 		testutil.GitCommitAll(t, repo, "optional input appears", options)
-		inputs, err = baseline.AutoResolve(t.Context(), after, base, owner)
+		inputs, err = baseline.AutoResolve(
+			t.Context(),
+			baseline.Config{Network: networktest.New(t), Path: after, Base: base, Cache: owner},
+		)
 	} else {
 		inputs, err = baseline.ResolvePaths(t.Context(), after, before)
 	}

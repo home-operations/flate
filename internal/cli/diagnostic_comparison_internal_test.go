@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -42,7 +42,7 @@ func TestRun_DiagnosticOnlyComparison(t *testing.T) {
 		t.Run(strings.Join(command, "/"), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			args := append(slices.Clone(command), "--path", root, "--base", pin.String(), "--concurrency", "2")
-			code := Run(args, &stdout, &stderr)
+			code := Run(args, &stdout, &stderr, RunConfig{})
 			assert.FatalIf(
 				t,
 				code != 1 || stdout.Len() != 0 || strings.Count(stderr.String(), "Git status unavailable") != 1 ||

@@ -13,22 +13,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
-	objectcache "github.com/go-git/go-git/v5/plumbing/cache"
-	"github.com/go-git/go-git/v5/plumbing/format/packfile"
-	"github.com/go-git/go-git/v5/plumbing/format/pktline"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	"github.com/go-git/go-git/v5/storage"
-	"github.com/go-git/go-git/v5/storage/filesystem"
-	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	objectcache "github.com/go-git/go-git/v6/plumbing/cache"
+	"github.com/go-git/go-git/v6/plumbing/format/packfile"
+	"github.com/go-git/go-git/v6/plumbing/format/pktline"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/protocol/capability"
+	"github.com/go-git/go-git/v6/plumbing/protocol/packp"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	"github.com/go-git/go-git/v6/storage"
+	"github.com/go-git/go-git/v6/storage/filesystem"
+	"github.com/go-git/go-git/v6/storage/memory"
+
+	"github.com/home-operations/flate/internal/testutil/networktest"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -69,7 +71,15 @@ func TestAutoResolve_ExplicitBaseFetchedFromOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := historylessCheckout(t, url, "a.yaml", "pr-tip")
-			res, err := AutoResolve(t.Context(), dir, tc.base, cachetest.New(t, "", sourcecache.New))
+			res, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    dir,
+					Base:    tc.base,
+					Cache:   cachetest.New(t, "", sourcecache.New),
+				},
+			)
 			assert.FatalIf(t, err != nil, "AutoResolve(--base=%s): %v", tc.base, err)
 
 			got, err := fs.ReadFile(res.BaseInput.FS, "a.yaml")
@@ -117,7 +127,10 @@ func TestAutoResolve_ExplicitBaseFetchedDespiteLocalHistory(t *testing.T) {
 	initRepoWithFile(t, dir, "a.yaml", "pr-tip")
 	addOrigin(t, dir, filepath.Join(remote, ".git"))
 
-	res, err := AutoResolve(t.Context(), dir, "main", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "main", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve(--base=main): %v", err)
 
 	if res.BaseInput.Revision != mainCommit.String() {
@@ -133,7 +146,10 @@ func TestAutoResolve_ExplicitBaseNotOnOrigin(t *testing.T) {
 	initRepoWithFile(t, remote, "a.yaml", "base")
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(t.Context(), dir, "nope", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "nope", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.FatalIf(t, err == nil, "%v", "expected error for a rev origin does not have")
@@ -148,7 +164,10 @@ func TestAutoResolve_ExplicitBaseNoOriginRemote(t *testing.T) {
 	t.Parallel()
 	dir := historylessCheckout(t, "", "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(t.Context(), dir, "main", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "main", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
@@ -170,7 +189,10 @@ func TestAutoResolve_UnbornHEADWithoutBase(t *testing.T) {
 	initRepoWithFile(t, remote, "a.yaml", "base")
 	dir := historylessCheckout(t, filepath.Join(remote, ".git"), "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.Equal(t, errors.Is(err, plumbing.ErrReferenceNotFound), true)
@@ -207,19 +229,24 @@ func addOrigin(t *testing.T, dir, url string) {
 
 func TestBaseRemote_FetchPolicy(t *testing.T) {
 	t.Parallel()
-	pin := plumbing.NewHash(strings.Repeat("a", 40))
+	origin := t.TempDir()
+	pin := initRepoWithFile(t, origin, "a.yaml", "requested body")
 	refusal := &pktline.ErrorLine{Text: "partial fetch refused"}
 	responseClose, sessionClose := errors.New("response close"), errors.New("session close")
+	storageError := errors.New("storage lookup")
 	for _, tc := range []struct {
-		name                                     string
-		filter, shallow, reachable, full, bodies bool
-		failures                                 []error
-		wantErr                                  error
-		wantFull                                 bool
-		attempts                                 int
-		cancel                                   bool
-		smallSideband, preCanceled               bool
-		closeErrors                              bool
+		name                                              string
+		filter, shallow, reachable, full, bodies, noExact bool
+		failures                                          []error
+		wantErr                                           error
+		wantFull                                          bool
+		attempts                                          int
+		cancel                                            bool
+		smallSideband, preCanceled                        bool
+		closeErrors                                       bool
+		responsePins                                      []bool
+		preload, wildcard                                 bool
+		storageError                                      error
 	}{
 		{name: "metadata small sideband", filter: true, shallow: true, attempts: 1, smallSideband: true},
 		{name: "already canceled", filter: true, wantErr: context.Canceled, preCanceled: true},
@@ -231,6 +258,7 @@ func TestBaseRemote_FetchPolicy(t *testing.T) {
 		{name: "targeted bodies", filter: true, shallow: true, reachable: true, bodies: true, attempts: 1},
 		{name: "targeted bodies preserve full", filter: true, shallow: true, reachable: true, bodies: true, full: true, wantFull: true, attempts: 1},
 		{name: "missing reachable capability fetches full pin", filter: true, shallow: true, bodies: true, wantFull: true, attempts: 1},
+		{name: "named metadata later needs bodies", filter: true, shallow: true, bodies: true, noExact: true, wantFull: true, attempts: 1},
 		{name: "full missing objects", full: true, bodies: true, wantFull: true},
 		{name: "refusal retries fresh full pin", filter: true, shallow: true, failures: []error{refusal}, wantFull: true, attempts: 2},
 		{name: "body refusal retries fresh full pin", filter: true, shallow: true, reachable: true, bodies: true, failures: []error{refusal}, wantFull: true, attempts: 2},
@@ -240,12 +268,21 @@ func TestBaseRemote_FetchPolicy(t *testing.T) {
 		{name: "authorization stops", filter: true, failures: []error{transport.ErrAuthorizationFailed}, wantErr: transport.ErrAuthorizationFailed, attempts: 1},
 		{name: "cancellation precedes refusal and auth", filter: true, failures: []error{errors.Join(refusal, transport.ErrAuthenticationRequired)}, wantErr: context.Canceled, attempts: 1, cancel: true},
 		{name: "response and session close errors", filter: true, wantErr: responseClose, attempts: 1, closeErrors: true},
+		{name: "missing saved pin recovers history", filter: true, shallow: true, responsePins: []bool{false, true}, attempts: 2},
+		{name: "history recovery preserves depth after refusal", filter: true, shallow: true, responsePins: []bool{false, false, true}, failures: []error{nil, refusal}, wantFull: true, attempts: 3},
+		{name: "history recovery preserves depth after filter refusal", filter: true, shallow: true, responsePins: []bool{false, false, true}, failures: []error{nil, transport.ErrFilterNotSupported}, wantFull: true, attempts: 3},
+		{name: "history recovery budget survives refusal", filter: true, shallow: true, responsePins: []bool{false, false, false}, failures: []error{nil, refusal}, wantFull: true, wantErr: plumbing.ErrObjectNotFound, attempts: 3},
+		{name: "no-change response requires saved pin", filter: true, shallow: true, failures: []error{git.NoErrAlreadyUpToDate, git.NoErrAlreadyUpToDate}, wantErr: plumbing.ErrObjectNotFound, attempts: 2},
+		{name: "preloaded metadata cannot certify fresh full response", full: true, noExact: true, shallow: true, preload: true, responsePins: []bool{false, false}, wantFull: true, wantErr: plumbing.ErrObjectNotFound, attempts: 2},
+		{name: "unrestricted wildcard requires saved pin", filter: true, noExact: true, wildcard: true, responsePins: []bool{false}, wantErr: plumbing.ErrObjectNotFound, attempts: 1},
+		{name: "storage error cannot trigger recovery", filter: true, shallow: true, noExact: true, storageError: storageError, wantErr: storageError, attempts: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			testBaseRemoteFetchPolicyCase(
 				t,
 				testBaseRemoteFetchPolicyCaseInputs{
+					origin:        origin,
 					pin:           &pin,
 					refusal:       &refusal,
 					responseClose: &responseClose,
@@ -259,63 +296,64 @@ func TestBaseRemote_FetchPolicy(t *testing.T) {
 }
 
 type fetchPolicyTransport struct {
-	transport.Transport
-
-	pack                    []byte
-	failures                []error
-	upload                  func()
-	responseErr, sessionErr error
-	requests                []*packp.UploadPackRequest
-	closed, responsesClosed int
+	capabilities                    *capability.List
+	pack                            []byte
+	failures                        []error
+	upload                          func()
+	responseErr, sessionErr         error
+	requests                        []*transport.FetchRequest
+	targets                         []storage.Storer
+	missingPack                     []byte
+	responsePins                    []bool
+	opened, closed, responsesClosed int
+	pin                             plumbing.Hash
 }
 
-//nolint:ireturn // The upstream interface requires this return type.
-func (f *fetchPolicyTransport) NewUploadPackSession(
-	*transport.Endpoint,
-	transport.AuthMethod,
-) (transport.UploadPackSession, error) {
-	return &fetchPolicySession{fixture: f}, nil
-}
-
-type fetchPolicySession struct {
-	transport.UploadPackSession
-
-	fixture *fetchPolicyTransport
-}
-
-func (s *fetchPolicySession) UploadPack(
+func (f *fetchPolicyTransport) Fetch(
 	_ context.Context,
-	request *packp.UploadPackRequest,
-) (*packp.UploadPackResponse, error) {
-	f := s.fixture
+	upper storage.Storer,
+	_ string,
+	opts *git.FetchOptions,
+) error {
+	f.opened++
+	defer func() { f.closed++ }()
+	if opts.Filter != "" && !f.capabilities.Supports(capability.Filter) {
+		return transport.ErrFilterNotSupported
+	}
+	if opts.Depth > 0 && !f.capabilities.Supports(capability.Shallow) {
+		return transport.ErrShallowNotSupported
+	}
+	req := &transport.FetchRequest{Depth: opts.Depth, Filter: opts.Filter, Progress: opts.Progress}
+	for _, spec := range opts.RefSpecs {
+		if spec.IsExactSHA1() {
+			if !f.capabilities.Supports(capability.AllowReachableSHA1InWant) {
+				return git.ErrExactSHA1NotSupported
+			}
+			req.Wants = append(req.Wants, plumbing.NewHash(spec.Src()))
+		} else {
+			req.Wants = append(req.Wants, f.pin)
+		}
+	}
 	attempt := len(f.requests)
-	f.requests = append(f.requests, request)
+	f.requests = append(f.requests, req)
+	f.targets = append(f.targets, upper)
 	if f.upload != nil {
 		f.upload()
 	}
 	if attempt < len(f.failures) && f.failures[attempt] != nil {
-		return nil, f.failures[attempt]
+		return f.failures[attempt]
 	}
-	return packp.NewUploadPackResponseWithPackfile(
-		request,
-		&fetchPolicyPack{Reader: bytes.NewReader(f.pack), fixture: f},
-	), nil
-}
-
-func (s *fetchPolicySession) Close() error {
-	s.fixture.closed++
-	return s.fixture.sessionErr
-}
-
-type fetchPolicyPack struct {
-	io.Reader
-
-	fixture *fetchPolicyTransport
-}
-
-func (p *fetchPolicyPack) Close() error {
-	p.fixture.responsesClosed++
-	return p.fixture.responseErr
+	packed := f.pack
+	if attempt < len(f.responsePins) && !f.responsePins[attempt] {
+		packed = f.missingPack
+	}
+	err := packfile.UpdateObjectStorage(upper, bytes.NewReader(packed))
+	f.responsesClosed++
+	err = errors.Join(err, f.responseErr)
+	if err != nil {
+		return err
+	}
+	return f.sessionErr
 }
 
 func TestAdopt_FetchedStorage(t *testing.T) {
@@ -355,6 +393,14 @@ func fetchBlob(t *testing.T, st storage.Storer, body string) plumbing.Hash {
 	return hash
 }
 
+type pinLookupError struct {
+	storage.Storer
+
+	err error
+}
+
+func (s *pinLookupError) HasEncodedObject(plumbing.Hash) error { return s.err }
+
 type markerReadError struct {
 	billy.Filesystem
 
@@ -372,8 +418,6 @@ func (f *markerReadError) Open(name string) (billy.File, error) {
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestResolveExplicit_FetchCancellation(t *testing.T) {
 	const scheme = "baseline-failure"
-	original := client.Protocols[scheme]
-	t.Cleanup(func() { client.InstallProtocol(scheme, original) })
 	for _, tc := range []struct {
 		name  string
 		cause error
@@ -385,11 +429,13 @@ func TestResolveExplicit_FetchCancellation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wrapped := fmt.Errorf("local transport: %w", tc.cause)
-			client.InstallProtocol(scheme, &failureTransport{err: wrapped})
+			routes := sourcegit.Transports{
+				scheme: func(context.Context, sourcegit.TransportRequest) (sourcegit.Connection, error) { return nil, wrapped },
+			}
 			dir := historylessCheckout(t, scheme+"://origin/repo", "a.yaml", "current")
 			location, err := gitrepo.Locate(t.Context(), dir, "")
 			assert.NoError(t, err)
-			_, err = (selection{repo: location.Repository, owner: cachetest.New(t, "", sourcecache.New)}).resolveExplicit(
+			_, err = (&selection{repo: location.Repository, owner: cachetest.New(t, "", sourcecache.New), network: networktest.New(t), transports: routes}).resolveExplicit(
 				t.Context(),
 				location,
 				"main",
@@ -402,21 +448,8 @@ func TestResolveExplicit_FetchCancellation(t *testing.T) {
 	}
 }
 
-type failureTransport struct {
-	transport.Transport
-
-	err error
-}
-
-//nolint:ireturn // The upstream interface requires this return type.
-func (f *failureTransport) NewUploadPackSession(
-	*transport.Endpoint,
-	transport.AuthMethod,
-) (transport.UploadPackSession, error) {
-	return nil, f.err
-}
-
 type testBaseRemoteFetchPolicyCaseInputs struct {
+	origin        string
 	pin           *plumbing.Hash
 	refusal       **pktline.ErrorLine
 	responseClose *error
@@ -429,53 +462,66 @@ type testBaseRemoteFetchPolicyCaseInputs struct {
 		reachable bool
 		full      bool
 		bodies    bool
+		noExact   bool
 		failures  []error
 		wantErr   error
 
-		wantFull      bool
-		attempts      int
-		cancel        bool
-		smallSideband bool
-		preCanceled   bool
-		closeErrors   bool
+		wantFull          bool
+		attempts          int
+		cancel            bool
+		smallSideband     bool
+		preCanceled       bool
+		closeErrors       bool
+		responsePins      []bool
+		preload, wildcard bool
+		storageError      error
 	}
 }
 
 func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFetchPolicyCaseInputs) {
 	t.Helper()
 
-	caps := capability.NewList()
+	caps := new(capability.List)
 	sideband := capability.Sideband64k
 	if testCaseInput.tc.smallSideband {
 		sideband = capability.Sideband
 	}
-	for _, c := range []capability.Capability{sideband, capability.MultiACKDetailed} {
-		{
-			err := caps.Set(c)
-			assert.FatalIf(t, err != nil, "%v", err)
-		}
+	for _, c := range []string{sideband, capability.MultiACKDetailed} {
+		caps.Set(c)
 	}
-	toggles := make(map[capability.Capability]bool)
+	toggles := make(map[string]bool)
 	toggles[capability.Filter] = testCaseInput.tc.filter
 	toggles[capability.Shallow] = testCaseInput.tc.shallow
 	toggles[capability.AllowReachableSHA1InWant] = testCaseInput.tc.reachable
 	for c, enabled := range toggles {
 		if enabled {
-			{
-				err := caps.Set(c)
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
+			caps.Set(c)
 		}
 	}
 	originalCaps := caps.String()
-	source := memory.NewStorage()
-	body := fetchBlob(t, source, "requested body")
+	source := openHelper(t, testCaseInput.origin).Storer
+	commit, err := object.GetCommit(source, *testCaseInput.pin)
+	assert.NoError(t, err)
+	tree, err := commit.Tree()
+	assert.NoError(t, err)
+	body := tree.Entries[0].Hash
 	var packed bytes.Buffer
 	{
-		_, err := packfile.NewEncoder(&packed, source, false).Encode([]plumbing.Hash{body}, 0)
-		assert.FatalIf(t, err != nil, "%v", err)
+		_, encodeErr := packfile.NewEncoder(&packed, source, false).
+			Encode([]plumbing.Hash{*testCaseInput.pin, tree.Hash, body}, 0)
+		assert.FatalIf(t, encodeErr != nil, "%v", encodeErr)
 	}
-	fixture := &fetchPolicyTransport{pack: packed.Bytes(), failures: testCaseInput.tc.failures}
+	fixture := &fetchPolicyTransport{
+		pack:         packed.Bytes(),
+		failures:     testCaseInput.tc.failures,
+		capabilities: caps,
+		pin:          *testCaseInput.pin,
+	}
+	var missing bytes.Buffer
+	_, packErr := packfile.NewEncoder(&missing, source, false).Encode([]plumbing.Hash{body}, 0)
+	assert.NoError(t, packErr)
+	fixture.missingPack = missing.Bytes()
+	fixture.responsePins = testCaseInput.tc.responsePins
 	if testCaseInput.tc.closeErrors {
 		fixture.responseErr, fixture.sessionErr = (*testCaseInput.responseClose), (*testCaseInput.sessionClose)
 	}
@@ -485,12 +531,26 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 		fixture.upload = cancel
 	}
 	remote := &baseRemote{
-		client:       fixture,
-		capabilities: caps,
-		pin:          (*testCaseInput.pin),
-		full:         testCaseInput.tc.full,
+		client:  fixture,
+		pin:     (*testCaseInput.pin),
+		ref:     "refs/heads/baseline",
+		full:    testCaseInput.tc.full,
+		noExact: testCaseInput.tc.noExact,
 	}
 	upper := memory.NewStorage()
+	if testCaseInput.tc.preload {
+		encoded, lookupErr := source.EncodedObject(plumbing.AnyObject, *testCaseInput.pin)
+		assert.NoError(t, lookupErr)
+		_, storeErr := upper.SetEncodedObject(encoded)
+		assert.NoError(t, storeErr)
+	}
+	if testCaseInput.tc.wildcard {
+		remote.ref = ""
+	}
+	var target storage.Storer = upper
+	if testCaseInput.tc.storageError != nil {
+		target = &pinLookupError{Storer: upper, err: testCaseInput.tc.storageError}
+	}
 	var wants []plumbing.Hash
 	if testCaseInput.tc.bodies {
 		wants = []plumbing.Hash{body}
@@ -498,7 +558,7 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 	if testCaseInput.tc.preCanceled {
 		cancel()
 	}
-	err := remote.fetch(ctx, upper, wants)
+	err = remote.fetch(ctx, target, wants)
 	if testCaseInput.tc.name == "full missing objects" {
 		assert.FatalIf(
 			t,
@@ -516,7 +576,7 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 			testCaseInput.tc.wantErr,
 		)
 	}
-	if len(fixture.requests) != testCaseInput.tc.attempts || fixture.closed != testCaseInput.tc.attempts ||
+	if len(fixture.requests) != testCaseInput.tc.attempts || fixture.closed != fixture.opened ||
 		remote.full != testCaseInput.tc.wantFull ||
 		caps.String() != originalCaps {
 		t.Fatalf(
@@ -526,6 +586,9 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 			remote.full,
 			caps.String(),
 		)
+	}
+	if errors.Is(err, plumbing.ErrObjectNotFound) {
+		assert.Equal(t, strings.Contains(err.Error(), testCaseInput.pin.String()), true)
 	}
 	testBaseRemoteFetchPolicyCaseSegment(t, &testCaseInput, &fixture, &wants)
 	marker, markerErr := upper.Reference(fullBaseRef)
@@ -639,6 +702,7 @@ func testAdoptFetchedStorageCase(t *testing.T, testCaseInput testAdoptFetchedSto
 		), "%v", "adopted writes did not retain fetched-upper ownership")
 }
 
+//nolint:gocognit // History recovery MUST retain the existing body, filter, and request assertions in the shared policy table.
 func testBaseRemoteFetchPolicyCaseSegment(
 	t *testing.T,
 	testCaseInput *testBaseRemoteFetchPolicyCaseInputs,
@@ -646,28 +710,41 @@ func testBaseRemoteFetchPolicyCaseSegment(
 	wants *[]plumbing.Hash,
 ) {
 	t.Helper()
+	history := len(testCaseInput.tc.responsePins) > 1 ||
+		len(testCaseInput.tc.failures) > 0 && errors.Is(testCaseInput.tc.failures[0], git.NoErrAlreadyUpToDate)
 	for i, request := range (*fixture).requests {
 		bodyRequest := testCaseInput.tc.bodies && testCaseInput.tc.reachable && i == 0
-		want := []plumbing.Hash{(*testCaseInput.pin)}
-		depth := packp.DepthCommits(0)
+		want := []plumbing.Hash{*testCaseInput.pin}
 		if bodyRequest {
-			want = (*wants)
-		} else if testCaseInput.tc.shallow {
-			depth = packp.DepthCommits(1)
+			want = *wants
 		}
-		filtered := !testCaseInput.tc.bodies && !testCaseInput.tc.full && testCaseInput.tc.filter && i == 0
+		if testCaseInput.tc.wildcard {
+			want = []plumbing.Hash{*testCaseInput.pin, *testCaseInput.pin}
+		}
+		recovering := history && i > 0
+		depth := 0
+		if testCaseInput.tc.shallow && !bodyRequest && !testCaseInput.tc.wildcard && !recovering {
+			depth = 1
+		}
+		filtered := !testCaseInput.tc.bodies && !testCaseInput.tc.full && testCaseInput.tc.filter
+		if i > 0 {
+			filtered = filtered && history && i == 1
+		}
+		if recovering {
+			assert.Equal(t, (*fixture).targets[i] == (*fixture).targets[0], false)
+			assert.Equal(t, (*fixture).targets[i] == (*fixture).targets[i-1], false)
+		}
 		if !slices.Equal(request.Wants, want) || request.Depth != depth ||
-			request.Capabilities.Supports(capability.Shallow) != (depth != 0) ||
-			request.Capabilities.Supports(capability.Filter) != filtered ||
-			request.Capabilities.Supports(capability.Sideband) ||
-			request.Capabilities.Supports(capability.Sideband64k) {
+			(request.Depth > 0 && (*fixture).capabilities.Supports(capability.Shallow)) != (depth != 0) ||
+			(request.Filter != "") != filtered ||
+			request.Progress != nil {
 			t.Fatalf(
 				"request %d: wants=%v depth=%v filter=%q caps=%q",
 				i,
 				request.Wants,
 				request.Depth,
 				request.Filter,
-				request.Capabilities.String(),
+				fmt.Sprintf("progress=%t", request.Progress != nil),
 			)
 		}
 		wantFilter := packp.Filter("")
@@ -678,7 +755,7 @@ func testBaseRemoteFetchPolicyCaseSegment(
 			t.Fatalf("request %d filter=%q, want %q", i, request.Filter, wantFilter)
 		}
 		assert.FatalIf(t, i > 0 &&
-			(request == (*fixture).requests[0] || request.Capabilities == (*fixture).requests[0].Capabilities), "%v", "fallback reused a partial request")
+			request == (*fixture).requests[0], "%v", "fallback reused a partial request")
 	}
 }
 
@@ -695,10 +772,16 @@ type testFetchPolicyCompletionInputs struct {
 func testFetchPolicyCompletion(t *testing.T, statementInput *testFetchPolicyCompletionInputs) {
 	t.Helper()
 	if (*statementInput.err) == nil {
+		responses := statementInput.testCaseInput.tc.attempts
+		for _, failure := range statementInput.testCaseInput.tc.failures {
+			if failure != nil {
+				responses--
+			}
+		}
 		assert.FatalIf(
 			t,
 			(*statementInput.upper).HasEncodedObject((*statementInput.body)) != nil ||
-				(*statementInput.fixture).responsesClosed != 1,
+				(*statementInput.fixture).responsesClosed != responses,
 			"%v",
 			"successful response was not consumed and closed",
 		)
@@ -730,8 +813,8 @@ func testFetchPolicyCompletion(t *testing.T, statementInput *testFetchPolicyComp
 	assert.FatalIf(
 		t,
 		statementInput.testCaseInput.tc.closeErrors &&
-			(!errors.Is((*statementInput.err), (*statementInput.testCaseInput.sessionClose)) || (*statementInput.fixture).responsesClosed != 1),
-		"joined close errors lost: %v",
+			(errors.Is((*statementInput.err), (*statementInput.testCaseInput.sessionClose)) || (*statementInput.fixture).responsesClosed != 1),
+		"unexpected close-error result: %v",
 		(*statementInput.err),
 	)
 	assert.FatalIf(

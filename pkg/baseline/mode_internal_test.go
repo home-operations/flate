@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/change"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
@@ -52,7 +53,15 @@ func TestAutoResolve_ModeOnlyMatchesDetect(t *testing.T) {
 				assert.Equal(t, info.Mode().Perm(), []fs.FileMode{tc.before, tc.after}[i])
 			}
 
-			resolved, err := AutoResolve(t.Context(), current, base.String(), cachetest.New(t, "", sourcecache.New))
+			resolved, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    current,
+					Base:    base.String(),
+					Cache:   cachetest.New(t, "", sourcecache.New),
+				},
+			)
 			assert.NoError(t, err)
 			paths, err := ResolvePaths(t.Context(), current, original)
 			assert.NoError(t, err)

@@ -12,10 +12,10 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -175,6 +175,8 @@ func TestRun_AliasesURLMatchedInTreeGitRepository(t *testing.T) {
 	repo := testutil.GitInit(t, dir)
 	testutil.WriteFile(t, dir, ".git/config", `[core]
 	repositoryformatversion = 0
+[commit]
+ gpgSign = false
 [remote "origin"]
 	url = git@github.com:Example/home-ops.git
 `)

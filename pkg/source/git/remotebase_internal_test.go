@@ -17,19 +17,19 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/assert"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/protocol"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	filetransport "github.com/go-git/go-git/v6/plumbing/transport/file"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -42,7 +42,7 @@ import (
 func newRemoteBaseFetcher(t *testing.T) *Fetcher {
 	t.Helper()
 	root := t.TempDir()
-	return &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+	return &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 }
 
 func assertWorktree(t *testing.T, input fs.FS, file, wantContent string) {
@@ -130,7 +130,7 @@ func TestFetchRemoteBase_RejectsBeforeAcquisition(t *testing.T) {
 		t.Run(url, func(t *testing.T) {
 			t.Parallel()
 			// The uninitialized cache panics if acquisition precedes validation.
-			f := &Fetcher{Cache: new(sourcecache.Cache), RestrictSchemes: true}
+			f := &Fetcher{Network: networktest.New(t), Cache: new(sourcecache.Cache), RestrictSchemes: true}
 			_, err := f.FetchRemoteBase(
 				t.Context(),
 				&RemoteBaseRequest{URL: url, Ref: "v1", Timeout: 27 * time.Second, Submodules: true},
@@ -185,7 +185,7 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 			if disk {
 				root = t.TempDir()
 			}
-			f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+			f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 			request := RemoteBaseRequest{URL: "file://" + src, Timeout: 27 * time.Second, Submodules: false}
 			policy := sourcecache.Policy{MaxAge: time.Hour}
 			artifact, err := f.FetchRemoteBase(t.Context(), &request, &policy)
@@ -285,54 +285,27 @@ func TestFetchRemoteBase_DefaultSubmodules(t *testing.T) {
 	}
 }
 
-type commandTransport struct {
-	transport.Transport
+type commandTransport struct{ before func(context.Context) error }
 
-	before func(context.Context) error
-}
-
-type commandSession struct {
-	transport.UploadPackSession
-
-	before func(context.Context) error
-}
-
-//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
-func (tr commandTransport) NewUploadPackSession(
-	endpoint *transport.Endpoint,
-	auth transport.AuthMethod,
-) (transport.UploadPackSession, error) {
-	local := *endpoint
-	local.Protocol = "file"
-	local.Path = filepath.Join(local.Path, ".git")
-	session, err := tr.Transport.NewUploadPackSession(&local, auth)
-	if err != nil {
+func (tr commandTransport) connect(ctx context.Context, req TransportRequest) (Connection, error) {
+	if err := tr.before(ctx); err != nil {
 		return nil, err
 	}
-	return commandSession{UploadPackSession: session, before: tr.before}, nil
+	return filetransport.NewTransport(filetransport.Options{}).
+		Connect(ctx, &transport.Request{URL: req.URL, Command: req.Command, Protocol: protocol.Version(req.Protocol)})
 }
 
-func (s commandSession) AdvertisedReferencesContext(ctx context.Context) (*packp.AdvRefs, error) {
-	if err := s.before(ctx); err != nil {
-		return nil, err
-	}
-	return s.UploadPackSession.AdvertisedReferencesContext(ctx)
+func commandTransports(before func(context.Context) error) Transports {
+	return Transports{"commands": commandTransport{before: before}.connect}
 }
 
-func installCommandTransport(t *testing.T, before func(context.Context) error) {
-	t.Helper()
-	client.InstallProtocol("commands", commandTransport{Transport: server.DefaultServer, before: before})
-	t.Cleanup(func() { client.InstallProtocol("commands", nil) })
-}
-
-//nolint:paralleltest // The test replaces go-git protocol registration and restores it afterward.
-//nolint:paralleltest // The test replaces process-wide go-git protocol registration.
 func TestFetchRemoteBase_CommandBudgets(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		src := t.TempDir()
 		mustInitRepo(t, src)
 		calls := 0
-		installCommandTransport(t, func(ctx context.Context) error {
+		routes := commandTransports(func(ctx context.Context) error {
 			calls++
 			deadline, ok := ctx.Deadline()
 			if !ok || time.Until(deadline) != 5*time.Second {
@@ -345,7 +318,7 @@ func TestFetchRemoteBase_CommandBudgets(t *testing.T) {
 				return ctx.Err()
 			}
 		})
-		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+		f := &Fetcher{Network: networktest.New(t), GitTransports: routes, Cache: cachetest.New(t, "", sourcecache.New)}
 		start := time.Now()
 		aggregate := time.Second
 		artifact, err := f.FetchRemoteBase(
@@ -359,15 +332,14 @@ func TestFetchRemoteBase_CommandBudgets(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // The test replaces go-git protocol registration and restores it afterward.
-//nolint:paralleltest // The test replaces process-wide go-git protocol registration.
 func TestFetchRemoteBase_TimeoutPolicies(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		src := t.TempDir()
 		mustInitRepo(t, src)
 		started := make(chan struct{}, 1)
 		var calls atomic.Int32
-		installCommandTransport(t, func(ctx context.Context) error {
+		routes := commandTransports(func(ctx context.Context) error {
 			if calls.Add(1) == 1 {
 				started <- struct{}{}
 			}
@@ -379,7 +351,11 @@ func TestFetchRemoteBase_TimeoutPolicies(t *testing.T) {
 			}
 		})
 		root := t.TempDir()
-		f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+		f := &Fetcher{
+			Network:       networktest.New(t),
+			GitTransports: routes,
+			Cache:         cachetest.New(t, root, sourcecache.New),
+		}
 		short, long := make(chan error, 1), make(chan error, 1)
 		request := RemoteBaseRequest{URL: "commands://" + src, Timeout: time.Second}
 		shortRequest := request
@@ -407,7 +383,7 @@ func TestFetchRemoteBase_TimeoutPolicies(t *testing.T) {
 			assert.NoError(t, err)
 		}
 
-		f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+		f = &Fetcher{Network: networktest.New(t), GitTransports: routes, Cache: cachetest.New(t, root, sourcecache.New)}
 		before := calls.Load()
 		request.Timeout = time.Millisecond
 		artifact, err := f.FetchRemoteBase(t.Context(), &request, &sourcecache.Policy{MaxAge: time.Hour})
@@ -453,7 +429,7 @@ func testFetchRemoteBaseFreshnessCase(t *testing.T, tc *struct {
 	srv.Start()
 	t.Cleanup(srv.Close)
 	root := t.TempDir()
-	f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 	request := RemoteBaseRequest{URL: srv.URL, Ref: ref, Timeout: 27 * time.Second, Submodules: true}
 	first, err := f.FetchRemoteBase(t.Context(), &request, &sourcecache.Policy{MaxAge: tc.age})
 	assert.NoError(t, err)
@@ -489,7 +465,7 @@ func testFetchRemoteBaseFreshnessCase(t *testing.T, tc *struct {
 		assert.NoError(t, closeErr)
 	}
 
-	f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+	f = &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 	second, err := f.FetchRemoteBase(t.Context(), &request, &sourcecache.Policy{MaxAge: tc.age})
 	assert.FatalIf(t, err != nil, "offline cache hit: %v", err)
 	assert.FatalIf(
@@ -531,7 +507,7 @@ func testFetchRemoteBaseDefaultSubmodulesRecursionChangesContent(
 ) {
 	t.Helper()
 
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	for _, recurse := range []bool{false, true} {
 		artifact, err := f.FetchRemoteBase(
 			t.Context(),
@@ -566,7 +542,7 @@ func testFetchRemoteBaseDefaultSubmodulesCase(
 
 	root := t.TempDir()
 	for _, wave := range []string{"cold", "reopened"} {
-		f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+		f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 		var artifact *store.SourceArtifact
 		var err error
 		if *remote {

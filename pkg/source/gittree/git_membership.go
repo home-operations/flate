@@ -10,14 +10,14 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
-	"github.com/go-git/go-git/v5/utils/merkletrie"
-	merklefs "github.com/go-git/go-git/v5/utils/merkletrie/filesystem"
-	merkleindex "github.com/go-git/go-git/v5/utils/merkletrie/index"
-	"github.com/go-git/go-git/v5/utils/merkletrie/noder"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/format/gitignore"
+	"github.com/go-git/go-git/v6/utils/merkletrie"
+	merklefs "github.com/go-git/go-git/v6/utils/merkletrie/filesystem"
+	merkleindex "github.com/go-git/go-git/v6/utils/merkletrie/index"
+	"github.com/go-git/go-git/v6/utils/merkletrie/noder"
 )
 
 //nolint:funlen,gocognit,wrapcheck // Native capture keeps its index, submodule, and ignore decisions in one admission lifetime and preserves their error identities.
@@ -29,7 +29,11 @@ func (d *Directory) captureMembership() (membership, error) {
 	if location == nil || location.Repository == nil {
 		return membership{captured: true}, nil
 	}
-	patterns, err := gitignore.ReadPatterns(observed, nil)
+	//nolint:staticcheck // Admission MUST capture ignore errors and observations before index access.
+	patterns, err := gitignore.ReadPatterns(
+		observed,
+		nil,
+	)
 	if err != nil {
 		return membership{}, err
 	}
@@ -63,7 +67,7 @@ func (d *Directory) captureMembership() (membership, error) {
 	for _, module := range status {
 		submodules[module.Path] = cmp.Or(module.Current, module.Expected)
 	}
-	current := merklefs.NewRootNode(worktree.Filesystem, submodules)
+	current := merklefs.NewRootNodeWithOptions(worktree.Filesystem(), submodules, merklefs.Options{})
 	changes, err := merkletrie.DiffTreeContext(
 		ctx,
 		merkleindex.NewRootNode(idx),
@@ -120,13 +124,13 @@ type membershipFilesystem struct {
 }
 
 type membershipDirectory struct {
-	entries []fs.FileInfo
-	byName  map[string]fs.FileInfo
+	entries []fs.DirEntry
+	byName  map[string]fs.DirEntry
 	err     error
 }
 
 //nolint:wrapcheck // Capture-local I/O preserves filesystem error identities.
-func (f *membershipFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
+func (f *membershipFilesystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	if err := f.err(); err != nil {
 		return nil, err
 	}
@@ -135,7 +139,7 @@ func (f *membershipFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
 		return directory.entries, directory.err
 	}
 	entries, err := f.Filesystem.ReadDir(name)
-	byName := make(map[string]fs.FileInfo, len(entries))
+	byName := make(map[string]fs.DirEntry, len(entries))
 	for _, entry := range entries {
 		byName[entry.Name()] = entry
 	}
@@ -154,7 +158,8 @@ func (f *membershipFilesystem) OpenFile(name string, flag int, mode fs.FileMode)
 		return nil, err
 	}
 	name = f.Join(".", name)
-	if name != "." && len(f.directories) != 0 {
+	metadata := strings.HasPrefix(name, gitDirectory+string(filepath.Separator))
+	if name != "." && !metadata && len(f.directories) != 0 {
 		directory := "."
 		for part := range strings.SplitSeq(name, string(filepath.Separator)) {
 			_, err := f.ReadDir(directory)
@@ -188,7 +193,7 @@ func (f *membershipFilesystem) Lstat(name string) (fs.FileInfo, error) {
 	}
 	base := filepath.Base(name)
 	if entry := directory.byName[base]; entry != nil {
-		return entry, nil
+		return entry.Info()
 	}
 	return nil, &fs.PathError{Op: lstatOperation, Path: name, Err: fs.ErrNotExist}
 }
@@ -200,18 +205,22 @@ type membershipRoot struct {
 }
 
 //nolint:wrapcheck // Capture-local directory reads preserve OS error identities.
-func (f *membershipRoot) ReadDir(name string) ([]fs.FileInfo, error) {
+func (f *membershipRoot) ReadDir(name string) ([]fs.DirEntry, error) {
 	directory, err := f.root.Open(cmp.Or(name, "."))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = directory.Close() }()
-	// The native tree needs FileInfo without resolving each entry through its full path.
-	entries, err := directory.Readdir(-1)
+	// Capture metadata before closing the root-bound directory.
+	infos, err := directory.Readdir(-1)
 	if err != nil {
 		return nil, err
 	}
-	slices.SortFunc(entries, func(a, b fs.FileInfo) int { return strings.Compare(a.Name(), b.Name()) })
+	entries := make([]fs.DirEntry, len(infos))
+	for i, info := range infos {
+		entries[i] = fs.FileInfoToDirEntry(info)
+	}
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	return entries, nil
 }
 

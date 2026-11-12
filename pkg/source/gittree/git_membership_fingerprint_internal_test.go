@@ -5,9 +5,9 @@ import (
 	"io/fs"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -78,7 +78,7 @@ func testFSGitContentEvidenceCommittedMembership(t *testing.T) {
 	assert.Equal(t, keys[0], keys[1])
 	committed, _, err := New(t.Context(), backing, commit, ViewOptions{
 		Mode:    Direct,
-		Content: struct{ Revision string }{commit.String()}, Worktree: worktree.Filesystem,
+		Content: struct{ Revision string }{commit.String()}, Worktree: worktree.Filesystem(),
 	})
 	assert.NoError(t, err)
 	_, err = committed.ReadFile("old.yaml")

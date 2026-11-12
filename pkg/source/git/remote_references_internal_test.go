@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -37,7 +38,7 @@ func testFetcherReferencesCase(t *testing.T, src *string, tc *struct {
 },
 ) {
 	t.Helper()
-	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Depth: tc.depth}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Depth: tc.depth}
 	repo := &manifest.GitRepository{
 		Name:              "test",
 		Namespace:         "flux-system",

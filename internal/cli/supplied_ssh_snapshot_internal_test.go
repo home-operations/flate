@@ -1,24 +1,18 @@
 package cli
 
 import (
-	"bytes"
 	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/pem"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	gitlib "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	"github.com/go-git/go-git/v5/plumbing/transport/server"
-	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	gitlib "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
@@ -26,46 +20,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-type suppliedSSHTransport struct {
-	transport.Transport
-
-	allowed       ssh.PublicKey
-	authenticated atomic.Int32
-	onAuth        func()
-}
-
-//nolint:ireturn // The upstream interface contract requires this return type.
-func (s *suppliedSSHTransport) NewUploadPackSession(
-	endpoint *transport.Endpoint,
-	auth transport.AuthMethod,
-) (transport.UploadPackSession, error) {
-	keys, ok := auth.(*gitssh.PublicKeys)
-	if !ok || keys.User != "git" || keys.Signer == nil {
-		return nil, transport.ErrAuthenticationRequired
-	}
-	if !bytes.Equal(keys.Signer.PublicKey().Marshal(), s.allowed.Marshal()) {
-		return nil, transport.ErrAuthorizationFailed
-	}
-	challenge := []byte("supplied source authentication fixture")
-	signature, err := keys.Signer.Sign(rand.Reader, challenge)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.allowed.Verify(challenge, signature); err != nil {
-		return nil, err
-	}
-
-	s.authenticated.Add(1)
-	if s.onAuth != nil {
-		s.onAuth()
-	}
-	local := *endpoint
-	local.Protocol = "file"
-	local.Path = filepath.Join(local.Path, ".git")
-	return s.Transport.NewUploadPackSession(&local, nil)
-}
-
-// CLI execution and Git protocol registration require serial execution.
 func TestRun_SuppliedSSHSnapshotOnBothDiffSides(t *testing.T) {
 	public, key, err := ed25519.GenerateKey(nil)
 	assert.FatalIf(t, err != nil, "%s", err)
@@ -77,12 +31,13 @@ func TestRun_SuppliedSSHSnapshotOnBothDiffSides(t *testing.T) {
 	allowed, err := ssh.NewPublicKey(public)
 	assert.FatalIf(t, err != nil, "%s", err)
 
-	tr := &suppliedSSHTransport{Transport: server.DefaultServer, allowed: allowed}
-	previous := client.Protocols["ssh"]
-	client.InstallProtocol("ssh", tr)
-	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
+	host, err := ssh.NewSignerFromKey(key)
+	assert.NoError(t, err)
+	tr := &testutil.GitSSH{Host: host, Allowed: allowed}
+	address := testutil.LocalGitSSH(t, tr)
 	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "absent"))
 	remote := t.TempDir()
+	tr.Roots = []string{remote}
 	repository := testutil.GitInit(t, remote)
 	author := &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}
 	roots := make([]string, 0, 2)
@@ -106,7 +61,7 @@ func TestRun_SuppliedSSHSnapshotOnBothDiffSides(t *testing.T) {
 		}
 		roots = append(roots, root)
 		declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: 'https://local.invalid/cluster'}\n---\n" +
-			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: ursa-major-ssh}\n"
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@" + address + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: ursa-major-ssh}\n"
 		var declarationsSb147 strings.Builder
 		for _, name := range []string{"one", "two"} {
 			declarationsSb147.WriteString("---\n" + testutil.KustomizationYAML(
@@ -140,9 +95,11 @@ func TestRun_SuppliedSSHSnapshotOnBothDiffSides(t *testing.T) {
 			strings.TrimSpace(identity),
 			"\n",
 			"\n    ",
-		)+"\n  known_hosts: "+knownhosts.Line(
-			[]string{"fixture"},
-			allowed,
+		)+"\n  known_hosts: "+strconv.Quote(
+			knownhosts.Line(
+				[]string{address},
+				allowed,
+			),
 		)+"\n",
 	)
 	input := filepath.Join(supplied, "credentials.yaml")
@@ -175,9 +132,9 @@ func TestRun_SuppliedSSHSnapshotOnBothDiffSides(t *testing.T) {
 		assert.FatalIf(t, strings.Count(stdout, "value: "+[]string{"before", "after"}[i]) != 2,
 			"private consumers missing: %s", stdout)
 	}
-	before := tr.authenticated.Load()
+	before := tr.Authenticated.Load()
 	var changed sync.Once
-	tr.onAuth = func() {
+	tr.AfterAuth = func() error {
 		changed.Do(func() {
 			testutil.WriteFileAt(
 				t,
@@ -185,6 +142,7 @@ func TestRun_SuppliedSSHSnapshotOnBothDiffSides(t *testing.T) {
 				"apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData: {identity: changed-after-snapshot}\n",
 			)
 		})
+		return nil
 	}
 	args := []string{
 		"diff",
@@ -204,22 +162,22 @@ func TestRun_SuppliedSSHSnapshotOnBothDiffSides(t *testing.T) {
 	assert.FatalIf(
 		t,
 		code != 0 || strings.Count(stdout, "-  value: before") != 2 || strings.Count(stdout, "+  value: after") != 2 ||
-			tr.authenticated.Load()-before < 2,
+			tr.Authenticated.Load()-before < 2,
 		"supplied diff: exit=%d authenticated=%d stdout=%s stderr=%s",
 		code,
-		tr.authenticated.Load()-before,
+		tr.Authenticated.Load()-before,
 		stdout,
 		stderr,
 	)
 
-	tr.onAuth = nil
-	before = tr.authenticated.Load()
+	tr.AfterAuth = nil
+	before = tr.Authenticated.Load()
 	result2 := runCLI(t,
 		append(args, "--cache-dir", t.TempDir(), "--allow-missing-kinds=Secret,ConfigMap")...)
 	stdout, stderr, code = result2.stdout, result2.stderr, result2.code
 	assert.FatalIf(t, code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") ||
 		!strings.Contains(stderr, "ursa-major-ssh") ||
 		strings.Contains(stderr, "ExternalSource") ||
-		tr.authenticated.Load() != before,
+		tr.Authenticated.Load() != before,
 		"absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 }

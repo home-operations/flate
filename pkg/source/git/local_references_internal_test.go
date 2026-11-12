@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -79,7 +79,7 @@ func testResolveLocalReferencesCase(t *testing.T, root *string,
 	assert.Equal(
 		t,
 		artifact.FS.(*gittree.FS).FileDigests()["value.txt"],
-		manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(wantBody))),
+		manifest.Fingerprint(testutil.GitBlobHash(t, []byte(wantBody))),
 	)
 
 	if (artifact.LocalPath == (*root)) != (tc.want == (*b)) {

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -70,7 +70,7 @@ func TestFreshInputs_CurrentBytesAndMembership(t *testing.T) {
 			assert.Equal(
 				t,
 				captured.Files["file"],
-				manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("bravo"))),
+				manifest.Fingerprint(testutil.GitBlobHash(t, []byte("bravo"))),
 			)
 			assert.Equal(t, captured.Files["new"], "")
 			after, err := selected.FreshInputs(t.Context(), nil, nil)
@@ -78,7 +78,7 @@ func TestFreshInputs_CurrentBytesAndMembership(t *testing.T) {
 			assert.Equal(
 				t,
 				after.Files["file"],
-				manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("bravo"))),
+				manifest.Fingerprint(testutil.GitBlobHash(t, []byte("bravo"))),
 			)
 			assert.Equal(t, after.Files["file"] != before.Files["file"], true)
 			assert.Equal(t, after.Files["new"] != "", true)
@@ -185,7 +185,7 @@ func TestFreshInputs_StreamedIdentity(t *testing.T) {
 		}
 		testutil.WriteFile(t, root, file.name, string(data))
 		kinds[file.name] = 0
-		want[file.name] = manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, data))
+		want[file.name] = manifest.Fingerprint(testutil.GitBlobHash(t, data))
 	}
 	input, err := admitLocal(t, root)
 	assert.NoError(t, err)
@@ -271,7 +271,7 @@ func TestFreshInputs_ConcurrentRegularReads(t *testing.T) {
 	assert.NoError(t, err)
 	kinds := map[string]fs.FileMode{"file": 0}
 	want := InputObservations{
-		Files: map[string]string{"file": manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, data))},
+		Files: map[string]string{"file": manifest.Fingerprint(testutil.GitBlobHash(t, data))},
 		Types: kinds,
 	}
 	entered := make(chan struct{}, 2)

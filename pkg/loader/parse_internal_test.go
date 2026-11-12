@@ -13,7 +13,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/kustomize/api/types"

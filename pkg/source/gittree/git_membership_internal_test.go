@@ -12,18 +12,18 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
-	gitindex "github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage"
-	"github.com/go-git/go-git/v5/storage/filesystem"
-	"github.com/go-git/go-git/v5/utils/merkletrie"
-	merklefs "github.com/go-git/go-git/v5/utils/merkletrie/filesystem"
-	merkleindex "github.com/go-git/go-git/v5/utils/merkletrie/index"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/format/gitignore"
+	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage"
+	"github.com/go-git/go-git/v6/storage/filesystem"
+	"github.com/go-git/go-git/v6/utils/merkletrie"
+	merklefs "github.com/go-git/go-git/v6/utils/merkletrie/filesystem"
+	merkleindex "github.com/go-git/go-git/v6/utils/merkletrie/index"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -157,7 +157,11 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 			ctx:         t.Context(),
 			directories: make(map[string]membershipDirectory),
 		}
-		patterns, err := gitignore.ReadPatterns(observed, nil)
+		//nolint:staticcheck // Admission MUST capture ignore errors and observations before index access.
+		patterns, err := gitignore.ReadPatterns(
+			observed,
+			nil,
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, backing.opens, 2)
 		assert.Equal(t, gitignore.NewMatcher(patterns).Match([]string{"info-only"}, false), true)
@@ -172,7 +176,7 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 		_, err = merkletrie.DiffTreeContext(
 			t.Context(),
 			merkleindex.NewRootNode(idx),
-			merklefs.NewRootNode(worktree.Filesystem, nil),
+			merklefs.NewRootNodeWithOptions(worktree.Filesystem(), nil, merklefs.Options{}),
 			membershipEqual,
 		)
 		assert.NoError(t, err)
@@ -188,7 +192,7 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(
 			t,
-			slices.ContainsFunc(entries, func(entry fs.FileInfo) bool { return entry.Name() == ".git" }),
+			slices.ContainsFunc(entries, func(entry fs.DirEntry) bool { return entry.Name() == ".git" }),
 			true,
 		)
 		file, err := observed.Open(".git/info/exclude")
@@ -199,9 +203,15 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 		assert.Equal(t, string(data), "info-only\n")
 		_, err = observed.ReadDir(".git/info")
 		assert.NoError(t, err)
-		_, err = worktree.Filesystem.Open(".git/info/exclude")
+		directory := &Directory{
+			location: &gitrepo.Location{Repository: repo, RepositoryRoot: root, ContentRoot: root},
+			observed: observed,
+		}
+		worktree, err = directory.Worktree(&FS{})
+		assert.NoError(t, err)
+		_, err = worktree.Filesystem().Open(".git/info/exclude")
 		assert.Equal(t, err != nil, true)
-		_, err = worktree.Filesystem.ReadDir(".git/info")
+		_, err = worktree.Filesystem().ReadDir(".git/info")
 		assert.Equal(t, err != nil, true)
 		assert.Equal(t, backing.reads["."], 1)
 		assert.Equal(t, backing.reads[filepath.Join(".git", "info")], 1)
@@ -210,7 +220,7 @@ func testNewEntryPolicyGitCaptureObservations(t *testing.T) {
 		file, err = observed.Open("alias/tracked")
 		assert.NoError(t, err)
 		assert.NoError(t, file.Close())
-		_, err = worktree.Filesystem.Open("alias/tracked")
+		_, err = worktree.Filesystem().Open("alias/tracked")
 		assert.Equal(t, err != nil, true)
 	})
 	for _, mode := range []string{"root", "empty", "error", "canceled", "canceled unread", "canceled open", "canceled open after observation", "canceled lstat"} {
@@ -354,7 +364,7 @@ type membershipCountingFS struct {
 	err             error
 }
 
-func (f *membershipCountingFS) ReadDir(name string) ([]fs.FileInfo, error) {
+func (f *membershipCountingFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	f.reads[f.Join(".", name)]++
 	if f.err != nil {
 		return nil, &fs.PathError{Op: "readdir", Path: name, Err: f.err}
@@ -362,12 +372,12 @@ func (f *membershipCountingFS) ReadDir(name string) ([]fs.FileInfo, error) {
 	entries, err := f.Filesystem.ReadDir(name)
 	if f.names != nil {
 		for i, entry := range entries {
-			entries[i] = countedName{FileInfo: entry, calls: f.names}
+			entries[i] = countedName{DirEntry: entry, calls: f.names}
 		}
 	}
 	if f.directoryChecks != nil {
 		for i, entry := range entries {
-			entries[i] = countedDirectory{FileInfo: entry, calls: f.directoryChecks, name: f.Join(name, entry.Name())}
+			entries[i] = countedDirectory{DirEntry: entry, calls: f.directoryChecks, name: f.Join(name, entry.Name())}
 		}
 	}
 	if f.cancel != nil {
@@ -612,24 +622,41 @@ func newMembershipRoot(t *testing.T, directory string) *membershipRoot {
 }
 
 type countedName struct {
-	fs.FileInfo
+	fs.DirEntry
 
 	calls *int
 }
 
 type countedDirectory struct {
+	fs.DirEntry
+
+	calls map[string]int
+	name  string
+}
+
+func (f countedDirectory) Type() fs.FileMode {
+	f.calls[f.name]++
+	return f.DirEntry.Type()
+}
+
+func (f countedName) Name() string {
+	*f.calls++
+	return f.DirEntry.Name()
+}
+
+func (f countedDirectory) Info() (fs.FileInfo, error) {
+	info, err := f.DirEntry.Info()
+	if err != nil {
+		return nil, err
+	}
+	return countedDirectoryInfo{FileInfo: info, calls: f.calls, name: f.name}, nil
+}
+
+type countedDirectoryInfo struct {
 	fs.FileInfo
 
 	calls map[string]int
 	name  string
 }
 
-func (f countedDirectory) Mode() fs.FileMode {
-	f.calls[f.name]++
-	return f.FileInfo.Mode()
-}
-
-func (f countedName) Name() string {
-	*f.calls++
-	return f.FileInfo.Name()
-}
+func (f countedDirectoryInfo) Mode() fs.FileMode { f.calls[f.name]++; return f.FileInfo.Mode() }

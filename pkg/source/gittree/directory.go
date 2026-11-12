@@ -8,9 +8,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -38,6 +38,9 @@ func OpenDirectory(ctx context.Context, location *gitrepo.Location) (*Directory,
 func openDirectoryAt(ctx context.Context, location *gitrepo.Location, excluded string) (*Directory, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if location.RepositoryRoot != "" && location.LookupErr != nil {
+		return nil, location.LookupErr
 	}
 	if _, err := os.Stat(location.ContentRoot); err != nil {
 		return nil, err
@@ -149,7 +152,7 @@ type directoryFilesystem struct {
 }
 
 type directorySelection struct {
-	entries   []fs.FileInfo
+	entries   []fs.DirEntry
 	info      fs.FileInfo
 	directory bool
 }
@@ -181,7 +184,7 @@ func (f *directoryFilesystem) Lstat(name string) (fs.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !f.admits("", directory, info) {
+		if !f.admits("", directory, info.Mode) {
 			return nil, &fs.PathError{Op: lstatOperation, Path: name, Err: fs.ErrNotExist}
 		}
 		if directory == name {
@@ -194,7 +197,7 @@ func (f *directoryFilesystem) Lstat(name string) (fs.FileInfo, error) {
 	panic("unreachable directory path")
 }
 
-func (f *directoryFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
+func (f *directoryFilesystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	info, err := f.Lstat(name)
 	if err != nil {
 		return nil, err
@@ -210,13 +213,13 @@ func (f *directoryFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
 	selected := entries
 	index := slices.IndexFunc(
 		entries,
-		func(entry fs.FileInfo) bool { return !f.admits(name, entry.Name(), entry) },
+		func(entry fs.DirEntry) bool { return !f.admits(name, entry.Name(), entry.Type) },
 	)
 	if index >= 0 {
-		selected = make([]fs.FileInfo, 0, len(entries)-1)
+		selected = make([]fs.DirEntry, 0, len(entries)-1)
 		selected = append(selected, entries[:index]...)
 		for _, entry := range entries[index+1:] {
-			if f.admits(name, entry.Name(), entry) {
+			if f.admits(name, entry.Name(), entry.Type) {
 				selected = append(selected, entry)
 			}
 		}
@@ -260,14 +263,14 @@ func (f *directoryFilesystem) Chroot(name string) (billy.Filesystem, error) {
 	}, nil
 }
 
-func (f *directoryFilesystem) admits(parent, name string, info fs.FileInfo) bool {
+func (f *directoryFilesystem) admits(parent, name string, mode func() fs.FileMode) bool {
 	if filepath.Base(name) == gitDirectory {
 		return false
 	}
 	if f.current.membership.directory == "" && len(f.current.membership.ignored) == 0 {
 		return true
 	}
-	if !info.Mode().IsRegular() && !info.IsDir() {
+	if kind := mode(); !kind.IsRegular() && !kind.IsDir() {
 		return true
 	}
 	name = f.Join(parent, name)

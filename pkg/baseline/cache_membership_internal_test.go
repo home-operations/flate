@@ -6,13 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -31,7 +32,10 @@ func TestAutoResolve_CacheMembership(t *testing.T) {
 	testutil.WriteFile(t, root, ".active/payload", "after")
 	testutil.WriteFile(t, root, "file", "after")
 	owner := cachetest.New(t, filepath.Join(root, ".active"), sourcecache.New)
-	resolved, err := AutoResolve(t.Context(), root, base.String(), owner)
+	resolved, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: root, Base: base.String(), Cache: owner},
+	)
 	assert.NoError(t, err)
 	for _, tc := range []struct {
 		name, content string

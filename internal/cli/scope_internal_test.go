@@ -441,7 +441,7 @@ func TestRun_NamedScope_WarningWriteErrors(t *testing.T) {
 				args = append(args, "--path-orig", filepath.Join(orig, "cluster"))
 			}
 			want := errors.New("warning write failed")
-			cmd := New("test")
+			cmd := New("test", RunConfig{})
 			cmd.SetContext(t.Context())
 			cmd.SetArgs(args)
 			cmd.SetOut(&bytes.Buffer{})

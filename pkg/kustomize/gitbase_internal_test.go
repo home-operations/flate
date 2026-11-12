@@ -13,15 +13,16 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -479,7 +480,7 @@ func testRenderNestedGitBasesAndIntervalsCase(
 		)
 	}
 	sources := cachetest.New(t, "", sourcecache.New)
-	fetcher := &sourcegit.Fetcher{Cache: sources}
+	fetcher := &sourcegit.Fetcher{Network: networktest.New(t), Cache: sources}
 	c := newTestTreeCache(t, "")
 	var requests []GitBaseRequest
 	c.SetGitBaseFetcher(

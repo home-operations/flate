@@ -16,14 +16,14 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/memfs"
-	"github.com/go-git/go-billy/v5/util"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/memfs"
+	"github.com/go-git/go-billy/v6/util"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -73,8 +73,7 @@ func craftedCommit(t *testing.T, repo *git.Repository, entry object.TreeEntry) p
 		assert.NoError(t, err)
 	}
 	tree := &object.Tree{Entries: []object.TreeEntry{entry}}
-	encoded := repo.Storer.NewEncodedObject()
-	assert.NoError(t, tree.Encode(encoded))
+	var encoded plumbing.EncodedObject = testutil.GitMalformedTree(t, tree, 0)
 	treeHash, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	commit := &object.Commit{

@@ -18,14 +18,14 @@ import (
 	"time"
 	"weak"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/cache"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/storer"
-	"github.com/go-git/go-git/v5/storage/filesystem"
-	"github.com/go-git/go-git/v5/storage/transactional"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/cache"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/storer"
+	"github.com/go-git/go-git/v6/storage/filesystem"
+	"github.com/go-git/go-git/v6/storage/transactional"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -402,7 +402,7 @@ func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 		if !fs.ValidPath(name) || strings.ContainsAny(entry.Name(), "/\x00") {
 			return fs.ErrInvalid
 		}
-		mode := entry.Mode()
+		mode := entry.Type()
 		if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
 			continue
 		}

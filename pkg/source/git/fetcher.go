@@ -18,14 +18,14 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"github.com/go-git/go-git/v5/storage"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	gitssh "github.com/go-git/go-git/v6/plumbing/transport/ssh"
+	"github.com/go-git/go-git/v6/storage"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
@@ -33,8 +33,6 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
-	// HTTPS operations must retain flate's egress guard.
-	_ "github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -42,6 +40,9 @@ import (
 // Fetcher acquires immutable Git generations through the common cache owner.
 type Fetcher struct {
 	Cache *sourcecache.Cache
+	// Network MUST outlive acquisitions and their cache producers.
+	Network       *source.Network
+	GitTransports Transports
 
 	// Depth bounds history for refs that do not require reachability validation.
 	Depth int
@@ -125,7 +126,7 @@ func (f *operation) resolveTransport(
 	if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 		return gitAcquisition{}, authErr
 	}
-	skipTLS := endpoint.Protocol == sshScheme
+	skipTLS := endpoint.Scheme == sshScheme
 	var inputs []source.TransportInput
 	if repo.SecretRef != nil && !skipTLS && secrets != nil {
 		inputs = append(
@@ -144,11 +145,8 @@ func (f *operation) resolveTransport(
 	if err != nil {
 		return gitAcquisition{}, err
 	}
-	cert := resolved.Certificate()
 	opts := git.CloneOptions{
-		URL: repo.URL, NoCheckout: true, Auth: auth,
-		Depth:    f.Depth,
-		CABundle: []byte(cert[2]), ClientCert: []byte(cert[0]), ClientKey: []byte(cert[1]),
+		URL: repo.URL, NoCheckout: true, Depth: f.Depth,
 	}
 	if reference := (*manifest.GitRepositoryRef)(
 		repo.Reference,
@@ -156,18 +154,11 @@ func (f *operation) resolveTransport(
 		reference.Kind == commitReference {
 		opts.Depth = 0
 	}
-	opts.ProxyOptions, err = gitProxyOptions(repo.URL, &resolved)
-	if err != nil {
-		return gitAcquisition{}, err
-	}
 	var secretMaterial any
 	if sec.Data != nil {
 		secretMaterial = sec.Data.Snapshot()
 	}
-	var material any
-	if sec.Data != nil || opts.ProxyOptions.URL != "" {
-		material = [2]any{secretMaterial, opts.ProxyOptions}
-	}
+	material := resolved.Identity(secretMaterial)
 	if authErr == nil && auth == nil && repo.Provider == sourcev1.GitProviderGitHub {
 		authErr = source.MissingSecretErr(
 			manifest.DiagnosticFor(repo.Named(), repo),
@@ -175,7 +166,15 @@ func (f *operation) resolveTransport(
 			"provider authentication unavailable offline",
 		)
 	}
-	request := gitAcquisition{work: &f.work, protocol: endpoint.Protocol, spec: repo, options: opts, material: material}
+	request := gitAcquisition{
+		work:      &f.work,
+		protocol:  endpoint.Scheme,
+		spec:      repo,
+		options:   opts,
+		material:  material,
+		auth:      auth,
+		transport: resolved,
+	}
 	if authErr == nil || repo.Provider == sourcev1.GitProviderGitHub {
 		return request, authErr
 	}
@@ -204,37 +203,15 @@ func (f *operation) resolveTransport(
 	return request, authErr
 }
 
-func gitProxyOptions(repoURL string, resolved *source.TransportMaterial) (transport.ProxyOptions, error) {
-	proxy := resolved.ProxyComponents()
-	if proxy[0] != "" {
-		return transport.ProxyOptions{URL: proxy[0], Username: proxy[1], Password: proxy[2]}, nil
-	}
-	target, err := url.Parse(repoURL)
-	if err != nil || target.Scheme != "http" && target.Scheme != "https" {
-		return transport.ProxyOptions{}, nil //nolint:nilerr // Non-HTTP go-git endpoint syntaxes bypass HTTP proxy selection.
-	}
-	selected, err := resolved.ProxyURL(target)
-	if err != nil {
-		return transport.ProxyOptions{}, manifest.NewError(
-			manifest.ErrInput,
-			nil,
-			"resolve proxy: invalid proxy configuration",
-		)
-	}
-	var options transport.ProxyOptions
-	if selected != nil {
-		options.URL = selected.String()
-	}
-	return options, nil
-}
-
 type gitAcquisition struct {
-	work     *manifest.AcquisitionWork
-	protocol string
-	timeout  time.Duration
-	spec     *manifest.GitRepository
-	options  git.CloneOptions
-	material any
+	auth      any
+	transport source.TransportMaterial
+	work      *manifest.AcquisitionWork
+	protocol  string
+	timeout   time.Duration
+	spec      *manifest.GitRepository
+	options   git.CloneOptions
+	material  any
 }
 
 func (r *gitAcquisition) complete(
@@ -306,7 +283,7 @@ func (f *Fetcher) fetch(
 					ctx,
 					cloned,
 					submoduleOptions{
-						auth:  request.options.Auth,
+						auth:  request.auth,
 						depth: git.DefaultSubmoduleRecursionDepth,
 						work:  request.work,
 					},
@@ -378,12 +355,10 @@ func gitWarnings(input *gittree.FS, id manifest.NamedResource, repository, ref s
 		return nil
 	}
 	var coordinates []string
-	if endpoint, err := transport.NewEndpoint(repository); err == nil {
-		endpoint.User, endpoint.Password = "", ""
-		if address, err := url.Parse(endpoint.String()); err == nil {
-			address.RawQuery, address.Fragment = "", ""
-			coordinates = append(coordinates, address.String())
-		}
+	if endpoint, err := transport.ParseURL(repository); err == nil {
+		endpoint.User = nil
+		endpoint.RawQuery, endpoint.Fragment = "", ""
+		coordinates = append(coordinates, endpoint.String())
 	}
 	if ref != "" {
 		coordinates = append(coordinates, ref)
@@ -406,25 +381,28 @@ func (f *Fetcher) acquire(
 	reference2 := ref.Effective()
 	kind, value := reference2.Kind, reference2.Value
 	options := request.options
-	fetch := &git.FetchOptions{
-		Auth: options.Auth, ProxyOptions: options.ProxyOptions, CABundle: options.CABundle,
-		ClientCert: options.ClientCert, ClientKey: options.ClientKey,
-		Depth: options.Depth, Tags: git.NoTags,
+	client, err := newClient(
+		&ClientConfig{Transports: f.GitTransports, Network: f.Network, Material: request.transport},
+		request.auth,
+	)
+	if err != nil {
+		return nil, err
 	}
+	options.ClientOptions = client.options
+	fetch := &git.FetchOptions{ClientOptions: client.options, Depth: options.Depth, Tags: git.NoTags}
 
 	if kind == commitReference && ref.Branch == "" {
-		repo, err := initRemote(storer, worktree, options.URL)
-		if err != nil {
-			return nil, err
+		repo, initErr := initRemote(storer, worktree, options.URL)
+		if initErr != nil {
+			return nil, initErr
 		}
 		fetch.Depth, fetch.RefSpecs = 1, []config.RefSpec{config.RefSpec("+" + value + ":refs/flate/pin")}
-		if err := request.fetchPin(ctx, f, repo, fetch); err != nil {
-			return nil, err
+		if fetchErr := request.fetchPin(ctx, f, repo, fetch); fetchErr != nil {
+			return nil, fetchErr
 		}
 		return repo, nil
 	}
 	if request.spec.RecurseSubmodules {
-		options.RecurseSubmodules = git.DefaultSubmoduleRecursionDepth
 		options.Depth, fetch.Depth = 0, 0
 	}
 	var specs []config.RefSpec
@@ -432,9 +410,9 @@ func (f *Fetcher) acquire(
 		specs = []config.RefSpec{spec}
 	}
 	if len(specs) == 0 || worktree != nil {
-		repo, err := request.clone(ctx, storer, worktree, &options)
-		if err != nil {
-			return nil, err
+		repo, cloneErr := request.clone(ctx, storer, worktree, &options)
+		if cloneErr != nil {
+			return nil, cloneErr
 		}
 		switch kind {
 		case "name":
@@ -486,7 +464,7 @@ func (r *gitAcquisition) clone(
 }
 
 func initRemote(storer storage.Storer, worktree billy.Filesystem, remoteURL string) (*git.Repository, error) {
-	repo, err := git.Init(storer, worktree)
+	repo, err := git.Init(storer, git.WithWorkTree(worktree))
 	if err != nil {
 		return nil, fmt.Errorf("initialize git repository: %w", err)
 	}
@@ -497,21 +475,22 @@ func initRemote(storer storage.Storer, worktree billy.Filesystem, remoteURL stri
 	return repo, nil
 }
 
-func (f *Fetcher) validateRepo(repo *manifest.GitRepository, admitted bool) (*transport.Endpoint, error) {
+func (f *Fetcher) validateRepo(repo *manifest.GitRepository, admitted bool) (*url.URL, error) {
 	if repo == nil {
 		return nil, errors.New("git repository is nil")
 	}
 	if repo.URL == "" {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "missing url")
 	}
-	endpoint, err := transport.NewEndpoint(repo.URL)
+	endpoint, err := transport.ParseURL(repo.URL)
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("parse git endpoint: %w", err), "")
 	}
 	if f.RestrictSchemes && !admitted {
 		// Restricted scp-style remotes require an explicit user.
-		allowedSSH := endpoint.Protocol == sshScheme && (endpoint.User != "" || strings.HasPrefix(repo.URL, "ssh://"))
-		if endpoint.Protocol != "https" && !allowedSSH {
+		allowedSSH := endpoint.Scheme == sshScheme &&
+			(endpoint.User.Username() != "" || strings.HasPrefix(repo.URL, "ssh://"))
+		if endpoint.Scheme != "https" && !allowedSSH {
 			return nil, manifest.NewError(
 				manifest.ErrInput,
 				nil,
@@ -526,11 +505,11 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository, admitted bool) (*tr
 }
 
 func (f *operation) retrySSH(
-	ctx context.Context, request *gitAcquisition, policyValue *sourcecache.Policy, endpoint *transport.Endpoint,
+	ctx context.Context, request *gitAcquisition, policyValue *sourcecache.Policy, endpoint *url.URL,
 ) (source.PreparedFetch, error) {
 	policy := *policyValue
 	repo := request.spec
-	user := cmp.Or(endpoint.User, "git")
+	user := cmp.Or(endpoint.User.Username(), "git")
 	prepared := *request
 	var conn net.Conn
 	var stop func() bool
@@ -541,7 +520,7 @@ func (f *operation) retrySSH(
 			return err
 		}
 		stop = context.AfterFunc(ctx, func() { _ = opened.Close() })
-		prepared.options.Auth = auth
+		prepared.auth = auth
 		prepared.material = [3]any{request.material, user, keys}
 		return nil
 	}, func(ctx context.Context, policyValue *sourcecache.Policy, local *store.SourceArtifact) (*store.SourceArtifact, error) {

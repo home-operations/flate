@@ -38,7 +38,7 @@ func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 				expected = persistenceNotice
 			}
 			assert.Equal(t, stderr, expected)
-			cmd := New("test")
+			cmd := New("test", RunConfig{})
 			cmd.SetContext(t.Context())
 			cmd.SetArgs(args)
 			cmd.SetOut(&bytes.Buffer{})

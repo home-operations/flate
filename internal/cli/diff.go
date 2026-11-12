@@ -10,16 +10,19 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func newDiffCmd() *cobra.Command {
-	cmd := diffCmd("diff", nil, "Diff rendered output (defaults to all)", "")
+func newDiffCmd(cfg RunConfig) *cobra.Command {
+	cmd := diffCmd(cfg, &cobra.Command{Use: "diff", Short: "Diff rendered output (defaults to all)"}, "")
 	cmd.AddCommand(
-		diffCmd("all", nil,
-			"Diff all Flux producer output against a baseline", ""),
-		diffCmd("ks [name]", []string{kustomizationAlias, kustomizationAliases},
-			"Diff Kustomizations against another path", manifest.KindKustomization),
-		diffCmd("hr [name]", []string{helmReleaseAlias, helmReleaseAliases},
-			"Diff HelmReleases against another path", manifest.KindHelmRelease),
-		newDiffImagesCmd(),
+		diffCmd(cfg, &cobra.Command{Use: useAll, Short: "Diff all Flux producer output against a baseline"}, ""),
+		diffCmd(cfg, &cobra.Command{
+			Use: useKustomization, Aliases: []string{kustomizationAlias, kustomizationAliases},
+			Short: "Diff Kustomizations against another path",
+		}, manifest.KindKustomization),
+		diffCmd(cfg, &cobra.Command{
+			Use: useHelmRelease, Aliases: []string{helmReleaseAlias, helmReleaseAliases},
+			Short: "Diff HelmReleases against another path",
+		}, manifest.KindHelmRelease),
+		newDiffImagesCmd(cfg),
 	)
 	return cmd
 }
@@ -36,21 +39,16 @@ func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
 		StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields, "Ignore a dotted field in diffs (repeatable flag)")
 }
 
-func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
-	c := &commonFlags{}
+func diffCmd(cfg RunConfig, cmd *cobra.Command, kind string) *cobra.Command {
+	c := &commonFlags{gitTransports: cfg.GitTransports}
 	d := &diffFlags{}
 	positional := cobra.MaximumNArgs(1)
 	if kind == "" {
 		positional = cobra.NoArgs
 	}
-	cmd := &cobra.Command{
-		Use:     use,
-		Aliases: aliases,
-		Short:   short,
-		Args:    positional,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return d.run(cmd, c, c.roots(firstArg(args), kind)[0])
-		},
+	cmd.Args = positional
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return d.run(cmd, c, c.roots(firstArg(args), kind)[0])
 	}
 	bindCommon(cmd.Flags(), c)
 	bindOutput(cmd.Flags(), &c.output, diff.Formats()...)
@@ -58,8 +56,8 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 	return cmd
 }
 
-func newDiffImagesCmd() *cobra.Command {
-	c := &commonFlags{}
+func newDiffImagesCmd(cfg RunConfig) *cobra.Command {
+	c := &commonFlags{gitTransports: cfg.GitTransports}
 	var includeRemoved bool
 	cmd := &cobra.Command{
 		Use:   "images",

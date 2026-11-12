@@ -11,33 +11,38 @@ import (
 	"path"
 	"slices"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	gitindex "github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 type selection struct {
-	repo     *git.Repository
-	worktree *git.Worktree
-	base     *resolution
-	current  *gittree.FS
-	input    *store.SourceArtifact
-	owner    *sourcecache.Cache
-	content  any
+	network    *source.Network
+	transports sourcegit.Transports
+	repo       *git.Repository
+	worktree   *git.Worktree
+	base       *resolution
+	current    *gittree.FS
+	input      *store.SourceArtifact
+	owner      *sourcecache.Cache
+	content    any
 }
 
-func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, string, []manifest.Warning, error) {
+func selectChanges(ctx context.Context, s *selection) (*gittree.FS, *change.Set, string, []manifest.Warning, error) {
 	entries, comparison, err := s.baseEntries(ctx)
 	if err != nil {
 		return nil, nil, "", nil, err
@@ -108,7 +113,7 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	return baseline, changes, identity, warnings, nil
 }
 
-func (s selection) reader(
+func (s *selection) reader(
 	ctx context.Context,
 	entries map[string]object.TreeEntry,
 	routing []string,
@@ -140,7 +145,7 @@ func (s selection) reader(
 	return baseline, identity, nil
 }
 
-func (s selection) baseEntries(ctx context.Context) (map[string]object.TreeEntry, *gitindex.Index, error) {
+func (s *selection) baseEntries(ctx context.Context) (map[string]object.TreeEntry, *gitindex.Index, error) {
 	var baseTree *object.Tree
 	var entries map[string]object.TreeEntry
 	var comparison *gitindex.Index
@@ -165,7 +170,7 @@ func (s selection) baseEntries(ctx context.Context) (map[string]object.TreeEntry
 	return entries, comparison, nil
 }
 
-func (s selection) candidates(
+func (s *selection) candidates(
 	ctx context.Context,
 	entries map[string]object.TreeEntry,
 	comparison *gitindex.Index,
@@ -206,7 +211,7 @@ func (s selection) candidates(
 		if name := change.To.String(); name != "" {
 			// Upstream uses a zero content hash when checkout reads fail.
 			// Such observations MUST retain the ordinary comparison's I/O error.
-			uncertain := bytes.Equal(change.To.Hash()[:len(plumbing.ZeroHash)], plumbing.ZeroHash[:])
+			uncertain := bytes.Equal(change.To.Hash()[:plumbing.ZeroHash.Size()], plumbing.ZeroHash.Bytes())
 			candidates[name] = uncertain
 		}
 	}
@@ -221,7 +226,7 @@ func (s selection) candidates(
 	return candidates, warnings, nil
 }
 
-func (s selection) acquireBodies(
+func (s *selection) acquireBodies(
 	ctx context.Context,
 	entries map[string]object.TreeEntry,
 	candidates map[string]bool,
@@ -247,12 +252,20 @@ func (s selection) acquireBodies(
 	if s.base.remote == nil {
 		return nil
 	}
-	hashes := slices.SortedFunc(maps.Keys(routed), func(a, b plumbing.Hash) int { return bytes.Compare(a[:], b[:]) })
+	hashes := slices.SortedFunc(maps.Keys(routed), func(a, b plumbing.Hash) int { return a.Compare(b.Bytes()) })
+	// Object IDs have no exported fields, so cache payloads MUST carry their bytes.
+	var wants [][formatcfg.SHA1Size]byte
+	if hashes != nil {
+		wants = make([][formatcfg.SHA1Size]byte, len(hashes))
+	}
+	for i, hash := range hashes {
+		wants[i] = [formatcfg.SHA1Size]byte(hash.Bytes())
+	}
 	content := struct {
 		URL    string
 		Commit string
-		Wants  []plumbing.Hash
-	}{s.base.remote.url, s.base.Hash.String(), hashes}
+		Wants  [][formatcfg.SHA1Size]byte
+	}{s.base.remote.url, s.base.Hash.String(), wants}
 	generation, _, err := s.owner.Git(
 		ctx,
 		sourcecache.GitKey{Content: content, Ref: s.base.Hash.String()},
@@ -274,7 +287,7 @@ func (s selection) acquireBodies(
 	return s.base.adopt(s.repo.Storer)
 }
 
-func (s selection) transferBodies(ctx context.Context, upper storage.Storer, hashes []plumbing.Hash) error {
+func (s *selection) transferBodies(ctx context.Context, upper storage.Storer, hashes []plumbing.Hash) error {
 	var wants []plumbing.Hash
 	for _, hash := range hashes {
 		if err := ctx.Err(); err != nil {
@@ -305,7 +318,7 @@ func (s selection) transferBodies(ctx context.Context, upper storage.Storer, has
 	return nil
 }
 
-func (s selection) ensureBodies(ctx context.Context, upper storage.Storer, wants []plumbing.Hash) error {
+func (s *selection) ensureBodies(ctx context.Context, upper storage.Storer, wants []plumbing.Hash) error {
 	for _, hash := range wants {
 		err := upper.HasEncodedObject(hash)
 		if errors.Is(err, plumbing.ErrObjectNotFound) && !s.base.remote.full {
@@ -320,7 +333,7 @@ func (s selection) ensureBodies(ctx context.Context, upper storage.Storer, wants
 	return nil
 }
 
-func (s selection) acquireBase(ctx context.Context) error {
+func (s *selection) acquireBase(ctx context.Context) error {
 	url, ok := originURL(s.current.Location().Config)
 	if !ok {
 		return manifest.NewError(
@@ -329,7 +342,12 @@ func (s selection) acquireBase(ctx context.Context) error {
 			fmt.Sprintf("base %s is missing objects and no origin is configured", s.base.Hash),
 		)
 	}
-	r, err := fetchBase(ctx, url, s.base.Hash.String(), s.owner)
+	r, err := fetchBase(
+		ctx,
+		url,
+		s.base.Hash.String(),
+		Config{Cache: s.owner, Network: s.network, GitTransports: s.transports},
+	)
 	if err != nil {
 		return err
 	}

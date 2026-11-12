@@ -6,8 +6,8 @@ import (
 	"testing"
 	"weak"
 
-	"github.com/go-git/go-git/v5/plumbing/storer"
-	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/go-git/go-git/v6/plumbing/storer"
+	"github.com/go-git/go-git/v6/storage/memory"
 
 	"github.com/home-operations/flate/internal/assert"
 )

@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -41,7 +42,7 @@ func testCheckoutRefPreservesOriginFirstBranchLookupCase(
 		handler.ServeHTTP(w, r)
 	}))
 	defer srv.Close()
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	ref := &sourcev1.GitRepositoryRef{Name: branch.String()}
 	if (*kind) == "commit-branch" {
 		ref = &sourcev1.GitRepositoryRef{Commit: fixture.head.String(), Branch: "pinned"}

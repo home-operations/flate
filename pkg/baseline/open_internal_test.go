@@ -13,17 +13,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	gitindex "github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -70,7 +71,15 @@ func TestAutoResolve_SubmoduleWarningAttribution(t *testing.T) {
 	pin, err = repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	setRef(t, repo, plumbing.NewBranchReferenceName("base-with-module"), pin)
-	result, err := AutoResolve(t.Context(), root, "base-with-module", cachetest.New(t, "", sourcecache.New))
+	result, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    root,
+			Base:    "base-with-module",
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.NoError(t, err)
 	warnings := result.BaseInput.Warnings
 	if len(warnings) != 1 || warnings[0].Category != manifest.WarnSkippedSubmodule ||
@@ -108,7 +117,15 @@ func TestAutoResolve_SparseGitMemory(t *testing.T) {
 			}
 			fixture := testutil.NewSparseGit(t, size.files, size.bytes)
 			owner := cachetest.New(t, "", sourcecache.New)
-			res, err := AutoResolve(t.Context(), filepath.Join(fixture.Root, "flux"), fixture.Base.String(), owner)
+			res, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    filepath.Join(fixture.Root, "flux"),
+					Base:    fixture.Base.String(),
+					Cache:   owner,
+				},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, res.Changes.Paths(), []string{"app/input.yaml"})
 
@@ -145,7 +162,15 @@ func TestAutoResolve_SparseGitMemory(t *testing.T) {
 				&git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}},
 			)
 			assert.NoError(t, err)
-			grown, err := AutoResolve(t.Context(), filepath.Join(fixture.Root, "flux"), fixture.Base.String(), owner)
+			grown, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    filepath.Join(fixture.Root, "flux"),
+					Base:    fixture.Base.String(),
+					Cache:   owner,
+				},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, grown.Changes.Paths(), []string{"app/input.yaml", "disjoint/growth.txt"})
 			t.Logf(
@@ -174,9 +199,12 @@ func TestAutoResolve_SparseHistoricalBodyUnavailable(t *testing.T) {
 	assert.NoError(t, os.Remove(filepath.Join(fixture.Root, ".git", "objects", oid[:2], oid[2:])))
 	res, err := AutoResolve(
 		t.Context(),
-		filepath.Join(fixture.Root, "flux"),
-		fixture.Base.String(),
-		cachetest.New(t, "", sourcecache.New),
+		Config{
+			Network: networktest.New(t),
+			Path:    filepath.Join(fixture.Root, "flux"),
+			Base:    fixture.Base.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
 	)
 	assert.NoError(t, err)
 	assert.Diff(t, res.Changes.Paths(), []string{"app/input.yaml"})
@@ -362,7 +390,15 @@ func TestAutoResolve_CheckoutInventory(t *testing.T) {
 			if kind == "unignored_file" {
 				testutil.WriteFile(t, root, "notes.txt", "untracked input")
 			}
-			result, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
+			result, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    root,
+					Base:    pin.String(),
+					Cache:   cachetest.New(t, "", sourcecache.New),
+				},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, result.Changes.Paths(), want)
 		})
@@ -389,7 +425,15 @@ func TestAutoResolve_IgnoredHistoricalRemoval(t *testing.T) {
 	})
 	assert.Equal(t, base != head, true)
 	testutil.WriteFile(t, root, "historical.ignored", "identical historical bytes")
-	result, err := AutoResolve(t.Context(), root, base.String(), cachetest.New(t, "", sourcecache.New))
+	result, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    root,
+			Base:    base.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.NoError(t, err)
 	data, err := fs.ReadFile(result.BaseInput.FS, "historical.ignored")
 	assert.NoError(t, err)

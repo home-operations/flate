@@ -44,7 +44,8 @@ var reconcilableKinds = func() []manifest.KindInfo {
 
 // Config contains invocation policy and shared rendering resources.
 type Config struct {
-	RecordWork bool
+	GitTransports git.Transports
+	RecordWork    bool
 
 	// Selection narrows declarations before rendering; zero selection is universal.
 	Selection selection.Request
@@ -276,6 +277,7 @@ func (o *Orchestrator) parentOf(id manifest.NamedResource) (manifest.NamedResour
 
 func (o *Orchestrator) discover(ctx context.Context) error {
 	gitFetcher := &git.Fetcher{
+		Network: o.cfg.Network, GitTransports: o.cfg.GitTransports,
 		Cache: o.cache, Depth: o.cfg.GitDepth,
 		RestrictSchemes: o.cfg.RestrictEgress,
 	}

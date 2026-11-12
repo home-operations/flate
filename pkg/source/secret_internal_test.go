@@ -271,7 +271,12 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, material.Certificate()[2], ca)
-	assert.Diff(t, material.ProxyComponents(), [3]string{"http://proxy.invalid", "repository", "filled"})
+	assert.FatalIf(t, material.proxy == nil, "explicit proxy material is absent")
+	assert.Diff(
+		t,
+		[3]string{material.proxy.Address, material.proxy.Username, material.proxy.Password},
+		[3]string{"http://proxy.invalid", "repository", "filled"},
+	)
 	assert.FatalIf(
 		t,
 		s.GetObject(supplied.Named()) != repository || len(repository.StringData) != 1,

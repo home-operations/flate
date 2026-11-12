@@ -24,11 +24,15 @@ import (
 	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 const (
+	useKustomization         = "ks [name]"
+	useHelmRelease           = "hr [name]"
+	useAll                   = "all"
 	sourceRetryAttempts      = 3
 	defaultConcurrencyPerCPU = 4
 	shortRevisionLength      = 7
@@ -38,12 +42,14 @@ const (
 )
 
 type commonFlags struct {
-	input     *store.SourceArtifact
-	baseInput *store.SourceArtifact
-	changes   *change.Set
-	owner     *sourcecache.Cache
-	path      string
-	pathOrig  string
+	gitTransports sourcegit.Transports
+	network       *source.Network
+	input         *store.SourceArtifact
+	baseInput     *store.SourceArtifact
+	changes       *change.Set
+	owner         *sourcecache.Cache
+	path          string
+	pathOrig      string
 	// Synthetic baseline labels need explicit source coordinates and identity.
 	pathRoot            string
 	pathOrigRoot        string
@@ -197,7 +203,10 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) err
 		c.pathOrigSelfURLs = res.SelfURLs
 		return nil
 	}
-	res, err := baseline.AutoResolve(ctx, c.path, c.base, c.owner)
+	res, err := baseline.AutoResolve(
+		ctx,
+		baseline.Config{Path: c.path, Base: c.base, Cache: c.owner, Network: c.network, GitTransports: c.gitTransports},
+	)
 	if res != nil {
 		c.input, c.baseInput = res.Source, res.BaseInput
 	}
@@ -248,6 +257,7 @@ func buildOrchCfg(c *commonFlags) orchestrator.Config {
 	helmOptions.SkipCRDs = slices.Contains(helmOptions.SkipKinds, manifest.KindCustomResourceDefinition)
 	return orchestrator.Config{
 		Cache:          c.owner,
+		GitTransports:  c.gitTransports,
 		HelmOptions:    helmOptions,
 		RegistryConfig: c.registryConfig,
 		Concurrency:    c.concurrency,
@@ -380,6 +390,7 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 	cfg := buildOrchCfg(c)
 	cfg.HelmClient, cfg.Network = helm.NewClient(owner), new(source.Network)
 	defer cfg.Network.Close()
+	c.network = cfg.Network
 	inv := selectedInvocation{}
 	if err := resolveBaseline(ctx, c, req.pair); err != nil {
 		inv.failBaseline(c, req.pair, err)

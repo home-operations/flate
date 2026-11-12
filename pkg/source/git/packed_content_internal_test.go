@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -44,7 +45,7 @@ func testFetcherPackedContentCase(t *testing.T, testCaseInput testFetcherPackedC
 	if (*testCaseInput.mode) == "disk" {
 		root = t.TempDir()
 	}
-	f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 	art, err := fetchtest.Fetch(
 		t.Context(),
 		f.Fetch,

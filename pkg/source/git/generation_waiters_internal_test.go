@@ -9,11 +9,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -64,7 +65,7 @@ func testGenerationWaiter(
 	if disk {
 		root = t.TempDir()
 	}
-	f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 
 	results := make(chan testtestGenerationWaiterResult, 2)
 	go func() {
@@ -118,7 +119,7 @@ func testGenerationWaiter(
 	srv.Close()
 	if disk {
 		assert.NoError(t, f.Cache.Close())
-		f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+		f = &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 	}
 	hit, err := fetch(t.Context(), f, srv.URL)
 	assert.NoError(t, err)

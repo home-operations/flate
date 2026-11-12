@@ -10,11 +10,11 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -163,7 +163,7 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 		assert.Equal(
 			t,
 			observed.Files[(*captures.name)],
-			manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte((*captures.want)))),
+			manifest.Fingerprint(testutil.GitBlobHash(t, []byte((*captures.want)))),
 		)
 		assert.Equal(t, (*captures.objects).reads.Load(), int64(0))
 	}
@@ -173,13 +173,13 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 	assert.Equal(
 		t,
 		selected.FileDigests()[(*captures.name)],
-		manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte((*captures.want)))),
+		manifest.Fingerprint(testutil.GitBlobHash(t, []byte((*captures.want)))),
 	)
 	if (*(*captures.mode)) == "untracked" {
 		assert.Equal(
 			t,
 			selected.FileDigests()["dir/new"],
-			manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("untracked"))),
+			manifest.Fingerprint(testutil.GitBlobHash(t, []byte("untracked"))),
 		)
 	}
 	if (*(*captures.mode)) != "subtree" {

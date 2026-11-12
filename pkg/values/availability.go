@@ -108,6 +108,9 @@ func (r *Result) Disposition(permission missingPolicy) Disposition {
 		return Omit
 	}
 	if r.use == substitutionUse {
+		if permission.AllowsKind(r.id.Kind) && (r.state == Absent || r.state == Encrypted || r.state == Produced) {
+			return Unresolved
+		}
 		if r.data != nil && r.data.HasKeys() {
 			return UseData
 		}
@@ -151,10 +154,10 @@ func (r *Result) Failure() *manifest.Error {
 		r.use, r.id.Kind, r.id.Namespace, r.id.Name, cause))
 }
 
-// AdmitMissing MUST leave absent substitutions subject to readiness.
+// AdmitMissing MUST require matching kind permission for absent unresolved inputs.
 func (r *Result) AdmitMissing(permission missingPolicy) bool {
 	disposition := r.Disposition(permission)
-	return disposition == Omit || disposition == Unresolved && r.state != Absent
+	return disposition == Omit || disposition == Unresolved && (r.state != Absent || permission.AllowsKind(r.id.Kind))
 }
 
 func (r *Result) supplyGuidance() string {

@@ -1,0 +1,10 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cloudflare-tunnel, namespace: network}
+spec:
+  path: ./kubernetes/apps/tunnel
+  postBuild:
+    substitute: {ACTIVE: 'yes'}
+    substituteFrom:
+      - kind: Secret
+        name: cloudflare-tunnel-id-secret

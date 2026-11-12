@@ -1,7 +1,6 @@
 package depwait
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -17,13 +16,22 @@ import (
 func TestAvailable_OptionalMaterializerAbsence(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                                                           string
+		name, use                                                      string
 		status                                                         store.Status
 		level                                                          manifest.DrainLevel
 		optional, allowed, generated, offline, private, data, producer bool
 		want                                                           schedule.Kind
 		omit                                                           bool
 	}{
+		{name: "required substitution absent", use: "substituteFrom", want: schedule.Blocked},
+		{name: "required substitution settled absence", use: "substituteFrom", level: manifest.DrainCascade, want: schedule.DependencyFailed},
+		{name: "allowed substitution absent", use: "substituteFrom", allowed: true, want: schedule.Terminal, omit: true},
+		{name: "allowed substitution settled absence", use: "substituteFrom", allowed: true, level: manifest.DrainCascade, want: schedule.Terminal, omit: true},
+		{name: "allowed substitution pending", use: "substituteFrom", allowed: true, producer: true, status: store.StatusPending, want: schedule.Blocked},
+		{name: "allowed substitution failed", use: "substituteFrom", allowed: true, producer: true, status: store.StatusFailed, want: schedule.Terminal, omit: true},
+		{name: "allowed substitution available", use: "substituteFrom", allowed: true, producer: true, status: store.StatusReady, data: true, want: schedule.Terminal},
+		{name: "allowed substitution file waiting", use: "substituteFrom", allowed: true, offline: true, want: schedule.Blocked},
+		{name: "allowed substitution file absent", use: "substituteFrom", allowed: true, offline: true, level: manifest.DrainCascade, want: schedule.Terminal, omit: true},
 		{name: "optional absent", optional: true, want: schedule.Terminal, omit: true},
 		{name: "optional pending", optional: true, producer: true, status: store.StatusPending, want: schedule.Blocked},
 		{name: "optional pending cascade", optional: true, producer: true, status: store.StatusPending, level: manifest.DrainCascade, want: schedule.Blocked},
@@ -75,7 +83,7 @@ func TestAvailable_RequiredMaterializerCycle(t *testing.T) {
 func testAvailableOptionalMaterializerAbsenceCase(
 	t *testing.T,
 	testCaseInput *struct {
-		name string
+		name, use string
 
 		status    store.Status
 		level     manifest.DrainLevel
@@ -127,10 +135,14 @@ func testAvailableOptionalMaterializerAbsenceCase(
 	if testCaseInput.allowed {
 		w.Missing = NewMissingPolicy([]string{manifest.KindConfigMap})
 	}
+	use := "valuesFrom"
+	if testCaseInput.use != "" {
+		use = testCaseInput.use
+	}
 	got := w.Available(
 		t.Context(),
 		DataDependency{
-			NamedResource: id, Optional: testCaseInput.optional, Use: "valuesFrom",
+			NamedResource: id, Optional: testCaseInput.optional, Use: use,
 			Input: input,
 		},
 		testCaseInput.level,
@@ -220,8 +232,16 @@ func testAvailableRequiredMaterializerCycleCase(
 
 func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
 	t.Parallel()
-	for _, allowed := range []bool{false, true} {
-		t.Run(fmt.Sprintf("allowed=%t", allowed), func(t *testing.T) {
+	for _, tc := range []struct {
+		name, use string
+		allowed   bool
+		state     values.State
+	}{
+		{name: "required values", use: "valuesFrom", state: values.Produced},
+		{name: "allowed values", use: "valuesFrom", allowed: true, state: values.Produced},
+		{name: "allowed substitution", use: "substituteFrom", allowed: true, state: values.Encrypted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
@@ -253,10 +273,16 @@ func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
 			facts := before.ReferenceFacts(id, nil, consumer)
 			assert.Equal(t, facts.Original, manifest.Data(nil))
 			assert.Equal(t, facts.Generated && facts.Offline, true)
-			ref := manifest.Reference{NamedResource: id, Key: "second", Use: "valuesFrom"}
+			ref := manifest.Reference{NamedResource: id, Key: "second", Use: tc.use}
+			if tc.use == "substituteFrom" {
+				ref.Key = ""
+				facts.Warnings = []manifest.Warning{
+					{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"second"}},
+				}
+			}
 			result, err := values.Classify(new(ref), new(facts))
 			assert.NoError(t, err)
-			assert.Equal(t, result.State(), values.Produced)
+			assert.Equal(t, result.State(), tc.state)
 			firstRef := ref
 			firstRef.Key = "first"
 			first, err := values.Classify(new(firstRef), new(facts))
@@ -264,7 +290,7 @@ func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
 			assert.Equal(t, first.State(), values.Readable)
 			assert.Equal(t, first.Value(), "supplied")
 			var kinds []string
-			if allowed {
+			if tc.allowed {
 				kinds = []string{manifest.KindSecret}
 			}
 			w := Waiter{Store: &before, Parent: consumer, Missing: NewMissingPolicy(kinds)}
@@ -298,7 +324,16 @@ func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
 			ready := w.Available(t.Context(), DataDependency{Reference: ref, Input: facts}, manifest.DrainNone)
 			assert.Equal(t, ready.Kind, schedule.Terminal)
 			assert.Equal(t, ready.Omit, false)
-			assert.Equal(t, ready.Result.Value(), "materialized")
+			if tc.use == "valuesFrom" {
+				assert.Equal(t, ready.Result.Value(), "materialized")
+			}
+			materialized, err := ready.Result.Data().Value("second")
+			assert.NoError(t, err)
+			assert.Equal(t, materialized.Found, true)
+			assert.Equal(t, materialized.Value, "materialized")
+			firstValue, err := ready.Result.Data().Value("first")
+			assert.NoError(t, err)
+			assert.Equal(t, firstValue.Value, "supplied")
 		})
 	}
 }

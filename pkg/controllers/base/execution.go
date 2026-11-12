@@ -588,7 +588,8 @@ func (e *Execution) FingerprintDedup(
 	if e.selection != nil {
 		decision := e.selection.Snapshot()
 		selected, dirty := decision.Output(id), decision.Changed(id)
-		if selected && !dirty {
+		// Unresolved inputs MUST reach content fingerprinting before reuse.
+		if selected && !dirty && len(e.Unreadable) == 0 {
 			e.Disposition = store.AssessmentReused
 			e.Store.UpdateStatus(
 				id,

@@ -513,11 +513,11 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 					SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}},
 				},
 			}
-			{
-				err := ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil))
+			for _, permissions := range []testPermissions{nil, {kind}} {
+				err := ExpandPostBuildSubstituteReference(ks, provider, permissions)
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "got %v, want ErrInput", err)
+				assert.Diff(t, ks.PostBuild.Substitute, map[string]string{"INLINE": "kept"})
 			}
-			assert.Diff(t, ks.PostBuild.Substitute, map[string]string{"INLINE": "kept"})
 		})
 	}
 }

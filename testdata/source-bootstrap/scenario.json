@@ -588,7 +588,7 @@
     },
     {
       "name": "source-ref--missing-non-git-bucket",
-      "description": "source ref  missing non git bucket",
+      "description": "A missing Bucket tree reference aliases in full and changed-only runs in both directions.",
       "setup": [
         {
           "commit": "missing-Bucket-repo"
@@ -618,7 +618,7 @@
             "expect": {
               "stdout": "expect/missing-Bucket-forward-full.stdout",
               "stderr": "expect/missing-Bucket-forward-full.stderr",
-              "code": 1
+              "code": 0
             }
           }
         },
@@ -640,7 +640,7 @@
             "expect": {
               "stdout": "expect/missing-Bucket-forward-changed.stdout",
               "stderr": "expect/missing-Bucket-forward-changed.stderr",
-              "code": 1
+              "code": 0
             }
           }
         },
@@ -662,7 +662,7 @@
             "expect": {
               "stdout": "expect/missing-Bucket-forward-diff.stdout",
               "stderr": "expect/missing-Bucket-forward-diff.stderr",
-              "code": 1
+              "code": 0
             }
           }
         },
@@ -682,7 +682,7 @@
             "expect": {
               "stdout": "expect/missing-Bucket-reverse-full.stdout",
               "stderr": "expect/missing-Bucket-reverse-full.stderr",
-              "code": 1
+              "code": 0
             }
           }
         },
@@ -704,7 +704,7 @@
             "expect": {
               "stdout": "expect/missing-Bucket-reverse-changed.stdout",
               "stderr": "expect/missing-Bucket-reverse-changed.stderr",
-              "code": 1
+              "code": 0
             }
           }
         },
@@ -726,7 +726,7 @@
             "expect": {
               "stdout": "expect/missing-Bucket-reverse-diff.stdout",
               "stderr": "expect/missing-Bucket-reverse-diff.stderr",
-              "code": 1
+              "code": 0
             }
           }
         }

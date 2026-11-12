@@ -31,7 +31,7 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		d := Session{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
 		t.Cleanup(d.loader.Close)
 		t.Cleanup(d.Close)
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.NoError(t, err)
 		a := d.finishAdmission(t.Context())
 		before := a.resolvedSources.snapshot()
@@ -44,11 +44,12 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		published, err := a.Publish(
 			t.Context(),
 			id,
-			manifest.WorkScope{},
+			aliasRequestReads(t, st, id),
 			func(store.Child) (bool, error) { return true, nil },
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, published, true)
+		assert.NoError(t, constructAdmissionTest(t.Context(), a, id))
 		_, existed := before[id]
 		assert.Equal(t, existed, false)
 		resolution := a.resolvedSources.snapshot()[id]

@@ -1,0 +1,8 @@
+
+  ⊘  Kustomization  flux-system/cluster  blocked by flux-system/flux-system (not found)
+  ⊘  Kustomization  flux-system/flux-instance  blocked by flux-system/flux-system (not found)
+  ⊘  Kustomization  flux-system/flux-operator  blocked by flux-system/flux-system (not found)
+  ⊘  Kustomization  flux-system/kustomize-mutating-webhook  blocked by flux-system/flux-system (not found)
+  ⊘  ResourceSet    flux-system/sync-producer  blocked by fluxinstances.fluxcd.controlplane.io (not found)
+
+  ✗ 0 passed · 5 blocked   <DUR>

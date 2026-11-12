@@ -95,7 +95,8 @@ func RenderTrees(
 	inputs := source.NewHTTPInputs(cfg.Cache, cfg.Network, budget)
 	defer inputs.Close()
 	cfg.projections = new(manifest.ProducerProjections)
-	trees, err = prepareTrees(ctx, trees, &cfg, &inputs)
+	r := renderInvocation{cfg: &cfg, budget: budget}
+	trees, err = r.prepareTrees(ctx, trees, &inputs)
 	if err != nil {
 		inputs.Close()
 		return failedTrees(trees, err), err
@@ -111,10 +112,8 @@ func RenderTrees(
 			}
 		}
 	}()
-	r := renderInvocation{
-		cfg: &cfg, trees: trees, results: results, budget: budget,
-		stores: make([]*store.Store, len(trees)), byID: make(map[manifest.TreeID]int, len(trees)),
-	}
+	r.trees, r.results, r.stores, r.byID = trees, results,
+		make([]*store.Store, len(trees)), make(map[manifest.TreeID]int, len(trees))
 	r.discoverTrees(ctx)
 	cfg.projections.Clear()
 	if err = r.stopFailedDiscovery(); err != nil {
@@ -399,6 +398,10 @@ func (r *renderInvocation) prepareSession(ctx context.Context, i int) {
 	advanced := false
 	if failure == nil && accepted {
 		advanced, failure = o.session.Advance(ctx, &result)
+		if failure == nil {
+			advanced = advanced || len(o.session.PendingSources()) != 0
+			failure = reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks)
+		}
 	}
 	if failure != nil {
 		r.recordFailure(i, failure)
@@ -573,7 +576,7 @@ func (r *renderInvocation) installAdmission(ctx context.Context) {
 			o.completeBootstrap()
 			failure := o.prepareInvocation(ctx)
 			if failure == nil {
-				failure = o.installAdmission(ctx)
+				failure = o.finishInitialAdmission(ctx)
 			}
 			if failure != nil {
 				r.results[i].Result = o.failureResult()
@@ -621,97 +624,6 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 		})
 	}
 	r.wg.Wait()
-}
-
-func prepareTrees(ctx context.Context, trees []Tree, cfg *Config, inputs *source.HTTPInputs) ([]Tree, error) {
-	trees = slices.Clone(trees)
-	slices.SortFunc(trees, func(a, b Tree) int { return a.ID.Compare(b.ID) })
-	admitted := make(map[string]*store.SourceArtifact)
-	if err := prepareTreeInputs(ctx, trees, admitted, cfg); err != nil {
-		return trees, err
-	}
-	changes := make(map[[2]*store.SourceArtifact]*change.Set)
-	for i, tree := range trees {
-		for _, opposite := range trees {
-			if opposite.ID.Cluster == tree.ID.Cluster && opposite.ID.Side != tree.ID.Side {
-				tree.BaseInput = opposite.Input
-			}
-		}
-		if err := prepareTreeChanges(ctx, &tree, changes); err != nil {
-			return trees, err
-		}
-		trees[i] = tree
-	}
-	expanded, err := prepareTreeEntries(ctx, trees, cfg, inputs)
-	if err != nil {
-		return trees, err
-	}
-	if err := validateTrees(expanded); err != nil {
-		return trees, manifest.NewError(
-			manifest.ErrInput,
-			err,
-			err.Error()+"; use --path to select distinct entry directories",
-		)
-	}
-	trees = expanded
-	trees = pairTreeSides(trees)
-	slices.SortFunc(trees, func(a, b Tree) int { return a.ID.Compare(b.ID) })
-	return trees, nil
-}
-
-func prepareTreeEntries(ctx context.Context, trees []Tree, cfg *Config, inputs *source.HTTPInputs) ([]Tree, error) {
-	entries := make([][]discovery.Entry, len(trees))
-	failures := make([]error, len(trees))
-	var wg sync.WaitGroup
-	for i, tree := range trees {
-		wg.Go(func() {
-			request := cfg.Selection
-			request.Changed = request.Changed || tree.ExternalChanges != nil
-			var err error
-			entries[i], err = discovery.Plan(ctx, discovery.Config{
-				Cache: cfg.Cache,
-				Work:  tree.work.Scope(), Projections: cfg.projections,
-				Declarations: cfg.Supply, Selection: request, Changes: tree.ExternalChanges,
-				Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, Input: tree.Input,
-				RemoteInputs: inputs, RemoteRetry: cfg.SourceRetry,
-				StrictSubstitutions: cfg.StrictSubstitutions, SkipKinds: cfg.HelmOptions.SkipKinds,
-			})
-			if err != nil {
-				failures[i] = &treeError{id: tree.ID, err: err}
-			}
-		})
-	}
-	wg.Wait()
-	if err := errors.Join(failures...); err != nil {
-		return nil, err
-	}
-	labels := map[manifest.ClusterID]map[manifest.ClusterID]manifest.ClusterID{}
-	for i, tree := range trees {
-		if labels[tree.ID.Cluster] == nil {
-			labels[tree.ID.Cluster] = map[manifest.ClusterID]manifest.ClusterID{}
-		}
-		for _, entry := range entries[i] {
-			labels[tree.ID.Cluster][entry.ID] = entry.ID
-		}
-	}
-	for i, tree := range trees {
-		automatic := tree.ID.Cluster == "." && tree.Path == tree.RepoRoot && len(labels[tree.ID.Cluster]) > 1
-		if len(entries[i]) == 1 && !automatic {
-			labels[tree.ID.Cluster][entries[i][0].ID] = tree.ID.Cluster
-		}
-	}
-	var expanded []Tree
-	for i, tree := range trees {
-		for j := range entries[i] {
-			entry := &entries[i][j]
-			current := tree
-			current.ID.Cluster = labels[tree.ID.Cluster][entry.ID]
-			current.Path, current.Input, current.entry = entry.Path, entry.Input, entry
-			expanded = append(expanded, current)
-		}
-	}
-	slices.SortFunc(expanded, func(a, b Tree) int { return a.ID.Compare(b.ID) })
-	return expanded, nil
 }
 
 func prepareTreeChanges(ctx context.Context, tree *Tree, changes map[[2]*store.SourceArtifact]*change.Set) error {

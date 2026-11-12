@@ -75,21 +75,12 @@ spec:
 					Name:      "ordinary",
 				}
 				artifact, ok := st.GetArtifact(ordinary, store.ArtifactContent).(*store.SourceArtifact)
-				if kind == manifest.KindGitRepository {
-					assert.FatalIf(
-						t,
-						!ok || !artifact.InputAlias || st.GetObject(ordinary) == nil,
-						"Git source was not aliased: %+v",
-						artifact,
-					)
-				} else {
-					assert.FatalIf(
-						t,
-						ok || st.GetObject(ordinary) != nil,
-						"missing non-Git source was aliased: %+v",
-						artifact,
-					)
-				}
+				assert.FatalIf(
+					t,
+					!ok || !artifact.InputAlias || st.GetObject(ordinary) == nil,
+					"tree source was not aliased: %+v",
+					artifact,
+				)
 			})
 		}
 	}

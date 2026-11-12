@@ -17,6 +17,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	controllerbase "github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -353,6 +355,9 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 		index:    index,
 		tasks:    task.NewBounded(2),
 		cfg:      treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
+	}
+	o.controllers = controllerbase.Controllers{
+		HelmRelease: helmrelease.New(controllerbase.New(st, o.tasks), nil, o.cfg.HelmOptions),
 	}
 	var previousAll, previousLocal, savedAll, savedLocal []manifest.KSClaim
 	for pass := range 2 {

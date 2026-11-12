@@ -377,8 +377,8 @@ func TestController_AmbientFailureRetainsCause(t *testing.T) {
 			acquisition := base.Acquisition{
 				AllowMissingSecrets: true,
 				Fetch:               func(context.Context) (src.PreparedFetch, error) { return src.PreparedFetch{}, missing },
-				Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
-					return c.completeFetch(repo, artifact, unavailable)
+				Complete: func(fetchCtx context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+					return c.completeFetch(fetchCtx, repo, artifact, unavailable)
 				},
 			}
 			var err error
@@ -545,7 +545,7 @@ func testControllerDeclaredNonGitWithAdmissionCase(
 		LocalRoot: root,
 		FS:        fstest.MapFS{"decoy": {Data: []byte("local")}},
 	}
-	result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Store: st})
+	result, err := runDiscovery(t.Context(), discovery.Config{Input: input, Store: st})
 	assert.NoError(t, err)
 	spec := map[string]any{"url": "oci://fixture.invalid/artifact"}
 	if (*testCaseInput) == manifest.KindHelmRepository {

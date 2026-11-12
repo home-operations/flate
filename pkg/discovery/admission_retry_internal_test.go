@@ -212,7 +212,7 @@ func TestAdvance_PublicationRetryObservations(t *testing.T) {
 	marker := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "marker"}
 	_, indexed := l.Index.Lookup(marker)
 	assert.Equal(t, indexed, false)
-	advanced, err := d.Advance(t.Context(), &accepted)
+	advanced, err := d.advanceTest(t.Context(), &accepted)
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, true)
 	assert.Equal(t, d.entryReceiptRequest, afterReceipt)
@@ -259,7 +259,7 @@ func TestAdvance_InitiallyPresentApplicationDoesNotRefresh(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
 	assert.Equal(t, len(accepted.Absent), 0)
-	advanced, err := d.Advance(t.Context(), &accepted)
+	advanced, err := d.advanceTest(t.Context(), &accepted)
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, false)
 	assert.Equal(t, len(l.Index.Records), 0)
@@ -312,7 +312,7 @@ func TestAdvance_EmptyRootHistory(t *testing.T) {
 			assert.Equal(t, history.Records != nil, available)
 			assert.Equal(t, calls, map[bool]int{false: 0, true: 1}[available])
 			assert.Equal(t, len(accepted.Demands), 0)
-			advanced, err := d.Advance(t.Context(), &accepted)
+			advanced, err := d.advanceTest(t.Context(), &accepted)
 			assert.NoError(t, err)
 			assert.Equal(t, advanced, false)
 			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(owner.Named()), true)
@@ -418,7 +418,7 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 			l.SourceRoot = root
 			l.Options.Changes = change.NewSet([]string{"owner.yaml"})
 			configureSelection(t, l, selection.Request{Changed: true})
-			d, err := Begin(t.Context(), Config{
+			d, err := beginTest(t.Context(), Config{
 				Input: input, Path: root, Store: st, Loader: l,
 				Selection: selection.Request{Changed: true}, SelfURLs: []string{source.URL},
 			})
@@ -506,7 +506,7 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 				assert.Equal(t, accepted.Objects[index].SourceSupport, manifest.BootstrapSourceID)
 			}
 			assert.Equal(t, len(st.Warnings()), 0)
-			_, err = d.Advance(t.Context(), &accepted)
+			_, err = d.advanceTest(t.Context(), &accepted)
 			assert.NoError(t, err)
 			if tc.replacement {
 				assert.Equal(t, len(st.Warnings()), 0)

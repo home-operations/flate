@@ -132,6 +132,7 @@ func assertSourceValuesReferences(t *testing.T, testCaseInput *struct {
 	}
 	if testCaseInput.files {
 		source.Files = files
+		source.readsSourceTree = true
 	}
 	if testCaseInput.chart {
 		source.ChartPath = "./charts/demo"

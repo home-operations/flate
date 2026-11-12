@@ -1,0 +1,5 @@
+
+  ✗  OCIRepository  flux-system/app-template  not found
+         required by flux-system/chart
+
+  ✗ 1 failed · 1 blocked

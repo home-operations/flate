@@ -48,7 +48,7 @@ func TestAdvance_ReferencedProducerRequiresReconciliation(t *testing.T) {
 	st := store.New()
 	l := loader.New(st)
 	configureSelection(t, l, selection.Request{Changed: true})
-	session, err := Begin(t.Context(), Config{
+	session, err := beginTest(t.Context(), Config{
 		Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st, Loader: l,
 		Trees:     kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2)),
 		Selection: selection.Request{Changed: true},

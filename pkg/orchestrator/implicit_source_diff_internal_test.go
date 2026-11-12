@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestRenderTrees_ChangedOnlyAndDiff_ImplicitSource(t *testing.T) {
@@ -167,4 +172,157 @@ func implicitSourceDiff(t *testing.T, runs []Rendered) ([]byte, []diff.Change) {
 	}
 	assert.NoError(t, json.Unmarshal(body, &output))
 	return body, output.Changes
+}
+
+func TestRenderTrees_ChangedOnlyAndDiff_BootstrapAuthority(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		transition string
+		kind       string
+	}{
+		{transition: "application removed", kind: manifest.KindOCIRepository},
+		{transition: "source declared", kind: manifest.KindGitRepository},
+		{transition: "source replaced", kind: manifest.KindGitRepository},
+	} {
+		t.Run(tc.transition, func(t *testing.T) {
+			t.Parallel()
+			roots := [2]string{t.TempDir(), t.TempDir()}
+			for side, root := range roots {
+				testutil.WriteFile(
+					t,
+					root,
+					"flux/entry.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: entry}\n",
+				)
+				testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: [hello.yaml]\n")
+				testutil.WriteFile(
+					t,
+					root,
+					"payload/hello.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello}\ndata: {value: local}\n",
+				)
+				if side == 0 || tc.transition != "application removed" {
+					testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps",
+						"  path: ./payload\n  sourceRef: {kind: "+tc.kind+", name: shared}\n"))
+				}
+			}
+			if tc.transition == "source replaced" {
+				testutil.WriteFile(
+					t,
+					roots[0],
+					"flux/source.yaml",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: shared, namespace: apps}\nspec: {url: https://fixture.invalid/self, interval: 1m}\n",
+				)
+			}
+			if tc.transition != "application removed" {
+				remote := t.TempDir()
+				testutil.WriteFile(t, remote, "payload/kustomization.yaml", "resources: [hello.yaml]\n")
+				testutil.WriteFile(
+					t,
+					remote,
+					"payload/hello.yaml",
+					"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello}\ndata: {value: remote}\n",
+				)
+				repository := testutil.GitInit(t, remote)
+				testutil.GitCommitAll(
+					t,
+					repository,
+					"declared source",
+					&git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}},
+				)
+				testutil.WriteFile(
+					t,
+					roots[1],
+					"flux/source.yaml",
+					"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: shared, namespace: apps}\nspec: {url: 'file://"+remote+"', interval: 1m}\n",
+				)
+			}
+			for _, reverse := range []bool{false, true} {
+				testBootstrapAuthorityDiff(t, roots, tc.transition, reverse)
+			}
+		})
+	}
+}
+
+func testBootstrapAuthorityDiff(t *testing.T, roots [2]string, transition string, reverse bool) {
+	t.Helper()
+	trees := make([]Tree, 2)
+	for side := range trees {
+		index := side
+		if reverse {
+			index = 1 - side
+		}
+		trees[side] = Tree{
+			Path:     filepath.Join(roots[index], "flux"),
+			RepoRoot: roots[index],
+			SelfURLs: []string{"https://fixture.invalid/self"},
+			ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)},
+		}
+	}
+	full := make([]Rendered, 2)
+	for side := range trees {
+		runs, err := renderTreesForTest(
+			t.Context(),
+			t,
+			trees[side:side+1],
+			Config{Concurrency: 2, CacheDir: t.TempDir()},
+		)
+		assert.NoError(t, err)
+		full[side] = runs[0]
+	}
+	var previous []byte
+	for run := range 2 {
+		paired, err := renderTreesForTest(t.Context(), t, trees, Config{Concurrency: 2, CacheDir: t.TempDir()})
+		assert.NoError(t, err)
+		for side, rendered := range paired {
+			assertBootstrapAuthoritySide(t, &[2]Rendered{rendered, full[side]}, transition, reverse)
+		}
+		body, _ := implicitSourceDiff(t, paired)
+		want, _ := implicitSourceDiff(t, full)
+		assert.Equal(t, string(body), string(want))
+		if run > 0 {
+			assert.Equal(t, string(body), string(previous))
+		}
+		previous = body
+	}
+}
+
+func assertBootstrapAuthoritySide(t *testing.T, pair *[2]Rendered, transition string, reverse bool) {
+	t.Helper()
+	rendered, full := pair[0], pair[1]
+	assert.Diff(t, rendered.Result.Failed, full.Result.Failed)
+	assert.Diff(t, rendered.Result.Blocked, full.Result.Blocked)
+	assert.Diff(t, rendered.Result.Warnings, full.Result.Warnings)
+	assert.Diff(t, rendered.Result.ClusterWarnings, full.Result.ClusterWarnings)
+	assert.Diff(t, outputByParent(rendered.Result.Manifests), outputByParent(full.Result.Manifests))
+	consumer := testutil.KustomizationID("apps", "consumer")
+	kind := manifest.KindOCIRepository
+	if transition != "application removed" {
+		kind = manifest.KindGitRepository
+	}
+	sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "shared"}
+	side := int(rendered.ID.Side)
+	originalSide := side
+	if reverse {
+		originalSide = 1 - side
+	}
+	assert.Diff(t, outputByParent(rendered.Result.Manifests)[consumer], outputByParent(full.Result.Manifests)[consumer])
+	artifact := rendered.Store().GetArtifact(sourceID, store.ArtifactContent)
+	if transition == "application removed" && originalSide == 1 {
+		assert.Equal(t, artifact == nil, true)
+		assert.Equal(t, rendered.Store().GetObject(sourceID) == nil, true)
+		assert.Equal(t, rendered.Store().GetObject(consumer) == nil, true)
+		return
+	}
+	assert.FatalIf(t, artifact == nil, "side %d lost source", side)
+	input := artifact.(*store.SourceArtifact)
+	declared := transition != "application removed" && originalSide == 1
+	assert.Equal(t, input.InputAlias, !declared)
+	docs := outputByParent(rendered.Result.Manifests)[consumer]
+	assert.Equal(t, len(docs), 1)
+	value := "local"
+	if declared {
+		value = "remote"
+	}
+	assert.Equal(t, docs[0]["data"].(map[string]any)["value"], any(value))
 }

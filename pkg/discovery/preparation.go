@@ -81,6 +81,12 @@ func (d *Session) Close() {
 	if d == nil {
 		return
 	}
+	d.planner = nil
+	d.entryBuilderInput = nil
+	d.entryBuilderPath = ""
+	d.entryBuilder = false
+	d.pendingSources = nil
+	d.sourceGroups = nil
 	if d.result != nil {
 		d.result.Close()
 		d.prepared = nil

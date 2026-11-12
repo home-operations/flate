@@ -206,10 +206,10 @@ func prepareOrderingTrees(t *testing.T, treeInputs []Tree, cfg *Config) *renderI
 	budget := task.NewBounded(cfg.Concurrency)
 	inputs := source.NewHTTPInputs(cache, cfg.Network, budget)
 	t.Cleanup(inputs.Close)
-	trees, err := prepareTrees(
+	planner := renderInvocation{cfg: cfg, budget: budget}
+	trees, err := planner.prepareTrees(
 		ctx,
 		treeInputs,
-		cfg,
 		&inputs,
 	)
 	assert.NoError(t, err)

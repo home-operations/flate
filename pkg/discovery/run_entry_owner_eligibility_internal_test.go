@@ -508,7 +508,7 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 			Path:  root + "/entry",
 		},
 	)
-	_, err = d.resolveEntrySources(t.Context(), false)
+	_, err = d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)
 	d.loader.SourceRoot = root
 	_, err = d.loader.Load(t.Context(), root+"/entry", manifest.NamedResource{}, nil)

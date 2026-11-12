@@ -146,7 +146,7 @@ func (d *Session) loadSourcePath(
 	})
 }
 
-// Begin binds sources and collects declarations without evaluating standalone packages.
+// Begin admits the bootstrap declaration before any material-dependent construction.
 //
 //nolint:gocritic // Public session construction preserves its configuration value snapshot.
 func Begin(ctx context.Context, cfg Config) (*Session, error) {
@@ -167,26 +167,70 @@ func Begin(ctx context.Context, cfg Config) (*Session, error) {
 			d.Close()
 		}
 	}()
-	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+	bootstrap, err := d.resolveBootstrapInput(ctx)
+	if err != nil {
 		return nil, err
+	}
+	d.admission().input = bootstrap
+	if _, err := d.resolveEntrySource(
+		ctx,
+		d.admission(),
+		manifest.BootstrapSourceID,
+		&entrySourceGroup{required: true},
+	); err != nil &&
+		!errors.Is(err, errPendingSources) {
+		return nil, err
+	}
+
+	complete = true
+	return d, nil
+}
+
+// Load resumes construction after the caller reconciles PendingSources.
+func (d *Session) Load(ctx context.Context) (bool, error) {
+	if d.loaded {
+		return true, nil
+	}
+	d.pendingSources = d.pendingSources[:0]
+	if err := d.load(ctx); err != nil {
+		if errors.Is(err, errPendingSources) {
+			return false, nil
+		}
+		return false, err
+	}
+	d.loaded = true
+	return true, nil
+}
+
+func (d *Session) load(ctx context.Context) error {
+	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+		return err
 	}
 	root := d.cfg.Input.LocalPath
 	if err := d.loadManifests(ctx, root, false); err != nil {
-		return nil, err
+		return err
 	}
 	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
-		return nil, err
+		return err
 	}
 	admission := d.admission()
 	if d.cfg.Selection.Changed && d.cfg.Trees != nil && !d.hasEntryBuilder() {
 		d.entryReceipt(ctx, admission, admission.input)
 	}
-	complete = true
-	return d, nil
+	return nil
 }
 
 // Advance MUST consume only accepted observations after admission publication.
 func (d *Session) Advance(ctx context.Context, admission *selection.AdmissionResult) (bool, error) {
+	d.pendingSources = d.pendingSources[:0]
+	changed, err := d.advance(ctx, admission)
+	if errors.Is(err, errPendingSources) {
+		return true, nil
+	}
+	return changed, err
+}
+
+func (d *Session) advance(ctx context.Context, admission *selection.AdmissionResult) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, fmt.Errorf("context: %w", err)
 	}
@@ -407,20 +451,31 @@ func (d *Session) refreshDeclarations(ctx context.Context, root string) error {
 	return nil
 }
 
-// Freeze publishes the final index once and releases construction ownership.
+// Freeze requires the caller to reconcile PendingSources whenever it returns no result.
 func (d *Session) Freeze(ctx context.Context) (*Result, error) {
 	if d.result != nil {
 		return d.result, nil
 	}
-	cfg := d.cfg
-	cfg.session = d
-	if err := d.loadManifests(ctx, d.cfg.Input.LocalPath, d.requiresEntry()); err != nil {
-		return nil, err
+	d.pendingSources = d.pendingSources[:0]
+	if !d.built && !d.finalized {
+		if err := d.loadManifests(ctx, d.cfg.Input.LocalPath, d.requiresEntry()); err != nil {
+			if errors.Is(err, errPendingSources) {
+				return nil, nil //nolint:nilnil // The caller MUST reconcile PendingSources before resuming.
+			}
+			return nil, err
+		}
 	}
-	result, err := Run(ctx, cfg)
+	result, err := d.finishDiscovery(ctx, d.cfg.Input.LocalPath, d.loader)
+	if errors.Is(err, errPendingSources) {
+		return nil, nil //nolint:nilnil // The caller MUST reconcile PendingSources before resuming.
+	}
 	if err != nil {
 		return nil, err
 	}
+	for _, frame := range d.prepared {
+		frame.retireSupport(d.cfg.Store)
+	}
+
 	result.Admission.session = nil
 	if result.Admission.qualification != nil {
 		result.Admission.qualification.session = nil

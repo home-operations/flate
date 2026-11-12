@@ -38,7 +38,7 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 	supplier := (&manifest.GitRepository{Name: "supplier", Namespace: "flux-system"}).Named()
 	for side, root := range roots {
 		stores[side] = store.New()
-		result, err := discovery.Run(
+		result, err := runDiscovery(
 			t.Context(),
 			discovery.Config{
 				Path:      filepath.Join(root, "flux"),
@@ -278,7 +278,7 @@ func optionalInputFilters(
 	for side, input := range inputs {
 		st := store.New()
 		stores[side] = st
-		result, err := discovery.Run(
+		result, err := runDiscovery(
 			t.Context(),
 			discovery.Config{
 				Input:     input,
@@ -364,7 +364,7 @@ data: {VALUE: available}
 	assert.Diff(t, changes.Paths(), []string{"flux/optional.yaml"})
 
 	st := store.New()
-	discovered, err := discovery.Run(t.Context(), discovery.Config{
+	discovered, err := runDiscovery(t.Context(), discovery.Config{
 		Input: inputs.Source, Path: inputs.ScanPath, Store: st,
 		SelfURLs: []string{"https://example.test/cluster.git"}, Selection: selection.Request{Changed: true},
 	})

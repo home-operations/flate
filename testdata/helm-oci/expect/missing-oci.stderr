@@ -1,5 +1,4 @@
 
-  ✗  OCIRepository  flux-system/automatic  not found
-         required by flux-system/apps
+  ✗  HelmRelease  apps/demo  track oci chart version: invalid artifact revision ""
 
-  ✗ 1 failed · 1 blocked
+  ✗ 1 failed

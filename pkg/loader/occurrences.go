@@ -189,14 +189,18 @@ func (l *Loader) OccurrenceClaims(repoRoot string, occurrences []selection.Occur
 func (l *Loader) PathObjects() []selection.OccurrenceFacts {
 	stored := l.Store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
 	objects := make([]authoredOccurrence, 0, len(stored))
-	l.eachKustomization(stored, func(child store.Child) {
-		if !l.inactiveKustomization(child.Obj.Named()) {
+	for _, object := range stored {
+		if !l.Store.Policy(object.Named()).Root || l.documents.compact && object.Named().ReportHidden() {
+			continue
+		}
+		if _, _, applies := object.SourcePath(); applies && !l.inactiveKustomization(object.Named()) {
 			objects = append(
 				objects,
-				authoredOccurrence{Identity: child.Obj.Named(), Authored: child.Obj.Named(), object: child.Obj},
+				authoredOccurrence{Identity: object.Named(), Authored: object.Named(), object: object},
 			)
 		}
-	})
+	}
+	objects = l.appendIndexedPathObjects(objects)
 	if l.scopes == nil || !l.scopes.complete {
 		objects = l.appendCachedPathObjects(objects)
 	}
@@ -216,6 +220,22 @@ func (l *Loader) PathObjects() []selection.OccurrenceFacts {
 		result[i] = occurrenceView(&objects[i])
 	}
 	return result
+}
+
+func (l *Loader) appendIndexedPathObjects(objects []authoredOccurrence) []authoredOccurrence {
+	for id := range l.Index.Files() {
+		if l.Store.GetObject(id) != nil || l.inactiveKustomization(id) || !l.declarationLocated(id, l.Store) {
+			continue
+		}
+		object := l.CatalogObject(id)
+		if object == nil {
+			continue
+		}
+		if _, _, applies := object.SourcePath(); applies {
+			objects = append(objects, authoredOccurrence{Identity: id, Authored: id, object: object})
+		}
+	}
+	return objects
 }
 
 // Packages snapshots resource graph inputs already traversed by Load.

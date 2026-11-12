@@ -356,7 +356,7 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	st := store.New()
 	l := loader.New(st)
 	configureSelection(t, l, selection.Request{Changed: true})
-	session, err := Begin(
+	session, err := beginTest(
 		t.Context(),
 		Config{
 			Input:     &store.SourceArtifact{LocalPath: root, FS: input},
@@ -439,15 +439,15 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCa
 			SelfURLs:     []string{"https://fixture.invalid/self"},
 		},
 	)
-	_, err := d.resolveEntrySources(t.Context(), false)
+	_, err := d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)
 	if testCaseInput.supplied {
-		assert.NoError(t, d.loadManifests(t.Context(), root, false))
+		assert.NoError(t, d.loadManifestsTest(t.Context(), root, false))
 		_, err := d.bindEntry(t.Context(), root)
 		assert.NoError(t, err)
 		assert.Equal(t, observed.calls.Load(), int64(0))
 	}
-	assert.NoError(t, d.loadManifests(t.Context(), root, true))
+	assert.NoError(t, d.loadManifestsTest(t.Context(), root, true))
 	assert.Equal(t, d.binding != (Binding{}), testCaseInput.qualified)
 	if testCaseInput.qualified {
 		assert.Equal(t, d.entryApplier.Name, testCaseInput.owner)

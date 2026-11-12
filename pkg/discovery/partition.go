@@ -21,57 +21,99 @@ type entryRoot struct {
 	Occurrences []selection.OccurrenceFacts
 	Anchors     []string
 	pinned      []manifest.KSClaim
+	sources     map[manifest.NamedResource]entryResolution
 	views       map[string]*store.SourceArtifact
 	parsed      *loader.ParsedInputs
+	seeds       []selection.OccurrenceFacts
 }
 
 type occurrenceProjection struct {
 	path, namespace string
-}
-
-type sourceCoordinate struct {
-	declaration selection.OccurrenceID
-	identity    manifest.NamedResource
-	root        string
+	input           *store.SourceArtifact
 }
 
 type entryPlanner struct {
+	roots       []entryRoot
+	index       int
+	queue       []partitionVisit
+	head        int
+	parsed      *loader.ParsedInputs
+	started     bool
+	scope       partitionScope
+	coordinates map[selection.OccurrenceID]bool
+	seen        map[occurrenceKey]bool
+
 	session     *Session
 	inputs      map[string]*store.SourceArtifact
 	objects     map[occurrenceKey]store.Child
-	resolved    map[sourceCoordinate]entryResolution
 	projections map[occurrenceProjection][]selection.OccurrenceFacts
 }
 
 func (d *Session) partitionRoots(ctx context.Context) ([]entryRoot, error) {
-	packages, err := d.loader.Packages(ctx)
-	if err != nil {
-		return nil, err
-	}
-	planner := entryPlanner{
-		session:     d,
-		inputs:      map[string]*store.SourceArtifact{d.cfg.Input.LocalPath: d.cfg.Input},
-		objects:     map[occurrenceKey]store.Child{},
-		resolved:    map[sourceCoordinate]entryResolution{},
-		projections: map[occurrenceProjection][]selection.OccurrenceFacts{},
-	}
-
-	var roots []entryRoot
-	for _, pkg := range packages {
-		if !pkg.Independent {
-			continue
-		}
-		root := entryRoot{
-			Path: pkg.Path, Scans: pkg.Scans, views: map[string]*store.SourceArtifact{},
-		}
-		if err := planner.reach(ctx, &root, pkg.Occurrences); err != nil {
+	if d.planner == nil {
+		packages, err := d.loader.Packages(ctx)
+		if err != nil {
 			return nil, err
 		}
-		// Independent roots can admit different source views at the same path.
-		root.parsed = d.loader.ParsedInputs()
-		roots = append(roots, root)
+		d.planner = &entryPlanner{
+			session:     d,
+			inputs:      map[string]*store.SourceArtifact{d.cfg.Input.LocalPath: d.cfg.Input},
+			coordinates: map[selection.OccurrenceID]bool{},
+			seen:        map[occurrenceKey]bool{},
+		}
+		for _, pkg := range packages {
+			if !pkg.Independent {
+				continue
+			}
+			d.planner.roots = append(
+				d.planner.roots,
+				entryRoot{Path: pkg.Path, Scans: pkg.Scans, seeds: pkg.Occurrences},
+			)
+		}
 	}
-	return d.unpinnedRoots(roots), nil
+	planner := d.planner
+	for planner.index < len(planner.roots) {
+		root := &planner.roots[planner.index]
+		seeds := root.seeds
+		if !planner.started {
+			if err := planner.start(ctx, seeds); err != nil {
+				return nil, err
+			}
+			planner.started = true
+		}
+		if err := planner.reach(ctx, root); err != nil {
+			return nil, err
+		}
+		if planner.parsed == nil {
+			planner.parsed = d.loader.ParsedInputs()
+		}
+		root.parsed = planner.parsed
+		planner.index++
+		planner.started = false
+		root.seeds = nil
+	}
+	roots := d.unpinnedRoots(planner.roots)
+	d.planner = nil
+	return roots, nil
+}
+
+func (p *entryPlanner) start(ctx context.Context, seeds []selection.OccurrenceFacts) error {
+	p.queue = slices.Grow(p.queue[:0], len(seeds))
+	p.head = 0
+	clear(p.coordinates)
+	clear(p.seen)
+	p.scope = partitionScope{occurrences: seeds}
+	if err := p.prepareScope(ctx, &p.scope); err != nil {
+		return err
+	}
+	for i := range seeds {
+		p.queue = append(
+			p.queue,
+			partitionVisit{occurrence: &seeds[i], scope: &p.scope},
+		)
+		p.coordinates[seeds[i].Declaration] = true
+	}
+	return nil
 }
 
 func (d *Session) unpinnedRoots(pending []entryRoot) []entryRoot {
@@ -130,12 +172,23 @@ func pinnedRootOwners(roots []entryRoot, claimed func(entryRoot, []manifest.KSCl
 type partitionVisit struct {
 	occurrence *selection.OccurrenceFacts
 	scope      *partitionScope
-	root       string
 }
 
 type partitionScope struct {
 	occurrences []selection.OccurrenceFacts
 	parent      *partitionScope
+}
+
+func (s *partitionScope) objects() iter.Seq[*selection.OccurrenceFacts] {
+	return func(yield func(*selection.OccurrenceFacts) bool) {
+		for scope := s; scope != nil; scope = scope.parent {
+			for i := range scope.occurrences {
+				if !yield(&scope.occurrences[i]) {
+					return
+				}
+			}
+		}
+	}
 }
 
 func occurrenceReferences(occurrence *selection.OccurrenceFacts) iter.Seq[manifest.Reference] {
@@ -152,24 +205,19 @@ func occurrenceReferences(occurrence *selection.OccurrenceFacts) iter.Seq[manife
 	}
 }
 
-func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []selection.OccurrenceFacts) error {
-	queue := make([]partitionVisit, 0, len(seeds))
-	coordinates := map[selection.OccurrenceID]bool{}
-	scope := &partitionScope{occurrences: seeds}
-	for i := range seeds {
-		queue = append(queue, partitionVisit{occurrence: &seeds[i], scope: scope, root: root.Path})
-		coordinates[seeds[i].Declaration] = true
-	}
-	seen := map[occurrenceKey]bool{}
-	for len(queue) != 0 {
-		visit := queue[0]
-		queue = queue[1:]
-		if seen[occurrenceIdentity(visit.occurrence)] {
+func (p *entryPlanner) reach(ctx context.Context, root *entryRoot) error {
+	for p.head < len(p.queue) {
+		visit := p.queue[p.head]
+		if p.seen[occurrenceIdentity(visit.occurrence)] {
+			p.queue[p.head] = partitionVisit{}
+			p.head++
 			continue
 		}
-		seen[occurrenceIdentity(visit.occurrence)] = true
-		root.Occurrences = append(root.Occurrences, *visit.occurrence)
 		if _, _, hasPath := visit.occurrence.SourcePath(); !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
+			root.Occurrences = append(root.Occurrences, *visit.occurrence)
+			p.seen[occurrenceIdentity(visit.occurrence)] = true
+			p.queue[p.head] = partitionVisit{}
+			p.head++
 			continue
 		}
 		object := partitionObject(visit.occurrence)
@@ -182,15 +230,19 @@ func (p *entryPlanner) reach(ctx context.Context, root *entryRoot, seeds []selec
 			if !ref.IsSource() || !ref.NamedResource.KindInfo().IsSource() || ref.NamedResource == application.Source {
 				continue
 			}
-			if _, sourceErr := p.source(ctx, root, &visit, ref.NamedResource); sourceErr != nil {
+			if _, sourceErr := p.source(ctx, root, &visit, &ref); sourceErr != nil {
 				return sourceErr
 			}
 		}
-		children, err := p.follow(ctx, root, &visit, coordinates[visit.occurrence.Declaration])
+		children, err := p.follow(ctx, root, &visit, p.coordinates[visit.occurrence.Declaration])
 		if err != nil {
 			return err
 		}
-		queue = append(queue, children...)
+		root.Occurrences = append(root.Occurrences, *visit.occurrence)
+		p.seen[occurrenceIdentity(visit.occurrence)] = true
+		p.queue[p.head] = partitionVisit{}
+		p.head++
+		p.queue = append(p.queue, children...)
 	}
 	slices.Sort(root.Anchors)
 	return nil
@@ -208,11 +260,12 @@ func (p *entryPlanner) follow(
 	if !valid {
 		return nil, nil
 	}
-	binding, err := p.source(ctx, root, visit, application.Source)
+	reference := sourceReference(object, application.Source)
+	reference.NamedResource = application.Source
+	input, err := p.source(ctx, root, visit, &reference)
 	if err != nil {
 		return nil, err
 	}
-	input := binding.artifact
 	if input == nil {
 		return nil, nil
 	}
@@ -222,7 +275,6 @@ func (p *entryPlanner) follow(
 	if !safepath.Contains(input.LocalPath, absolute) {
 		return nil, nil
 	}
-	p.session.cfg.Store.SetArtifact(application.Source, input)
 	total := 0
 	_, err = p.session.loadAt(ctx, absolute, &total, &sourceLoad{
 		work:     p.session.cfg.Work.Source(application.Source).Record(manifest.WorkPreparation, absolute),
@@ -233,15 +285,19 @@ func (p *entryPlanner) follow(
 	}
 	pinned := p.session.pinnedWorkingTreeClaims(p.session.cfg.Input.LocalPath, []selection.OccurrenceFacts{*occurrence})
 	root.pinned = append(root.pinned, pinned.claims...)
-	key := occurrenceProjection{path: absolute}
+	key := occurrenceProjection{path: absolute, input: input}
 	if manifest.KindOf(object).Parent {
 		key.namespace = object.EmissionPolicy().Namespace
 	}
 	children, known := p.projections[key]
 	if !known {
+		p.parsed = nil
 		children, err = p.session.loader.Occurrences(ctx, absolute, key.namespace)
 		if err != nil {
 			return nil, err
+		}
+		if p.projections == nil {
+			p.projections = map[occurrenceProjection][]selection.OccurrenceFacts{}
 		}
 		p.projections[key] = children
 	}
@@ -252,20 +308,48 @@ func (p *entryPlanner) follow(
 		root.Anchors = append(root.Anchors, target)
 	}
 	scope := &partitionScope{occurrences: children, parent: visit.scope}
+	if err := p.prepareScope(ctx, scope); err != nil {
+		return nil, err
+	}
 	next := make([]partitionVisit, len(children))
 	for i := range children {
-		next[i] = partitionVisit{occurrence: &children[i], scope: scope, root: visit.root}
+		next[i] = partitionVisit{occurrence: &children[i], scope: scope}
 	}
 	return next, nil
 }
 
+func (p *entryPlanner) prepareScope(ctx context.Context, scope *partitionScope) error {
+	for i := range scope.occurrences {
+		occurrence := &scope.occurrences[i]
+		kind := manifest.KindOf(partitionObject(occurrence))
+		if !kind.Parent || !kind.Discovery || kind.Structural || len(occurrence.TemplateObjects) != 0 {
+			continue
+		}
+		child, err := p.object(ctx, occurrence)
+		if err != nil {
+			return err
+		}
+		if child.Obj != nil {
+			facts := p.session.loader.ProducerFacts(child.Obj).Occurrence
+			occurrence.Targets, occurrence.TemplateObjects = facts.Targets, facts.TemplateObjects
+		}
+	}
+	return nil
+}
+
 func (p *entryPlanner) object(ctx context.Context, occurrence *selection.OccurrenceFacts) (store.Child, error) {
-	if child, ok := p.objects[occurrenceIdentity(occurrence)]; ok {
+	key := occurrenceIdentity(occurrence)
+	key.input = p.inputs[occurrence.Declaration.Source]
+	if child, ok := p.objects[key]; ok {
 		return child, nil
 	}
 	child, err := p.session.loader.OccurrenceObject(ctx, occurrence, p.inputs[occurrence.Declaration.Source])
-	if err == nil {
-		p.objects[occurrenceIdentity(occurrence)] = child
+	if err == nil && child.Obj != nil {
+		if p.objects == nil {
+			p.objects = map[occurrenceKey]store.Child{}
+		}
+		p.objects[key] = child
+		p.parsed = nil
 	}
 	return child, err
 }
@@ -274,51 +358,63 @@ func (p *entryPlanner) source(
 	ctx context.Context,
 	root *entryRoot,
 	visit *partitionVisit,
-	id manifest.NamedResource,
-) (entryResolution, error) {
+	reference *manifest.Reference,
+) (*store.SourceArtifact, error) {
+	id := reference.NamedResource
 	object := partitionObject(visit.occurrence)
 	application, _ := manifest.ApplicationFor(object)
-	selected := visit.scope.source(id)
+	selected, projected, producers := visit.scope.source(id)
 
-	coordinate := sourceCoordinate{identity: id, root: visit.root}
-	group := entrySourceGroup{scoped: true, required: true}
+	group := entrySourceGroup{
+		scoped: true, required: true, reference: *reference, producers: producers,
+		entry: application.Source == id && p.session.admission().appliesEntry(&application),
+	}
 	for i := range p.session.cfg.Declarations {
 		declaration := &p.session.cfg.Declarations[i]
 		if declaration.Obj.Named() == id {
 			group.object, group.document = declaration.Obj, declaration.Doc
 		}
 	}
-	if group.object == nil && selected != nil {
-		coordinate.declaration = selected.Declaration
-		coordinate.root = ""
+	switch {
+	case group.object != nil:
+	case selected != nil:
 		child, err := p.object(ctx, selected)
 		if err != nil {
-			return entryResolution{}, err
+			return nil, err
 		}
 		group.object, group.document = child.Obj, child.Doc
-	} else if group.object == nil && id == application.Source {
-		group.object = application.Declaration
-		if application.Declaration != nil {
-			coordinate.declaration = visit.occurrence.Declaration
-			coordinate.root = ""
-		}
+	default:
+		group.project(projected)
 	}
-	binding, known := p.resolved[coordinate]
-	if !known {
-		admission := p.session.admission()
-		if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
-			return entryResolution{}, err
-		}
-		binding = p.session.resolvedSources.snapshot()[id]
-		if binding.artifact != nil {
-			p.inputs[binding.artifact.LocalPath] = binding.artifact
-		}
-		p.resolved[coordinate] = binding
+	admission := p.session.admission()
+	before := p.session.resolvedSources.snapshot()[id]
+	if _, err := p.session.resolveEntrySource(ctx, admission, id, &group); err != nil {
+		return nil, err
 	}
-	if binding.viewKey != "" {
-		root.views[binding.viewKey] = binding.artifact
+	binding := p.session.resolvedSources.snapshot()[id]
+	if !binding.artifact.SameMaterial(before.artifact) {
+		p.parsed = nil
 	}
-	return binding, nil
+	if binding.artifact != nil {
+		p.inputs[binding.artifact.LocalPath] = binding.artifact
+	}
+	if binding.viewKey == "" && !binding.projected && len(binding.producers) == 0 {
+		return p.session.sourceMaterial(id, binding.artifact), nil
+	}
+	if root.sources == nil {
+		root.sources = map[manifest.NamedResource]entryResolution{}
+	}
+	previous := root.sources[id]
+	previous.merge(&binding)
+	root.sources[id] = previous
+	if binding.viewKey == "" {
+		return p.session.sourceMaterial(id, binding.artifact), nil
+	}
+	if root.views == nil {
+		root.views = map[string]*store.SourceArtifact{}
+	}
+	root.views[binding.viewKey] = binding.artifact
+	return p.session.sourceMaterial(id, binding.artifact), nil
 }
 
 type occurrenceKey struct {
@@ -327,6 +423,7 @@ type occurrenceKey struct {
 	object        manifest.BaseManifest
 	witness       any
 	requiresBuild bool
+	input         *store.SourceArtifact
 }
 
 func occurrenceIdentity(occurrence *selection.OccurrenceFacts) occurrenceKey {
@@ -336,6 +433,7 @@ func occurrenceIdentity(occurrence *selection.OccurrenceFacts) occurrenceKey {
 		occurrence.Object,
 		occurrence.Witness,
 		occurrence.RequiresBuild,
+		occurrence.Mounted,
 	}
 }
 
@@ -351,16 +449,44 @@ func partitionObject(occurrence *selection.OccurrenceFacts) manifest.BaseManifes
 	return object
 }
 
-func (s *partitionScope) source(id manifest.NamedResource) *selection.OccurrenceFacts {
+//nolint:ireturn // Scoped projections retain their manifest types.
+func (s *partitionScope) source(id manifest.NamedResource) (
+	*selection.OccurrenceFacts,
+	manifest.BaseManifest,
+	[]occurrenceKey,
+) {
 	var selected *selection.OccurrenceFacts
-	for scope := s; scope != nil; scope = scope.parent {
-		for i := range scope.occurrences {
-			candidate := &scope.occurrences[i]
-			if candidate.Identity == id {
-				selected = candidate
-			}
+	var projected manifest.BaseManifest
+	var producers []occurrenceKey
+	project := func(object manifest.BaseManifest) bool {
+		application, valid := manifest.ApplicationFor(object)
+		if !valid || application.Declaration == nil || application.Source != id {
+			return false
+		}
+		if projected == nil {
+			projected = application.Declaration
+		}
+		return true
+	}
+	for candidate := range s.objects() {
+		if candidate.Identity == id {
+			selected = candidate
+		}
+		produced := project(partitionObject(candidate))
+		for _, object := range candidate.TemplateObjects {
+			produced = project(object) || produced
+		}
+		targets := candidate.Targets
+		if candidate.NeedsCandidates {
+			targets = manifest.ProducerTargets(partitionObject(candidate), id)
+		}
+		produced = produced || slices.ContainsFunc(targets, func(target manifest.ProducerTarget) bool {
+			return target.NamedResource == id
+		})
+		if produced {
+			producers = append(producers, occurrenceIdentity(candidate))
 		}
 	}
 
-	return selected
+	return selected, projected, producers
 }

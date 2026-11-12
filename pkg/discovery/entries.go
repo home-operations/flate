@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"path"
@@ -29,42 +30,40 @@ type entryInputs struct {
 	input      store.SourceArtifact
 	parsed     *loader.ParsedInputs
 	aliasViews map[string]*store.SourceArtifact
+	sources    map[manifest.NamedResource]entryResolution
 }
 
-// Plan must partition the scan before any entry publishes seeds into the caller's store.
-//
-//nolint:gocritic // Public entry planning preserves its configuration value snapshot.
-func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
-	if cfg.Input == nil && cfg.Store != nil {
-		cfg.Input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+func (e *Entry) matches(input *store.SourceArtifact, scan string) bool {
+	if e.prepared == nil || input == nil || scan != e.Path {
+		return false
 	}
-	cfg.Store = store.New()
-	cfg.Store.SetWorkTree(cfg.Work.Identity().Tree, cfg.Work)
-	d := newDiscoverer(&cfg)
-	l := d.loader
-	var err error
-	l.Options.Session, err = selection.New(cfg.Store, l, cfg.Selection)
-	if err != nil {
+	prepared := e.prepared
+	return prepared.parsed.Matches(input) &&
+		input.LocalPath == prepared.input.LocalPath && input.LocalRoot == prepared.input.LocalRoot &&
+		prepared.sameContent(input)
+}
+
+func (p *entryInputs) sameContent(input *store.SourceArtifact) bool {
+	return input.Key == p.input.Key && input.Content == p.input.Content &&
+		input.Revision == p.input.Revision && input.Digest == p.input.Digest
+}
+
+// Plan requires an isolated session and resumes after PendingSources are ready.
+func (d *Session) Plan(ctx context.Context) ([]Entry, error) {
+	d.pendingSources = d.pendingSources[:0]
+	switch err := d.loadPlan(ctx); {
+	case errors.Is(err, errPendingSources):
+		return nil, nil
+	case err != nil:
 		return nil, err
 	}
-	if _, resolveErr := d.resolveEntrySources(ctx, false); resolveErr != nil {
-		return nil, resolveErr
-	}
-	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Entry admission provides a source artifact.
-	l.SourceRoot = input.LocalPath
-	l.IgnoreFile = cfg.KRMIgnoreFile
-	if _, loadErr := l.Load(
-		ctx,
-		d.cfg.Path,
-		manifest.NamedResource{},
-		cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path),
-	); loadErr != nil {
-		return nil, loadErr
-	}
-	l.IgnoreFile = ""
-	l.PreferExisting = true
+	l := d.loader
+	input := d.cfg.Input
 	roots, err := d.partitionRoots(ctx)
-	if err != nil {
+	switch {
+	case errors.Is(err, errPendingSources):
+		return nil, nil
+	case err != nil:
 		return nil, err
 	}
 	entries, err := partitionEntries(roots, input, d.cfg.Path)
@@ -75,22 +74,94 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 		return nil, err
 	}
 	for i := range entries {
-		entry := &entries[i]
-		views := map[string]*store.SourceArtifact{}
-		var parsed *loader.ParsedInputs
-		for j := range roots {
-			root := &roots[j]
-			if safepath.Contains(entry.Path, filepath.Join(input.LocalPath, root.Path)) {
-				maps.Copy(views, root.views)
-				parsed = root.parsed
-			}
+		if err := d.prepareEntry(ctx, &entries[i], roots); err != nil {
+			return nil, err
 		}
-		if parsed == nil {
-			parsed = l.ParsedInputs()
-		}
-		entry.prepared = &entryInputs{input: *input, parsed: parsed, aliasViews: views}
 	}
 	return entries, nil
+}
+
+func (p *entryInputs) merge(root *entryRoot) {
+	p.parsed = root.parsed
+	if p.aliasViews == nil {
+		p.aliasViews = maps.Clone(root.views)
+	} else {
+		maps.Copy(p.aliasViews, root.views)
+	}
+	if p.sources == nil {
+		p.sources = make(map[manifest.NamedResource]entryResolution, len(root.sources))
+	}
+	for id, resolution := range root.sources {
+		previous := p.sources[id]
+		previous.merge(&resolution)
+		p.sources[id] = previous
+	}
+}
+
+func (d *Session) prepareEntry(ctx context.Context, entry *Entry, roots []entryRoot) error {
+	input := d.cfg.Input
+	prepared := &entryInputs{input: *input}
+	var scope *partitionScope
+	for j := range roots {
+		root := &roots[j]
+		if !safepath.Contains(entry.Path, filepath.Join(input.LocalPath, root.Path)) {
+			continue
+		}
+		scope = &partitionScope{occurrences: root.Occurrences, parent: scope}
+		prepared.merge(root)
+	}
+	for _, id := range slices.SortedFunc(maps.Keys(prepared.sources), manifest.NamedResource.Compare) {
+		resolution := prepared.sources[id]
+		_, projected, producers := scope.source(id)
+		if len(producers) == 0 {
+			continue
+		}
+		object := resolution.object
+		if resolution.synthetic {
+			object = nil
+		}
+		projection := object == nil && projected != nil
+		if projection {
+			object = projected
+		}
+		resolved, resolveErr := d.admission().resolve(ctx, id, &sourceRequest{
+			object: object, producers: producers, scoped: true,
+			entry: resolution.entry, projected: resolution.projected || projection,
+		})
+		if resolveErr != nil {
+			return resolveErr
+		}
+		prepared.sources[id] = resolved
+	}
+	if prepared.parsed == nil {
+		prepared.parsed = d.loader.ParsedInputs()
+	}
+	entry.prepared = prepared
+	return nil
+}
+
+func (d *Session) loadPlan(ctx context.Context) error {
+	if d.planLoaded {
+		return nil
+	}
+	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+		return err
+	}
+	l := d.loader
+	l.SourceRoot = d.cfg.Input.LocalPath
+	l.IgnoreFile = d.cfg.KRMIgnoreFile
+	if _, err := l.Load(
+		ctx,
+		d.cfg.Path,
+		manifest.NamedResource{},
+		d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path),
+	); err != nil {
+		return err
+	}
+	l.IgnoreFile = ""
+	l.PreferExisting = true
+	d.planLoaded = true
+	return nil
 }
 
 func partitionEntries(roots []entryRoot, input *store.SourceArtifact, scan string) ([]Entry, error) {

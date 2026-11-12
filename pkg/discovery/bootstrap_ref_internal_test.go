@@ -494,7 +494,7 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	}
 	d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	if testCaseInput.lookupErr {
@@ -510,7 +510,7 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	bootstrap := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	side := bootstrap.LocalPath
 	d.cfg.Path = side
-	aliased, err := d.resolveEntrySources(t.Context(), false)
+	aliased, err := d.resolveTestSources(t.Context(), false)
 	assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap ||
 		st.GetObject(
 			repository.Named(),

@@ -123,10 +123,10 @@ func newTestOrchestratorTail(tailCaseInput *newTestOrchestratorTailInputs) (*Orc
 			}
 		})
 	if o.cfg.Selection.Changed || o.cfg.ExternalChanges != nil || len(o.cfg.Selection.Roots) != 0 {
-		planned, err := prepareTreeEntries(
+		planner := renderInvocation{cfg: tailCaseInput.cfg, budget: o.tasks}
+		planned, err := planner.prepareTreeEntries(
 			(*tailCaseInput.tb).Context(),
 			[]Tree{o.cfg.Tree},
-			tailCaseInput.cfg,
 			&o.inputs,
 		)
 		if err != nil {
@@ -168,6 +168,10 @@ func (o *Orchestrator) prepareBootstrap(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		advanced = advanced || len(o.session.PendingSources()) != 0
+		if err := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); err != nil {
+			return err
+		}
 		if !advanced {
 			o.preparation = &result
 			break
@@ -196,7 +200,7 @@ func (o *Orchestrator) bootstrap(ctx context.Context) error {
 		}
 	}
 	if o.selection != nil {
-		return o.installAdmission(ctx)
+		return o.finishInitialAdmission(ctx)
 	}
 	return nil
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	kustomizationctrl "github.com/home-operations/flate/pkg/controllers/kustomization"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -289,6 +290,7 @@ func TestDAGSweep_ClassifiesBeforeTermination(t *testing.T) {
 			map[manifest.NamedResource]string{parent.Named(): "root.yaml", child.Named(): "apps/child.yaml"},
 		),
 	}
+	o.controllers.Kustomization = kustomizationctrl.New(st, nil, nil)
 	d := dagDispatcher{o}
 	assert.Equal(t, len(d.Sweep(t.Context(), true)), 0)
 	info, _ := st.GetStatus(child.Named())
@@ -402,6 +404,7 @@ func TestDAGSweep_OrphanDecodeAttributionStable(t *testing.T) {
 	publications := 0
 	u := st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { publications++ }, false)
 	defer u()
+	o.controllers.Kustomization = kustomizationctrl.New(st, nil, nil)
 	d := dagDispatcher{o}
 	assert.Equal(t, len(d.Sweep(t.Context(), true)), 0)
 	info, _ := st.GetStatus(orphan.Named())

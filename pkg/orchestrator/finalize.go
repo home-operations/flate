@@ -98,12 +98,12 @@ func (o *Orchestrator) classifyCompleted() {
 	}
 	claims := o.reportingClaims()
 	orphans := o.detectOrphans(failed, o.reportOwnership(claims))
+	o.controllers.CompleteOrphans(orphans, orphanedMessage)
 	if len(orphans) != 0 && o.orphans == nil {
 		o.orphans = make(map[manifest.NamedResource]string)
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(orphans), manifest.NamedResource.Compare) {
 		o.orphans[id] = orphans[id]
-		o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: orphanedMessage})
 	}
 }
 

@@ -1,0 +1,11 @@
+
+  ✗  orig snapshot: OCIRepository  flux-system/flux-system  not found
+         orig snapshot: required by flux-system/cluster
+
+  ✗  current snapshot: OCIRepository  flux-system/flux-system  not found
+         current snapshot: required by flux-system/cluster
+
+  ⚠ warnings (1)
+    [DiffSuppressed] Kustomization flux-system/cluster: 0 objects withheld; diff suppressed (failed on both sides: orig: dependencies failed: OCIRepository.source.toolkit.fluxcd.io/flux-system/flux-system: dependency not found; current: dependencies failed: OCIRepository.source.toolkit.fluxcd.io/flux-system/flux-system: dependency not found)
+
+  ✗ 2 failed · 2 blocked

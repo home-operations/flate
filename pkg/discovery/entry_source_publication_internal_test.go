@@ -23,7 +23,7 @@ import (
 func TestAdmission_Publish(t *testing.T) {
 	t.Parallel()
 	var absent *Admission
-	published, err := absent.Publish(t.Context(), manifest.NamedResource{}, manifest.WorkScope{}, nil)
+	published, err := absent.Publish(t.Context(), manifest.NamedResource{}, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, published, false)
 	for _, phase := range []string{"construction", "runtime"} {
@@ -35,7 +35,7 @@ func TestAdmission_Publish(t *testing.T) {
 			d := Session{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
 			t.Cleanup(d.loader.Close)
 			t.Cleanup(d.Close)
-			_, err := d.resolveEntrySources(t.Context(), false)
+			_, err := d.resolveTestSources(t.Context(), false)
 			assert.NoError(t, err)
 			a := d.admission()
 			if phase == "runtime" {
@@ -48,7 +48,8 @@ func TestAdmission_Publish(t *testing.T) {
 			}
 			var offered manifest.BaseManifest
 			calls := 0
-			published, err := a.Publish(t.Context(), id, manifest.WorkScope{}, func(child store.Child) (bool, error) {
+			requestReads := aliasRequestReads(t, st, id)
+			published, err := a.Publish(t.Context(), id, requestReads, func(child store.Child) (bool, error) {
 				calls++
 				offered = child.Obj
 				assert.Equal(t, child.Obj.Named(), id)
@@ -56,17 +57,21 @@ func TestAdmission_Publish(t *testing.T) {
 				assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
 				_, alreadyRecorded := a.resolvedSources.snapshot()[id]
 				assert.Equal(t, alreadyRecorded, false)
-				st.AddObject(child.Obj)
+				requestReads.Admit(child, manifest.BootstrapSourceID, manifest.NamedResource{})
 				return true, nil
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, published, true)
 			assert.Equal(t, calls, 1)
+			assert.NoError(t, constructAdmissionTest(t.Context(), a, id))
 			resolution, recorded := a.resolvedSources.snapshot()[id]
 			assert.Equal(t, recorded, true)
 			assert.Equal(t, resolution.object == offered, true)
 			assert.Equal(t, st.GetObject(id) == offered, true)
-			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == resolution.artifact, true)
+			publishedArtifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+			assert.Equal(t, publishedArtifact.SameMaterial(resolution.artifact), true)
+			assert.Equal(t, publishedArtifact.Reads != nil, true)
+			assert.Equal(t, publishedArtifact.Reads.Valid(), true)
 			assert.Equal(t, resolution.input == a.input, true)
 			assert.Equal(t, manifest.Equal(resolution.object, resolution.git), true)
 			assert.Equal(t, resolution.git.URL, "file://"+root)
@@ -93,9 +98,14 @@ func TestAdmission_Publish(t *testing.T) {
 				err      error
 			}{{name: "rejected"}, {name: "acceptance-error", accepted: true, err: failure}} {
 				id.Name = rejected.name
-				published, err = a.Publish(t.Context(), id, manifest.WorkScope{}, func(store.Child) (bool, error) {
-					return rejected.accepted, rejected.err
-				})
+				published, err = a.Publish(
+					t.Context(),
+					id,
+					aliasRequestReads(t, st, id),
+					func(store.Child) (bool, error) {
+						return rejected.accepted, rejected.err
+					},
+				)
 				assert.Equal(t, err, rejected.err)
 				assert.Equal(t, published, false)
 				assert.Equal(t, st.GetObject(id) == nil, true)
@@ -106,7 +116,7 @@ func TestAdmission_Publish(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			id.Name = "resolution-error"
-			published, err = a.Publish(ctx, id, manifest.WorkScope{}, func(store.Child) (bool, error) {
+			published, err = a.Publish(ctx, id, aliasRequestReads(t, st, id), func(store.Child) (bool, error) {
 				t.Fatal("acceptance ran after failed resolution")
 				return true, nil
 			})
@@ -114,8 +124,8 @@ func TestAdmission_Publish(t *testing.T) {
 			assert.Equal(t, published, false)
 			_, recorded = a.resolvedSources.snapshot()[id]
 			assert.Equal(t, recorded, false)
-			id.Kind, id.Name = manifest.KindOCIRepository, "unsupported"
-			published, err = a.Publish(t.Context(), id, manifest.WorkScope{}, func(store.Child) (bool, error) {
+			id.Kind, id.Name = manifest.KindHelmRepository, "unsupported"
+			published, err = a.Publish(t.Context(), id, aliasRequestReads(t, st, id), func(store.Child) (bool, error) {
 				t.Fatal("acceptance ran without a local source")
 				return true, nil
 			})
@@ -125,12 +135,13 @@ func TestAdmission_Publish(t *testing.T) {
 			id.Kind, id.Name = manifest.KindGitRepository, "accepted-cancellation"
 			ctx, cancel = context.WithCancel(t.Context())
 			t.Cleanup(cancel)
-			published, err = a.Publish(ctx, id, manifest.WorkScope{}, func(store.Child) (bool, error) {
+			published, err = a.Publish(ctx, id, aliasRequestReads(t, st, id), func(store.Child) (bool, error) {
 				cancel()
 				return true, nil
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, published, true)
+			assert.NoError(t, constructAdmissionTest(t.Context(), a, id))
 			status, ok = st.GetStatus(id)
 			assert.Equal(t, ok, true)
 			assert.Equal(t, status.Status, store.StatusReady)
@@ -164,7 +175,7 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 			if mode == "run" {
 				result, err = Run(t.Context(), cfg)
 			} else {
-				session, err = Begin(t.Context(), cfg)
+				session, err = beginTest(t.Context(), cfg)
 				assert.NoError(t, err)
 				result, err = session.Freeze(t.Context())
 			}
@@ -182,7 +193,7 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 			id := manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "late",
 			}
-			published, err := a.Publish(t.Context(), id, manifest.WorkScope{}, func(store.Child) (bool, error) {
+			published, err := a.Publish(t.Context(), id, aliasRequestReads(t, st, id), func(store.Child) (bool, error) {
 				return true, nil
 			})
 			assert.NoError(t, err)
@@ -219,9 +230,13 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 				viewKey: "pinned-view",
 			}
 			owner.publish(&complete, false)
+			assert.NoError(t, constructAdmissionTest(t.Context(), a, object.Named()))
 			assertResolution(t, owner.snapshot()[object.Named()], complete)
 			assert.Equal(t, st.GetObject(object.Named()) == complete.object, true)
-			assert.Equal(t, st.GetArtifact(object.Named(), store.ArtifactContent) == complete.artifact, true)
+			publishedArtifact := st.GetArtifact(object.Named(), store.ArtifactContent).(*store.SourceArtifact)
+			assert.Equal(t, publishedArtifact.SameMaterial(complete.artifact), true)
+			assert.Equal(t, publishedArtifact.Reads != nil, true)
+			assert.Equal(t, publishedArtifact.Reads.Valid(), true)
 		})
 	}
 	t.Run("construction refresh and republication", func(t *testing.T) {
@@ -232,7 +247,7 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		d := Session{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
 		t.Cleanup(d.loader.Close)
 		t.Cleanup(d.Close)
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.NoError(t, err)
 		a := d.admission()
 		id := manifest.NamedResource{
@@ -241,7 +256,7 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		published, err := a.Publish(
 			t.Context(),
 			id,
-			manifest.WorkScope{},
+			aliasRequestReads(t, st, id),
 			func(store.Child) (bool, error) { return true, nil },
 		)
 		assert.NoError(t, err)
@@ -249,15 +264,18 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		before := d.resolvedSources.snapshot()[id]
 		assert.Equal(t, st.DeleteObject(id), true)
 		st.AddObject(before.object)
-		_, err = d.resolveEntrySources(t.Context(), false)
+		_, err = d.resolveTestSources(t.Context(), false)
 		assert.NoError(t, err)
 		assertResolution(t, d.resolvedSources.snapshot()[id], before)
-		assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == before.artifact, true)
+		publishedBefore := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+		assert.Equal(t, publishedBefore.SameMaterial(before.artifact), true)
+		assert.Equal(t, publishedBefore.Reads != nil, true)
+		assert.Equal(t, publishedBefore.Reads.Valid(), true)
 		assert.Equal(t, d.aliasViews[before.viewKey] == before.artifact, true)
 		next := *d.cfg.Input
 		next.Revision = "refreshed"
 		st.SetArtifact(manifest.BootstrapSourceID, &next)
-		_, err = d.resolveEntrySources(t.Context(), false)
+		_, err = d.resolveTestSources(t.Context(), false)
 		assert.NoError(t, err)
 		after := d.resolvedSources.snapshot()[id]
 		assert.Equal(t, after.input, &next)
@@ -268,7 +286,10 @@ func TestAdmission_ResolvedSourcesFreeze(t *testing.T) {
 		assert.Diff(t, after.warnings, before.warnings)
 		assert.Equal(t, after.viewKey, before.viewKey)
 		assert.Equal(t, after.artifact.Revision, "refreshed")
-		assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == after.artifact, true)
+		publishedAfter := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+		assert.Equal(t, publishedAfter.SameMaterial(after.artifact), true)
+		assert.Equal(t, publishedAfter.Reads != nil, true)
+		assert.Equal(t, publishedAfter.Reads.Valid(), true)
 		assert.Equal(t, len(d.aliasViews), 0)
 		assert.Equal(t, d.hasPins, false)
 	})
@@ -296,11 +317,12 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 	seed := manifest.NamedResource{
 		Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "seed",
 	}
-	published, err := a.Publish(t.Context(), seed, manifest.WorkScope{}, func(store.Child) (bool, error) {
+	published, err := a.Publish(t.Context(), seed, aliasRequestReads(t, st, seed), func(store.Child) (bool, error) {
 		return true, nil
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, published, true)
+	assert.NoError(t, constructAdmissionTest(t.Context(), a, seed))
 	before := a.resolvedSources.snapshot()
 	captured := before[seed]
 	ids := [2]manifest.NamedResource{seed, seed}
@@ -310,7 +332,7 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 	}
 	var expected [2]entryResolution
 	for i, id := range ids {
-		expected[i], err = a.resolve(t.Context(), id, nil, manifest.WorkScope{})
+		expected[i], err = a.resolve(t.Context(), id, &sourceRequest{reference: aliasRequestReference(t, st, id)})
 		assert.NoError(t, err)
 	}
 	ready := make(chan struct{}, 2)
@@ -324,7 +346,7 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 			accepted[i], failures[i] = a.Publish(
 				t.Context(),
 				id,
-				manifest.WorkScope{},
+				aliasRequestReads(t, st, id),
 				func(child store.Child) (bool, error) {
 					offered[i] = child.Obj
 					ready <- struct{}{}
@@ -342,6 +364,7 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 		assert.Equal(t, resolution.artifact.FS != nil, true)
 	}
 	workers.Wait()
+	assert.NoError(t, constructAdmissionTest(t.Context(), a, ids[:]...))
 	assert.Equal(t, len(before), 2)
 	assert.Equal(t, before[seed].object == captured.object, true)
 	assert.Equal(t, before[seed].artifact == captured.artifact, true)
@@ -364,6 +387,9 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 		assert.Equal(t, got.viewKey, expected[i].viewKey)
 		assert.Diff(t, got.warnings, expected[i].warnings)
 		artifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+		assert.Equal(t, artifact.SameMaterial(got.artifact), true)
+		assert.Equal(t, artifact.Reads != nil, true)
+		assert.Equal(t, artifact.Reads.Valid(), true)
 		for _, value := range []*store.SourceArtifact{got.artifact, artifact} {
 			assert.Diff(t, value.Input(store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin),
 				expected[i].artifact.Input(store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin))
@@ -371,7 +397,7 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 			assert.Equal(t, value.Size, expected[i].artifact.Size)
 			assert.Diff(t, value.Metadata, expected[i].artifact.Metadata)
 			assert.Diff(t, value.Warnings, expected[i].artifact.Warnings)
-			assert.Equal(t, value.Reads, expected[i].artifact.Reads)
+			assert.Equal(t, value.Reads.Valid(), true)
 			body, readErr := fs.ReadFile(value.FS, "apps/file")
 			assert.NoError(t, readErr)
 			assert.Equal(t, string(body), "working tree")
@@ -408,6 +434,43 @@ func testAdmissionPublishConcurrent(t *testing.T, duplicate bool) {
 	})
 	assert.Equal(t, a.session == nil, true)
 	assert.Equal(t, a.qualification.session == nil, true)
+}
+
+func TestAdmission_SingleAliasWarning(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		kind, namespace, name string
+	}{
+		{manifest.KindGitRepository, "flux-system", "flux-system"},
+		{manifest.KindOCIRepository, "flux-system", "flux-system"},
+		{manifest.KindBucket, "flux-system", "flux-system"},
+		{manifest.KindOCIRepository, "apps", "shared"},
+	} {
+		t.Run(tc.kind+"/"+tc.namespace+"/"+tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			result, err := Run(t.Context(), Config{Path: root, Store: st})
+			assert.NoError(t, err)
+			t.Cleanup(result.Close)
+			id := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      tc.kind,
+				Namespace: tc.namespace,
+				Name:      tc.name,
+			}
+			_, err = result.Admission.Publish(
+				t.Context(),
+				id,
+				aliasRequestReads(t, st, id),
+				func(store.Child) (bool, error) { return true, nil },
+			)
+			assert.NoError(t, err)
+			assert.NoError(t, constructAdmissionTest(t.Context(), result.Admission, id))
+			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) != nil, true)
+			assert.Equal(t, len(result.Admission.Warnings()), 0)
+		})
+	}
 }
 
 func TestAdmission_Warnings(t *testing.T) {
@@ -456,11 +519,12 @@ func TestAdmission_Warnings(t *testing.T) {
 	published, err := a.Publish(
 		t.Context(),
 		late,
-		manifest.WorkScope{},
+		aliasRequestReads(t, st, late),
 		func(store.Child) (bool, error) { return true, nil },
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, published, true)
+	assert.NoError(t, constructAdmissionTest(t.Context(), a, late))
 	want := append(slices.Clone(ordinary), manifest.Warning{
 		Category: manifest.WarnBootstrapAliases,
 		Message:  "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
@@ -487,7 +551,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	d := Session{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
 	t.Cleanup(d.loader.Close)
 	t.Cleanup(d.Close)
-	_, err := d.resolveEntrySources(t.Context(), false)
+	_, err := d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)
 	a := d.finishAdmission(t.Context())
 	id := manifest.NamedResource{
@@ -499,11 +563,12 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	published, err := a.Publish(
 		t.Context(),
 		id,
-		manifest.WorkScope{},
+		aliasRequestReads(t, st, id),
 		func(store.Child) (bool, error) { return true, nil },
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, published, true)
+	assert.NoError(t, constructAdmissionTest(t.Context(), a, id))
 	alias := a.resolvedSources.snapshot()[id]
 	pinned := &manifest.GitRepository{Name: "pinned", Namespace: "apps"}
 	st.AddObject(pinned)
@@ -552,7 +617,10 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	)
 	d.discardPinnedWorkingTreeFiles(root)
 	assert.Equal(t, st.GetObject(id) == alias.object, true)
-	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == alias.artifact, true)
+	publishedArtifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	assert.Equal(t, publishedArtifact.SameMaterial(alias.artifact), true)
+	assert.Equal(t, publishedArtifact.Reads != nil, true)
+	assert.Equal(t, publishedArtifact.Reads.Valid(), true)
 	status, ok := st.GetStatus(id)
 	assert.Equal(t, ok, true)
 	assert.Equal(t, status.Status, store.StatusReady)
@@ -561,4 +629,162 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	assert.Equal(t, st.GetObject(dirty.Named()) == nil, true)
 	_, ok = d.loader.Index.Lookup(dirty.Named())
 	assert.Equal(t, ok, false)
+}
+
+func aliasRequestReads(t *testing.T, st *store.Store, id manifest.NamedResource) *store.ReadSet {
+	t.Helper()
+	ks := &manifest.Kustomization{
+		Name: "request-" + id.Name, Namespace: id.Namespace,
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
+	}
+	st.AddObject(ks)
+	reads := &store.ReadSet{}
+	reads.Init(st, ks.Named(), nil)
+	t.Cleanup(reads.Retire)
+	return reads
+}
+
+func aliasRequestReference(t *testing.T, st *store.Store, id manifest.NamedResource) manifest.Reference {
+	t.Helper()
+	reads := aliasRequestReads(t, st, id)
+	for ref := range manifest.References(reads.GetDeclaration(reads.ID()), manifest.ReferenceRelations) {
+		if ref.NamedResource == id && ref.ReadsSourceTree() {
+			return ref
+		}
+	}
+	t.Fatal("request has no manifest source reference")
+	return manifest.Reference{}
+}
+
+func TestAdmission_PublishAuthority(t *testing.T) {
+	t.Parallel()
+	for _, authority := range []string{"declaration", "supplied", "producer", "settled producer"} {
+		t.Run(authority, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			root := t.TempDir()
+			result, err := Run(t.Context(), Config{Path: root, Store: st})
+			assert.NoError(t, err)
+			t.Cleanup(result.Close)
+			id := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindOCIRepository,
+				Namespace: "apps",
+				Name:      "shared",
+			}
+			reads := aliasRequestReads(t, st, id)
+			entered, release := make(chan struct{}), make(chan struct{})
+			var published bool
+			var failure error
+			var workers sync.WaitGroup
+			workers.Go(func() {
+				published, failure = result.Admission.Publish(t.Context(), id, reads, func(store.Child) (bool, error) {
+					close(entered)
+					<-release
+					return true, nil
+				})
+			})
+			<-entered
+			addSourceAuthority(t, st, id, authority)
+			close(release)
+			workers.Wait()
+			assert.NoError(t, failure)
+			assert.Equal(t, published, false)
+			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
+			_, recorded := result.Admission.resolvedSources.snapshot()[id]
+			assert.Equal(t, recorded, false)
+			published, err = result.Admission.Publish(
+				t.Context(),
+				id,
+				aliasRequestReads(t, st, id),
+				func(store.Child) (bool, error) {
+					t.Fatal("authoritative source offered as an alias")
+					return true, nil
+				},
+			)
+			assert.NoError(t, err)
+			assert.Equal(t, published, false)
+		})
+	}
+}
+
+func TestAdmission_PublishSelfSource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "apps/file", "local material")
+	st := store.New()
+	result, err := Run(t.Context(), Config{Path: root, Store: st, SelfURLs: []string{"https://fixture.invalid/self"}})
+	assert.NoError(t, err)
+	t.Cleanup(result.Close)
+	parsed, err := manifest.ParseDoc(map[string]any{
+		"apiVersion": manifest.SourceDomain + "/v1", "kind": manifest.KindGitRepository,
+		"metadata": map[string]any{"name": "self", "namespace": "apps"},
+		"spec":     map[string]any{"url": "ssh://git@fixture.invalid/self.git"},
+	}, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	id := parsed.Object.Named()
+	st.AddObject(parsed.Object)
+	published, err := result.Admission.Publish(
+		t.Context(),
+		id,
+		aliasRequestReads(t, st, id),
+		func(child store.Child) (bool, error) {
+			assert.Equal(t, child.Obj == parsed.Object, true)
+			assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
+			return true, nil
+		},
+	)
+	assert.NoError(t, err)
+	assert.Equal(t, published, true)
+	assert.Equal(t, st.GetArtifact(id, store.ArtifactContent) == nil, true)
+	assert.NoError(t, constructAdmissionTest(t.Context(), result.Admission, id))
+	material := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+	data, err := fs.ReadFile(material.FS, "apps/file")
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), "local material")
+	assert.Equal(t, st.GetObject(id) == parsed.Object, true)
+	assert.Equal(t, result.Admission.resolvedSources.snapshot()[id].synthetic, false)
+}
+
+func addSourceAuthority(t *testing.T, st *store.Store, id manifest.NamedResource, authority string) {
+	t.Helper()
+	if authority == "declaration" || authority == "supplied" {
+		object, bindErr := id.BindLocal("/authoritative")
+		assert.NoError(t, bindErr)
+		if authority == "supplied" {
+			st.AddDeclaration(store.Declaration{Obj: object, Origin: manifest.SuppliedDeclaration})
+		} else {
+			st.AddObject(object)
+		}
+		return
+	}
+	owner := &manifest.Kustomization{Name: "emitter", Namespace: id.Namespace}
+	st.AddObject(owner)
+	producer := &manifest.RawObject{
+		APIVersion: manifest.FluxOperatorDomain + "/v1",
+		Kind:       "FluxInstance",
+		Name:       "flux",
+		Namespace:  id.Namespace,
+		Spec: map[string]any{
+			"sync": map[string]any{
+				"kind": id.Kind,
+				"name": id.Name,
+				"url":  "oci://fixture.invalid/source",
+				"ref":  "latest",
+				"path": "./",
+			},
+		},
+	}
+
+	application, valid := producer.EntryApplication()
+	assert.Equal(t, valid, true)
+	st.RecordEmitted(
+		owner.Named(),
+		&store.Emission{Children: []store.Child{{Obj: application.Declaration}}, Complete: true},
+		nil,
+	)
+	if authority == "settled producer" {
+		st.UpdateStatus(application.Source, store.StatusInfo{Status: store.StatusReady})
+	}
+	assert.Equal(t, len(st.Productions(id, nil)) != 0, true)
 }

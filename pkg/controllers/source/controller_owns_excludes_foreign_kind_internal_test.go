@@ -324,8 +324,8 @@ func TestController_AmbientContextError(t *testing.T) {
 						Fetch: func(context.Context) (src.PreparedFetch, error) {
 							return src.PreparedFetch{}, missing
 						},
-						Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
-							return c.completeFetch(repo, artifact, unavailable)
+						Complete: func(fetchCtx context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+							return c.completeFetch(fetchCtx, repo, artifact, unavailable)
 						},
 					},
 					manifest.DrainCascade)

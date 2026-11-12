@@ -56,7 +56,7 @@ func TestCase_FailedOwnerDoesNotAdmitRawReleases(t *testing.T) {
 	fixture := Open(t, "scope-orphans", "namespace-failing-owner-2")
 	fixture.fixture.Restore(t)
 	objects := store.New()
-	_, err := discovery.Run(t.Context(), discovery.Config{
+	_, err := runDiscovery(t.Context(), discovery.Config{
 		Path: filepath.Join(fixture.fixture.Repo, "flux"), RepoRoot: fixture.fixture.Repo, Store: objects,
 	})
 	assert.NoError(t, err)

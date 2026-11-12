@@ -85,7 +85,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 				SelfURLs: []string{"https://fixture.invalid/self"},
 			},
 		)
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.NoError(t, err)
 		owner := manifest.NewEntryKustomization(
 			manifest.BootstrapSourceID,
@@ -104,7 +104,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		if strings.HasPrefix(lifetime, "warm-") {
 			assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), previousHistory)
 		}
-		assert.NoError(t, d.loadManifests(t.Context(), root, true))
+		assert.NoError(t, d.loadManifestsTest(t.Context(), root, true))
 		assert.Equal(t, d.binding.Producer, owner.Named())
 		assertPreparedPackageOutputsResult2 := d.assertPreparedPackageOutputs(t, testCaseInput, owner, wantValue)
 		docs, wantHistory := assertPreparedPackageOutputsResult2.documents, assertPreparedPackageOutputsResult2.history

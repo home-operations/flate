@@ -422,31 +422,22 @@ spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavai
 		)
 	}
 
-	if strings.HasPrefix((*testCaseInput), "missing_") {
+	if strings.HasPrefix(*testCaseInput, "missing_") {
 		id := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
 			Kind:      kind,
 			Namespace: "flux-system",
 			Name:      sourceName,
 		}
+		artifact, ok := cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		assert.FatalIf(
 			t,
-			cfg.Store.GetObject(id) != nil || cfg.Store.GetArtifact(id, store.ArtifactContent) != nil,
-			"%v",
-			"missing non-Git source became available",
+			!ok || !artifact.InputAlias || cfg.Store.GetObject(id) == nil,
+			"tree source was not aliased: %v",
+			id,
 		)
-		assert.FatalIf(
-			t,
-			cfg.Store.GetObject(testutil.KustomizationID("flux-system", "child")) != nil,
-			"%v",
-			"missing source exposed a decoy child",
-		)
-		{
-			owners := ownersForTest(res.Index, "apps/cm.yaml")
-			assert.FatalIf(t, len(owners) != 0, "missing source acquired owners: %v", owners)
-		}
-		return
 	}
+
 	child := testutil.KustomizationID("flux-system", "child")
 	assert.FatalIf(
 		t,

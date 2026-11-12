@@ -144,7 +144,7 @@ func TestResolve_UnrelatedApplicationAdmission(t *testing.T) {
 	st.AddObject(source)
 	st.AddObject(application)
 	a := &Admission{store: st, input: input, path: root, remotes: map[string]struct{}{"example.test/self": {}}}
-	_, artifact, err := a.Resolve(t.Context(), source.Named(), source, manifest.WorkScope{})
+	_, artifact, err := a.Resolve(t.Context(), source.Named(), source, nil)
 	assert.NoError(t, err)
 	assert.FatalIf(t, artifact == nil, "bootstrap source did not resolve")
 	assert.Equal(t, artifact.InputAlias, true)

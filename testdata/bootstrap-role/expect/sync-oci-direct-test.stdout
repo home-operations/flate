@@ -1,0 +1,7 @@
+
+  ⊘  Kustomization  flux-system/cluster  blocked by flux-system/flux-system (not found)
+  ⊘  Kustomization  flux-system/flux-instance  blocked by flux-system/flux-system (not found)
+  ⊘  Kustomization  flux-system/flux-operator  blocked by flux-system/flux-system (not found)
+  ⊘  Kustomization  flux-system/kustomize-mutating-webhook  blocked by flux-system/flux-system (not found)
+
+  ✗ 0 passed · 4 blocked   <DUR>

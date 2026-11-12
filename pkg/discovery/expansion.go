@@ -18,6 +18,9 @@ type sourceExpansion struct {
 }
 
 func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *int) error {
+	if d.loading {
+		return nil
+	}
 	input := d.cfg.Input
 	if input == nil {
 		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
@@ -42,6 +45,7 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 		return err
 	}
 	l.IgnoreFile = ""
+	d.loading = true
 	return nil
 }
 

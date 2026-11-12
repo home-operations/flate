@@ -1,6 +1,8 @@
 package loader
 
 import (
+	"errors"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"slices"
@@ -130,28 +132,53 @@ func TestDocumentReader_IndexedSource(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "kustomization.yaml", "namespace: host\n")
-	st := store.New()
 	id := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindGitRepository,
 		Namespace: "apps",
 		Name:      "indexed",
 	}
-	st.SetArtifact(id, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
-		"kustomization.yaml": {Data: []byte("namespace: authoritative\n")},
-	}})
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		id: {File: "source.yaml"},
-	}}
-	reader := documentReader{cache: map[string]document{}}
-	reader.mountSources(st, nil, index)
-	body := reader.read(root).body
-	assert.FatalIf(
-		t,
-		body == nil || body.Namespace != "authoritative" || st.GetObject(id) != nil,
-		"indexed-only source mount = %v",
-		body,
-	)
+	for _, sourceRecord := range []bool{true, false} {
+		t.Run(fmt.Sprintf("source_record=%t", sourceRecord), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			st.SetArtifact(id, &store.SourceArtifact{LocalPath: root})
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+			if sourceRecord {
+				index.Records[id] = manifest.DiscoveryRecord{File: "source.yaml"}
+			} else {
+				index.Records[testutil.KustomizationID("apps", "consumer")] = manifest.DiscoveryRecord{
+					File: "consumer.yaml", Refs: []manifest.NamedResource{id},
+				}
+			}
+			reader := documentReader{cache: map[string]document{}}
+			reader.mountSources(st, nil, index)
+			assert.Equal(t, reader.read(root).body == nil, true)
+			probe := new(reader).input(filepath.Join(root, ".krmignore"))
+			_, err := fs.ReadFile(probe.fs, probe.name)
+			assert.Equal(t, errors.Is(err, errSourceUnavailable), true)
+			artifact := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+				"kustomization.yaml": {Data: []byte("namespace: authoritative\n")},
+				".krmignore":         {Data: []byte("ignored.yaml\n")},
+			}}
+			st.SetArtifact(id, artifact)
+			reader.mountSources(st, nil, index)
+			probe = new(reader).input(filepath.Join(root, ".krmignore"))
+			data, err := fs.ReadFile(probe.fs, probe.name)
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), "ignored.yaml\n")
+			body := reader.read(root).body
+			assert.FatalIf(
+				t,
+				body == nil || body.Namespace != "authoritative" || st.GetObject(id) != nil,
+				"indexed-only source mount = %v",
+				body,
+			)
+			st.SetArtifact(id, artifact.WithReads(nil))
+			assert.Equal(t, len(reader.mountSources(st, nil, index)), 0)
+			assert.Equal(t, reader.read(root).body == body, true)
+		})
+	}
 }
 
 func TestLoader_ReplacedProjectedEvidence(t *testing.T) {

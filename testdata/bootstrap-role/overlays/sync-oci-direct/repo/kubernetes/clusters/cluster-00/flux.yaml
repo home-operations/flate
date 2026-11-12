@@ -1,0 +1,12 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  sync:
+    kind: OCIRepository
+    name: flux-system
+    url: oci://registry.invalid/cluster
+    ref: latest
+    path: kubernetes/clusters/cluster-00

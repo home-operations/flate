@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -14,7 +15,7 @@ func TestCatalogCodec_RoundTrip(t *testing.T) {
 	for _, object := range []BaseManifest{
 		&Kustomization{Name: "root", Namespace: "apps", Labels: map[string]string{"app": "test"}, Annotations: map[string]string{"flag": "value"}},
 		&HelmRelease{Name: "app", Namespace: "apps"},
-		&GitRepository{Name: "repo", Namespace: "apps", Labels: map[string]string{"app": "test"}},
+		&GitRepository{Name: "repo", Namespace: "apps", Labels: map[string]string{"app": "test"}, URL: "https://fixture.invalid/self", Reference: &sourcev1.GitRepositoryRef{Branch: "main"}, SparseCheckout: []string{"apps"}, Ignore: new("excluded/"), RecurseSubmodules: true},
 		&OCIRepository{Name: "repo", Namespace: "apps"},
 		&HelmRepository{Name: "repo", Namespace: "apps"},
 		&HelmChartSource{Name: "chart", Namespace: "apps"},

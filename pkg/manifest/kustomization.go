@@ -339,9 +339,10 @@ func (k *Kustomization) sourceReference(yield func(Reference) bool, view Referen
 			use = ""
 		}
 		if (view == ReferenceAll || use != "") && !yield(Reference{
-			NamedResource: src,
-			bindsSource:   true,
-			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
+			NamedResource:   src,
+			bindsSource:     true,
+			readsSourceTree: true,
+			Use:             use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
 			ArtifactStages: GateInputs | GateArtifacts,
 
 			NamespaceDefault: use != "" && k.SourceRef.Namespace == "",

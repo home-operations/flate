@@ -155,23 +155,38 @@ func TestHistory_RemovedPathSourceQualification(t *testing.T) {
 
 func TestRender_ChangedPathThroughGeneratedSource(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct{ name, kind, declaration string }{
+		{name: "produced self", kind: manifest.KindGitRepository, declaration: `    apiVersion: source.toolkit.fluxcd.io/v1
+    kind: GitRepository
+    metadata: {name: generated, namespace: apps}
+    spec: {url: https://fixture.invalid/repo}
+    ---
+`},
+		{name: "missing git", kind: manifest.KindGitRepository},
+		{name: "missing oci", kind: manifest.KindOCIRepository},
+		{name: "missing bucket", kind: manifest.KindBucket},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertChangedPathThroughGeneratedSource(t, tc.kind, tc.declaration)
+		})
+	}
+}
+
+func assertChangedPathThroughGeneratedSource(t *testing.T, kind, declaration string) {
+	t.Helper()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/producer.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: producer, namespace: apps}
 spec:
   resourcesTemplate: |
-    apiVersion: source.toolkit.fluxcd.io/v1
-    kind: GitRepository
-    metadata: {name: generated, namespace: apps}
-    spec: {url: https://fixture.invalid/repo}
-    ---
-    apiVersion: kustomize.toolkit.fluxcd.io/v1
+`+declaration+`    apiVersion: kustomize.toolkit.fluxcd.io/v1
     kind: Kustomization
     metadata: {name: generated, namespace: apps}
     spec:
       path: ./apps/generated
-      sourceRef: {kind: GitRepository, name: generated}
+      sourceRef: {kind: `+kind+`, name: generated}
 `)
 	testutil.WriteFile(t, root, "apps/generated/kustomization.yaml", "resources: [payload.yaml]\n")
 	testutil.WriteFile(

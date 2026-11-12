@@ -310,9 +310,10 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		Namespace: "flux-system",
 		Name:      "missing",
 	}
-	wantIDs := []string{manifest.BootstrapSourceID.String(), testutil.KustomizationID("flux-system", "root").String()}
-	if kind == manifest.KindGitRepository {
-		wantIDs = append(wantIDs, source.String())
+	wantIDs := []string{
+		manifest.BootstrapSourceID.String(),
+		testutil.KustomizationID("flux-system", "root").String(),
+		source.String(),
 	}
 	slices.Sort(wantIDs)
 	run := func(scan string) store.SourceArtifact {
@@ -339,13 +340,13 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		}
 		slices.Sort(ids)
 		assert.Diff(t, ids, wantIDs)
-		alias := input
-		if kind == manifest.KindGitRepository {
+		var alias *store.SourceArtifact
+		{
 			status, present := st.GetStatus(source)
 			assert.FatalIf(
 				t,
 				!present || status.Status != store.StatusReady || status.String() != "local entry source",
-				"Git readiness = %+v",
+				"source readiness = %+v",
 				status,
 			)
 			var ok bool
@@ -355,13 +356,6 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 				!ok || alias.LocalRoot != root || alias.LocalPath == "" || !alias.InputAlias,
 				"source artifact = %+v",
 				alias,
-			)
-		} else {
-			assert.FatalIf(
-				t,
-				st.GetObject(source) != nil || st.GetArtifact(source, store.ArtifactContent) != nil,
-				"%v",
-				"missing non-Git source became available",
 			)
 		}
 		got, err := fs.ReadFile(alias.FS, "ks.yaml")
@@ -384,7 +378,13 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		return aliasCopy
 	}
 	{
-		diff := cmp.Diff(run(root), run(scan), cmpopts.IgnoreFields(store.SourceArtifact{}, "material"))
+		diff := cmp.Diff(run(root), run(scan), cmpopts.IgnoreFields(store.SourceArtifact{}, "material"),
+			cmp.Comparer(func(a, b *store.ReadSet) bool {
+				if a == nil || b == nil {
+					return a == b
+				}
+				return a.Matches(b) && b.Matches(a)
+			}))
 		assert.ErrorIf(t, diff != "", "scan coordinate mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -454,38 +454,16 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 			}
 			parent := testutil.KustomizationID("apps", "parent")
 			payload := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "payload"}
-			if kind != manifest.KindGitRepository {
-				assert.FatalIf(
-					t,
-					st.GetObject(source) != nil || st.GetArtifact(source, store.ArtifactContent) != nil,
-					"%v",
-					"missing non-Git source aliased",
-				)
-				{
-					ownership := res.Index.OwnersOfFile("apps/x/cm.yaml")
-					owners := ownership.Owners
-					assert.FatalIf(t, len(owners) != 0, "missing source claimed owners: %v", owners)
-				}
-				{
-					producers := st.Productions(payload, res.Index)
-					assert.FatalIf(t, len(producers) != 0, "missing source claimed producers: %v", producers)
-				}
-				{
-					readers := slices.Collect(res.Index.ReadersOfFile("apps/x/cm.yaml"))
-					assert.FatalIf(t, len(readers) != 0, "missing source claimed readers: %v", readers)
-				}
-				return
-			}
 			art, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-			assert.FatalIf(t, !ok || art.LocalRoot != dir, "Git source = %+v", art)
+			assert.FatalIf(t, !ok || art.LocalRoot != dir, "source artifact = %+v", art)
 			{
 				ownership2 := res.Index.OwnersOfFile("apps/x/cm.yaml")
 				owners := ownership2.Owners
-				assert.FatalIf(t, !slices.Contains(owners, parent), "Git owners = %v", owners)
+				assert.FatalIf(t, !slices.Contains(owners, parent), "source owners = %v", owners)
 			}
 			{
 				producers := testutil.Owners(st.Productions(payload, res.Index))
-				assert.FatalIf(t, !slices.Contains(producers, parent), "Git producers = %v", producers)
+				assert.FatalIf(t, !slices.Contains(producers, parent), "source producers = %v", producers)
 			}
 			{
 				readers := slices.Collect(
@@ -494,7 +472,7 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 				assert.FatalIf(t, !slices.ContainsFunc(
 					readers,
 					func(r manifest.FileReader) bool { return r.Reader == parent },
-				), "Git readers = %v", readers)
+				), "source readers = %v", readers)
 			}
 			{
 				ownership3 := res.Index.OwnersOfFile("sibling/cm.yaml")

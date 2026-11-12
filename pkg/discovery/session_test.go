@@ -37,7 +37,7 @@ func TestSession_OnlyRequiredStandaloneConstruction(t *testing.T) {
 	}
 	st := store.New()
 	l := loader.New(st)
-	session, err := discovery.Begin(
+	session, err := discovery.BeginTest(
 		t.Context(),
 		discovery.Config{
 			Input:     &store.SourceArtifact{LocalPath: root, FS: input},
@@ -187,7 +187,7 @@ spec: {path: ./workload}
 				manifest.WorkScope{},
 			)
 			assert.NoError(t, err)
-			session, err := discovery.Begin(
+			session, err := discovery.BeginTest(
 				t.Context(),
 				discovery.Config{
 					Input:     source,

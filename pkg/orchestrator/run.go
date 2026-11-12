@@ -68,7 +68,10 @@ func (e *orchestratorExistence) promoteSelected(
 	if err != nil {
 		return false, err
 	}
-	return e.o.selection.Snapshot().Reconcile(id) && captured.GetObject(id) != nil, nil
+	if captured.GetObject(id) == nil {
+		return e.promoteAdmission(ctx, *request, id)
+	}
+	return e.o.selection.Snapshot().Reconcile(id), nil
 }
 
 func (e *orchestratorExistence) promoteFull(
@@ -131,7 +134,10 @@ func (e *orchestratorExistence) promotePrepared(
 	if reads != nil {
 		obj = reads.GetDeclaration(id)
 	}
-	return obj != nil && slices.Contains(e.o.preparation.Needed, id), nil
+	if obj == nil {
+		return e.promoteAdmission(ctx, request, id)
+	}
+	return slices.Contains(e.o.preparation.Needed, id), nil
 }
 
 //nolint:gocritic // The admission contract requires an independent request snapshot.
@@ -144,7 +150,7 @@ func (e *orchestratorExistence) promoteAdmission(
 	if e.o.admission == nil || reads == nil || reads.GetDeclaration(reads.ID()) == nil {
 		return false, nil
 	}
-	return e.o.admission.Publish(ctx, id, reads.Work().Scope(), func(child store.Child) (bool, error) {
+	return e.o.admission.Publish(ctx, id, reads, func(child store.Child) (bool, error) {
 		if !reads.Valid() {
 			return false, nil
 		}

@@ -36,7 +36,7 @@ type Result struct {
 	Index    *manifest.DiscoveryIndex
 }
 
-// Config is the input contract for Run. Store is mandatory.
+// Config is the input contract for Begin. Store is mandatory.
 type Config struct {
 	Cache *cache.Cache
 	Work  manifest.WorkScope
@@ -48,9 +48,7 @@ type Config struct {
 	Selection selection.Request
 	Changes   *change.Set
 	// Loader borrows the invocation's sole declaration loader.
-	Loader     *loader.Loader
-	session    *Session
-	ownsLoader bool
+	Loader *loader.Loader
 	// Input is authoritative over a preseeded bootstrap artifact or disk admission.
 	Input *store.SourceArtifact
 	// Entry supplies immutable parsed input prepared by Plan for this admission.
@@ -89,6 +87,17 @@ type Config struct {
 
 // Session retains invocation-local declaration construction until Freeze.
 type Session struct {
+	entryBuilderInput   *store.SourceArtifact
+	entryBuilderPath    string
+	entryBuilder        bool
+	planner             *entryPlanner
+	planLoaded          bool
+	pendingSources      []manifest.NamedResource
+	sourceGroups        map[manifest.NamedResource]*entrySourceGroup
+	loaded              bool
+	built               bool
+	finalized           bool
+	loading             bool
 	request             selection.PrepareRequest
 	preparation         *selection.Preparation
 	constructionStarted bool
@@ -109,83 +118,40 @@ type Session struct {
 	ownsLoader          bool
 }
 
-// Run performs the full discovery phase against cfg and writes results
-// into cfg.Store. Returns the structural metadata the orchestrator
-// needs for change-filter construction and controller wiring.
-//
-//nolint:gocritic // Public discovery preserves its configuration value snapshot.
-func Run(ctx context.Context, cfg Config) (*Result, error) {
-	if cfg.Store == nil {
-		return nil, errors.New("discovery: Store is required")
+// Run requires the caller to reconcile PendingSources whenever it returns no result.
+func (d *Session) Run(ctx context.Context) (*Result, error) {
+	if d.loader.Options.Session != nil {
+		return d.runSelected(ctx)
 	}
-	if cfg.Loader == nil {
-		cfg.Loader = loader.New(cfg.Store)
-		cfg.ownsLoader = true
+	if d.built {
+		return d.Freeze(ctx)
 	}
-	if cfg.Loader.Options.Session == nil {
-		var err error
-		cfg.Loader.Options.Session, err = selection.New(cfg.Store, cfg.Loader, cfg.Selection)
-		if err != nil {
-			return nil, err
+	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+		if errors.Is(err, errPendingSources) {
+			return nil, nil //nolint:nilnil // The caller MUST reconcile PendingSources before resuming.
 		}
-	}
-	if cfg.session == nil && cfg.Loader.Options.Session != nil {
-		return runSelected(ctx, &cfg)
-	}
-	d := cfg.session
-	if d == nil {
-		d = newDiscoverer(&cfg)
-	}
-	complete := false
-	defer func() { d.finishRun(complete) }()
-	l := d.loader
-	if cfg.session == nil {
-		if _, err := d.resolveEntrySources(ctx, false); err != nil {
-			return nil, err
-		}
-	}
-	repoRoot := d.cfg.Input.LocalPath
-	if cfg.session == nil {
-		if err := d.loadManifests(ctx, repoRoot, true); err != nil {
-			return nil, err
-		}
-	}
-	result, err := d.finishDiscovery(ctx, repoRoot, l)
-	complete = err == nil
-	return result, err
-}
-
-func (d *Session) finishRun(complete bool) {
-	if !complete {
-		d.Close()
-		return
-	}
-	for _, frame := range d.prepared {
-		frame.retireSupport(d.cfg.Store)
-	}
-}
-
-func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
-	if cfg.Loader == nil {
-		cfg.Loader = loader.New(cfg.Store)
-		cfg.ownsLoader = true
-	}
-
-	session, err := Begin(ctx, *cfg)
-	if err != nil {
 		return nil, err
 	}
-	complete := false
-	defer func() {
-		if !complete {
-			session.Close()
+	if err := d.loadManifests(ctx, d.cfg.Input.LocalPath, true); err != nil {
+		if errors.Is(err, errPendingSources) {
+			return nil, nil //nolint:nilnil // The caller MUST reconcile PendingSources before resuming.
 		}
-	}()
+		return nil, err
+	}
+	d.loaded, d.built = true, true
+	return d.Freeze(ctx)
+}
+
+func (d *Session) runSelected(ctx context.Context) (*Result, error) {
+	if ready, err := d.Load(ctx); err != nil || !ready {
+		return nil, err
+	}
+
 	var preparation *selection.Preparation
 	defer func() { preparation.Retire() }()
 	for {
-		request := session.prepareRequest(&selection.PrepareRequest{Invocation: true, Preparation: &preparation})
-		admitted, committed, err := cfg.Loader.Options.Session.Admit(ctx, selection.AdmissionOptions{
+		request := d.prepareRequest(&selection.PrepareRequest{Invocation: true, Preparation: &preparation})
+		admitted, committed, err := d.loader.Options.Session.Admit(ctx, selection.AdmissionOptions{
 			Request: request, Stage: selection.Construction,
 		})
 		if err != nil {
@@ -194,15 +160,18 @@ func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
 		if !committed {
 			continue
 		}
-		advanced, err := session.Advance(ctx, &admitted)
+		advanced, err := d.Advance(ctx, &admitted)
 		if err != nil {
 			return nil, err
 		}
 		if advanced {
+			if len(d.pendingSources) != 0 {
+				return nil, nil //nolint:nilnil // The caller MUST reconcile PendingSources before resuming.
+			}
 			continue
 		}
-		request = session.prepareRequest(&selection.PrepareRequest{Invocation: true, Preparation: &preparation})
-		_, committed, err = cfg.Loader.Options.Session.Admit(ctx, selection.AdmissionOptions{
+		request = d.prepareRequest(&selection.PrepareRequest{Invocation: true, Preparation: &preparation})
+		_, committed, err = d.loader.Options.Session.Admit(ctx, selection.AdmissionOptions{
 			Request: request, Stage: selection.Execution,
 		})
 		if err != nil {
@@ -211,8 +180,7 @@ func runSelected(ctx context.Context, cfg *Config) (*Result, error) {
 		if !committed {
 			continue
 		}
-		result, err := session.Freeze(ctx)
-		complete = err == nil
+		result, err := d.Freeze(ctx)
 		return result, err
 	}
 }
@@ -222,14 +190,19 @@ func (d *Session) finishDiscovery(
 	repoRoot string,
 	l *loader.Loader,
 ) (*Result, error) {
-	if d.binding.Failure == nil {
+	if !d.finalized && d.binding.Failure == nil {
 		if err := l.EntryFailure(ctx, repoRoot); err != nil {
 			return nil, err
 		}
 	}
-
-	if err := l.FinalizeIndex(ctx, repoRoot, true); err != nil {
-		return nil, err
+	if !d.finalized {
+		if err := l.FinalizeIndex(ctx, repoRoot, true); err != nil {
+			return nil, err
+		}
+		d.finalized = true
+		if _, err := d.resolveEntrySources(ctx, true); err != nil {
+			return nil, err
+		}
 	}
 	if l.Options.Session == nil {
 		if err := l.PromoteOrphans(ctx); err != nil {
@@ -238,6 +211,9 @@ func (d *Session) finishDiscovery(
 	}
 	if err := d.acceptPrepared(ctx); err != nil {
 		return nil, err
+	}
+	if len(d.PendingSources()) != 0 {
+		return nil, errPendingSources
 	}
 	admission := d.finishAdmission(ctx)
 	result := &Result{
@@ -316,7 +292,7 @@ func newDiscoverer(config *Config) *Session {
 	}
 	d := &Session{
 		cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{},
-		ownsLoader: cfg.ownsLoader || cfg.Loader == nil,
+		ownsLoader: cfg.Loader == nil,
 	}
 	d.cfg.Entry = nil
 	if cfg.Entry == nil || cfg.Entry.prepared == nil {
@@ -330,21 +306,18 @@ func newDiscoverer(config *Config) *Session {
 	if input == nil {
 		return d
 	}
-	if !prepared.parsed.Matches(input) || input.LocalPath != prepared.input.LocalPath ||
-		input.LocalRoot != prepared.input.LocalRoot ||
-		input.Key != prepared.input.Key ||
-		input.Content != prepared.input.Content ||
-		input.Revision != prepared.input.Revision ||
-		input.Digest != prepared.input.Digest {
+	if !cfg.Entry.matches(input, cfg.Path) {
 		return d
 	}
 	l.Options.ParsedInputs = prepared.parsed
 	d.aliasViews = maps.Clone(prepared.aliasViews)
+	d.cfg.Entry = cfg.Entry
 	return d
 }
 
 func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool) error {
 	l := d.loader
+	defer func() { l.PreferExisting = false }()
 	l.SourceRoot = repoRoot
 
 	total := 0
@@ -394,6 +367,7 @@ func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool
 			return err
 		}
 	}
+	d.loading = false
 	l.PreferExisting = false
 	if warning := d.resolvedSources.aliasWarning(); warning != nil {
 		d.cfg.Store.AddWarning(*warning)
@@ -458,10 +432,15 @@ func (d *Session) hasEntryBuilder() bool {
 	if input == nil {
 		return false
 	}
+	if input.SameMaterial(d.entryBuilderInput) && d.entryBuilderPath == d.cfg.Path {
+		return d.entryBuilder
+	}
+	d.entryBuilderInput, d.entryBuilderPath, d.entryBuilder = input, d.cfg.Path, false
 	relative, _ := filepath.Rel(input.LocalPath, d.cfg.Path)
 	for _, filename := range manifest.KustomizeBuilderFilenames {
 		_, err := fs.Stat(input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
 		if !errors.Is(err, fs.ErrNotExist) {
+			d.entryBuilder = true
 			return true
 		}
 	}

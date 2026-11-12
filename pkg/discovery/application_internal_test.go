@@ -196,7 +196,7 @@ func TestRun_EntryQualificationLifetime(t *testing.T) {
 			if scenario == "nil trees" {
 				cfg.Trees = nil
 			}
-			session, err := Begin(t.Context(), cfg)
+			session, err := beginTest(t.Context(), cfg)
 			assert.NoError(t, err)
 			result, err := session.Freeze(t.Context())
 			assert.NoError(t, err)

@@ -63,7 +63,10 @@ func (l *Loader) prepareBuiltProductions(
 				prepared[record.File] = append(prepared[record.File], *child)
 				preparedOwners[obj.Named()] = doc.builtInput.Owner
 				b.recordProducer(
-					new(producerDeclaration{obj: obj, identity: obj.Named(), authored: obj.Named(), visit: root}),
+					&producerDeclaration{
+						obj: obj, identity: obj.Named(), authored: obj.Named(), visit: root,
+						substituteDisabled: manifest.HasSubstituteDisabled(child.Doc),
+					},
 					candidates,
 				)
 			}

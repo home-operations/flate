@@ -32,7 +32,7 @@ func (l *Loader) ReferenceFacts(id manifest.NamedResource,
 }
 
 func (l *Loader) resolvePaths(ctx context.Context) error {
-	p := pathResolution{loader: l}
+	p := substitutionResolution{loader: l}
 
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for id, record := range l.Index.Records {
@@ -379,43 +379,116 @@ func (l *Loader) pathCatalog(
 	return parent, true
 }
 
-func (l *Loader) projectPathRoots(
-	child, parent *manifest.Kustomization,
-	record *manifest.DiscoveryRecord,
-	provider *values.StoreProvider,
-) bool {
-	owner := record.Parent
-	path, known := values.ResolveStaticPath(child.Path, parent, provider, l.Options.Missing)
-	source := child.EffectiveSourceID()
-	if known {
-		if path == child.Path {
-			return false
-		}
-		projected := *child
-		projected.Path = path
-		record.ContentRoots = map[manifest.NamedResource][]string{
-			source: slices.Collect(manifest.RenderRoots(&projected)),
-		}
-	} else {
-		source = parent.EffectiveSourceID()
-		record.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
-		producer := l.Index.Records[owner]
-		producer.StaticOutput = false
-		producer.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
-		l.Index.Records[owner] = producer
-	}
-	return true
-}
-
-type pathResolution struct {
+type substitutionResolution struct {
 	loader      *Loader
 	projections map[manifest.NamedResource]inputprojection.Projection
 	provider    *values.StoreProvider
 	hydrated    map[manifest.NamedResource]bool
 	catalogs    map[manifest.NamedResource]*manifest.Kustomization
+	resolving   map[manifest.NamedResource]bool
 }
 
-func (p *pathResolution) projectSubstitutions(
+func (p *substitutionResolution) resolveIdentity(
+	ctx context.Context,
+	owner manifest.NamedResource,
+	id *manifest.NamedResource,
+) bool {
+	for _, field := range []*string{&id.Name, &id.Namespace} {
+		if !manifest.HasEnvsubstReference(*field) {
+			continue
+		}
+		resolved, known := p.resolveValue(ctx, owner, *field)
+		if !known || manifest.HasEnvsubstReference(resolved) {
+			return false
+		}
+		*field = resolved
+	}
+	return id.Name != ""
+}
+
+func (p *substitutionResolution) resolveValue(
+	ctx context.Context,
+	owner manifest.NamedResource,
+	value string,
+) (string, bool) {
+	if p.resolving[owner] {
+		return value, false
+	}
+	l := p.loader
+	parent, known := l.pathCatalog(owner, &p.catalogs)
+	if !known {
+		return value, false
+	}
+	if p.resolving == nil {
+		p.resolving = map[manifest.NamedResource]bool{}
+	}
+	p.resolving[owner] = true
+	defer delete(p.resolving, owner)
+	parent, known = p.inheritValues(ctx, owner, parent, value)
+	if !known || !l.hydratePathReferences(ctx, parent, &p.hydrated) {
+		return value, false
+	}
+	if p.provider == nil {
+		p.provider = values.NewStoreProvider(l)
+	}
+	return values.ResolveStaticValue(value, parent, p.provider, l.Options.Missing)
+}
+
+func (p *substitutionResolution) inheritValues(
+	ctx context.Context,
+	owner manifest.NamedResource,
+	parent *manifest.Kustomization,
+	value string,
+) (*manifest.Kustomization, bool) {
+	record, _ := p.loader.Index.Lookup(owner)
+	if parent.PostBuild == nil || record.Parent == (manifest.NamedResource{}) || record.Parent == owner ||
+		parent.Labels[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue ||
+		parent.Annotations[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue {
+		return parent, true
+	}
+	var projected *manifest.Kustomization
+	resolve := func(value string) (string, bool) {
+		resolved, complete := p.resolveValue(ctx, record.Parent, value)
+		if complete && projected == nil {
+			projected = parent.Clone()
+		}
+		return resolved, complete
+	}
+	for i, ref := range parent.PostBuild.SubstituteFrom {
+		if !manifest.HasEnvsubstReference(ref.Name) {
+			continue
+		}
+		resolved, complete := resolve(ref.Name)
+		if !complete {
+			return parent, false
+		}
+		projected.PostBuild.SubstituteFrom[i].Name = resolved
+	}
+	var names map[string]struct{}
+	for key, inline := range parent.PostBuild.Substitute {
+		if !manifest.HasEnvsubstReference(inline) {
+			continue
+		}
+		if names == nil {
+			names = values.SubstitutionNames([]byte(value))
+		}
+		if _, used := names[key]; !used {
+			continue
+		}
+		resolved, complete := resolve(inline)
+		if !complete {
+			return parent, false
+		}
+		projected.PostBuild.Substitute[key] = resolved
+	}
+	if projected != nil {
+		p.catalogs[owner] = projected
+		return projected, true
+	}
+	return parent, true
+}
+
+func (p *substitutionResolution) projectSubstitutions(
 	ctx context.Context,
 	id manifest.NamedResource,
 	child *manifest.Kustomization,
@@ -459,7 +532,7 @@ func (p *pathResolution) projectSubstitutions(
 	return nil
 }
 
-func (p *pathResolution) resolveInheritedPath(
+func (p *substitutionResolution) resolveInheritedPath(
 	ctx context.Context,
 	id manifest.NamedResource,
 	child *manifest.Kustomization,
@@ -479,28 +552,37 @@ func (p *pathResolution) resolveInheritedPath(
 	if owner == (manifest.NamedResource{}) || owner == id {
 		return nil
 	}
-	var parent *manifest.Kustomization
-	{
-		var ok bool
-		parent, ok = l.pathCatalog(owner, &p.catalogs)
-		if !ok {
+	path, known := p.resolveValue(ctx, owner, child.Path)
+	if err := ctx.Err(); err != nil {
+		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+	}
+	parent, found := l.pathCatalog(owner, &p.catalogs)
+	if !found {
+		return nil
+	}
+	source := child.EffectiveSourceID()
+	if known {
+		if path == child.Path {
 			return nil
 		}
-	}
-	if !l.hydratePathReferences(ctx, parent, &p.hydrated) {
-		return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
-	}
-	if p.provider == nil {
-		p.provider = values.NewStoreProvider(l)
-	}
-	if !l.projectPathRoots(child, parent, &record, p.provider) {
-		return nil
+		projected := *child
+		projected.Path = path
+		record.ContentRoots = map[manifest.NamedResource][]string{
+			source: slices.Collect(manifest.RenderRoots(&projected)),
+		}
+	} else {
+		source = parent.EffectiveSourceID()
+		record.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
+		producer := l.Index.Records[owner]
+		producer.StaticOutput = false
+		producer.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
+		l.Index.Records[owner] = producer
 	}
 	l.Index.Records[id] = record
 	return nil
 }
 
-func (p *pathResolution) resolveRecord(
+func (p *substitutionResolution) resolveRecord(
 	ctx context.Context,
 	id manifest.NamedResource,
 	recordValue *manifest.DiscoveryRecord,

@@ -60,6 +60,7 @@ type occurrenceFacts struct {
 	roots                          []string
 	targets, authoredTargets       []manifest.ProducerTarget
 	needsCandidates                bool
+	substituteDisabled             bool
 	policy                         *manifest.EmissionPolicy
 	labels                         map[string]string
 	labeled                        bool

@@ -1,0 +1,32 @@
+[
+  {
+    "apiVersion": "helm.toolkit.fluxcd.io/v2",
+    "kind": "HelmRelease",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "paperwork-paperless",
+        "kustomize.toolkit.fluxcd.io/namespace": "paperwork"
+      },
+      "name": "paperless",
+      "namespace": "paperwork"
+    },
+    "spec": {
+      "chart": {
+        "spec": {
+          "chart": "./charts/paperless",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "flux-system",
+            "namespace": "flux-system"
+          }
+        }
+      },
+      "interval": "1h",
+      "values": {
+        "image": {
+          "tag": "v1"
+        }
+      }
+    }
+  }
+]

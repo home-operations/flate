@@ -1,0 +1,20 @@
+--- Deployment paperwork/paperless
++++ Deployment paperwork/paperless
+@@ -16,6 +16,6 @@
+         app: paperless
+     spec:
+       containers:
+-      - image: example.invalid/paperless:v1
++      - image: example.invalid/paperless:v2
+         name: paperless
+ 
+
+--- HelmRelease paperwork/paperless (kubernetes/apps/paperwork/paperless/app)
++++ HelmRelease paperwork/paperless (kubernetes/apps/paperwork/paperless/app)
+@@ -17,5 +17,5 @@
+   interval: 1h
+   values:
+     image:
+-      tag: v1
++      tag: v2
+ 

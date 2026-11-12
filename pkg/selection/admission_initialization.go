@@ -387,6 +387,9 @@ func (s *admissionSeeds) scanProductions(
 	link func(from, to manifest.NamedResource),
 ) []manifest.Production {
 	productions := c.productions(id)
+	if c.unavailableGeneratedData(id) {
+		return productions
+	}
 	{
 		pValues := productions
 		for pIndex := range pValues {

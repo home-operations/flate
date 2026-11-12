@@ -400,8 +400,8 @@ func (c *admissionClosure) materializerTargetsMatch(
 	for _, produced := range targets {
 		ref := produced.NamedResource
 		if (target.Kind == "" || ref.Group == target.Group && ref.Kind == target.Kind) &&
-			(target.Name == "" || ref.Name == target.Name || manifest.HasEnvsubstReference(ref.Name)) &&
-			(target.Namespace == "" || ref.Namespace == target.Namespace || ref.Namespace == "" || manifest.HasEnvsubstReference(ref.Namespace)) {
+			(target.Name == "" || ref.Name == target.Name) &&
+			(target.Namespace == "" || ref.Namespace == target.Namespace || ref.Namespace == "") {
 			match = true
 			break
 		}

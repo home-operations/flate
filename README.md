@@ -177,8 +177,10 @@ Encrypted keys stay absent, and repository plaintext keys take precedence.
 It does not fill encrypted keys in rendered objects.
 
 Flux postBuild substitution replaces `${VAR}` references with variable values.
-If a `substituteFrom` Secret exists only on the cluster, its variables are unavailable.
-If a non-optional `substituteFrom` Secret has no readable keys, flate warns `UnresolvedSubstitution`.
+A required `substituteFrom` Secret or ConfigMap can have unavailable data because it is absent, encrypted, or produced in the cluster.
+With `--allow-missing-kinds` naming its kind, flate renders and warns `UnresolvedSubstitution` once per unavailable reference.
+Readable keys from the same object still apply.
+Without matching permission, an absent required object with no producer fails.
 Encrypted SOPS keys are absent, so their variables are unavailable.
 The `SOPSUnreadable` warning names the removed encrypted keys.
 If a variable is readable or inline, Flux substitution runs.
@@ -188,7 +190,7 @@ Active substitution applies defaults with or without `--strict-substitutions`.
 Without `--strict-substitutions`, it replaces other unavailable `${VAR}` references with empty strings.
 If no variables are readable under the default strategy, `${VAR}` remains literal.
 Give those variables defaults (`${VAR:=value}`) or supply a dummy Secret with the keys.
-If a required `substituteFrom` ConfigMap is missing, the render still fails.
+Permission does not suppress strict undefined-variable errors or malformed consumed data.
 
 For unreadable SOPS keys, save a dummy input with the matching identity as `dummy-values.yaml`:
 
@@ -327,8 +329,8 @@ flate does not use the working tree in place of their content.
 - Helm renders each release as a fresh install, without live release history.
 - `--kube-version` and `--api-versions` set cluster facts for Helm.
 - `--allow-missing-kinds` independently selects `Secret`, `ConfigMap` or `CustomResourceDefinition`.
-  These cover unavailable source credentials, Helm values and CustomResourceDefinition (CRD) dependencies.
-- Required postBuild ConfigMap references and malformed real data still fail.
+  These cover unavailable source credentials, Helm values, postBuild substitution inputs, and CustomResourceDefinition (CRD) dependencies.
+- Required absent postBuild inputs without producers fail unless their kind has permission. Malformed consumed data still fails.
 - flate does not perform cloud workload identity. Use repository, supplied or machine credentials.
 
 Required Helm values with unknown data produced in the cluster are omitted with `OmittedValues`, with or without `--allow-missing-kinds`.

@@ -1,0 +1,9 @@
+--- HelmRelease paperwork/paperless (kubernetes/apps/paperwork/paperless/app)
++++ HelmRelease paperwork/paperless (kubernetes/apps/paperwork/paperless/app)
+@@ -17,5 +17,5 @@
+   interval: 1h
+   values:
+     image:
+-      tag: v2
++      tag: v1
+ 

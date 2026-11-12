@@ -751,6 +751,35 @@
               "code": 0
             }
           }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-default-inactive-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-default-inactive-0.stderr",
+              "code": 0
+            }
+          }
         }
       ]
     },
@@ -853,6 +882,35 @@
               "code": 0
             }
           }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-active-inline-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-active-inline-0.stderr",
+              "code": 0
+            }
+          }
         }
       ]
     },
@@ -901,6 +959,35 @@
             "expect": {
               "stdout": "expect/sops-unreadable-empty-variable-set-active-readable-0.stdout",
               "stderr": "expect/sops-unreadable-empty-variable-set-active-readable-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-active-readable-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-active-readable-permitted.stderr",
               "code": 0
             }
           }
@@ -995,6 +1082,36 @@
               "--skip-kinds",
               "",
               "--strict-substitutions"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/sops-unreadable-empty-variable-set-strict-active-0.stdout",
+              "stderr": "expect/sops-unreadable-empty-variable-set-strict-active-0.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux-system",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--skip-kinds",
+              "",
+              "--strict-substitutions",
+              "--allow-missing-kinds",
+              "Secret"
             ],
             "env": {},
             "cache": {
@@ -2693,6 +2810,13 @@
         "generator-sops-document-hash"
       ],
       "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "expect/sops-unreadable-empty-variable-set-active-readable-permitted.stderr",
+      "cases": [
+        "sops-unreadable-empty-variable-set-active-readable"
+      ],
+      "purpose": "Encrypted key warning and one unresolved warning while readable siblings remain available."
     }
   ]
 }

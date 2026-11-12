@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/selection"
@@ -51,126 +52,244 @@ func (p *historyInputPromotion) Promote(
 
 func TestPreviousRender_IndexedInputRequiresNormalRender(t *testing.T) {
 	t.Parallel()
-	fixture, st, root := newControllerWithFixture(t)
-	const document = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {value: '${VALUE:=fallback}'}\n"
-	testutil.WriteFile(t, root, "apps/cm.yaml", document)
-	input := &manifest.ConfigMap{Name: "input", Namespace: "flux-system", Data: map[string]any{"VALUE": "promoted"}}
-	promotion := &historyInputPromotion{store: st, input: input}
-	trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, fixture.Tasks)
-	t.Cleanup(trees.Close)
-	c := New(st, fixture.Tasks, trees)
-	c.Configure(Options{Existence: promotion}, sourcecache.RetryConfig{})
-	c.StartLifecycle()
-	owner := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system", Path: "./apps",
-		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-			{Kind: manifest.KindConfigMap, Name: input.Name, Optional: true},
-		}},
-	}
-	freezeSourceForTest(t, st)
-	warm, warmStore, _ := newControllerWithFixture(t)
-	warm.Trees = c.Trees
-	warmStore.SetArtifact(
-		manifest.BootstrapSourceID,
-		st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
-	)
-	warmStore.AddObject(owner)
-	warmInfo := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
-		Tasks: warm.Tasks, Store: warmStore, ID: owner.Named(), ReconcileNode: warm.ReconcileNode,
-	})
-	assert.Equal(t, warmInfo.Status, store.StatusReady)
-	warmHistory := warm.PreviousRender(t.Context(), owner, schedule.Result{})
-	assert.Equal(t, warmHistory.Complete, true)
-	assert.FatalIf(t, warmHistory.Assessment == nil, "missing warm assessment")
-	warmHistory.Assessment.Close()
-	st.AddObject(owner)
-	st.SetIncluded(owner.Named(), false, false)
-	objects, warnings := st.Objects(), st.Warnings()
-	status, statusExists := st.GetStatus(owner.Named())
-	var events atomic.Int32
-	for _, kind := range []store.EventKind{store.EventObjectAdded, store.EventStatusUpdated, store.EventArtifactUpdated} {
-		t.Cleanup(st.AddListener(kind, func(manifest.NamedResource, any) { events.Add(1) }, false))
-	}
-	history := c.PreviousRender(t.Context(), owner, schedule.Result{})
-	assert.FatalIf(t, history.Assessment == nil, "missing probe assessment")
-	assert.Equal(t, history.Complete, false)
-	assert.Equal(t, history.Records == nil, true)
-	assert.Diff(t, promotion.indexed, []manifest.NamedResource{input.Named()})
-	assert.Equal(t, len(promotion.promoted), 0)
-	assert.Equal(t, events.Load(), int32(0))
-	assert.Equal(t, slices.Equal(st.Objects(), objects), true)
-	assert.Diff(t, st.Warnings(), warnings)
-	afterStatus, afterExists := st.GetStatus(owner.Named())
-	assert.Equal(t, afterStatus, status)
-	assert.Equal(t, afterExists, statusExists)
-	assert.Equal(t, history.Assessment.Reads.Admitted(), false)
-	assert.Equal(t, history.Assessment.Reads.Valid(), true)
-	assert.Equal(t, st.GetObject(input.Named()) == nil, true)
-	assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent) == nil, true)
-	assert.Equal(t, c.Tasks.Failures(), int64(0))
+	for _, tc := range []struct {
+		name     string
+		optional bool
+		allowed  []string
+	}{
+		{name: "optional", optional: true},
+		{name: "required_permitted", allowed: []string{manifest.KindConfigMap}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fixture, st, root := newControllerWithFixture(t)
+			const document = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {value: '${VALUE:=fallback}'}\n"
+			testutil.WriteFile(t, root, "apps/cm.yaml", document)
+			input := &manifest.ConfigMap{
+				Name:      "input",
+				Namespace: "flux-system",
+				Data:      map[string]any{"VALUE": "promoted"},
+			}
+			promotion := &historyInputPromotion{store: st, input: input}
+			trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, fixture.Tasks)
+			t.Cleanup(trees.Close)
+			c := New(st, fixture.Tasks, trees)
+			c.Configure(
+				Options{Existence: promotion, Missing: depwait.NewMissingPolicy(tc.allowed)},
+				sourcecache.RetryConfig{},
+			)
+			c.StartLifecycle()
+			owner := &manifest.Kustomization{
+				Name: "apps", Namespace: "flux-system", Path: "./apps",
+				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+					{Kind: manifest.KindConfigMap, Name: input.Name, Optional: tc.optional},
+				}},
+			}
+			freezeSourceForTest(t, st)
+			warmFixture, warmStore, _ := newControllerWithFixture(t)
+			warm := New(warmStore, warmFixture.Tasks, c.Trees)
+			warm.Configure(Options{Missing: depwait.NewMissingPolicy(tc.allowed)}, sourcecache.RetryConfig{})
+			warm.StartLifecycle()
+			warmStore.SetArtifact(
+				manifest.BootstrapSourceID,
+				st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+			)
+			warmStore.AddObject(owner)
+			warmInfo := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+				Tasks: warm.Tasks, Store: warmStore, ID: owner.Named(), ReconcileNode: warm.ReconcileNode,
+			})
+			assert.Equal(t, warmInfo.Status, store.StatusReady)
+			warmHistory := warm.PreviousRender(t.Context(), owner, schedule.Result{})
+			assert.Equal(t, warmHistory.Complete, true)
+			assert.FatalIf(t, warmHistory.Assessment == nil, "missing warm assessment")
+			warmHistory.Assessment.Close()
+			st.AddObject(owner)
+			st.SetIncluded(owner.Named(), false, false)
+			objects, warnings := st.Objects(), st.Warnings()
+			status, statusExists := st.GetStatus(owner.Named())
+			var events atomic.Int32
+			for _, kind := range []store.EventKind{store.EventObjectAdded, store.EventStatusUpdated, store.EventArtifactUpdated} {
+				t.Cleanup(st.AddListener(kind, func(manifest.NamedResource, any) { events.Add(1) }, false))
+			}
+			history := c.PreviousRender(t.Context(), owner, schedule.Result{})
+			assert.FatalIf(t, history.Assessment == nil, "missing probe assessment")
+			assert.Equal(t, history.Complete, false)
+			assert.Equal(t, history.Records == nil, true)
+			assert.Diff(t, promotion.indexed, []manifest.NamedResource{input.Named()})
+			assert.Equal(t, len(promotion.promoted), 0)
+			assert.Equal(t, events.Load(), int32(0))
+			assert.Equal(t, slices.Equal(st.Objects(), objects), true)
+			assert.Diff(t, st.Warnings(), warnings)
+			afterStatus, afterExists := st.GetStatus(owner.Named())
+			assert.Equal(t, afterStatus, status)
+			assert.Equal(t, afterExists, statusExists)
+			assert.Equal(t, history.Assessment.Reads.Admitted(), false)
+			assert.Equal(t, history.Assessment.Reads.Valid(), true)
+			assert.Equal(t, st.GetObject(input.Named()) == nil, true)
+			assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent) == nil, true)
+			assert.Equal(t, c.Tasks.Failures(), int64(0))
 
-	history.Assessment.Close()
-	st.SetIncluded(owner.Named(), true, true)
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
-		Tasks: c.Tasks, Store: st, ID: owner.Named(), ReconcileNode: c.ReconcileNode,
-	})
-	assert.Equal(t, info.Status, store.StatusReady)
-	assert.Equal(t, slices.Contains(promotion.promoted, input.Named()), true)
-	actual := st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
-	actualBytes, err := manifest.EncodeRender(actual.Manifests)
-	assert.NoError(t, err)
-	assert.Equal(t, actual.Manifests[0].Document["data"].(map[string]any)["value"], any("promoted"))
+			history.Assessment.Close()
+			st.SetIncluded(owner.Named(), true, true)
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+				Tasks: c.Tasks, Store: st, ID: owner.Named(), ReconcileNode: c.ReconcileNode,
+			})
+			assert.Equal(t, info.Status, store.StatusReady)
+			assert.Equal(t, slices.Contains(promotion.promoted, input.Named()), true)
+			actual := st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
+			actualBytes, err := manifest.EncodeRender(actual.Manifests)
+			assert.NoError(t, err)
+			assert.Equal(t, actual.Manifests[0].Document["data"].(map[string]any)["value"], any("promoted"))
 
-	full, fullStore, fullRoot := newControllerWithFixture(t)
-	testutil.WriteFile(t, fullRoot, "apps/cm.yaml", document)
-	fullStore.AddObject(owner)
-	fullStore.AddObject(input)
-	fullInfo := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
-		Tasks: full.Tasks, Store: fullStore, ID: owner.Named(), ReconcileNode: full.ReconcileNode,
-	})
-	assert.Equal(t, fullInfo.Status, store.StatusReady)
-	fullOutput := fullStore.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
-	fullBytes, err := manifest.EncodeRender(fullOutput.Manifests)
-	assert.NoError(t, err)
-	assert.Equal(t, string(actualBytes), string(fullBytes))
+			fullFixture, fullStore, fullRoot := newControllerWithFixture(t)
+			full := New(fullStore, fullFixture.Tasks, fullFixture.Trees)
+			full.Configure(Options{Missing: depwait.NewMissingPolicy(tc.allowed)}, sourcecache.RetryConfig{})
+			full.StartLifecycle()
+			testutil.WriteFile(t, fullRoot, "apps/cm.yaml", document)
+			fullStore.AddObject(owner)
+			fullStore.AddObject(input)
+			fullInfo := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+				Tasks: full.Tasks, Store: fullStore, ID: owner.Named(), ReconcileNode: full.ReconcileNode,
+			})
+			assert.Equal(t, fullInfo.Status, store.StatusReady)
+			fullOutput := fullStore.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
+			fullBytes, err := manifest.EncodeRender(fullOutput.Manifests)
+			assert.NoError(t, err)
+			assert.Equal(t, string(actualBytes), string(fullBytes))
+		})
+	}
 }
 
 func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 	t.Parallel()
-	for _, present := range []bool{false, true} {
-		name := "absent"
-		if present {
-			name = "empty"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		kind     string
+		object   manifest.BaseManifest
+		mixed    bool
+		allowed  []string
+		value    string
+		warnings int
+	}{
+		{name: "absent", kind: manifest.KindSecret},
+		{
+			name: "empty", kind: manifest.KindSecret,
+			object: &manifest.Secret{Name: "unreadable", Namespace: "flux-system"},
+		},
+		{
+			name: "permitted_absent_secret", kind: manifest.KindSecret,
+			allowed: []string{manifest.KindSecret}, value: "fallback",
+		},
+		{
+			name: "permitted_absent_configmap", kind: manifest.KindConfigMap,
+			allowed: []string{manifest.KindConfigMap}, value: "fallback",
+		},
+		{
+			name: "permitted_mixed_secret", kind: manifest.KindSecret,
+			object: &manifest.Secret{
+				Name: "unreadable", Namespace: "flux-system",
+				StringData: map[string]any{
+					"PLAIN": "readable", "VALUE": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
+				},
+			},
+			mixed: true, allowed: []string{manifest.KindSecret}, value: "readable", warnings: 1,
+		},
+		{
+			name: "permitted_mixed_configmap", kind: manifest.KindConfigMap,
+			object: &manifest.ConfigMap{
+				Name: "unreadable", Namespace: "flux-system",
+				Data: map[string]any{
+					"PLAIN": "readable", "VALUE": "ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]",
+				},
+			},
+			mixed: true, allowed: []string{manifest.KindConfigMap}, value: "readable", warnings: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c, st, _ := newControllerWithFixture(t)
+			fixture, st, root := newControllerWithFixture(t)
+			trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, fixture.Tasks)
+			t.Cleanup(trees.Close)
+			c := New(st, fixture.Tasks, trees)
+			c.Configure(Options{Missing: depwait.NewMissingPolicy(tc.allowed)}, sourcecache.RetryConfig{})
+			c.StartLifecycle()
+			testutil.WriteFile(
+				t,
+				root,
+				"apps/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${PLAIN:=fallback}', missing: '${VALUE:=default}'}\n",
+			)
+			freezeSourceForTest(t, st)
 			owner := &manifest.Kustomization{
 				Name: "apps", Namespace: "flux-system", Path: "./apps",
 				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
-					{Kind: manifest.KindSecret, Name: "unreadable"},
-				}},
+					{Kind: tc.kind, Name: "unreadable"},
+				}, Substitute: map[string]string{"ACTIVE": "yes"}},
 			}
-			input := &manifest.Secret{Name: "unreadable", Namespace: owner.Namespace}
+			input := manifest.NamedResource{Kind: tc.kind, Name: "unreadable", Namespace: owner.Namespace}
 			st.AddObject(owner)
-			if present {
-				st.AddObject(input)
+			if tc.object != nil {
+				child, outcome, _ := loader.Prepare(
+					manifest.DocOccurrence{Document: testutil.ObjectDocument(tc.object)},
+					manifest.ParseDocOptions{RequiredIdentity: true},
+				)
+				assert.NoError(t, outcome.Err)
+				st.AddDeclaration(store.Declaration{
+					Obj: child.Obj, Doc: child.Doc, Origin: manifest.RepositoryDeclaration, Warnings: child.Warnings,
+				})
 			}
+			beforeWarnings := st.Warnings()
 			history := c.PreviousRender(t.Context(), owner, schedule.Result{})
 			assert.FatalIf(t, history.Assessment == nil, "missing probe assessment")
-			defer history.Assessment.Close()
 			normal := c.newExecution(owner.Named())
 			defer normal.run.Close()
 			_, err := normal.run.DataInputs(t.Context(), owner, normal.data)
 			assert.NoError(t, err)
 			var unreadable []manifest.NamedResource
-			if !present {
-				unreadable = []manifest.NamedResource{input.Named()}
+			if tc.object == nil || tc.mixed {
+				unreadable = []manifest.NamedResource{input}
 			}
 			assert.Diff(t, history.Assessment.Unreadable, unreadable)
 			assert.Diff(t, history.Assessment.Unreadable, normal.run.Unreadable)
-			assert.Equal(t, len(st.Warnings()), 0)
+			assert.Diff(t, st.Warnings(), beforeWarnings)
+			assert.Equal(t, len(st.Warnings()), tc.warnings)
 			assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent) == nil, true)
+			history.Assessment.Close()
+			if len(tc.allowed) == 0 {
+				return
+			}
+			for _, regime := range []string{"cold", "reused"} {
+				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+					Tasks: c.Tasks, Store: st, ID: owner.Named(), ReconcileNode: c.ReconcileNode,
+				})
+				assert.Equal(t, info.Status, store.StatusReady)
+				output := st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission)
+				assert.Diff(
+					t,
+					output.Manifests[0].Document["data"],
+					map[string]any{"value": tc.value, "missing": "default"},
+				)
+				assert.Diff(t, output.Unreadable, unreadable)
+				warnings := st.Warnings()
+				assert.Equal(t, len(warnings), len(beforeWarnings)+1)
+				unresolved := warnings[len(warnings)-1]
+				assert.Equal(t, unresolved.Category, manifest.WarnUnresolvedSubstitution)
+				assert.Equal(t, unresolved.Count, 1)
+				if tc.mixed {
+					assert.Diff(t, warnings[0], beforeWarnings[0])
+				}
+				replay := c.PreviousRender(t.Context(), owner, schedule.Result{})
+				assert.FatalIf(t, replay.Assessment == nil, "missing %s assessment", regime)
+				assert.Equal(t, replay.Complete, true)
+				assert.Diff(t, replay.Assessment.Unreadable, normal.run.Unreadable)
+				assert.Diff(
+					t,
+					replay.Assessment.Reads.ReferenceFacts(input, nil, owner.Named()),
+					normal.data.Lookup(input),
+				)
+				replay.Assessment.Close()
+				t.Logf("%s history: complete=%t, output and warning assertions evaluated", regime, replay.Complete)
+			}
 		})
 	}
 }

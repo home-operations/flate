@@ -38,3 +38,11 @@ func TestE2E_UnappliedPackagePatches(t *testing.T) {
 		"unapplied-package-patches-applied",
 	)
 }
+
+//nolint:paralleltest // The corpus harness changes process-global state.
+func TestE2E_SubstitutionRequiredMissing(t *testing.T) {
+	runSubstitutionCases(t, "substitute-values",
+		"required-missing-secret",
+		"required-missing-configmap",
+	)
+}

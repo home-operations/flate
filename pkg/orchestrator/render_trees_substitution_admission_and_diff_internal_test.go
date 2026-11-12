@@ -334,19 +334,19 @@ func canonicalBatches(res *Result) []struct {
 	return batches
 }
 
-func TestRenderTrees_RequiredPostBuildNotWaived(t *testing.T) {
+func TestRenderTrees_RequiredPostBuildPermission(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 		for _, allowed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/allowed=%t", kind, allowed), func(t *testing.T) {
 				t.Parallel()
-				testRenderTreesRequiredPostBuildNotWaivedCase1(t, &kind, &allowed)
+				testRenderTreesRequiredPostBuildPermissionCase1(t, &kind, &allowed)
 			})
 		}
 	}
 }
 
-func testRenderTreesRequiredPostBuildNotWaivedCase1(t *testing.T, kind *string, allowed *bool) {
+func testRenderTreesRequiredPostBuildPermissionCase1(t *testing.T, kind *string, allowed *bool) {
 	t.Helper()
 
 	roots := []string{t.TempDir(), t.TempDir()}
@@ -383,6 +383,24 @@ func testRenderTreesRequiredPostBuildNotWaivedCase1(t *testing.T, kind *string, 
 		}
 	}
 	runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
+	if *allowed {
+		assert.NoError(t, err)
+		assert.Equal(t, len(runs), 2)
+		for _, run := range runs {
+			id := testutil.KustomizationID("apps", "consumer")
+			assert.NoError(t, run.Err)
+			assert.FatalIf(t, run.Result == nil, "missing result on side %v", run.ID)
+			assert.Equal(t, len(run.Result.Failed), 0)
+			output := outputByParent(run.Result.Manifests)[id]
+			assert.Equal(t, len(output), 1)
+			assert.Diff(t, output[0]["data"], map[string]any{"value": fmt.Sprintf("${VALUE}-%d", run.ID.Side)})
+			warnings := run.Orchestrator.store.Warnings()
+			assert.Equal(t, len(warnings), 1)
+			assert.Equal(t, warnings[0].Category, manifest.WarnUnresolvedSubstitution)
+			assert.Equal(t, warnings[0].Count, 1)
+		}
+		return
+	}
 	assert.FatalIf(t, err == nil || len(runs) != 2,
 		"paired required input admitted: %+v %v", runs, err)
 

@@ -39,7 +39,8 @@ A native Component holds an ExternalSecret whose metadata and target names resol
 Two Kustomizations share that component with different values.
 The package witness requires zero execution attempts and no output membership for the other owner.
 `component-secret-producer/parent-context-ordered` and `component-secret-producer/parent-context-unordered` add parent namespace projection and inherited substitution of the target.
-`component-secret-producer/producer-absent` and `component-secret-producer/producer-absent-allowed` retain required-Secret errors without a producer.
+`component-secret-producer/producer-absent` retains the required-Secret error without a producer.
+`component-secret-producer/producer-absent-allowed` renders with matching permission and emits one unresolved warning.
 The latter case includes `--allow-missing-kinds Secret`.
 
 A local HelmRelease changes only its image tag between Git revisions.
@@ -664,6 +665,8 @@ The U5 cases preserve substitution, supplied inputs, and dependencies. Expected 
 | `supplied-inputs/data-reader--string-data-precedence` | `TestE2E_DataReader_StringDataPrecedence` |
 | `supplied-inputs/data-reader--supplied-source-produces-credential` | `TestE2E_DataReader_SuppliedSourceProducesCredential` |
 | `supplied-inputs/data-reader--cluster-advisories-on-both-base-sides` | `TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides` |
+| `substitute-values/required-missing-secret` | `TestE2E_SubstitutionRequiredMissing/required-missing-secret` |
+| `substitute-values/required-missing-configmap` | `TestE2E_SubstitutionRequiredMissing/required-missing-configmap` |
 | `substitute-values/parent-patches-propagate-to-children` | `TestE2E_ParentPatchesPropagateToChildren` |
 | `substitute-values/substitute-disabled-annotation` | `TestE2E_SubstituteDisabledAnnotation` |
 | `substitute-values/substitution-precedence-build` | `TestE2E_SubstitutionPrecedence/build` |
@@ -712,6 +715,25 @@ The U5 cases preserve substitution, supplied inputs, and dependencies. Expected 
 The supplied SSH corpus case compares both full builds and the supplied paired diff. The absent-agent branch stays in `internal/cli/TestRun_SuppliedSSHSnapshotOnBothDiffSides` with every original assertion. `pkg/source/git/TestFetcher_SSHAcquisitionsOnBothSides` also requires zero authenticated acquisitions for an absent agent. The native-agent proof uses real package-test sockets. The corpus uses only declared Git URLs and generated test keys.
 
 The ancestor-patch cases follow `bjw-s-labs/home-ops` at `656b3515052fcdb0450ca56151809852e383200d`, `kubernetes/flux/cluster/ks.yaml`. They retain the parent patch and child ownership structure. Local ConfigMaps replace unrelated workloads. The dependency cases follow `truxnell/home-cluster` at `0f7b47a9fec9419a4c5d6b5c4a4ae219ad342c1c`, `kubernetes/hegira/apps/cert-manager/cert-manager/ks.yaml`. The readiness expressions, emitted sources, and negative variants are authored reductions.
+
+The `required-missing-secret` and `required-missing-configmap` cases model `network/cloudflare-tunnel` with required absent `cloudflare-tunnel-id-secret` data.
+Matching kind permission renders the Pod and emits one unresolved warning per snapshot.
+No permission and wrong-kind permission retain the missing-input failure.
+Both cases compare complete build and image-diff bytes, forward and reverse comparisons, changed-only output, and one-sided references.
+The fixtures use two workers and retain caches across the two deterministic replays.
+
+The authored Pod selects `offline` through its default and changes its image from `v1` to `v2`.
+The source shape comes from the owner-reported onedr0p/home-ops commit `9f5aa16f3a` without fetching that repository.
+
+The producer rendering and transformed-namespace cases retain their original invocations and add matching-permission invocations with the same output assertions.
+The encrypted substitution cases retain inactive substitution, readable siblings, inline activation, and strict-mode failures under matching permission.
+`component-secret-producer/producer-absent-allowed` now expects its declared HelmRelease and one unresolved warning.
+The unpermitted absent-producer case still fails.
+Removed and renamed producer comparisons render with permission in both directions.
+Their additional invocations without permission retain the original missing-input and suppressed-diff assertions.
+The removed-producer pair keeps the same HelmRelease bytes and expects an empty diff.
+This pair also guards against treating an unresolved input as proof that execution can omit output.
+All new expectations derive from declared manifests, substitution defaults, image tags, and diagnostic formatting.
 
 Expected manifests use Flux `Generator.WriteFile` and `SecureBuild` from `github.com/fluxcd/pkg/kustomize`. Flux removes newlines from substitution values before expansion. Expected labels identify the applying Kustomization. Source admission, output selection, ciphertext removal, and diagnostic routing use flate policy. All expectations are source changes, never accepted CLI output.
 

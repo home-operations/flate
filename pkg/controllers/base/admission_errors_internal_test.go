@@ -41,6 +41,8 @@ func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
 		{"helm_allow_missing", &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "input"}}}, true},
 		{"substitute_optional", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input", Optional: true}}}}, false},
 		{"substitute_secret", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}}}}, false},
+		{"substitute_permitted_secret", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}}}}, true},
+		{"substitute_permitted_configmap", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}}}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -50,7 +52,9 @@ func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
 			c := New(st, nil)
 			var missingKinds []string
 			if tc.allowMissing {
-				missingKinds = []string{manifest.KindSecret}
+				for ref := range manifest.References(tc.object, manifest.ReferenceRelations) {
+					missingKinds = append(missingKinds, ref.Kind)
+				}
 			}
 			c.Configure(
 				Options{

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: cloudflare-tunnel, namespace: network}
+spec:
+  containers:
+    - name: cloudflared
+      image: example.invalid/cloudflared:v1
+      env:
+        - name: TUNNEL_ID
+          value: '${TUNNEL_ID:=offline}'

@@ -612,6 +612,34 @@
               "code": 0
             }
           }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-configmap-full-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-configmap-full-0.stderr",
+              "code": 0
+            }
+          }
         }
       ]
     },
@@ -952,6 +980,34 @@
               "code": 0
             }
           }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-rendering-secret-full-0.stdout",
+              "stderr": "expect/substitution-producer-rendering-secret-full-0.stderr",
+              "code": 0
+            }
+          }
         }
       ]
     },
@@ -1112,6 +1168,34 @@
               "code": 0
             }
           }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-transformed-namespace-configmap-full-0.stdout",
+              "stderr": "expect/substitution-producer-transformed-namespace-configmap-full-0.stderr",
+              "code": 0
+            }
+          }
         }
       ]
     },
@@ -1174,6 +1258,36 @@
               "code": 0
             }
           }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path-orig",
+              "@@baseline@@/kubernetes/cluster",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-transformed-namespace-configmap-changed-0.stdout",
+              "stderr": "expect/substitution-producer-transformed-namespace-configmap-changed-0.stderr",
+              "code": 0
+            }
+          }
         }
       ]
     },
@@ -1212,6 +1326,34 @@
               "--concurrency",
               "2",
               "--no-progress"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-transformed-namespace-secret-full-0.stdout",
+              "stderr": "expect/substitution-producer-transformed-namespace-secret-full-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
             ],
             "env": {},
             "cache": {
@@ -1274,6 +1416,36 @@
               "--no-progress",
               "--path-orig",
               "@@baseline@@/kubernetes/cluster"
+            ],
+            "env": {},
+            "cache": {
+              "name": "default",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/substitution-producer-transformed-namespace-secret-changed-0.stdout",
+              "stderr": "expect/substitution-producer-transformed-namespace-secret-changed-0.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "permitted",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/cluster",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--path-orig",
+              "@@baseline@@/kubernetes/cluster",
+              "--allow-missing-kinds",
+              "Secret"
             ],
             "env": {},
             "cache": {

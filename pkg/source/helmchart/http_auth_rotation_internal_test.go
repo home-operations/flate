@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -183,16 +185,19 @@ func testFetchHTTPChartBasicAuthSnapshotRotationCase(
 	assert.NoError(t, err)
 
 	defer func() { _ = c.Close() }()
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
 		testCaseInput.lookups.
 			Add(1)
-		return &manifest.Secret{
+
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{
 				"username": "alice",
 				"password": testCaseInput.password.Load().(string),
 				"ca.crt":   (*testCaseInput.ca),
 			},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}, repos: func(_, _ string) *manifest.HelmRepository { return (*testCaseInput.r) }}
 	f := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 

@@ -93,13 +93,8 @@ func (a typedAdapter[T]) Fetch(
 	return a.inner.Fetch(ctx, typed, reads, policy)
 }
 
-// SecretGetter resolves a Secret CR by namespace + name. Fetchers
-// that read authentication, TLS, or proxy material from a Flux
-// spec.*SecretRef accept one of these so they don't need a
-// back-reference to the Store. Today: GitRepository (auth + TLS),
-// OCIRepository (auth + TLS), Bucket (auth + TLS).
-// The orchestrator wires it to the core Secret store lookup at construction time.
-type SecretGetter func(namespace, name string) *manifest.Secret
+// SecretGetter MUST retain selected data, sanitation evidence, and supply provenance.
+type SecretGetter func(namespace, name string) store.ReferenceFacts
 
 // OperationView refreshes admitted mutable observations and retains cache acquisition identity.
 func OperationView(ctx context.Context, input fs.FS) (fs.FS, string, error) {

@@ -161,11 +161,20 @@ func testFetcherMachineContinuationEligibilityCase1(t *testing.T, tc *struct {
 	if tc.proxy {
 		b.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
 	}
-	inputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+	inputs := testInputs{secrets: func(_, name string) store.ReferenceFacts {
 		if name == "auth" {
-			return tc.auth
+			secretInput := tc.auth
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
-		return tc.cert
+
+		secretInput := tc.cert
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{Network: newTestNetwork(t)}
 	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, inputs.readSet(b), &cache.Policy{}, nil)
@@ -270,7 +279,7 @@ func TestFetcher_MachineIAMFailures(t *testing.T) {
 			b := ambientBucket()
 			f := &operation{
 				Fetcher: &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)},
-				secrets: func(string, string) *manifest.Secret { return nil },
+				secrets: func(string, string) store.ReferenceFacts { return store.ReferenceFacts{} },
 			}
 			request, err := f.preparedBucket(b)
 			assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
@@ -629,7 +638,7 @@ func testFetcherMachineProvidersCase(t *testing.T, failure **fs.PathError,
 	b := ambientBucket()
 	f := &operation{
 		Fetcher: &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)},
-		secrets: func(string, string) *manifest.Secret { return nil },
+		secrets: func(string, string) store.ReferenceFacts { return store.ReferenceFacts{} },
 	}
 	request, err := f.preparedBucket(b)
 	providers := []credentials.Provider{
@@ -726,7 +735,7 @@ func testFetcherMachineAcquisitionFailuresCase(
 	c := cachetest.New(t, root, cache.New)
 	f := &operation{
 		Fetcher: &Fetcher{Cache: c, Network: newTestNetwork(t)},
-		secrets: func(string, string) *manifest.Secret { return nil },
+		secrets: func(string, string) store.ReferenceFacts { return store.ReferenceFacts{} },
 	}
 	request, err := f.preparedBucket(b)
 	assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)

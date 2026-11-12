@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -64,10 +66,15 @@ func testResolveProxyCase1(t *testing.T, tc struct {
 	calls := 0
 	var getter SecretGetter
 	if !tc.unwired {
-		getter = func(ns, name string) *manifest.Secret {
+		getter = func(ns, name string) store.ReferenceFacts {
 			lookup = [2]string{ns, name}
 			calls++
-			return tc.secret
+
+			secretInput := tc.secret
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 	}
 	owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "ns", Name: "r"}

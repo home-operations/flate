@@ -20,6 +20,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/pkg/source/bucket"
@@ -47,7 +49,7 @@ func newTestNetwork(tb testing.TB) *source.Network {
 
 func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	t.Parallel()
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts { return store.ReferenceFacts{} }}
 	f := &bucket.Fetcher{Network: newTestNetwork(t)}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",

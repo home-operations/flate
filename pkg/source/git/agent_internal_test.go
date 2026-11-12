@@ -358,12 +358,7 @@ func testFetcherAmbientPreparationCase(t *testing.T, shape *string,
 			StringData: map[string]any{"identity": identity, "known_hosts": "invalid host material"},
 		}
 	}
-	reads := (testInputs{secrets: func(_, name string) *manifest.Secret {
-		if name == "proxy" {
-			return proxy
-		}
-		return auth
-	}}).readSet(repo)
+	reads := (testInputs{secrets: preparationSecrets(auth, proxy)}).readSet(repo)
 	defer reads.Close()
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
@@ -665,4 +660,22 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 		}
 	}
 	t.Logf("authenticated sessions=%d; success=%t", (*(*scope.captures).tr).authenticated.Load(), (*scope.success))
+}
+
+func preparationSecrets(auth, proxy *manifest.Secret) source.SecretGetter {
+	return func(_, name string) store.ReferenceFacts {
+		if name == "proxy" {
+			secretInput := proxy
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+		}
+
+		secretInput := auth
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	}
 }

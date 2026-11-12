@@ -145,13 +145,7 @@ func helmReply(r *http.Request, status int, data []byte) *http.Response {
 
 func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name        string
-		auth, cert  *manifest.Secret
-		certRef     bool
-		wantAmbient bool
-		wantInput   bool
-	}{
+	for _, tc := range []localHelmContinuationCase{
 		{name: "missing auth", wantAmbient: true},
 		{name: "empty auth", auth: &manifest.Secret{StringData: map[string]any{"username": "user", "password": ""}}, wantAmbient: true},
 		{name: "malformed auth", auth: &manifest.Secret{Data: map[string]any{"username": "credential-canary!"}}, wantInput: true},
@@ -160,28 +154,7 @@ func TestFetcher_LocalHelmContinuationEligibility(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := httpRepo("https://charts.invalid")
-			r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
-			if tc.certRef {
-				r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
-			}
-			f, inputs := newHTTPFetcherWithSecrets(t, r, func(_, name string) *manifest.Secret {
-				if name == "auth" {
-					return tc.auth
-				}
-				return tc.cert
-			})
-			hc := helmChart(r.Name, "app-template", "1.0.0")
-			artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, inputs.readSet(hc), &cache.Policy{}, nil)
-			missing, ok := errors.AsType[*source.MissingSecretError](err)
-			assert.FatalIf(t, err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
-				errors.Is(err, manifest.ErrInput) != tc.wantInput ||
-				strings.Contains(err.Error(), "canary"),
-
-				"ambient=%t input=%t: %v",
-				ok && missing.RetryAmbient != nil,
-				errors.Is(err, manifest.ErrInput),
-				err)
+			testFetcherLocalHelmContinuationEligibility(t, &tc)
 		})
 	}
 }
@@ -816,4 +789,47 @@ type testFetcherLocalHelmContinuationCase1Inputs struct {
 	tier     *string
 	requests *atomic.Int32
 	chart    *[]byte
+}
+
+type localHelmContinuationCase struct {
+	name        string
+	auth, cert  *manifest.Secret
+	certRef     bool
+	wantAmbient bool
+	wantInput   bool
+}
+
+func testFetcherLocalHelmContinuationEligibility(t *testing.T, tc *localHelmContinuationCase) {
+	t.Helper()
+	r := httpRepo("https://charts.invalid")
+	r.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
+	if tc.certRef {
+		r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	}
+	f, inputs := newHTTPFetcherWithSecrets(t, r, func(_, name string) store.ReferenceFacts {
+		if name == "auth" {
+			secretInput := tc.auth
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+		}
+
+		secretInput := tc.cert
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	})
+	hc := helmChart(r.Name, "app-template", "1.0.0")
+	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, hc, inputs.readSet(hc), &cache.Policy{}, nil)
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	assert.FatalIf(t, err == nil || artifact != nil || (ok && missing.RetryAmbient != nil) != tc.wantAmbient ||
+		errors.Is(err, manifest.ErrInput) != tc.wantInput ||
+		strings.Contains(err.Error(), "canary"),
+
+		"ambient=%t input=%t: %v",
+		ok && missing.RetryAmbient != nil,
+		errors.Is(err, manifest.ErrInput),
+		err)
 }

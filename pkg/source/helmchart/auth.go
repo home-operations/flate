@@ -40,15 +40,9 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 			)
 		}
 		sec := secrets(r.Namespace, r.SecretRef.Name)
-		if sec == nil {
-			authErr = source.MissingSecretErr(manifest.DiagnosticFor(r.Named(), r), r.SecretRef.Name, "not found")
-		} else {
-			prepared.username, prepared.password, authErr = source.BasicAuthFromSecret(
-				sec,
-				manifest.DiagnosticFor(r.Named(), r),
-				r.SecretRef.Name,
-			)
-		}
+		prepared.username, prepared.password, authErr = source.BasicAuthFromSecret(
+			sec, manifest.DiagnosticFor(r.Named(), r), r.SecretRef.Name,
+		)
 		if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 			return nil, authErr
 		}

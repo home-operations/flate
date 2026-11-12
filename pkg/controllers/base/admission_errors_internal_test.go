@@ -108,7 +108,7 @@ func TestAwaitData_AdmissionErrorPreventsResume(t *testing.T) {
 						Optional:  true,
 					},
 				},
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { resumed = true; return nil },
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
 			}, manifest.DrainForce)
 			assert.Equal(t, errors.Is(err, cause), true)
 			assert.Equal(t, resumed, false)

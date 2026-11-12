@@ -5,7 +5,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestMissingPolicy_ReferenceRules(t *testing.T) {
@@ -34,8 +36,8 @@ func TestMissingPolicy_ReferenceRules(t *testing.T) {
 		{name: "optional substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom", Optional: true}, allowed: true},
 		{name: "foreign substitution Secret", ref: manifest.Reference{Group: "example.test", Kind: manifest.KindSecret, Use: "substituteFrom"}},
 		{name: "generated substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Generated: true}, allowed: true, unreadable: true, producerAbsence: true},
-		{name: "offline generated substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Generated: true, Offline: true}, unreadable: true},
-		{name: "private offline input", input: store.ReferenceFacts{Private: true, Offline: true}, allowed: true, producerAbsence: true},
+		{name: "offline generated substitution Secret", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Generated: true, Offline: true}, allowed: true, unreadable: true, producerAbsence: true},
+		{name: "private offline input", ref: manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, input: store.ReferenceFacts{Private: true, Offline: true}, allowed: true, producerAbsence: true},
 		{name: "materializer alone requires data", input: store.ReferenceFacts{Materializers: []manifest.NamedResource{{Kind: manifest.KindKustomization, Name: "producer"}}}},
 		{name: "selected CRD", ref: manifest.Reference{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition}, kinds: []string{manifest.KindCustomResourceDefinition}, allowed: true},
 		{name: "unselected CRD", ref: manifest.Reference{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition}},
@@ -44,10 +46,20 @@ func TestMissingPolicy_ReferenceRules(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			policy := NewMissingPolicy(tc.kinds)
-			allowed, unreadable, producerAbsence := policy.Missing(tc.ref, tc.input)
-			assert.Equal(t, allowed, tc.allowed)
-			assert.Equal(t, unreadable, tc.unreadable)
-			assert.Equal(t, producerAbsence, tc.producerAbsence)
+			got := policy.Admission(new(tc.ref), new(tc.input))
+			want := selection.RequiredInput
+			if tc.allowed {
+				want = selection.OptionalInput
+			}
+			if tc.input.Data != nil {
+				want = selection.AvailableInput
+			}
+			assert.Equal(t, got, want)
+			if tc.ref.NamedResource.KindInfo().Data {
+				result, err := values.Classify(new(tc.ref), new(tc.input))
+				assert.NoError(t, err)
+				assert.Equal(t, result.State() == values.Produced, tc.producerAbsence)
+			}
 		})
 	}
 }
@@ -66,11 +78,11 @@ func TestMissingPolicy_SelectionSnapshot(t *testing.T) {
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			t.Parallel()
-			allowed, _, _ := policy.Missing(
-				manifest.Reference{Kind: tc.kind, Use: "valuesFrom"},
-				store.ReferenceFacts{},
+			admission := policy.Admission(
+				new(manifest.Reference{Kind: tc.kind, Use: "valuesFrom"}),
+				new(store.ReferenceFacts{}),
 			)
-			assert.Equal(t, allowed, tc.want)
+			assert.Equal(t, admission == selection.OptionalInput, tc.want)
 			assert.Equal(t, policy.AllowsKind(tc.kind), tc.want)
 		})
 	}
@@ -87,20 +99,19 @@ func TestMissingPolicy_ZeroSelection(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			allowed, unreadable, _ := tc.policy.Missing(
-				manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}, store.ReferenceFacts{},
+			admission := tc.policy.Admission(
+				new(manifest.Reference{Kind: manifest.KindSecret, Use: "substituteFrom"}), new(store.ReferenceFacts{}),
 			)
-			assert.Equal(t, allowed, false)
-			assert.Equal(t, unreadable, true)
-			allowed, _, _ = tc.policy.Missing(
-				manifest.Reference{
+			assert.Equal(t, admission, selection.RequiredInput)
+			admission = tc.policy.Admission(
+				new(manifest.Reference{
 					Kind:     manifest.KindSecret,
 					Use:      "valuesFrom",
 					Optional: true,
-				},
-				store.ReferenceFacts{},
+				}),
+				new(store.ReferenceFacts{}),
 			)
-			assert.Equal(t, allowed, true)
+			assert.Equal(t, admission, selection.OptionalInput)
 		})
 	}
 }

@@ -19,10 +19,10 @@ func (f testInputs) readSet(obj manifest.BaseManifest) *store.ReadSet {
 			continue
 		}
 		seen[ref.NamedResource] = true
-		if sec := f.secrets(ref.Namespace, ref.Name); sec != nil {
-			copied := *sec
+		if sec := f.secrets(ref.Namespace, ref.Name); sec.Data != nil {
+			copied := *sec.Data.(*manifest.Secret)
 			copied.Namespace, copied.Name = ref.Namespace, ref.Name
-			s.AddObject(&copied)
+			s.AddDeclaration(store.Declaration{Obj: &copied, Warnings: sec.Warnings})
 		}
 	}
 

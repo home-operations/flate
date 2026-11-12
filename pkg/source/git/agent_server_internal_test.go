@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
@@ -189,10 +191,12 @@ func testFetcherLocalAgentSSHCase(t *testing.T, shape *string,
 	if (*shape) == "explicit rejected" {
 		knownHosts, readErr := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"))
 		assert.NoError(t, readErr)
-		inputs.secrets = func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{
+		inputs.secrets = func(_, _ string) store.ReferenceFacts {
+			secretInput := &manifest.Secret{StringData: map[string]any{
 				"identity": identity, "known_hosts": string(knownHosts),
 			}}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 	}
 	reads := inputs.readSet(repo)

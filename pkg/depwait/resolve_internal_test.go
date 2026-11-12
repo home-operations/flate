@@ -47,11 +47,11 @@ func TestResolvedProvider_AbsenceIsFrozen(t *testing.T) {
 	defer reads.Retire()
 	provider := values.NewStoreProvider(&reads)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-	assert.Equal(t, provider.Data(id), manifest.Data(nil))
+	assert.Equal(t, provider.Lookup(id).Data, manifest.Data(nil))
 	st.AddObject(&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "late"}})
-	assert.Equal(t, provider.Data(id), manifest.Data(nil))
+	assert.Equal(t, provider.Lookup(id).Data, manifest.Data(nil))
 	assert.Equal(t, reads.Valid(), false)
-	assert.FatalIf(t, values.NewStoreProvider(st).Data(id) == nil, "%v", "new invocation missed arrival")
+	assert.FatalIf(t, values.NewStoreProvider(st).Lookup(id).Data == nil, "%v", "new invocation missed arrival")
 }
 
 func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
@@ -62,7 +62,7 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 		store.Declaration{Obj: data, Doc: testutil.ObjectDocument(data), Origin: manifest.SuppliedDeclaration},
 	)
 	provider := values.NewStoreProvider(st)
-	captured := provider.Data(data.Named())
+	captured := provider.Lookup(data.Named()).Data
 	result1, err := captured.Value("VALUE")
 	value := result1.Value
 	assert.NoError(t, err)
@@ -71,7 +71,7 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 	st.AddObject(
 		&manifest.ConfigMap{Name: data.Name, Namespace: data.Namespace, Data: map[string]any{"VALUE": "second"}},
 	)
-	assert.Equal(t, provider.Data(data.Named()), captured)
+	assert.Equal(t, provider.Lookup(data.Named()).Data, captured)
 }
 
 //nolint:paralleltest // This test changes process-global state.
@@ -133,7 +133,7 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	var after store.ReadSet
 	after.Init(st, parent, nil)
 	defer after.Retire()
-	data := values.NewStoreProvider(&after).Data(id)
+	data := values.NewStoreProvider(&after).Lookup(id).Data
 	assert.FatalIf(t, data != nil, "%s", "settled declaration fabricated data")
 }
 
@@ -251,7 +251,7 @@ func testResolveSelectedDataCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, input.Data, manifest.Data(nil))
 	} else {
 		assert.Equal(t, result.Kind, schedule.Terminal)
-		selected := provider.Data(data.Named())
+		selected := provider.Lookup(data.Named()).Data
 		assert.FatalIf(t, selected == nil, "%v", "usable accepted input was discarded")
 		result2, err := selected.Value("VALUE")
 		got, ok := result2.Value, result2.Found

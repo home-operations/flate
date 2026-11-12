@@ -9,9 +9,11 @@ import (
 func (r *ReadSet) matchesInput(input *Input, exact bool) bool {
 	id := input.Ref.NamedResource
 	details := input.details.Load()
-	if input.derived&capturedObject != 0 &&
-		!reconcileEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child.input()) {
-		return false
+	if input.derived&capturedObject != 0 {
+		r.GetObject(id)
+		if !reconcileEqual(r.input(id).view.child.input(), input.view.child.input()) {
+			return false
+		}
 	}
 	if input.ordinaryDemand && r.OrdinaryDemand(id) != input.view.ordinary {
 		return false

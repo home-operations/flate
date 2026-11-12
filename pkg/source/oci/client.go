@@ -17,6 +17,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 const dockerConfigJSONKey = ".dockerconfigjson"
@@ -240,13 +241,13 @@ func (f *operation) resolveRegistryConfig(
 		return nil, errors.New("secretRef requires source.SecretGetter")
 	}
 	sec := f.secrets(access.Namespace, access.SecretRef.Name)
-	if sec == nil {
-		return nil, source.MissingSecretErr(access.Owner, access.SecretRef.Name, "not found")
-	}
-	valueResult, err := sec.Value(dockerConfigJSONKey)
-	configJSON := valueResult.Value
+	valueResult, err := source.SecretValue(&sec, new(access.Owner), access.SecretRef.Name, dockerConfigJSONKey)
+	configJSON := valueResult.Value()
 	if err != nil {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read .dockerconfigjson: %w", err), "")
+	}
+	if valueResult.State() != values.Readable {
+		return nil, source.UnavailableSecret(new(access.Owner), access.SecretRef.Name, new(valueResult))
 	}
 	if configJSON == "" {
 		return nil, source.MissingSecretErr(

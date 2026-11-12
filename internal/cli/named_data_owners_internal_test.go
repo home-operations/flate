@@ -93,7 +93,7 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 	assert.FatalIf(
 		t,
 		(len(outputByParent(res.Manifests)[hr]) == 0) != requiredFailure || readerFailed != requiredFailure ||
-			(len(res.Blocked[hr]) != 0) != requiredFailure,
+			len(res.Blocked[hr]) != 0,
 		"consumer did not render independently: failed=%v blocked=%v",
 		res.Failed,
 		res.Blocked,
@@ -157,14 +157,7 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 		stderr,
 	)
 	if !requiredFailure {
-		(*selectedYAML) = cmp.Or((*selectedYAML), stdout)
-		assert.FatalIf(
-			t,
-			stdout != (*selectedYAML),
-			"producer health changed selected YAML: want %s, got %s",
-			(*selectedYAML),
-			stdout,
-		)
+		assertOwnerIndependentYAML(t, selectedYAML, stdout)
 	}
 	assert.FatalIf(
 		t,
@@ -172,14 +165,25 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 		"required input failure missing: %s",
 		stderr,
 	)
-	assert.FatalIf(t, tc.chain &&
-		(!strings.Contains(stderr, "producer-chain") || !strings.Contains(stderr, "missing-producer-root")), "producer's transitive root missing: %s", stderr)
+	assertDataOwnerChain(t, tc.chain, stderr)
 	assert.FatalIf(
 		t,
 		tc.broken && !strings.Contains(stderr, "producer"),
 		"producer diagnostic missing: %s",
 		stderr,
 	)
+}
+
+func assertDataOwnerChain(t *testing.T, chain bool, diagnostic string) {
+	t.Helper()
+	assert.FatalIf(t, chain && (!strings.Contains(diagnostic, "producer-chain") ||
+		!strings.Contains(diagnostic, "missing-producer-root")), "producer's transitive root missing: %s", diagnostic)
+}
+
+func assertOwnerIndependentYAML(t *testing.T, selected *string, output string) {
+	t.Helper()
+	*selected = cmp.Or(*selected, output)
+	assert.FatalIf(t, output != *selected, "producer health changed selected YAML: want %s, got %s", *selected, output)
 }
 
 func runNamedScopeSubstituteOwnersName(t *testing.T, tc *struct {

@@ -5,6 +5,8 @@ import (
 	"net/url"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type proxyConfig struct {
@@ -26,14 +28,9 @@ func resolveProxy(
 		return nil, nil, err
 	}
 
-	var material [3]string
-	for i, key := range []string{"address", "username", "password"} {
-		valueResult, err := sec.Value(key)
-		value := valueResult.Value
-		if err != nil {
-			return nil, nil, fmt.Errorf("proxySecretRef %s/%s: %w", owner.ID.Namespace, ref.Name, err)
-		}
-		material[i] = value
+	material, err := proxyValues(&sec, &owner, ref.Name)
+	if err != nil {
+		return nil, nil, err
 	}
 	proxy := &proxyConfig{Address: material[0], Username: material[1], Password: material[2]}
 	var selected *url.URL
@@ -62,4 +59,28 @@ func resolveProxy(
 		return nil, nil, MissingSecretErr(owner, ref.Name, "missing required 'address' key")
 	}
 	return proxy, selected, nil
+}
+
+func proxyValues(sec *store.ReferenceFacts, ownerValue *manifest.DiagnosticIdentity, name string) ([3]string, error) {
+	owner := *ownerValue
+	var material [3]string
+	var results [3]values.Result
+	for i, key := range []string{"address", "username", "password"} {
+		valueResult, err := SecretValue(sec, new(owner), name, key)
+		value := valueResult.Value()
+		if err != nil {
+			return [3]string{}, fmt.Errorf("proxySecretRef %s/%s: %w", owner.ID.Namespace, name, err)
+		}
+		material[i], results[i] = value, valueResult
+	}
+	for i := range results {
+		result := &results[i]
+		if i != 0 && result.State() == values.Produced {
+			continue
+		}
+		if result.State() != values.Readable && result.State() != values.MissingKey {
+			return [3]string{}, UnavailableSecret(new(owner), name, result)
+		}
+	}
+	return material, nil
 }

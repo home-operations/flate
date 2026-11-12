@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: input, namespace: apps}
+data:
+  encrypted: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
+  plain: repository
+  empty: ''

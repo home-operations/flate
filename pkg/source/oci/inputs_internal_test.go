@@ -56,10 +56,10 @@ func (f testInputs) admit(s *store.Store, seen map[manifest.NamedResource]bool, 
 		}
 		seen[ref.NamedResource] = true
 		if ref.Kind == manifest.KindSecret && f.secrets != nil {
-			if sec := f.secrets(ref.Namespace, ref.Name); sec != nil {
-				clone := *sec
+			if sec := f.secrets(ref.Namespace, ref.Name); sec.Data != nil {
+				clone := *sec.Data.(*manifest.Secret)
 				clone.Namespace, clone.Name = ref.Namespace, ref.Name
-				s.AddObject(&clone)
+				s.AddDeclaration(store.Declaration{Obj: &clone, Warnings: sec.Warnings})
 			}
 		}
 		if ref.Kind == manifest.KindHelmRepository && f.repos != nil {
@@ -107,12 +107,14 @@ func TestFetcher_InputsAcquisitionWaves(t *testing.T) {
 		Insecure:  true,
 		SecretRef: &manifest.LocalObjectReference{Name: "auth"},
 	}
-	inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{
+	inputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{
 				".dockerconfigjson": fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":"fixture"}}}`, host),
 			},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), cache.New)}
 	var artifacts [2]*store.SourceArtifact
@@ -460,11 +462,14 @@ func testFetcherInputsAuthenticationCase(t *testing.T, tc *struct {
 			material = map[string]any{"ca.crt": "malformed"}
 		}
 	}
-	inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+	inputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
 		if material == nil {
-			return nil
+			return store.ReferenceFacts{}
 		}
-		return &manifest.Secret{StringData: material}
+
+		secretInput := &manifest.Secret{StringData: material}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	reads := inputs.readSet(provider)
 	defer reads.Close()

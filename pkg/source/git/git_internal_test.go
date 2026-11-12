@@ -200,13 +200,15 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 				if strings.Contains(url, ":") && !strings.Contains(url, "://") {
 					identity, signer := testSSHIdentity(t)
 					repo.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
-					inputs.secrets = func(string, string) *manifest.Secret {
-						return &manifest.Secret{
+					inputs.secrets = func(string, string) store.ReferenceFacts {
+						secretInput := &manifest.Secret{
 							StringData: map[string]any{
 								"identity":    identity,
 								"known_hosts": "host.xz " + string(ssh.MarshalAuthorizedKey(signer.PublicKey())),
 							},
 						}
+
+						return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 					}
 				}
 				_, err := fetchtest.Fetch(

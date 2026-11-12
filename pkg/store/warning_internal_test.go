@@ -635,7 +635,8 @@ func assertNoWarningSubscriptions(t *testing.T, s *Store) {
 			1+len(sh.cells)+len(sh.conditions)+3*len(sh.artifacts)+len(sh.slots)+len(sh.byName),
 		)
 		heads[0] = &sh.absence
-		for _, cell := range sh.cells {
+		for id := range sh.cells {
+			cell := sh.cells[id]
 			heads = append(heads, cell.links)
 		}
 		for _, record := range sh.conditions {

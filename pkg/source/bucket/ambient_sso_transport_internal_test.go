@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -133,12 +135,16 @@ func testFetcherMachineSSOTransportCaseCompletion(
 	b.ProxySecretRef = &manifest.LocalObjectReference{Name: "route"}
 	b.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	inputs := testInputs{
-		secrets: func(callbackArg1, name string) *manifest.Secret {
-			return testFetcherMachineSSOTransportCaseCallback(
+		secrets: func(callbackArg1, name string) store.ReferenceFacts {
+			secretInput := testFetcherMachineSSOTransportCaseCallback(
 				callbackArg1,
 				name,
 				testFetcherMachineSSOTransportCaseCallbackInputs{proxy: captures.proxy, ca: &ca},
 			)
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		},
 	}
 	reads := inputs.readSet(b)

@@ -32,7 +32,11 @@ func TestDataInputs_ProbeRequiresPromotion(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			st.AddObject(object)
-			input := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "same"}}
+			input := &manifest.ConfigMap{
+				Name:      "input",
+				Namespace: "apps",
+				Data:      map[string]any{"VALUE": "same", "values.yaml": "{}"},
+			}
 			calls := 0
 			c := New(st, nil)
 			c.Configure(Options{Existence: &gatePromotion{promote: func(id manifest.NamedResource) bool {
@@ -66,7 +70,7 @@ func TestDataInputs_ProbeRequiresPromotion(t *testing.T) {
 			resumed := false
 			assert.NoError(t, normal.AwaitData(t.Context(), DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
 					resumed = true
 					return nil
 				},
@@ -109,8 +113,9 @@ func TestAwaitData_ProbeTracksMaterializerEvidence(t *testing.T) {
 		assert.NoError(t, err)
 		err = e.AwaitData(t.Context(), DataWait{
 			Inputs: inputs,
-			Resume: func(_ context.Context, _ manifest.DrainLevel, omitted []manifest.NamedResource) error {
-				assert.Diff(t, omitted, []manifest.NamedResource{input})
+			Resume: func(_ context.Context, _ manifest.DrainLevel, omitted []depwait.DataDependency) error {
+				assert.Equal(t, len(omitted), 1)
+				assert.Equal(t, omitted[0].NamedResource, input)
 				return nil
 			},
 		}, manifest.DrainNone)
@@ -186,4 +191,34 @@ func TestDataInputs_ProbeRequiresRawProductionMaterialization(t *testing.T) {
 	assert.Equal(t, st.GetObject(input) == nil, true)
 	_, statusKnown := st.GetStatus(owner.Named())
 	assert.Equal(t, statusKnown, false)
+}
+
+func TestAwaitData_ReadableSupplyDoesNotRequireProducer(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	owner := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	st.AddObjects([]manifest.BaseManifest{owner, producer})
+	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
+	secret := &manifest.Secret{Name: "input", Namespace: "apps", StringData: map[string]any{"value": "supplied"}}
+	st.AddDeclaration(store.Declaration{Obj: secret, Origin: manifest.SuppliedDeclaration})
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		secret.Named(): {Productions: []manifest.Production{{Owner: producer.Named()}}},
+	}})
+	var execution Execution
+	execution.Init(New(st, nil), owner.Named())
+	defer execution.Close()
+	facts := execution.Reads.ReferenceFacts(secret.Named(), nil, owner.Named())
+	assert.Diff(t, facts.Materializers, []manifest.NamedResource{producer.Named()})
+	resumed := false
+	assert.NoError(t, execution.AwaitData(t.Context(), DataWait{
+		Inputs: []depwait.DataDependency{
+			{NamedResource: secret.Named(), Key: "value", Use: "valuesFrom", Input: facts},
+		},
+		Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
+	}, manifest.DrainNone))
+	assert.Equal(t, resumed, true)
+	for required := range execution.Reads.Required() {
+		assert.Equal(t, required == producer.Named(), false)
+	}
 }

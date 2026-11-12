@@ -220,7 +220,8 @@ spec:
 		Category: manifest.WarnUnresolvedSubstitution,
 		Message: `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
 			"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
-			"or resolve to defaults or empty values",
+			"or resolve to defaults or empty values: " +
+			"is produced in the cluster with unknown data; supply it with --supply",
 		Count: 2,
 	}
 	assert.Diff(t, warnings, []manifest.Warning{want})

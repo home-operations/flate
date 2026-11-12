@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -188,8 +190,10 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 		b.ProxySecretRef = &manifest.LocalObjectReference{Name: "route"}
 		b.CertSecretRef = b.ProxySecretRef
 		ca := testutil.SelfSignedCA(t)
-		inputs := testInputs{secrets: func(string, string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "ca.crt": ca}}
+		inputs := testInputs{secrets: func(string, string) store.ReferenceFacts {
+			secretInput := &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "ca.crt": ca}}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}}
 		reads := inputs.readSet(b)
 		closers = append(closers, reads.Close)
@@ -264,8 +268,10 @@ func TestFetcher_MachineWebIdentityTransport(t *testing.T) {
 	b.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
 	b.CertSecretRef = b.ProxySecretRef
 	ca := testutil.SelfSignedCA(t)
-	inputs := testInputs{secrets: func(string, string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "ca.crt": ca}}
+	inputs := testInputs{secrets: func(string, string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{StringData: map[string]any{"address": proxy.URL, "ca.crt": ca}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	reads := inputs.readSet(b)
 	defer reads.Close()

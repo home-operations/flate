@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -28,11 +30,14 @@ func testFetcherSecretReferencesCase(t *testing.T, tt *struct {
 	fInputs := testInputs{}
 	f := &Fetcher{Network: newTestNetwork(t)}
 	if !tt.unwired {
-		fInputs.secrets = func(_, _ string) *manifest.Secret {
+		fInputs.secrets = func(_, _ string) store.ReferenceFacts {
 			if tt.material == nil {
-				return nil
+				return store.ReferenceFacts{}
 			}
-			return &manifest.Secret{StringData: tt.material}
+
+			secretInput := &manifest.Secret{StringData: tt.material}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 	}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {

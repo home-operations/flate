@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -176,29 +178,37 @@ func testFetcherTransportMaterialAbsentFromCacheCase(
 		certLookups := 0
 		network := new(source.Network)
 		t.Cleanup(network.Close)
-		fInputs := testInputs{secrets: func(ns, name string) *manifest.Secret {
+		fInputs := testInputs{secrets: func(ns, name string) store.ReferenceFacts {
 			assert.Equal(t, ns, (*testCaseInput.b).Namespace)
 			switch name {
 			case "proxy":
-				return &manifest.Secret{
+
+				secretInput := &manifest.Secret{
 					StringData: map[string]any{
 						"address":  (*testCaseInput.proxy).URL,
 						"username": (*testCaseInput.g).username,
 						"password": (*testCaseInput.g).password,
 					},
 				}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+
 			case "tls":
 				certLookups++
-				return &manifest.Secret{
+
+				secretInput := &manifest.Secret{
 					StringData: map[string]any{
 						"ca.crt":  (*testCaseInput.g).ca,
 						"tls.crt": (*testCaseInput.g).cert,
 						"tls.key": (*testCaseInput.g).key,
 					},
 				}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+
 			default:
 				t.Errorf("unexpected Secret reference %q", name)
-				return nil
+				return store.ReferenceFacts{}
 			}
 		}}
 		f := &bucket.Fetcher{Network: network, Cache: owner}

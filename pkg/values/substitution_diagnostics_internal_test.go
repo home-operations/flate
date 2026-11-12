@@ -9,7 +9,6 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -37,7 +36,7 @@ func TestExpandPostBuildSubstituteReference_DiagnosticLogContext(t *testing.T) {
 		},
 	}
 	{
-		err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New()), depwait.NewMissingPolicy(nil))
+		err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New()), testPermissions(nil))
 		assert.NoError(t, err)
 	}
 	count := 0

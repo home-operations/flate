@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -112,8 +114,14 @@ func testFetchHTTPChartNetworkRoutesCase(t *testing.T, route *string,
 	}
 	c := cachetest.New(t, "", sourcecache.New)
 	fInputs := testInputs{
-		secrets: func(_, _ string) *manifest.Secret { return secret },
-		repos:   func(_, _ string) *manifest.HelmRepository { return r },
+		secrets: func(_, _ string) store.ReferenceFacts {
+			secretInput := secret
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+		},
+		repos: func(_, _ string) *manifest.HelmRepository { return r },
 	}
 	f := New(nil, Config{Cache: c, Network: &network})
 

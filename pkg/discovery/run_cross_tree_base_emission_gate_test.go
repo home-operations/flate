@@ -341,7 +341,7 @@ configMapGenerator:
 	cmID := manifest.NamedResource{
 		Kind: manifest.KindConfigMap, Name: "cluster-settings",
 	}
-	cm, _ := values.NewStoreProvider(st).Data(cmID).(*manifest.ConfigMap)
+	cm, _ := values.NewStoreProvider(st).Lookup(cmID).Data.(*manifest.ConfigMap)
 	assert.FatalIf(t, st.GetObject(cmID) != nil, "%v", "generator lookup entered canonical inventory")
 	assert.FatalIf(t, cm == nil, "ConfigMap %s unavailable through generator lookup", cmID)
 	{
@@ -608,7 +608,7 @@ stringData: {HOST: fixture-value}
 	}
 	assert.FatalIf(
 		t,
-		(*scenario) == "graph-owned" && values.NewStoreProvider(st).Data(id) != nil,
+		(*scenario) == "graph-owned" && values.NewStoreProvider(st).Lookup(id).Data != nil,
 		"%s",
 		"remote declaration fabricated data",
 	)

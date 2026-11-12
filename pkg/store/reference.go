@@ -22,26 +22,28 @@ func (f *ReferenceFacts) resolve(
 	}
 	owner := scope.consumer
 	input := *f
-	input.Data = nil
+	input.Data, input.Original, input.Warnings = nil, nil, nil
 	production := trackReferenceProductions(&input, owner)
 	allowData := owner == (manifest.NamedResource{}) || f.Accepted || production.independent || !production.materialized
-	var warnings []manifest.Warning
 	if allowData {
 		input.Data = f.Data
+		if input.Data != nil {
+			input.Warnings = f.Warnings
+		}
 		if input.Data == nil {
 			for index := range f.ReferenceData {
 				candidate := &f.ReferenceData[index]
 				if candidate.OfflineData != nil {
 					input.Data, input.Offline = candidate.OfflineData, true
-					warnings = candidate.Warnings
+					input.Warnings = candidate.Warnings
 					break
 				}
 			}
 		}
 	}
 	if scope.reads != nil {
-		for warningIndex := range warnings {
-			warning := warnings[warningIndex]
+		for warningIndex := range input.Warnings {
+			warning := input.Warnings[warningIndex]
 			warning.Resource = id
 			scope.reads.AddWarning(warning)
 		}
@@ -54,14 +56,13 @@ func (f *ReferenceFacts) resolveReference(
 
 	scope *referenceResolution,
 ) ReferenceFacts {
+	f.Original = f.Data
 	scope.applySupplied(id, f)
-	if f.Data == nil {
-		for index := range f.Productions {
-			production := &f.Productions[index]
-			external := production.Owner != (manifest.NamedResource{}) && production.Owner != scope.consumer
-			if external && !slices.Contains(f.Materializers, production.Owner) {
-				f.Materializers = append(f.Materializers, production.Owner)
-			}
+	for index := range f.Productions {
+		production := &f.Productions[index]
+		external := production.Owner != (manifest.NamedResource{}) && production.Owner != scope.consumer
+		if external && !slices.Contains(f.Materializers, production.Owner) {
+			f.Materializers = append(f.Materializers, production.Owner)
 		}
 	}
 	return *f
@@ -94,18 +95,22 @@ func (sc *referenceResolution) applySupplied(id manifest.NamedResource, f *Refer
 	if sc.reference != nil {
 		supplied, _ = sc.reference.Obj.(manifest.Data)
 	}
-	if supplied != nil {
-		if f.Data == nil {
-			f.Data = supplied
-		} else {
-			var overridden []string
-			supply := f.Data.WithSupplied(supplied)
-			f.Data, overridden = supply.Data, supply.Overridden
-			if len(overridden) > 0 && sc.reads != nil {
-				sc.reads.RecordSuppliedOverride(
-					SuppliedOverride{Resource: id, SupplyPath: sc.reference.InputPath, Keys: overridden},
-				)
-			}
+	if supplied == nil {
+		return
+	}
+	if len(sc.reference.Warnings) != 0 {
+		f.Warnings = append(slices.Clone(f.Warnings), sc.reference.Warnings...)
+	}
+	if f.Data == nil {
+		f.Data = supplied
+	} else {
+		var overridden []string
+		supply := f.Data.WithSupplied(supplied)
+		f.Data, overridden = supply.Data, supply.Overridden
+		if len(overridden) > 0 && sc.reads != nil {
+			sc.reads.RecordSuppliedOverride(
+				SuppliedOverride{Resource: id, SupplyPath: sc.reference.InputPath, Keys: overridden},
+			)
 		}
 	}
 }
@@ -137,6 +142,7 @@ func (r *ReadSet) ReferenceFacts(
 	}
 	facts := ReferenceFacts{
 		Data:          data,
+		Warnings:      input.view.child.Warnings,
 		Accepted:      input.view.accepted || input.view.owner != nil,
 		Productions:   productions,
 		ReferenceData: candidates,

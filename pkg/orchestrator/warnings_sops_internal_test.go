@@ -85,9 +85,10 @@ spec:
 	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, &reads, &sourcecache.Policy{})
 	if missing, ok := errors.AsType[*source.MissingSecretError](
 		err,
-	); !ok || missing.Detail != "not found" || missing.Secret.Name != "cloudflared-secret" ||
+	); !ok || missing.Detail != "is produced in the cluster with unknown data; supply it with --supply" ||
+		missing.Secret.Name != "cloudflared-secret" ||
 		!reads.Valid() {
-		t.Fatalf("producer-declared credential lost absent-material classification: %v", err)
+		t.Fatalf("producer-declared credential lost its current unavailable cause: %v", err)
 	}
 
 	want := "${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com"

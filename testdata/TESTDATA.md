@@ -16,6 +16,24 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`unavailable-values/` covers absent, encrypted, and cluster-produced Helm values with a local chart.
+Two runs compare complete output and exit codes with fresh caches and two workers.
+Readable siblings, missing keys, kind permission, and supplied precedence retain explicit assertions.
+
+| Case | Behavior |
+| --- | --- |
+| `unavailable-values/combined-secret` | combined secret. |
+| `unavailable-values/combined-configmap` | combined configmap. |
+| `unavailable-values/strict-encryption` | strict encryption. |
+| `unavailable-values/wrong-kind-permission` | wrong kind permission. |
+| `unavailable-values/supply` | supply. |
+| `unavailable-values/configmap-supply` | configmap supply. |
+| `unavailable-values/produced-allowed` | produced allowed. |
+| `unavailable-values/produced-strict` | Cluster-produced Helm values render with an omission warning without permission. |
+| `unavailable-values/missing-key-allowed` | missing key allowed. |
+| `unavailable-values/missing-key-strict` | missing key strict. |
+| `unavailable-values/missing-key-supply` | Supplied data fills a required missing key in a readable Secret without an omission warning. |
+
 `gitignored-working-tree/ignored-working-tree` keeps ignored untracked desktop files and Flux declarations out of local Git inputs.
 Two replays compare complete full-selection, changed-only, and diff output with fresh caches and two workers.
 

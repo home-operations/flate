@@ -28,6 +28,7 @@ func TestStore_InclusionCellSize(t *testing.T) {
 		Policy                                         manifest.DeclarationPolicy
 		Static                                         manifest.BaseManifest
 		Document                                       map[string]any
+		Warnings                                       []manifest.Warning
 		Publication                                    uint64
 		Binding, Support                               *Input
 		Excluded, Rooted, Retired, Hidden, Independent bool

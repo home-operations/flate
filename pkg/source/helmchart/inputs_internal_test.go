@@ -28,10 +28,10 @@ func (f testInputs) admit(s *store.Store, seen map[manifest.NamedResource]bool, 
 		}
 		seen[ref.NamedResource] = true
 		if ref.Kind == manifest.KindSecret && f.secrets != nil {
-			if sec := f.secrets(ref.Namespace, ref.Name); sec != nil {
-				clone := *sec
+			if sec := f.secrets(ref.Namespace, ref.Name); sec.Data != nil {
+				clone := *sec.Data.(*manifest.Secret)
 				clone.Namespace, clone.Name = ref.Namespace, ref.Name
-				s.AddObject(&clone)
+				s.AddDeclaration(store.Declaration{Obj: &clone, Warnings: sec.Warnings})
 			}
 		}
 		if ref.Kind == manifest.KindHelmRepository && f.repos != nil {

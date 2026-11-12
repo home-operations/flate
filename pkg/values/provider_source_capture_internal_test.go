@@ -75,7 +75,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	input := provider.Lookup(first.Named())
 	assert.FatalIf(
 		t,
-		input.Data != first || !input.Offline || len(input.Materializers) != 0,
+		input.Data != first || !input.Offline || len(input.Materializers) != 1 || input.Materializers[0] != owner,
 		"captured input=%+v",
 		input,
 	)
@@ -112,7 +112,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 		assert.Diff(t, captured.input, provider.Lookup(captured.id))
 		assert.FatalIf(
 			t,
-			provider.Data(captured.id) != captured.input.Data,
+			provider.Lookup(captured.id).Data != captured.input.Data,
 			"%s",
 			"cached data differs from the captured input",
 		)
@@ -122,7 +122,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: &next}}, Complete: true}, nil)
 	assert.FatalIf(
 		t,
-		provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 5 ||
+		provider.Lookup(first.Named()).Data != first || counted.objects != 5 ||
 			counted.productions != 5,
 		"expansion rescanned captured input: object=%d productions=%d",
 		counted.objects,
@@ -134,11 +134,11 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	fresh.Init(s, reader, nil)
 	defer fresh.Close()
 	{
-		got := NewStoreProvider(&fresh).Data(first.Named())
+		got := NewStoreProvider(&fresh).Lookup(first.Named()).Data
 		assert.FatalIf(t, got != &next, "next execution retained preceding value: %v", got)
 	}
 	{
-		got := NewStoreProvider(&fresh).Data(absent)
+		got := NewStoreProvider(&fresh).Lookup(absent).Data
 		assert.FatalIf(t, got == nil, "%s", "fresh execution retained frozen absence")
 	}
 }

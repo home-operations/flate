@@ -10,16 +10,35 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type solverMissingPolicy struct {
 	allowed bool
 }
 
-//nolint:gocritic // The fixture matches the policy value contract.
-func (p *solverMissingPolicy) Missing(manifest.Reference, store.ReferenceFacts) (bool, bool, bool) {
-	return p != nil && p.allowed, false, false
+func (p *solverMissingPolicy) Admission(ref *manifest.Reference, input *store.ReferenceFacts) InputAdmission {
+	if !ref.NamedResource.KindInfo().Data {
+		if p.AllowsKind(ref.Kind) || ref.Optional {
+			return OptionalInput
+		}
+		return RequiredInput
+	}
+	result, err := values.Classify(ref, input)
+	if err == nil {
+		switch result.State() {
+		case values.Readable, values.Encrypted, values.MissingKey:
+			return AvailableInput
+		case values.Absent, values.Produced:
+			if result.AdmitMissing(p) || result.State() == values.Produced {
+				return OptionalInput
+			}
+		}
+	}
+	return RequiredInput
 }
+
+func (p *solverMissingPolicy) AllowsKind(string) bool { return p != nil && p.allowed }
 
 //nolint:gocritic // Test requests keep independent snapshots.
 func (s *Session) prepareTest(ctx context.Context, request PrepareRequest) (*Admission, error) {

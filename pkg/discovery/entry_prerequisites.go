@@ -43,11 +43,14 @@ func (e *entryPrerequisites) prerequisites(obj manifest.BaseManifest) bool {
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.ContentInput() && ref.ArtifactStages == 0 && !ref.Acquisition {
 			facts := e.reads.ReferenceFacts(ref.NamedResource, e.loader.Index, obj.Named())
-			if facts.Data != nil {
+			admission := e.loader.Options.Missing.Admission(&ref, &facts)
+			if admission == selection.AvailableInput {
 				continue
 			}
-			_, _, producerAbsence := e.loader.Options.Missing.Missing(ref, facts)
-			if _, accepted := acceptedApplicationOutput(e.reads, obj.Named()); accepted && producerAbsence {
+			if _, accepted := acceptedApplicationOutput(
+				e.reads,
+				obj.Named(),
+			); accepted && admission == selection.OptionalInput {
 				continue
 			}
 			if !ref.Optional {

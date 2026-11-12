@@ -138,13 +138,15 @@ func testFetcherMachineProfilesCaseCompletion(t *testing.T, captures *testFetche
 		proxyAddress = proxy.URL
 		b.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
 		b.CertSecretRef = b.ProxySecretRef
-		inputs.secrets = func(string, string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{
+		inputs.secrets = func(string, string) store.ReferenceFacts {
+			secretInput := &manifest.Secret{StringData: map[string]any{
 				"address":  proxy.URL,
 				"username": "repository-proxy-user",
 				"password": "repository-proxy-password",
 				"ca.crt":   ca,
 			}}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 	}
 	reads := inputs.readSet(b)

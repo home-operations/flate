@@ -7,7 +7,6 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -68,7 +67,7 @@ func TestResolveStaticPath_ParentSubstitutions(t *testing.T) {
 			if tc.allowMissing {
 				kinds = []string{kind}
 			}
-			got, known := ResolveStaticPath(tc.path, parent, provider, depwait.NewMissingPolicy(kinds))
+			got, known := ResolveStaticPath(tc.path, parent, provider, testPermissions(kinds))
 			assert.Equal(t, known, tc.known)
 			if known {
 				assert.Equal(t, got, tc.want)
@@ -106,7 +105,7 @@ func TestResolveStaticPath_Activation(t *testing.T) {
 				"./${ROOT:-apps/red}",
 				parent,
 				&sliceProvider{},
-				depwait.NewMissingPolicy(nil),
+				testPermissions(nil),
 			)
 			assert.Equal(t, known, tc.known)
 			assert.Equal(t, got, tc.want)

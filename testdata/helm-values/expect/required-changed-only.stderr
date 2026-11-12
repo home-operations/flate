@@ -2,6 +2,6 @@
   ✗  HelmRelease  apps/demo  helm template: execution error at (demo/templates/configmap.yaml:4:20): missing required value
 
   ⚠ warnings (1)
-    [UnresolvedSubstitution] substituteFrom Secret "unreadable" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+    [UnresolvedSubstitution] substituteFrom Secret "unreadable" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: is produced in the cluster with unknown data; supply it with --supply
 
   ✗ 1 failed

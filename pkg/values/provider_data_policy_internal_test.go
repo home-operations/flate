@@ -8,7 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
+func TestReferenceFacts_CapturedProviderPolicy(t *testing.T) {
 	t.Parallel()
 	st := store.New()
 	id := manifest.NamedResource{Kind: manifest.KindSecret, Name: "input", Namespace: "apps"}
@@ -38,14 +38,19 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	facts := st.ReferenceFacts(id, nil, manifest.NamedResource{})
 	assert.FatalIf(t, facts.Data != raw || facts.Accepted,
 		"covered facts=%+v", facts)
-	assert.FatalIf(t, NewStoreProvider(st).Data(id) != raw, "%s", "data-only provider rejected visible prediction")
+	assert.FatalIf(
+		t,
+		NewStoreProvider(st).Lookup(id).Data != raw,
+		"%s",
+		"captured provider rejected visible prediction",
+	)
 
 	var previous store.ReadSet
 	previous.Init(st, owner, nil)
 	defer previous.Retire()
 	assert.FatalIf(
 		t,
-		NewStoreProvider(&previous).Data(id) != raw,
+		NewStoreProvider(&previous).Lookup(id).Data != raw,
 		"%s",
 		"captured provider rejected visible prediction",
 	)
@@ -98,6 +103,6 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 		}
 		assert.Diff(t, facts, wantFacts)
 		assert.Diff(t, NewStoreProvider(reader).Lookup(id), wantFacts)
-		assert.FatalIf(t, NewStoreProvider(reader).Data(id) != nil, "%s", "provider fabricated declared data")
+		assert.FatalIf(t, NewStoreProvider(reader).Lookup(id).Data != nil, "%s", "provider fabricated declared data")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -30,6 +31,7 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		waitValues   bool
 		materialized bool
 		unreadable   bool
+		mixed        bool
 		optional     bool
 		duplicate    bool
 		fail         bool
@@ -43,11 +45,14 @@ func TestController_OmittedValuesAfterWait(t *testing.T) {
 		{name: "chart failed", fail: true, wantWarnings: 1},
 		{name: "optional unreadable values file", unreadable: true, wantGreeting: "fallback", wantWarnings: 1},
 		{name: "duplicate omitted ref", duplicate: true, wantGreeting: "fallback", wantWarnings: 1},
+		{name: "mixed encrypted and readable duplicate positions", unreadable: true, mixed: true, wantGreeting: "readable", wantWarnings: 2},
 		{name: "optional absent values", optional: true, wantGreeting: "fallback", wantWarnings: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testControllerOmittedValuesAfterWaitCase1(t, &tc)
+			for range 2 {
+				testControllerOmittedValuesAfterWaitCase1(t, &tc)
+			}
 		})
 	}
 }
@@ -57,6 +62,7 @@ func testControllerOmittedValuesAfterWaitCase1(t *testing.T, tc *struct {
 	waitValues   bool
 	materialized bool
 	unreadable   bool
+	mixed        bool
 	optional     bool
 	duplicate    bool
 	fail         bool
@@ -74,7 +80,10 @@ metadata: {name: demo}
 data:
   greeting: {{ .Values.greeting | default "fallback" | quote }}
 `)
-	c, st := newTestControllerWithOptions(t, &base.Options{})
+	c, st := newTestControllerWithOptions(
+		t,
+		&base.Options{Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret})},
+	)
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -117,13 +126,26 @@ data:
 			ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "app-values"}},
 		},
 	}
-	if tc.unreadable || tc.optional {
+	if tc.unreadable && !tc.mixed || tc.optional {
 		hr.ValuesFrom[0].Optional = true
 	}
 	if tc.duplicate {
 		hr.ValuesFrom = append(
 			hr.ValuesFrom,
 			manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "other.yaml"},
+		)
+	}
+	if tc.mixed {
+		hr.ValuesFrom = append(
+			hr.ValuesFrom,
+			hr.ValuesFrom[0],
+			manifest.ValuesReference{Kind: manifest.KindSecret, Name: "app-values", ValuesKey: "readable.yaml"},
+			manifest.ValuesReference{
+				Kind:      manifest.KindSecret,
+				Name:      "app-values",
+				ValuesKey: "optional.yaml",
+				Optional:  true,
+			},
 		)
 	}
 	if tc.waitValues {
@@ -149,27 +171,7 @@ data:
 		Data: map[string]any{"values.yaml": "{}"},
 	})
 	if tc.materialized || tc.unreadable {
-		value := "greeting: supplied\n"
-		if tc.unreadable {
-			value = "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
-		}
-		result1, err := manifest.ParseDoc(
-			map[string]any{
-				"apiVersion": "v1",
-				"kind":       "Secret",
-				"metadata":   map[string]any{"name": "app-values", "namespace": "default"},
-				"stringData": map[string]any{"values.yaml": value},
-			},
-			manifest.ParseDocOptions{},
-		)
-		obj, warnings := result1.Object, result1.Warnings
-
-		assert.NoError(t, err)
-		st.AddObject(obj)
-		for valueIndex := range warnings {
-			warning := warnings[valueIndex]
-			st.AddWarning(warning)
-		}
+		st.AddDeclaration(omittedValuesInput(t, tc.unreadable, tc.mixed))
 	}
 
 	status := store.StatusReady
@@ -179,6 +181,19 @@ data:
 	st.UpdateStatus(src.Named(), store.StatusInfo{Status: status, Reason: "", Message: "chart source"})
 	assert.Equal(t, reconcileFixture(t, c, hr.Named()).Status, status)
 	assert.Equal(t, len(st.Warnings()), tc.wantWarnings)
+	if tc.mixed {
+		assert.Equal(t, len(hr.ValuesFrom), 4)
+		var omissions []manifest.Warning
+		warnings := st.Warnings()
+		for i := range warnings {
+			warning := &warnings[i]
+			if warning.Category == manifest.WarnOmittedValues {
+				omissions = append(omissions, *warning)
+			}
+		}
+		assert.FatalIf(t, len(omissions) != 1, "omissions=%+v", omissions)
+		assert.Equal(t, strings.Contains(omissions[0].Message, `key "values.yaml"`), true)
+	}
 	for valueIndex := range st.Warnings() {
 		warning := st.Warnings()[valueIndex]
 		assert.Equal(t, warning.Count, 1)
@@ -319,7 +334,9 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 		},
 	}
 	st.AddObject(hr)
-	omitted := []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: hr.Namespace, Name: "optional"}}
+	omitted := []depwait.DataDependency{
+		{Kind: manifest.KindSecret, Namespace: hr.Namespace, Name: "optional", Use: "valuesFrom", Optional: true},
+	}
 	seed, err := helm.Prepare(
 		omitValues(hr, omitted),
 		helm.NewSources(st).Declaration,
@@ -332,7 +349,10 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 			t.Context(),
 			seed,
 			seed.Values,
-			helm.RenderOptions{Sources: helm.NewSources(st), Omitted: requiredValuesOmissions(hr, omitted)},
+			helm.RenderOptions{
+				Sources: helm.NewSources(st),
+				Omitted: omissionIDs(requiredValuesOmissions(omitted)),
+			},
 		),
 	)
 	assert.NoError(t, err)
@@ -501,7 +521,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				},
 			}
 			st.AddObject(hr)
-			omitted := []manifest.NamedResource{{Kind: kind, Namespace: "apps", Name: "missing"}}
+			omitted := []depwait.DataDependency{{Kind: kind, Namespace: "apps", Name: "missing", Use: "valuesFrom"}}
 			seed, err := helm.Prepare(
 				omitValues(hr, omitted),
 				helm.NewSources(st).Declaration,
@@ -513,7 +533,10 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				t.Context(),
 				seed,
 				seed.Values,
-				helm.RenderOptions{Sources: helm.NewSources(st), Omitted: requiredValuesOmissions(hr, omitted)},
+				helm.RenderOptions{
+					Sources: helm.NewSources(st),
+					Omitted: omissionIDs(requiredValuesOmissions(omitted)),
+				},
 			)
 			assert.NoError(t, err)
 			assert.NoError(
@@ -630,7 +653,7 @@ func testControllerValuesFromMixedProductionPrecedenceCase(
 	w := depwait.Waiter{
 		Store:   &execution.run.Reads,
 		Parent:  execution.run.Reads.ID(),
-		Missing: depwait.NewMissingPolicy(nil),
+		Missing: depwait.NewMissingPolicy([]string{manifest.KindSecret}),
 	}
 	result := w.Available(
 		t.Context(),
@@ -733,4 +756,23 @@ func testControllerPrepareRequiresDeclarationCase(
 			"suspended" && info.Outcome() != store.OutcomeSuspended, "effective suspension lost: %+v",
 		info,
 	)
+}
+
+func omittedValuesInput(t *testing.T, unreadable, mixed bool) store.Declaration {
+	t.Helper()
+	value := "greeting: supplied\n"
+	if unreadable {
+		value = "ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]"
+	}
+	data := map[string]any{"values.yaml": value}
+	if mixed {
+		data["readable.yaml"] = "greeting: readable\n"
+	}
+	parsed, err := manifest.ParseDoc(map[string]any{
+		"apiVersion": "v1", "kind": manifest.KindSecret,
+		"metadata":   map[string]any{"name": "app-values", "namespace": "default"},
+		"stringData": data,
+	}, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	return store.Declaration{Obj: parsed.Object, Doc: parsed.Document, Warnings: parsed.Warnings}
 }

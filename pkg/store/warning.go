@@ -94,7 +94,8 @@ func (s *Store) assessments() []*ReadSet {
 	var bundles []*ReadSet
 	for _, sh := range s.shards {
 		sh.mu.RLock()
-		for _, cell := range sh.cells {
+		for id := range sh.cells {
+			cell := sh.cells[id]
 			if cell.links != nil {
 				for i := range cell.links.assessments {
 					if accepted := cell.links.assessments[i].Load(); accepted != nil && accepted.reads != nil {

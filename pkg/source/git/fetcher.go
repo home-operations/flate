@@ -117,11 +117,11 @@ func (f *operation) resolveTransport(
 		return gitAcquisition{}, err
 	}
 	secrets := f.secrets
-	var sec *manifest.Secret
+	var sec store.ReferenceFacts
 	if repo.SecretRef != nil && secrets != nil {
 		sec = secrets(repo.Namespace, repo.SecretRef.Name)
 	}
-	auth, authErr := f.resolveAuth(repo, sec, endpoint)
+	auth, authErr := f.resolveAuth(repo, &sec, endpoint)
 	if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 		return gitAcquisition{}, authErr
 	}
@@ -161,11 +161,11 @@ func (f *operation) resolveTransport(
 		return gitAcquisition{}, err
 	}
 	var secretMaterial any
-	if sec != nil {
-		secretMaterial = [2]any{sec.Data, sec.StringData}
+	if sec.Data != nil {
+		secretMaterial = sec.Data.Snapshot()
 	}
 	var material any
-	if sec != nil || opts.ProxyOptions.URL != "" {
+	if sec.Data != nil || opts.ProxyOptions.URL != "" {
 		material = [2]any{secretMaterial, opts.ProxyOptions}
 	}
 	if authErr == nil && auth == nil && repo.Provider == sourcev1.GitProviderGitHub {

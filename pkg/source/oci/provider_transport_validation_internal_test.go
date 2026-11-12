@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -32,10 +34,12 @@ func TestFetcher_ProviderTransportValidation(t *testing.T) {
 					s.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
 				}
 			})
-			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{
+			inputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{
 					StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"},
 				}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
 			_, err := fetchtest.Fetch(
@@ -76,12 +80,14 @@ func TestFetcher_ProviderRegistryMatching(t *testing.T) {
 				s.Provider = sourcev1.AmazonOCIProvider
 				s.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
 			})
-			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{
+			inputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{
 					StringData: map[string]any{
 						".dockerconfigjson": `{"auths":{"unrelated.invalid":{"username":"repository","password":"fixture"}}}`,
 					},
 				}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t), RegistryConfig: config}
 			_, err := fetchtest.Fetch(

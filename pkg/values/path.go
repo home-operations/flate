@@ -20,7 +20,11 @@ func ResolveStaticPath(
 		inline = parent.PostBuild.Substitute
 		for _, ref := range parent.PostBuild.SubstituteFrom {
 			id := manifest.NamedResource{Kind: ref.Kind, Namespace: parent.Namespace, Name: ref.Name}
-			unknownInputs = unknownInputs || provider.Data(id) == nil
+			result, err := Classify(
+				new(manifest.Reference{NamedResource: id, Use: substitutionUse}),
+				new(provider.Lookup(id)),
+			)
+			unknownInputs = unknownInputs || err != nil || result.State() != Readable
 		}
 	}
 	if err := ExpandPostBuildSubstituteReference(parent, provider, missing); err != nil {

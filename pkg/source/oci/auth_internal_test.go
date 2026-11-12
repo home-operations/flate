@@ -17,6 +17,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -118,14 +120,16 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	t.Parallel()
 	certificate := testutil.SelfSignedServerCert(t)
 
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{
 				"tls.crt": certificate.Cert,
 				"tls.key": certificate.Key,
 				"ca.crt":  certificate.Cert,
 			},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
@@ -371,21 +375,28 @@ func testFetcherSecretCredentialsAcquisitionPolicyCase1(t *testing.T, tt *struct
 	}))
 	t.Cleanup(srv.Close)
 	cache := cachetest.New(t, "", sourcecache.New)
-	fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, name string) store.ReferenceFacts {
 		if name == "creds" && (tt.cert || tt.proxy || tt.canceled) {
-			return &manifest.Secret{
+			secretInput := &manifest.Secret{
 				StringData: map[string]any{
 					".dockerconfigjson": `{"auths":{"ghcr.io":{"username":"alice","password":"hunter2"}}}`,
 				},
 			}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 		if tt.material != nil {
 			if tt.encoded {
-				return &manifest.Secret{Data: tt.material}
+				secretInput := &manifest.Secret{Data: tt.material}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}
-			return &manifest.Secret{StringData: tt.material}
+
+			secretInput := &manifest.Secret{StringData: tt.material}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
-		return nil
+		return store.ReferenceFacts{}
 	}}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cache}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
@@ -425,7 +436,7 @@ func testFetcherSecretCredentialsAcquisitionPolicyCase1(t *testing.T, tt *struct
 
 func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	t.Parallel()
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts { return store.ReferenceFacts{} }}
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 		s.URL = "oci://ghcr.io/x/y"
@@ -501,7 +512,13 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 			if tt.helm != "" {
 				testutil.WriteFileAt(t, os.Getenv("HELM_REGISTRY_CONFIG"), tt.helm)
 			}
-			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return tt.secret }}
+			fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+				secretInput := tt.secret
+				if secretInput == nil {
+					return store.ReferenceFacts{}
+				}
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+			}}
 			f := &Fetcher{Network: newTestNetwork(t)}
 			if tt.config != "" {
 				f.RegistryConfig = filepath.Join(t.TempDir(), "config.json")

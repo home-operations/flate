@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -17,6 +19,7 @@ import (
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -225,13 +228,15 @@ func TestFetcher_ProviderUnavailable(t *testing.T) {
 
 func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 	t.Parallel()
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{
 				"username": "alice",
 				"password": "hunter2",
 			},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{}
 	for _, url := range []string{
@@ -243,7 +248,7 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 			t.Parallel()
 			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", url, "creds"))}).resolveAuth(
 				gitRepoWithSecret("g", url, "creds"),
-				fInputs.secrets("ns", "creds"),
+				new(fInputs.secrets("ns", "creds")),
 				testEndpoint(t, url),
 			)
 			assert.FatalIf(t, err != nil, "resolveAuth: %v", err)
@@ -256,14 +261,16 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 
 func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 	t.Parallel()
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{
 				"username":    "alice",
 				"password":    "ignored",
 				"bearerToken": "tkn_abc",
 			},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
@@ -273,7 +280,7 @@ func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 	}
 	auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(
 		repo,
-		fInputs.secrets(repo.Namespace, repo.SecretRef.Name),
+		new(fInputs.secrets(repo.Namespace, repo.SecretRef.Name)),
 		testEndpoint(t, repo.URL),
 	)
 	assert.FatalIf(t, err != nil, "resolveAuth: %v", err)
@@ -290,7 +297,7 @@ func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 		Name: "g", Namespace: "ns",
 		URL: "https://github.com/x/y.git",
 	}
-	auth, err := (&operation{Fetcher: f}).resolveAuth(repo, nil, testEndpoint(t, repo.URL))
+	auth, err := (&operation{Fetcher: f}).resolveAuth(repo, new(store.ReferenceFacts{}), testEndpoint(t, repo.URL))
 	assert.FatalIf(t, err != nil, "resolveAuth: %v", err)
 	assert.ErrorIf(t, auth != nil, "expected nil auth (anonymous); got %T", auth)
 }
@@ -299,11 +306,13 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 	t.Parallel()
 	identity, signer := testSSHIdentity(t)
 
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{StringData: map[string]any{
 			"identity":    identity,
 			"known_hosts": "host " + string(ssh.MarshalAuthorizedKey(signer.PublicKey())),
 		}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{}
 	for _, tc := range []struct{ url, user string }{
@@ -324,7 +333,7 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 
 func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	t.Parallel()
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts { return store.ReferenceFacts{} }}
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
@@ -379,8 +388,8 @@ func testFetcherSSHAuthEndpointUserCase(t *testing.T, fInputs *testInputs,
 
 	auth, err := (&operation{Fetcher: (*f), secrets: fInputs.lookup(gitRepoWithSecret("g", tc.url, "creds"))}).resolveAuth(
 		gitRepoWithSecret("g", tc.url, "creds"),
-		fInputs.
-			secrets("ns", "creds"),
+		new(fInputs.
+			secrets("ns", "creds")),
 		testEndpoint(t, tc.url),
 	)
 	assert.NoError(t, err)
@@ -482,7 +491,13 @@ func testFetcherSecretReferencesCase(t *testing.T, inputs *testFetcherSecretRefe
 	fInputs := testInputs{}
 	f := &Fetcher{}
 	if !inputs.tc.unwired {
-		fInputs.secrets = func(_, _ string) *manifest.Secret { return sec }
+		fInputs.secrets = func(_, _ string) store.ReferenceFacts {
+			secretInput := sec
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+		}
 	}
 	repo := gitRepoWithSecret("g", "https://host/repo", "creds")
 	if inputs.tc.ssh {
@@ -507,13 +522,33 @@ func testFetcherSecretReferencesCase(t *testing.T, inputs *testFetcherSecretRefe
 		)
 	default:
 
+		var input store.ReferenceFacts
+		if getter := fInputs.lookup(repo); getter != nil {
+			input = getter(repo.Namespace, repo.SecretRef.Name)
+		}
 		auth, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(
 			repo,
-			sec,
+			&input,
 			testEndpoint(t, repo.URL),
 		)
 	}
 
+	assertSecretReferenceResult(t, inputs, &secretReferenceResult{repo, auth, err, owner, secretName})
+}
+
+type secretReferenceResult struct {
+	repo       *manifest.GitRepository
+	auth       transport.AuthMethod
+	err        error
+	owner      manifest.NamedResource
+	secretName string
+}
+
+func assertSecretReferenceResult(
+	t *testing.T, inputs *testFetcherSecretReferencesCaseInputs, result *secretReferenceResult,
+) {
+	t.Helper()
+	repo, auth, err, owner, secretName := result.repo, result.auth, result.err, result.owner, result.secretName
 	if err != nil {
 		assert.Equal(t, auth == nil, true)
 	}
@@ -555,4 +590,51 @@ func testFetcherSecretReferencesCase(t *testing.T, inputs *testFetcherSecretRefe
 			"valid credentials did not produce auth",
 		)
 	}
+}
+
+func TestFetcher_CapturedCredentialAlternatives(t *testing.T) {
+	t.Parallel()
+	t.Run("malformed basic auth beside encrypted bearer", func(t *testing.T) {
+		t.Parallel()
+		repo := &manifest.GitRepository{
+			Name:      "repo",
+			Namespace: "apps",
+			URL:       "https://source.invalid/repo",
+			SecretRef: &manifest.LocalObjectReference{Name: "auth"},
+		}
+		secret := &manifest.Secret{
+			Data:       map[string]any{"password": "!"},
+			StringData: map[string]any{"username": "user"},
+		}
+		facts := store.ReferenceFacts{
+			Data:     secret,
+			Original: secret,
+			Warnings: []manifest.Warning{{Category: manifest.WarnSOPSUnreadable, Detail: []string{"bearerToken"}}},
+		}
+		getter := func(string, string) store.ReferenceFacts { return facts }
+		_, err := (&operation{secrets: getter}).resolveAuth(repo, new(facts), testEndpoint(t, repo.URL))
+		assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), false)
+	})
+	t.Run("supplied SSH without passphrase", func(t *testing.T) {
+		t.Parallel()
+		identity, signer := testSSHIdentity(t)
+		repo := &manifest.GitRepository{
+			Name:      "repo",
+			Namespace: "apps",
+			URL:       "ssh://git@source.invalid/repo",
+			SecretRef: &manifest.LocalObjectReference{Name: "auth"},
+		}
+		secret := &manifest.Secret{
+			StringData: map[string]any{
+				"identity":    identity,
+				"known_hosts": knownhosts.Line([]string{"source.invalid"}, signer.PublicKey()),
+			},
+		}
+		facts := store.ReferenceFacts{Data: secret, Generated: true}
+		getter := func(string, string) store.ReferenceFacts { return facts }
+		auth, err := (&operation{secrets: getter}).resolveAuth(repo, new(facts), testEndpoint(t, repo.URL))
+		assert.NoError(t, err)
+		assert.Equal(t, auth != nil, true)
+	})
 }

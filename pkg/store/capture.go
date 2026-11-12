@@ -627,7 +627,7 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 	update := objectUpdate{
 		obj: child.Obj, document: child.Doc, explicit: child.Doc != nil,
 		binding: r.bindAuthority(r.input(source), contentFacet, originFacet), support: support, reads: r,
-		classified: child.SourceSupport != (manifest.NamedResource{}),
+		classified: child.SourceSupport != (manifest.NamedResource{}), warnings: child.Warnings,
 	}
 	id := child.Obj.Named()
 	for input := r.inputs; input != nil; input = input.next {

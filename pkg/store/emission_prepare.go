@@ -142,8 +142,10 @@ func (a Child) equal(b Child) bool {
 
 //nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func (a Child) sameDeclaration(b Child) bool {
-	return a.Origin == b.Origin && a.Generated == b.Generated && manifest.Equal(a.Obj, b.Obj) &&
-		manifest.ValueEqual(a.Doc, b.Doc)
+	if a.Origin != b.Origin || a.Generated != b.Generated {
+		return false
+	}
+	return manifest.Equal(a.Obj, b.Obj) && manifest.ValueEqual(a.Doc, b.Doc) && warningsEqual(a.Warnings, b.Warnings)
 }
 
 //nolint:gocritic // Immutable value inputs preserve snapshot semantics.
@@ -356,4 +358,8 @@ func (e *Emission) retainPreviousCoverage(prev *Emission) {
 			}
 		}
 	}
+}
+
+func warningsEqual(a, b []manifest.Warning) bool {
+	return slices.EqualFunc(a, b, func(a, b manifest.Warning) bool { return manifest.CompareWarning(a, b) == 0 })
 }

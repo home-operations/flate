@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -101,10 +103,12 @@ func testFetcherRecursiveTLSDefaultsCase(t *testing.T, testCaseInput testFetcher
 		assert.NoError(t, setReferenceErr)
 	}
 
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": certificate2.pem},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 	repo := gitRepoWithSecret("recursive", srv.URL, "tls")

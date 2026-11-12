@@ -102,8 +102,18 @@ type Admission struct {
 	producerOwner *producerObligation
 }
 
+// InputAdmission MUST expose only the effect that selection needs.
+type InputAdmission uint8
+
+// Admission effects MUST not expose data classification across the policy seam.
+const (
+	AvailableInput InputAdmission = iota + 1
+	OptionalInput
+	RequiredInput
+)
+
 type missingPolicy interface {
-	Missing(manifest.Reference, store.ReferenceFacts) (allowed, unreadable, producerAbsence bool)
+	Admission(*manifest.Reference, *store.ReferenceFacts) InputAdmission
 }
 
 // PrepareRequest describes the evidence and selection intent for an admission proposal.

@@ -1,0 +1,23 @@
+{
+  "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "cluster-apps",
+    "namespace": "flux-system"
+  },
+  "spec": {
+    "interval": "1h",
+    "path": "./kubernetes/apps",
+    "postBuild": {
+      "substitute": {
+        "APP": "paperless"
+      }
+    },
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "targetNamespace": "paperwork"
+  }
+}

@@ -449,6 +449,9 @@ func (c *admissionClosure) selectProductions(
 ) bool {
 	materialized := record.Parent != (manifest.NamedResource{}) && record.Parent != id ||
 		record.BuilderOwner != (manifest.NamedResource{}) && record.BuilderOwner != id
+	if !role.selected && c.unavailableGeneratedData(id) {
+		return true
+	}
 	bootstrap := evidence.independent && Root(*c.capturedRoot(id)).InitialIndependent
 	productions := c.productions(id)
 	for i := range productions {
@@ -472,6 +475,17 @@ func (c *admissionClosure) selectProductions(
 		}
 	}
 	return materialized
+}
+
+func (c *admissionClosure) unavailableGeneratedData(id manifest.NamedResource) bool {
+	if !id.KindInfo().Data {
+		return false
+	}
+	input := c.objects.ReferenceFacts(id, c.facts.SelectionIndex(), id)
+	return input.Data == nil && input.Generated && !input.Offline &&
+		!slices.ContainsFunc(input.Productions, func(p manifest.Production) bool {
+			return p.Declaration.KindInfo().Parent
+		})
 }
 
 func (c *admissionClosure) selectProductionRoles(

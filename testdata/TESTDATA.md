@@ -34,6 +34,22 @@ Readable siblings, missing keys, kind permission, and supplied precedence retain
 | `unavailable-values/missing-key-strict` | missing key strict. |
 | `unavailable-values/missing-key-supply` | Supplied data fills a required missing key in a readable Secret without an omission warning. |
 
+`component-secret-producer/shared-file-ordered` and `component-secret-producer/shared-file-unordered` model a shared-file parent with and without `dependsOn`.
+A native Component holds an ExternalSecret whose metadata and target names resolve through `${BUCKET}` substitution.
+Two Kustomizations share that component with different values.
+The package witness requires zero execution attempts and no output membership for the other owner.
+`component-secret-producer/parent-context-ordered` and `component-secret-producer/parent-context-unordered` add parent namespace projection and inherited substitution of the target.
+`component-secret-producer/producer-absent` and `component-secret-producer/producer-absent-allowed` retain required-Secret errors without a producer.
+The latter case includes `--allow-missing-kinds Secret`.
+
+A local HelmRelease changes only its image tag between Git revisions.
+Full, narrow, both changed-only snapshots, and the Git diff run twice with fresh memory caches and two workers.
+The expected HelmRelease bytes follow the consumer declaration and Flux ownership labels.
+The expected diff follows the local chart and its image values.
+`component-secret-producer/removed-producer` and `component-secret-producer/removed-producer-reverse` retain side-specific missing-Secret errors after removal.
+`component-secret-producer/renamed-producer` and `component-secret-producer/renamed-producer-reverse` retain those errors after a target rename.
+These cases include reversed diff sides and shallow history.
+
 `gitignored-working-tree/ignored-working-tree` keeps ignored untracked desktop files and Flux declarations out of local Git inputs.
 Two replays compare complete full-selection, changed-only, and diff output with fresh caches and two workers.
 

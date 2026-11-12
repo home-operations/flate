@@ -10,7 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestResolveStaticPath_ParentSubstitutions(t *testing.T) {
+func TestResolveStaticValue_ParentSubstitutions(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, path, want string
@@ -67,7 +67,7 @@ func TestResolveStaticPath_ParentSubstitutions(t *testing.T) {
 			if tc.allowMissing {
 				kinds = []string{kind}
 			}
-			got, known := ResolveStaticPath(tc.path, parent, provider, testPermissions(kinds))
+			got, known := ResolveStaticValue(tc.path, parent, provider, testPermissions(kinds))
 			assert.Equal(t, known, tc.known)
 			if known {
 				assert.Equal(t, got, tc.want)
@@ -77,7 +77,7 @@ func TestResolveStaticPath_ParentSubstitutions(t *testing.T) {
 	}
 }
 
-func TestResolveStaticPath_Activation(t *testing.T) {
+func TestResolveStaticValue_Activation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name      string
@@ -101,7 +101,7 @@ func TestResolveStaticPath_Activation(t *testing.T) {
 			t.Parallel()
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", PostBuild: tc.postBuild}
 			before := parent.Clone()
-			got, known := ResolveStaticPath(
+			got, known := ResolveStaticValue(
 				"./${ROOT:-apps/red}",
 				parent,
 				&sliceProvider{},

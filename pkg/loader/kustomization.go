@@ -62,11 +62,12 @@ type parsedObject struct {
 
 	payload *inputPayload
 
-	outcome  manifest.DocOccurrence
-	item     int
-	fact     *authoredOccurrence
-	version  string
-	declared string
+	outcome            manifest.DocOccurrence
+	item               int
+	fact               *authoredOccurrence
+	version            string
+	declared           string
+	substituteDisabled bool
 }
 
 type pathState uint8

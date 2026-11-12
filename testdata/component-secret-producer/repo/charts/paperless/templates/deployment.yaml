@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paperless
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels: {app: paperless}
+  template:
+    metadata:
+      labels: {app: paperless}
+    spec:
+      containers:
+        - name: paperless
+          image: example.invalid/paperless:{{ .Values.image.tag }}

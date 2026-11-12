@@ -145,3 +145,72 @@ func TestAdmission_ResolvedInputDoesNotCaptureProducerSettlement(t *testing.T) {
 		})
 	}
 }
+
+func TestAdmission_MaterializerTargetLifetime(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                 string
+		output, complete     bool
+		nonmatching, unknown bool
+		foreignNamespace     bool
+		foreignSource        bool
+		want, pending        bool
+	}{
+		{name: "indexed", want: true, pending: true},
+		{name: "partial", output: true, want: true, pending: true},
+		{name: "complete", output: true, complete: true, want: true},
+		{name: "complete nonmatching", output: true, complete: true, nonmatching: true},
+		{name: "unknown name", unknown: true},
+		{name: "other namespace", foreignNamespace: true},
+		{name: "other source", foreignSource: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			producer := &manifest.HelmRelease{Name: "producer", Namespace: "apps"}
+			st.AddObject(producer)
+			input := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "shared"}
+			root := t.TempDir()
+			occurrence := applicationOccurrence(producer, root)
+			target := input
+			if tc.unknown {
+				target.Name = "${BUCKET}"
+			}
+			if tc.foreignNamespace {
+				target.Namespace = "other"
+			}
+			if tc.foreignSource {
+				occurrence.Declaration.Source = t.TempDir()
+			}
+			occurrence.Targets = []manifest.ProducerTarget{{NamedResource: target}}
+			occurrence.AuthoredTargets = occurrence.Targets
+			facts := &solverFacts{
+				store: st,
+				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					producer.Named(): {File: "producer.yaml"},
+				}},
+				occurrences: map[manifest.NamedResource]OccurrenceFacts{producer.Named(): occurrence},
+			}
+			if tc.output {
+				child := &manifest.RawObject{
+					APIVersion: "v1", Kind: manifest.KindSecret, Name: input.Name, Namespace: input.Namespace,
+				}
+				if tc.nonmatching {
+					child.Name = "other"
+				}
+				st.RecordEmitted(
+					producer.Named(),
+					&store.Emission{Children: []store.Child{{Obj: child}}, Complete: tc.complete},
+					nil,
+				)
+				st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
+			}
+			closure := solverClosure(t, st, facts)
+			pending := closure.materializers(materializerDemand{target: input, source: root, required: true},
+				manifest.NamedResource{Kind: manifest.KindKustomization, Name: "consumer", Namespace: "apps"})
+			assert.Equal(t, pending, tc.pending)
+			assert.Equal(t, closure.role(producer.Named()).needed, tc.want)
+			assert.Equal(t, closure.role(producer.Named()).selected, false)
+		})
+	}
+}

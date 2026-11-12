@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: bucket-marker, namespace: paperwork}
+data: {value: no-producer}

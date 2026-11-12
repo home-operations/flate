@@ -1,0 +1,79 @@
+{
+  "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "paperwork-paperless-bucket",
+    "namespace": "paperwork"
+  },
+  "spec": {
+    "interval": "1h",
+    "path": "./kubernetes/apps/paperwork/paperless/bucket",
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "targetNamespace": "paperwork",
+    "postBuild": {
+      "substitute": {
+        "BUCKET": "renamed"
+      }
+    }
+  }
+}
+---
+{
+  "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "paperwork-paperless-unused-bucket",
+    "namespace": "paperwork"
+  },
+  "spec": {
+    "interval": "1h",
+    "path": "./kubernetes/apps/paperwork/paperless/bucket",
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "targetNamespace": "paperwork",
+    "postBuild": {
+      "substitute": {
+        "BUCKET": "unused"
+      }
+    }
+  }
+}
+---
+{
+  "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "paperwork-paperless",
+    "namespace": "paperwork"
+  },
+  "spec": {
+    "interval": "1h",
+    "path": "./kubernetes/apps/paperwork/paperless/app",
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    },
+    "targetNamespace": "paperwork",
+    "dependsOn": [
+      {
+        "name": "paperwork-paperless-bucket"
+      }
+    ],
+    "postBuild": {
+      "substituteFrom": [
+        {
+          "kind": "Secret",
+          "name": "paperless"
+        }
+      ]
+    }
+  }
+}

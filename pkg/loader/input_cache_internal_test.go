@@ -319,6 +319,40 @@ func TestInputCache_SubstitutionNamesFollowContent(t *testing.T) {
 	}
 }
 
+func TestInputCache_SubstitutionExclusions(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"enabled", "annotations", "labels"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			owner, err := cache.New(t.Context(), t.TempDir())
+			assert.NoError(t, err)
+			defer func() { assert.NoError(t, owner.Close()) }()
+			if !owner.CanPersistRenders() {
+				t.Fatal("input cache witness requires a clean stamped test binary")
+			}
+			metadata := "metadata:\n  name: '${BUCKET}'\n"
+			if field != "enabled" {
+				metadata += "  " + field + ": {kustomize.toolkit.fluxcd.io/substitute: disabled}\n"
+			}
+			files := fstest.MapFS{"object.yaml": {Data: []byte(
+				"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\n" + metadata +
+					"spec:\n  target: {name: '${BUCKET}'}\n",
+			)}}
+			first := cachedFixtureLoader(t, root, files, owner)
+			assert.NoError(t, first.PersistInputs(t.Context()))
+			first.Close()
+			restored := cachedFixtureLoader(t, root, files, owner)
+			defer restored.Close()
+			objects, err := restored.documents.censusFile(t.Context(), filepath.Join(root, "object.yaml"),
+				manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			assert.FatalIf(t, len(objects) != 1, "restored objects: %d", len(objects))
+			assert.Equal(t, objects[0].fact.facts.substituteDisabled, field != "enabled")
+		})
+	}
+}
+
 func TestInputCache_ParsedHandoffPublishesNewFacts(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -71,23 +71,24 @@ type cachedOccurrence struct {
 }
 
 type cachedOccurrenceFacts struct {
-	Declared        string                    `json:"Declared,omitempty"`
-	Source          manifest.NamedResource    `json:"Source"`
-	Path            string                    `json:"Path,omitempty"`
-	HasPath         bool                      `json:"HasPath,omitempty"`
-	Namespaced      bool                      `json:"Namespaced,omitempty"`
-	Uncertain       bool                      `json:"Uncertain,omitempty"`
-	Retained        bool                      `json:"Retained,omitempty"`
-	Reverse         []manifest.NamedResource  `json:"Reverse,omitempty"`
-	Refs            []manifest.Reference      `json:"Refs,omitempty"`
-	TemplateInputs  []manifest.TemplateInput  `json:"TemplateInputs,omitempty"`
-	Roots           []string                  `json:"Roots,omitempty"`
-	Targets         []manifest.ProducerTarget `json:"Targets,omitempty"`
-	AuthoredTargets []manifest.ProducerTarget `json:"AuthoredTargets,omitempty"`
-	NeedsCandidates bool                      `json:"NeedsCandidates,omitempty"`
-	Policy          *manifest.EmissionPolicy  `json:"Policy,omitempty"`
-	Labels          map[string]string         `json:"Labels,omitempty"`
-	Labeled         bool                      `json:"Labeled,omitempty"`
+	Declared           string                    `json:"Declared,omitempty"`
+	Source             manifest.NamedResource    `json:"Source"`
+	Path               string                    `json:"Path,omitempty"`
+	HasPath            bool                      `json:"HasPath,omitempty"`
+	Namespaced         bool                      `json:"Namespaced,omitempty"`
+	Uncertain          bool                      `json:"Uncertain,omitempty"`
+	Retained           bool                      `json:"Retained,omitempty"`
+	Reverse            []manifest.NamedResource  `json:"Reverse,omitempty"`
+	Refs               []manifest.Reference      `json:"Refs,omitempty"`
+	TemplateInputs     []manifest.TemplateInput  `json:"TemplateInputs,omitempty"`
+	Roots              []string                  `json:"Roots,omitempty"`
+	Targets            []manifest.ProducerTarget `json:"Targets,omitempty"`
+	AuthoredTargets    []manifest.ProducerTarget `json:"AuthoredTargets,omitempty"`
+	NeedsCandidates    bool                      `json:"NeedsCandidates,omitempty"`
+	SubstituteDisabled bool                      `json:"SubstituteDisabled,omitempty"`
+	Policy             *manifest.EmissionPolicy  `json:"Policy,omitempty"`
+	Labels             map[string]string         `json:"Labels,omitempty"`
+	Labeled            bool                      `json:"Labeled,omitempty"`
 }
 
 type inputFrame struct {
@@ -167,6 +168,7 @@ func (r documentReader) restoreCachedFile(absolute string) {
 			catalog: catalog, reverse: f.Reverse, refs: f.Refs, templateInputs: f.TemplateInputs,
 			roots: f.Roots, targets: f.Targets, authoredTargets: f.AuthoredTargets,
 			needsCandidates: f.NeedsCandidates, policy: f.Policy, labels: f.Labels, labeled: f.Labeled,
+			substituteDisabled: f.SubstituteDisabled,
 		}
 		facts.structural, _ = catalog.(*manifest.Kustomization)
 		occurrence := &authoredOccurrence{
@@ -317,23 +319,24 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 			Identity: occurrence.Identity, Authored: occurrence.Authored,
 			Catalog: catalog, payload: object.payload,
 			Facts: cachedOccurrenceFacts{
-				Declared:        facts.declared,
-				Source:          facts.source,
-				Path:            facts.path,
-				HasPath:         facts.hasPath,
-				Namespaced:      facts.namespaced,
-				Uncertain:       facts.uncertain,
-				Retained:        facts.retained,
-				Reverse:         facts.reverse,
-				Refs:            facts.refs,
-				TemplateInputs:  facts.templateInputs,
-				Roots:           facts.roots,
-				Targets:         facts.targets,
-				AuthoredTargets: facts.authoredTargets,
-				NeedsCandidates: facts.needsCandidates,
-				Policy:          facts.policy,
-				Labels:          facts.labels,
-				Labeled:         facts.labeled,
+				Declared:           facts.declared,
+				Source:             facts.source,
+				Path:               facts.path,
+				HasPath:            facts.hasPath,
+				Namespaced:         facts.namespaced,
+				Uncertain:          facts.uncertain,
+				Retained:           facts.retained,
+				Reverse:            facts.reverse,
+				Refs:               facts.refs,
+				TemplateInputs:     facts.templateInputs,
+				Roots:              facts.roots,
+				Targets:            facts.targets,
+				AuthoredTargets:    facts.authoredTargets,
+				NeedsCandidates:    facts.needsCandidates,
+				SubstituteDisabled: facts.substituteDisabled,
+				Policy:             facts.policy,
+				Labels:             facts.labels,
+				Labeled:            facts.labeled,
 			},
 		})
 	}

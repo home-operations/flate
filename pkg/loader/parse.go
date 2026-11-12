@@ -205,6 +205,7 @@ func (r documentReader) censusFile(
 			}
 		}
 		o := compactOccurrence(child.Obj, projection)
+		o.facts.substituteDisabled = child.substituteDisabled
 		o.facts.declared = child.declared
 		origin := new(r).localPath(path)
 		root := new(r).mountedRoot(origin)
@@ -437,7 +438,10 @@ func (r *documentReader) prepareStreamObject(opts manifest.ParseDocOptions, leaf
 		declared = manifest.Fingerprint(manifest.WithoutOwnershipLabels(leaf.Document))
 	}
 	child, outcome, _ := Prepare(*leaf, opts)
-	return parsedObject{Child: child, outcome: outcome, version: version, declared: declared}
+	return parsedObject{
+		Child: child, outcome: outcome, version: version, declared: declared,
+		substituteDisabled: manifest.HasSubstituteDisabled(child.Doc),
+	}
 }
 
 func covers(coverage, intent manifest.DocumentRole) bool {

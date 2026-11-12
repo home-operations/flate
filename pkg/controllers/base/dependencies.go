@@ -323,7 +323,8 @@ func (p *pendingDataError) settleInput(
 	if result.Err != nil {
 		return result.Err
 	}
-	if !input.Optional && !input.Input.Private && result.Result.State() != values.Readable {
+	if !input.Optional && !input.Input.Private && result.Result.State() != values.Readable &&
+		result.Result.State() != values.Produced {
 		for _, producer := range input.Input.Materializers {
 			e.Reads.RequireData(producer)
 		}

@@ -6,9 +6,9 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// ResolveStaticPath resolves a produced path from declared parent substitutions.
-func ResolveStaticPath(
-	path string,
+// ResolveStaticValue never certifies a substitution that depends on unread input.
+func ResolveStaticValue(
+	value string,
 	parent *manifest.Kustomization,
 	provider Provider,
 	missing missingPolicy,
@@ -28,17 +28,17 @@ func ResolveStaticPath(
 		}
 	}
 	if err := ExpandPostBuildSubstituteReference(parent, provider, missing); err != nil {
-		return path, false
+		return value, false
 	}
 	var variables map[string]string
 	if parent.PostBuild != nil {
 		variables = manifest.VarsMap(parent.PostBuild.Substitute)
 	}
 	if !SubstitutionActive(parent) && !unknownInputs {
-		return path, true
+		return value, true
 	}
 	incomplete := false
-	resolved, err := envsubst.Eval(path, func(name string) (string, bool) {
+	resolved, err := envsubst.Eval(value, func(name string) (string, bool) {
 		value, known := variables[name]
 		_, fixed := inline[name]
 		incomplete = incomplete || unknownInputs && !fixed

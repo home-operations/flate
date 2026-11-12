@@ -201,8 +201,12 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 		srv := httptest.NewTLSServer(http.NotFoundHandler())
 		defer srv.Close()
 		ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
-		fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
+		fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+			secretInput := &manifest.Secret{
+				StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca},
+			}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}}
 		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 		ssrfguard.Restrict(true)
@@ -257,17 +261,6 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 		},
 		)
 	}
-}
-
-func gitRepoWithSecret(name, url, secretName string) *manifest.GitRepository {
-	repo := &manifest.GitRepository{
-		Name: name, Namespace: "ns",
-		URL: url,
-	}
-	if secretName != "" {
-		repo.SecretRef = &manifest.LocalObjectReference{Name: secretName}
-	}
-	return repo
 }
 
 func TestFetcher_ResolveTLS(t *testing.T) {
@@ -422,8 +415,10 @@ func TestFetcher_ResolveTransport_EndpointValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p"}}
+			fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p"}}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}}
 			f := &Fetcher{}
 			repo := gitRepoWithSecret("g", "http://[::1", tc.secret)
@@ -601,13 +596,18 @@ func testFetcherResolveTransportSecretMaterialCase1Part1(
 func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
-	fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, name string) store.ReferenceFacts {
 		if name == "proxy" {
-			return &manifest.Secret{
+			secretInput := &manifest.Secret{
 				StringData: map[string]any{"address": "http://proxy-user:proxy-password@proxy.invalid/%"},
 			}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
-		return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
+
+		secretInput := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
@@ -803,7 +803,13 @@ func testFetcherResolveTLSCase(t *testing.T, inputs *testFetcherResolveTLSCaseIn
 	assert.NoError(t, keyErr)
 	data["known_hosts"] = "host " + string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
 	sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: data, Data: inputs.tc.encodedData}
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return sec }}
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		secretInput := sec
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	}}
 	f := &Fetcher{}
 	url := inputs.tc.url
 	if url == "" {

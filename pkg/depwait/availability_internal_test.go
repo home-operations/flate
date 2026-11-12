@@ -1,6 +1,7 @@
 package depwait
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -10,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestAvailable_OptionalMaterializerAbsence(t *testing.T) {
@@ -32,12 +34,14 @@ func TestAvailable_OptionalMaterializerAbsence(t *testing.T) {
 		{name: "required pending", producer: true, status: store.StatusPending, want: schedule.Blocked},
 		{name: "required available", producer: true, status: store.StatusReady, data: true, want: schedule.Terminal},
 		{name: "failed materializer with available data", producer: true, status: store.StatusFailed, data: true, want: schedule.Terminal},
-		{name: "generated absent", generated: true, want: schedule.Terminal, omit: true},
+		{name: "generated strict", generated: true, want: schedule.Terminal, omit: true},
+		{name: "generated allowed", generated: true, allowed: true, want: schedule.Terminal, omit: true},
 		{name: "required unknown", want: schedule.Blocked},
 		{name: "required unknown cascade", level: manifest.DrainCascade, want: schedule.DependencyFailed},
 		{name: "allowed unknown", allowed: true, want: schedule.Terminal, omit: true},
 		{name: "allowed settled absence", allowed: true, level: manifest.DrainCascade, want: schedule.Terminal, omit: true},
-		{name: "private absence", private: true, want: schedule.Terminal, omit: true},
+		{name: "private strict", private: true, want: schedule.Terminal, omit: true},
+		{name: "private allowed", private: true, allowed: true, want: schedule.Terminal, omit: true},
 		{name: "optional file waiting", optional: true, offline: true, want: schedule.Blocked},
 		{name: "optional file absent", optional: true, offline: true, level: manifest.DrainCascade, want: schedule.Terminal, omit: true},
 	} {
@@ -150,7 +154,7 @@ func testAvailableOptionalMaterializerAbsenceCase(
 	}
 	assert.FatalIf(
 		t,
-		got.Kind == schedule.DependencyFailed && got.Reason.Message != "dependency not found",
+		got.Kind == schedule.DependencyFailed && got.Reason.Subject.ID != id,
 		"materializer failure became target cause: %+v",
 		got,
 	)
@@ -212,4 +216,185 @@ func testAvailableRequiredMaterializerCycleCase(
 		got,
 		want,
 	)
+}
+
+func TestAvailable_PartialIndexedProductionArrival(t *testing.T) {
+	t.Parallel()
+	for _, allowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allowed=%t", allowed), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			st.AddObject(producer)
+			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
+			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
+			declaration := manifest.NamedResource{
+				Group:     "external-secrets.io",
+				Kind:      "ExternalSecret",
+				Namespace: id.Namespace,
+				Name:      "cluster",
+			}
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				id: {Productions: []manifest.Production{
+					{Owner: producer.Named(), Declaration: declaration},
+					{Owner: producer.Named(), Authored: id, Path: "input.yaml", File: "input.yaml"},
+				}},
+			}})
+			supplied := &manifest.Secret{
+				Name:       id.Name,
+				Namespace:  id.Namespace,
+				StringData: map[string]any{"first": "supplied"},
+			}
+			st.AddDeclaration(store.Declaration{Obj: supplied, Origin: manifest.SuppliedDeclaration})
+			consumer := testutil.KustomizationID("apps", "consumer")
+			var before store.ReadSet
+			before.Init(st, consumer, nil)
+			defer before.Close()
+			facts := before.ReferenceFacts(id, nil, consumer)
+			assert.Equal(t, facts.Original, manifest.Data(nil))
+			assert.Equal(t, facts.Generated && facts.Offline, true)
+			ref := manifest.Reference{NamedResource: id, Key: "second", Use: "valuesFrom"}
+			result, err := values.Classify(new(ref), new(facts))
+			assert.NoError(t, err)
+			assert.Equal(t, result.State(), values.Produced)
+			firstRef := ref
+			firstRef.Key = "first"
+			first, err := values.Classify(new(firstRef), new(facts))
+			assert.NoError(t, err)
+			assert.Equal(t, first.State(), values.Readable)
+			assert.Equal(t, first.Value(), "supplied")
+			var kinds []string
+			if allowed {
+				kinds = []string{manifest.KindSecret}
+			}
+			w := Waiter{Store: &before, Parent: consumer, Missing: NewMissingPolicy(kinds)}
+			waiting := w.Available(t.Context(), DataDependency{Reference: ref, Input: facts}, manifest.DrainNone)
+			assert.Equal(t, waiting.Kind, schedule.Blocked)
+			assert.Diff(t, waiting.Blocked, []manifest.NamedResource{producer.Named()})
+			release, published := make(chan struct{}), make(chan struct{})
+			go func() {
+				<-release
+				data := &manifest.Secret{
+					Name:       id.Name,
+					Namespace:  id.Namespace,
+					StringData: map[string]any{"second": "materialized"},
+				}
+				st.RecordEmitted(
+					producer.Named(),
+					&store.Emission{Children: []store.Child{{Obj: data}}, Complete: true},
+					nil,
+				)
+				st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
+				close(published)
+			}()
+			close(release)
+			<-published
+			assert.Equal(t, before.Valid(), false)
+			var after store.ReadSet
+			after.Init(st, consumer, nil)
+			defer after.Close()
+			facts = after.ReferenceFacts(id, nil, consumer)
+			w.Store = &after
+			ready := w.Available(t.Context(), DataDependency{Reference: ref, Input: facts}, manifest.DrainNone)
+			assert.Equal(t, ready.Kind, schedule.Terminal)
+			assert.Equal(t, ready.Omit, false)
+			assert.Equal(t, ready.Result.Value(), "materialized")
+		})
+	}
+}
+
+func TestAvailable_AcceptedDataDoesNotCaptureProducerReadiness(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		key      string
+		optional bool
+		want     schedule.Kind
+		omit     bool
+	}{
+		{name: "readable", key: "VALUE", want: schedule.Terminal},
+		{name: "optional missing key", key: "absent", optional: true, want: schedule.Terminal, omit: true},
+		{name: "required missing key", key: "absent", want: schedule.DependencyFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			data := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "readable"}}
+			parent := testutil.HelmReleaseID("apps", "consumer")
+			st.AddObject(producer)
+			st.RecordEmitted(
+				producer.Named(),
+				&store.Emission{Children: []store.Child{{Obj: data}}, Complete: true},
+				nil,
+			)
+			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
+			var reads store.ReadSet
+			reads.Init(st, parent, nil)
+			defer reads.Close()
+			input := reads.ReferenceFacts(data.Named(), nil, parent)
+			assert.Equal(t, input.Accepted, true)
+			assert.Diff(t, input.Materializers, []manifest.NamedResource{producer.Named()})
+			w := Waiter{Store: &reads, Parent: parent, Missing: NewMissingPolicy(nil)}
+			result := w.Available(t.Context(), DataDependency{
+				NamedResource: data.Named(), Key: tc.key, Use: "valuesFrom", Optional: tc.optional, Input: input,
+			}, manifest.DrainNone)
+			assert.Equal(t, result.Kind, tc.want)
+			assert.Equal(t, result.Omit, tc.omit)
+			assert.NoError(t, result.Err)
+			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
+			assert.Equal(t, reads.Valid(), true)
+			st.RecordEmitted(producer.Named(), &store.Emission{Complete: true}, nil)
+			assert.Equal(t, reads.Valid(), false)
+		})
+	}
+}
+
+func TestAvailable_OriginalDataDoesNotCaptureProducerReadiness(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		key      string
+		optional bool
+		want     schedule.Kind
+		omit     bool
+	}{
+		{name: "readable", key: "VALUE", want: schedule.Terminal},
+		{name: "optional missing key", key: "absent", optional: true, want: schedule.Terminal, omit: true},
+		{name: "required missing key", key: "absent", want: schedule.DependencyFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			data := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "readable"}}
+			parent := testutil.HelmReleaseID("apps", "consumer")
+			st.AddObjects([]manifest.BaseManifest{producer, data})
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				data.Named(): {Productions: []manifest.Production{
+					{Owner: producer.Named(), Authored: data.Named(), Path: "input.yaml"},
+					{Authored: data.Named(), Path: "input.yaml"},
+				}},
+			}})
+			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
+			var reads store.ReadSet
+			reads.Init(st, parent, nil)
+			defer reads.Close()
+			input := reads.ReferenceFacts(data.Named(), nil, parent)
+			assert.Equal(t, input.Accepted, false)
+			assert.Equal(t, input.Original, manifest.Data(data))
+			assert.Diff(t, input.Materializers, []manifest.NamedResource{producer.Named()})
+			w := Waiter{Store: &reads, Parent: parent, Missing: NewMissingPolicy(nil)}
+			result := w.Available(t.Context(), DataDependency{
+				NamedResource: data.Named(), Key: tc.key, Use: "valuesFrom", Optional: tc.optional, Input: input,
+			}, manifest.DrainNone)
+			assert.Equal(t, result.Kind, tc.want)
+			assert.Equal(t, result.Omit, tc.omit)
+			assert.NoError(t, result.Err)
+			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusPending})
+			assert.Equal(t, reads.Valid(), true)
+			st.DeleteObject(data.Named())
+			assert.Equal(t, reads.Valid(), false)
+		})
+	}
 }

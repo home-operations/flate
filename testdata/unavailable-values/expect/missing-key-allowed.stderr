@@ -1,0 +1,4 @@
+
+  ✗  HelmRelease  apps/demo  valuesFrom Secret apps/input key "encrypted" not found
+
+  ✗ 1 failed

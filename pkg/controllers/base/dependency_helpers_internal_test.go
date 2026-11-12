@@ -42,7 +42,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 	for itemIndex := range inputs {
 		input := inputs[itemIndex]
 
-		allowed, _, _ := c.Missing.Missing(input.Reference, input.Input)
+		allowed := c.Missing.Admission(new(input.Reference), new(input.Input)) == selection.OptionalInput
 		if !allowed && !input.Input.Private && !input.Input.Generated &&
 			!slices.Contains(input.Input.Materializers, obj.Named()) {
 			deps = append(deps, input.DependencyRef)
@@ -52,7 +52,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 		context.TODO(),
 		DataWait{
 			Inputs: inputs,
-			Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil },
+			Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return nil },
 		},
 		manifest.DrainNone,
 	)

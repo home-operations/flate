@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
@@ -140,10 +138,7 @@ func (o *Orchestrator) finalize() error {
 }
 
 func (o *Orchestrator) warnMissingCRDs() {
-	ref := manifest.Reference{
-		Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition,
-	}
-	if allowed, _, _ := o.cfg.missing.Missing(ref, store.ReferenceFacts{}); !allowed {
+	if !o.cfg.missing.AllowsKind(manifest.KindCustomResourceDefinition) {
 		return
 	}
 	missing := make(map[manifest.NamedResource]map[manifest.NamedResource]struct{})

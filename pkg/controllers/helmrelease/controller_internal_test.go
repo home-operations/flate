@@ -295,7 +295,7 @@ data:
 			Resource: hr.Named(),
 			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
 			Category: manifest.WarnOmittedValues,
-			Message:  "required valuesFrom Secret/default/app-values omitted from offline render",
+			Message:  "required valuesFrom Secret/default/app-values omitted from offline render: is produced in the cluster with unknown data; supply it with --supply",
 			Count:    1,
 		},
 	})
@@ -335,7 +335,7 @@ data:
 			Resource: hr.Named(),
 			Subject:  manifest.DiagnosticFor(hr.Named(), hr),
 			Category: manifest.WarnOmittedValues,
-			Message:  "required valuesFrom Secret/default/app-values omitted from offline render",
+			Message:  "required valuesFrom Secret/default/app-values omitted from offline render: is produced in the cluster with unknown data; supply it with --supply",
 			Count:    1,
 		},
 	})

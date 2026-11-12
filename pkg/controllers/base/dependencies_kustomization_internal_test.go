@@ -467,7 +467,7 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 		t.Context(),
 		DataWait{
 			Inputs: inputs,
-			Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil },
+			Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return nil },
 		},
 		manifest.DrainNone,
 	)

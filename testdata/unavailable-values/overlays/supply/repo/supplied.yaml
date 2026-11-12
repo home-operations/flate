@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Secret
+metadata: {name: input, namespace: apps}
+stringData: {encrypted: supplied, plain: supplied, empty: supplied}
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: absent, namespace: apps}
+stringData: {value: supplied}

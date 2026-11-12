@@ -124,3 +124,82 @@ func TestReferenceFacts_PendingPeerAfterEmptySupplier(t *testing.T) {
 		facts,
 	)
 }
+
+func TestStore_ReferenceFacts_WarningOnlyReplacement(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"repository", "emitted", "supplied", "admitted"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			testStoreReferenceFactsWarningOnlyReplacement(t, mode)
+		})
+	}
+}
+
+func testStoreReferenceFactsWarningOnlyReplacement(t *testing.T, mode string) {
+	t.Helper()
+	st := New()
+	owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	st.AddObject(owner)
+	st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Content: "source"})
+	data := &manifest.Secret{Name: "input", Namespace: "apps"}
+	warning := manifest.Warning{
+		Resource: data.Named(),
+		Category: manifest.WarnSOPSUnreadable,
+		Detail:   []string{"VALUE"},
+	}
+	publish := func(warnings []manifest.Warning) {
+		switch mode {
+		case "emitted":
+			st.RecordEmitted(
+				owner.Named(),
+				&Emission{Children: []Child{{Obj: data, Warnings: warnings}}, Complete: true},
+				nil,
+			)
+		case "admitted":
+			var admission ReadSet
+			admission.Init(st, ownerID("admission"), nil)
+			defer admission.Retire()
+			admission.Admit(Child{Obj: data, Warnings: warnings}, manifest.BootstrapSourceID, manifest.NamedResource{})
+		default:
+			origin := manifest.RepositoryDeclaration
+			if mode == "supplied" {
+				origin = manifest.SuppliedDeclaration
+			}
+			st.AddDeclaration(Declaration{Obj: data, Origin: origin, Warnings: warnings})
+		}
+	}
+	var previous *ReadSet
+	for _, warnings := range [][]manifest.Warning{{warning}, nil, {warning}} {
+		publish(warnings)
+		if previous != nil {
+			assert.Equal(t, previous.Valid(), false)
+			var changed ReadSet
+			changed.Init(st, ownerID("consumer"), nil)
+			assert.Equal(t, changed.Matches(previous), false)
+			assert.Equal(t, changed.matches(previous, true), false)
+			changed.Close()
+			previous.Close()
+		}
+		reads := new(ReadSet)
+		reads.Init(st, ownerID("consumer"), nil)
+		captured := reads.ReferenceFacts(data.Named(), nil, reads.ID())
+		live := st.ReferenceFacts(data.Named(), nil, reads.ID())
+		assert.Equal(t, captured.Data, live.Data)
+		assert.Equal(t, captured.Original, live.Original)
+		assert.Diff(t, captured.Warnings, live.Warnings)
+		assert.Diff(t, captured.Warnings, warnings)
+		if mode == "supplied" {
+			assert.Equal(t, captured.Original, manifest.Data(nil))
+		} else {
+			assert.Equal(t, captured.Original, manifest.Data(data))
+		}
+		assert.Equal(t, reads.Valid(), true)
+		var same ReadSet
+		same.Init(st, ownerID("consumer"), nil)
+		assert.Equal(t, same.Matches(reads), true)
+		assert.Equal(t, same.matches(reads, true), true)
+		same.Close()
+		previous = reads
+	}
+	previous.Close()
+}

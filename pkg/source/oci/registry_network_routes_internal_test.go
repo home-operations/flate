@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -95,7 +97,7 @@ func testFetcherNetworkRoutesCase(t *testing.T, route *string,
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour}
 	if (*route) == "fallback" {
 		repo.SecretRef = &manifest.LocalObjectReference{Name: "missing"}
-		fInputs.secrets = func(_, _ string) *manifest.Secret { return nil }
+		fInputs.secrets = func(_, _ string) store.ReferenceFacts { return store.ReferenceFacts{} }
 		f.RegistryConfig = filepath.Join(t.TempDir(), "config.json")
 		testutil.WriteFileAt(
 			t,

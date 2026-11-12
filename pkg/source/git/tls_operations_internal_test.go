@@ -99,15 +99,19 @@ func testFetcherTLSOperationsCaseCase(t *testing.T, testCaseInput testFetcherTLS
 	srv.StartTLS()
 	t.Cleanup(srv.Close)
 	proxy, connects := tlsGitProxy(t, (*(*testCaseInput.route)) == "authenticated-proxy")
-	fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, name string) store.ReferenceFacts {
 		if name == "proxy" {
 			data := map[string]any{"address": proxy.URL}
 			if (*(*testCaseInput.route)) == "authenticated-proxy" {
 				data["username"], data["password"] = "proxy", "password"
 			}
-			return &manifest.Secret{StringData: data}
+
+			secretInput := &manifest.Secret{StringData: data}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
-		return &manifest.Secret{
+
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{
 				"username": "alice",
 				"password": "p",
@@ -116,6 +120,8 @@ func testFetcherTLSOperationsCaseCase(t *testing.T, testCaseInput testFetcherTLS
 				"tls.key":  certificate3.Key,
 			},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 	repo := gitRepoWithSecret("tls", srv.URL, "tls")

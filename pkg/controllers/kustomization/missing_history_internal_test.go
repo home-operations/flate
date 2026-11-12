@@ -163,7 +163,11 @@ func TestPreviousRender_UnreadableSecretMatchesNormalCapture(t *testing.T) {
 			defer normal.run.Close()
 			_, err := normal.run.DataInputs(t.Context(), owner, normal.data)
 			assert.NoError(t, err)
-			assert.Diff(t, history.Assessment.Unreadable, []manifest.NamedResource{input.Named()})
+			var unreadable []manifest.NamedResource
+			if !present {
+				unreadable = []manifest.NamedResource{input.Named()}
+			}
+			assert.Diff(t, history.Assessment.Unreadable, unreadable)
 			assert.Diff(t, history.Assessment.Unreadable, normal.run.Unreadable)
 			assert.Equal(t, len(st.Warnings()), 0)
 			assert.Equal(t, st.GetArtifact(owner.Named(), store.ArtifactContent) == nil, true)
@@ -244,7 +248,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 			resumed := false
 			waitErr := normal.run.AwaitData(t.Context(), base.DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
 					resumed = true
 					return nil
 				},
@@ -326,7 +330,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 			t.Context(),
 			base.DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { resumed = true; return nil },
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
 			},
 			manifest.DrainNone,
 		),

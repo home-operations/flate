@@ -599,9 +599,16 @@ func TestReadSet_CapturedPublicationLifetime(t *testing.T) {
 	for range st.Sweep() {
 	}
 	runtime.GC()
-	assert.Equal(t, warning.Value() == nil, true)
+	assert.Equal(t, warning.Value() != nil, true)
+	assert.Equal(t, len(frozen.findInput(child.Obj.Named()).view.child.Warnings), 1)
 	assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
 	assert.Equal(t, frozen.findInput(child.Obj.Named()).view.child.Obj, child.Obj)
 	assert.Equal(t, reads.Valid(), false)
 	assert.Equal(t, len(st.Warnings()), 0)
+	reads.Close()
+	reads.ReleaseCapture()
+	frozen.Retire()
+	frozen.ReleaseCapture()
+	runtime.GC()
+	assert.Equal(t, warning.Value() == nil, true)
 }

@@ -137,9 +137,10 @@ func (s *Store) getEmission(
 	return obj, view.child.Doc, e
 }
 
-// ReferenceFacts preserves visible data separately from accepted authority and relations.
+// ReferenceFacts MUST retain selected warnings and the original data before supply.
 type ReferenceFacts struct {
-	Data                        manifest.Data
+	Data, Original              manifest.Data
+	Warnings                    []manifest.Warning
 	Materializers               []manifest.NamedResource
 	Generated, Offline, Private bool
 	Accepted                    bool
@@ -178,6 +179,7 @@ func (s *Store) ReferenceFacts(
 	}
 	facts := ReferenceFacts{
 		Data:          result.data,
+		Warnings:      result.warnings,
 		Accepted:      result.accepted,
 		Productions:   result.out,
 		ReferenceData: candidates,
@@ -264,6 +266,7 @@ type productionResult struct {
 	qualified     bool
 	reference     *Declaration
 	data          manifest.Data
+	warnings      []manifest.Warning
 	out           []manifest.Production
 	id            manifest.NamedResource
 	parent        manifest.NamedResource
@@ -794,6 +797,7 @@ func (r *productionResult) captureReferenceLocked(sh *shard, id manifest.NamedRe
 	sh.captureLocked(id, new(sh.cells[id]), &view)
 	if view.child.Origin.Policy(id, nil).Root {
 		r.data, _ = view.child.Obj.(manifest.Data)
+		r.warnings = view.child.Warnings
 	}
 	r.reference = view.reference
 	r.accepted = view.accepted || view.owner != nil

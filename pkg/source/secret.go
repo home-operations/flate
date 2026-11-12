@@ -157,16 +157,28 @@ func resolveSecretRef(
 	ownerValue *manifest.DiagnosticIdentity,
 	field string,
 	ref *manifest.LocalObjectReference,
-) (*manifest.Secret, error) {
+) (store.ReferenceFacts, error) {
 	owner := *ownerValue
 	if secrets == nil {
-		return nil, fmt.Errorf("references %s but no source.SecretGetter is wired", field)
+		return store.ReferenceFacts{}, fmt.Errorf("references %s but no source.SecretGetter is wired", field)
 	}
-	sec := secrets(owner.ID.Namespace, ref.Name)
-	if sec == nil {
-		return nil, MissingSecretErr(owner, ref.Name, "not found")
-	}
-	return sec, nil
+	return secrets(owner.ID.Namespace, ref.Name), nil
+}
+
+// SecretValue MUST classify each consumed field from the same captured facts.
+func SecretValue(
+	input *store.ReferenceFacts,
+	owner *manifest.DiagnosticIdentity,
+	secretRef, key string,
+) (values.Result, error) {
+	return values.Classify(new(manifest.Reference{
+		Kind: manifest.KindSecret, Namespace: owner.ID.Namespace, Name: secretRef, Key: key, Use: "secretRef",
+	}), input)
+}
+
+// UnavailableSecret MUST retain acquisition retry and whole-source policy.
+func UnavailableSecret(owner *manifest.DiagnosticIdentity, secretRef string, result *values.Result) error {
+	return MissingSecretErr(*owner, secretRef, result.Cause())
 }
 
 // BasicAuthFromSecret rejects malformed credentials and reports absent
@@ -174,23 +186,28 @@ func resolveSecretRef(
 //
 //nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
 func BasicAuthFromSecret(
-	sec *manifest.Secret,
+	input store.ReferenceFacts,
 	owner manifest.DiagnosticIdentity,
 	secretRef string,
 ) (string, string, error) {
-	valueResult, err := sec.Value("username")
-	username := valueResult.Value
+	valueResult, err := SecretValue(&input, new(owner), secretRef, "username")
+	username := valueResult.Value()
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
-	password, err := sec.Value("password")
+	password, err := SecretValue(&input, new(owner), secretRef, "password")
 	if err != nil {
 		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
-	if username == "" || password.Value == "" {
+	for _, result := range []values.Result{valueResult, password} {
+		if result.State() != values.Readable {
+			return "", "", UnavailableSecret(new(owner), secretRef, new(result))
+		}
+	}
+	if username == "" || password.Value() == "" {
 		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")
 	}
-	return username, password.Value, nil
+	return username, password.Value(), nil
 }
 
 // SecretLookup binds credential reads to one execution's captured inputs.
@@ -199,8 +216,7 @@ func SecretLookup(reads *store.ReadSet) SecretGetter {
 		return nil
 	}
 	provider := values.NewStoreProvider(reads)
-	return func(namespace, name string) *manifest.Secret {
-		secret, _ := provider.Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: namespace, Name: name}).(*manifest.Secret)
-		return secret
+	return func(namespace, name string) store.ReferenceFacts {
+		return provider.Lookup(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: namespace, Name: name})
 	}
 }

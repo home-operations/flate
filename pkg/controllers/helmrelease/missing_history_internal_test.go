@@ -214,7 +214,7 @@ func TestPreviousRender_DataAssessmentHasNoRuntimeEffects(t *testing.T) {
 			resumed := false
 			waitErr := normal.run.AwaitData(t.Context(), base.DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
 					resumed = true
 					return nil
 				},
@@ -303,7 +303,7 @@ func TestPreviousRender_CapturedSourceReplacementInvalidatesHistory(t *testing.T
 			t.Context(),
 			base.DataWait{
 				Inputs: inputs,
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { resumed = true; return nil },
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
 			},
 			manifest.DrainNone,
 		),

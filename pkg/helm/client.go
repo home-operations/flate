@@ -18,11 +18,6 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// SecretGetter is the same shape as source.SecretGetter; aliased so
-// the helm Client and the source Fetchers consume one canonical type.
-// The orchestrator wires the same closure into both.
-type SecretGetter = source.SecretGetter
-
 // Client renders HelmReleases. Construct with NewClient.
 type Client struct {
 	// Canonical charts MUST remain immutable; renders clone at the mutation boundary.

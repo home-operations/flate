@@ -96,6 +96,7 @@ type objectCell struct {
 	classified, ordinary bool
 	static               manifest.BaseManifest
 	document             map[string]any
+	warnings             []manifest.Warning
 	// Direct writes use this revision; emitted values use the immutable producer record.
 	publication                                              uint64
 	binding                                                  *Input
@@ -103,6 +104,10 @@ type objectCell struct {
 	excluded, included, rooted, retired, hidden, independent bool
 	reconcile, report                                        bool
 	preflight                                                string
+}
+
+func (c *objectCell) visible(needsRoot bool) bool {
+	return !c.hidden && !c.retired && !needsRoot
 }
 
 func (c *objectCell) bound() bool {
@@ -280,6 +285,7 @@ type objectUpdate struct {
 	obj                         manifest.BaseManifest
 	policy                      manifest.DeclarationPolicy
 	document                    map[string]any
+	warnings                    []manifest.Warning
 	explicit                    bool
 	binding                     *Input
 	support                     *Input
@@ -294,8 +300,13 @@ type objectUpdate struct {
 	inventory                   *registration
 }
 
+func (u *objectUpdate) equalVisible() bool {
+	return u.staticEqual && u.effectiveEqual && u.cell.visible(u.needsRoot) &&
+		(!u.explicit || manifest.ValueEqual(u.cell.document, u.document))
+}
+
 func (u *objectUpdate) compare() {
-	equal := manifest.Equal(u.cell.static, u.obj)
+	equal := manifest.Equal(u.cell.static, u.obj) && warningsEqual(u.cell.warnings, u.warnings)
 	u.policy = manifest.DeclarationPolicy{Root: true, Reconcile: u.cell.reconcile, Report: u.cell.report}
 	if u.cell.static == nil || u.cell.reconcile != manifest.KindOf(u.obj).Runnable {
 		u.policy = (Child{Obj: u.obj}).Policy(u.obj.Named())
@@ -324,7 +335,8 @@ func (u *objectUpdate) compare() {
 		u.effectiveEqual = reconcileInputEqual(u.obj, u.cell.document, u.document).equal
 	}
 	if u.effective.child.Obj != u.cell.static {
-		u.effectiveEqual = manifest.Equal(u.effective.child.Obj, u.obj)
+		u.effectiveEqual = manifest.Equal(u.effective.child.Obj, u.obj) &&
+			warningsEqual(u.effective.child.Warnings, u.warnings)
 		if u.effectiveEqual {
 			u.effectiveEqual = reconcileInputEqual(u.obj, u.effective.child.Doc, u.document).equal
 		}
@@ -376,17 +388,18 @@ func (s *Store) addObject(update *objectUpdate) {
 		supplied := binding != nil && cell.reference != nil && cell.reference.Obj == obj &&
 			cell.reference.Origin == manifest.SuppliedDeclaration
 		needsRoot := !cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil)
-		if supplied || !update.explicit && cell.static == obj && cell.binding == binding && cell.support == support &&
-			cell.classified == update.classified &&
-			!cell.hidden &&
-			!cell.retired &&
-			!needsRoot {
+		sameObject := !update.explicit && cell.static == obj && warningsEqual(cell.warnings, update.warnings) &&
+			cell.classified == update.classified
+		sameAuthority := cell.binding == binding && cell.support == support
+		visible := cell.visible(needsRoot)
+		if supplied || sameObject && sameAuthority && visible {
 			sh.mu.RUnlock()
 			return
 		}
 		u := *update
 		u.cell, u.needsRoot = cell, needsRoot
 		u.effective.child.Obj, u.effective.child.Doc = cell.static, cell.document
+		u.effective.child.Warnings = cell.warnings
 		if sh.derived {
 			sh.captureLocked(id, new(cell), &u.effective)
 		}
@@ -394,10 +407,7 @@ func (s *Store) addObject(update *objectUpdate) {
 		u.classified = update.classified && rawDeclarationAuthority(index, id, true)
 		u.independent = rawDeclarationAuthority(index, id, false)
 		u.compare()
-		if u.staticEqual && u.effectiveEqual && (!u.explicit || manifest.ValueEqual(u.cell.document, u.document)) &&
-			!u.cell.hidden &&
-			!u.cell.retired &&
-			!u.needsRoot {
+		if u.equalVisible() {
 			return
 		}
 		if s.commitObjectUpdate(sh, id, &u, index) != publicationRetry {
@@ -414,7 +424,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 	}
 	cell.publication++
 	if u.staticEqual && u.effectiveEqual && !cell.retired {
-		cell.document = u.document
+		cell.document, cell.warnings = u.document, u.warnings
 		sh.cells[id] = cell
 		return eventDispatch{}
 	}
@@ -453,7 +463,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 		cell.static, cell.binding, cell.support = u.obj, u.binding, u.support
 		cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 	}
-	cell.document = u.document
+	cell.document, cell.warnings = u.document, u.warnings
 	cell.retired, cell.independent, cell.policy, cell.classified = false, u.independent, u.policy, u.classified
 	sh.cells[id] = cell
 	if !u.membershipEqual && bucket.update(nameID{id.Namespace, id.Name}, cell.static != nil, true, bucket.generation) {
@@ -573,7 +583,7 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 	if cell.links != nil {
 		cell.authority = sh.enqueueLocked(cell.authority)
 	}
-	cell.static, cell.rooted, cell.binding, cell.support, cell.document = nil, false, nil, nil, nil
+	cell.static, cell.rooted, cell.binding, cell.support, cell.document, cell.warnings = nil, false, nil, nil, nil, nil
 	_, cell.policy = sh.captureLocked(id, new(cell), nil)
 	sh.cells[id] = cell
 	sh.clearFacetsLocked(id)
@@ -658,7 +668,7 @@ func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	}
 	region := s.affectedLocked(changed, manifest.NamedResource{})
 	cell := sh.cells[id]
-	cell.static, cell.rooted, cell.binding, cell.support, cell.document = nil, false, nil, nil, nil
+	cell.static, cell.rooted, cell.binding, cell.support, cell.document, cell.warnings = nil, false, nil, nil, nil, nil
 	sh.cells[id] = cell
 	sh.clearFacetsLocked(id)
 	dispatches := s.reachabilityLocked(region)
@@ -749,7 +759,7 @@ func (s *Store) addAnchor(uValue *objectUpdate, index *manifest.DiscoveryIndex) 
 	cell := sh.cells[id]
 	u.retainSupport()
 	cell.rooted, cell.static, cell.binding, cell.support, cell.document, cell.classified = u.binding == nil, obj, u.binding, u.support, u.document, u.classified
-	cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
+	cell.reconcile, cell.report, cell.warnings = u.policy.Reconcile, u.policy.Report, u.warnings
 	cell.publication++
 	sh.cells[id] = cell
 	dispatches := s.reachabilityLocked(region)
@@ -811,6 +821,9 @@ func reconcileInputEqual(obj manifest.BaseManifest, a, b map[string]any) reconci
 
 //nolint:gocritic // Immutable value inputs preserve snapshot semantics.
 func reconcileEqual(a, b Child) bool {
+	if !warningsEqual(a.Warnings, b.Warnings) {
+		return false
+	}
 	comparison := reconcileInputEqual(a.Obj, a.Doc, b.Doc)
 	if comparison.consumes {
 		return manifest.Equal(a.Obj, b.Obj) && comparison.equal
@@ -861,7 +874,7 @@ func (s *Store) refreshObjectAnchors(anchors []objectUpdate) []objectUpdate {
 		u.compare()
 	}
 	anchors = slices.DeleteFunc(anchors, func(u objectUpdate) bool {
-		return u.staticEqual && u.effectiveEqual && !u.cell.hidden && !u.cell.retired && !u.needsRoot
+		return u.equalVisible()
 	})
 	return anchors
 }

@@ -357,7 +357,7 @@ func testFetcherLateProducerInvalidatesAmbientCase(
 		t.Fatalf("rerun did not wait on the captured producer: blocked=%v calls=%d", next.Blocked, f.calls)
 	}
 	assert.FatalIf(t, f.missing.Owner != missing.Owner || f.missing.Secret != missing.Secret ||
-		f.missing.Detail != missing.Detail, "%s", "rerun changed the structured missing-material outcome")
+		f.missing.Detail != "is produced in the cluster with unknown data; supply it with --supply", "%s", "rerun did not retain identities with the current unavailable cause")
 
 	before := authenticated.Load()
 	tasks.Go(
@@ -415,7 +415,9 @@ func testFetcherHelmAmbientReloadCase(t *testing.T, mode *string,
 		SecretRef: &manifest.LocalObjectReference{Name: "missing"},
 	}
 	var lookups atomic.Int32
-	inputs := testInputs{secrets: func(_, _ string) *manifest.Secret { lookups.Add(1); return nil }}
+	inputs := testInputs{
+		secrets: func(_, _ string) store.ReferenceFacts { lookups.Add(1); return store.ReferenceFacts{} },
+	}
 	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}
 	op := &operation{Fetcher: f, secrets: inputs.lookup(repo)}
 	_, err := fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {

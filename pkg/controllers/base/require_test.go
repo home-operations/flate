@@ -743,7 +743,7 @@ func testRequireRetainsArtifactFactsThroughSettlementCase(
 			return execution.AwaitData(
 				ctx,
 				base.DataWait{
-					Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+					Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
 						rendered = true
 						return nil
 					},

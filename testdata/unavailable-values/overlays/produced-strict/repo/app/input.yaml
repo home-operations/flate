@@ -1,0 +1,4 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: cluster, namespace: apps}
+spec: {target: {name: input}}

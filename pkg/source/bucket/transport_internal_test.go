@@ -17,6 +17,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -63,7 +65,11 @@ func TestFetcher_ResolveTransport(t *testing.T) {
 			if cert {
 				b.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 				ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
-				fInputs.secrets = func(_, _ string) *manifest.Secret { return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}} }
+				fInputs.secrets = func(_, _ string) store.ReferenceFacts {
+					secretInput := &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
+
+					return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+				}
 			}
 			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).preparedBucket(b)
 			assert.NoError(t, err)
@@ -85,7 +91,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 		field                        string
 	}{
 		{name: "auth unwired", ref: "auth", secret: "creds", unwired: true, wantError: "SecretGetter"},
-		{name: "auth missing key", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "k"}, missing: true, wantError: "missing accesskey/secretkey"},
+		{name: "auth missing key", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "k"}, missing: true, wantError: `key "secretkey" not found`},
 		{name: "accesskey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "", "secretkey": "secret"}, missing: true},
 		{name: "accesskey/encoded=true", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "", "secretkey": "secret"}, encoded: true, missing: true},
 		{name: "secretkey/encoded=false", ref: "auth", secret: "creds", data: map[string]any{"accesskey": "access", "secretkey": ""}, missing: true},
@@ -135,10 +141,14 @@ func testFetcherSecretReferencesPart1(t *testing.T) {
 			if tc.auth {
 				b.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 			}
-			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+			fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
 				assert.ErrorIf(t, !tc.auth, "%s", "anonymous credentials consulted a Secret")
 
-				return &manifest.Secret{StringData: map[string]any{"accesskey": "access", "secretkey": "secret"}}
+				secretInput := &manifest.Secret{
+					StringData: map[string]any{"accesskey": "access", "secretkey": "secret"},
+				}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}}
 			f := &Fetcher{}
 			creds, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).resolveCredentials(b)
@@ -177,9 +187,9 @@ func testFetcherSecretReferencesCase1(t *testing.T, tc *struct {
 	fInputs := testInputs{}
 	f := &Fetcher{Network: newTestNetwork(t)}
 	if !tc.unwired {
-		fInputs.secrets = func(_, _ string) *manifest.Secret {
+		fInputs.secrets = func(_, _ string) store.ReferenceFacts {
 			if tc.data == nil && tc.rawData == nil {
-				return nil
+				return store.ReferenceFacts{}
 			}
 			sec := &manifest.Secret{
 				Name:       "metadata-secret",
@@ -193,7 +203,10 @@ func testFetcherSecretReferencesCase1(t *testing.T, tc *struct {
 					sec.Data[k] = base64.StdEncoding.EncodeToString([]byte(v.(string)))
 				}
 			}
-			return sec
+
+			secretInput := sec
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 	}
 	b := &manifest.Bucket{
@@ -369,10 +382,12 @@ func TestFetcher_ProviderTransportValidation(t *testing.T) {
 			} else {
 				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
 			}
-			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{
+			inputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{
 					StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"},
 				}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
 			_, err := fetchtest.Fetch(t.Context(), fetcher.Fetch, repo, inputs.readSet(repo), &cache.Policy{}, nil)
@@ -443,16 +458,19 @@ func testFetcherResolveTransportSnapshotRotationCase(
 		t.Setenv("no_proxy", "*")
 	}
 	c := cachetest.New(t, (*testCaseInput.root), cache.New)
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
 		testCaseInput.lookups.
 			Add(1)
-		return &manifest.Secret{
+
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{
 				"accesskey": "access",
 				"secretkey": (*testCaseInput.password),
 				"ca.crt":    (*testCaseInput.ca),
 			},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 	before := testCaseInput.requests.Load()
@@ -525,11 +543,16 @@ func testFetcherProviderCredentialsCase(t *testing.T, tc *struct {
 	if tc.sts {
 		repo.STS = &sourcev1.BucketSTSSpec{Provider: "aws", Endpoint: "https://sts.fixture.invalid"}
 	}
-	inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+	inputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
 		if tc.malformed {
-			return &manifest.Secret{Data: map[string]any{"accesskey": "%%%fixture"}}
+			secretInput := &manifest.Secret{Data: map[string]any{"accesskey": "%%%fixture"}}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
-		return &manifest.Secret{StringData: map[string]any{"accesskey": "fixture", "secretkey": "fixture"}}
+
+		secretInput := &manifest.Secret{StringData: map[string]any{"accesskey": "fixture", "secretkey": "fixture"}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	fetcher := &Fetcher{Network: newTestNetwork(t)}
 	request, err := (&operation{Fetcher: fetcher, secrets: inputs.lookup(repo)}).preparedBucket(repo)

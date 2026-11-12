@@ -1,8 +1,7 @@
 
-  ✗  Secret  other/external  not found
-         required by other/unrelated
+  ✗  HelmRelease  other/unrelated  valuesFrom Secret other/external not found; supply it with --supply
 
   ⚠ warnings (1)
     [OmittedValues] HelmRelease apps/selected: required valuesFrom ConfigMap/apps/external omitted from offline render
 
-  ✗ 1 failed · 1 blocked
+  ✗ 1 failed

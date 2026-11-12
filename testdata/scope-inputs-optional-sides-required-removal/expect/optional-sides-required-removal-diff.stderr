@@ -3,6 +3,6 @@
          current snapshot: required by flux-system/app
 
   ⚠ warnings (1)
-    [DiffSuppressed] Kustomization flux-system/app: 1 object not rendered on the current side; diff suppressed (dependencies failed: ConfigMap/flux-system/optional: dependency not found)
+    [DiffSuppressed] Kustomization flux-system/app: 1 object not rendered on the current side; diff suppressed (dependencies failed: ConfigMap/flux-system/optional: not found; supply it with --supply)
 
   ✗ 1 failed · 1 blocked

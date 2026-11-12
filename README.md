@@ -331,7 +331,11 @@ flate does not use the working tree in place of their content.
 - Required postBuild ConfigMap references and malformed real data still fail.
 - flate does not perform cloud workload identity. Use repository, supplied or machine credentials.
 
-When `--allow-missing-kinds` accepts unavailable Helm values, flate warns `OmittedValues`.
+Required Helm values with unknown data produced in the cluster are omitted with `OmittedValues`, with or without `--allow-missing-kinds`.
+Absent objects without a producer and encrypted keys require permission for the matching kind.
+Without that permission, these required inputs fail with guidance to use `--supply`.
+Readable keys from the same object still apply.
+A readable object that lacks the required key fails with or without permission.
 When it accepts missing CRD dependencies, flate warns `MissingCRD`.
 `--allow-missing-kinds` accepts comma-separated or repeated selections.
 Its default is an empty list.

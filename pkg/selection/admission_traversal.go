@@ -187,14 +187,23 @@ func (c *admissionClosure) materializeReferenceInput(
 		return
 	}
 	input := c.objects.ReferenceFacts(ref.NamedResource, c.facts.SelectionIndex(), id)
-	if input.Data != nil {
+	admission := RequiredInput
+	if c.missing != nil {
+		admission = c.missing.Admission(new(ref), new(input))
+	}
+	if admission == AvailableInput {
 		return
 	}
 	requiredContent := !ref.Acquisition && ref.ContentInput()
-	allowedMissing, _, _ := c.missing.Missing(ref, input)
-	required := requiredContent && !allowedMissing && !c.changedInput(id, ref.NamedResource)
+	required := requiredContent && admission == RequiredInput && !c.changedInput(id, ref.NamedResource)
 	materializers(
-		materializerDemand{target: ref.NamedResource, source: c.declarationSource(id), required: required},
+		materializerDemand{
+			target:   ref.NamedResource,
+			key:      ref.Key,
+			use:      ref.Use,
+			source:   c.declarationSource(id),
+			required: required,
+		},
 		id,
 	)
 }

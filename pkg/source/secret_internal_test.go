@@ -33,17 +33,17 @@ func TestSecretLookup_References(t *testing.T) {
 	owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
 	reads.Init(s, owner, nil)
 	secrets := SecretLookup(&reads)
-	assert.Equal(t, secrets("ns", "shared"), first)
-	assert.Equal(t, secrets("ns", "missing"), (*manifest.Secret)(nil))
+	assert.Equal(t, secrets("ns", "shared").Data, manifest.Data(first))
+	assert.Equal(t, secrets("ns", "missing").Data, manifest.Data(nil))
 	current := &manifest.Secret{Name: "shared", Namespace: "ns", StringData: map[string]any{"username": "rotated"}}
 	s.AddObject(current)
 	s.AddObject(&manifest.Secret{Name: "missing", Namespace: "ns"})
-	assert.Equal(t, secrets("ns", "shared"), first)
-	assert.Equal(t, secrets("ns", "missing"), (*manifest.Secret)(nil))
+	assert.Equal(t, secrets("ns", "shared").Data, manifest.Data(first))
+	assert.Equal(t, secrets("ns", "missing").Data, manifest.Data(nil))
 	other := *current
 	other.Namespace = "other"
 	s.AddObject(&other)
-	assert.Equal(t, secrets("other", "shared"), &other)
+	assert.Equal(t, secrets("other", "shared").Data, manifest.Data(&other))
 	username, password, err := BasicAuthFromSecret(
 		secrets("ns", "shared"),
 		manifest.DiagnosticFor(owner, nil),
@@ -60,10 +60,10 @@ func TestSecretLookup_References(t *testing.T) {
 	assert.Equal(t, material.Certificate()[2], ca)
 	var next store.ReadSet
 	next.Init(s, owner, nil)
-	assert.Equal(t, SecretLookup(&next)("ns", "shared"), current)
+	assert.Equal(t, SecretLookup(&next)("ns", "shared").Data, manifest.Data(current))
 	assert.FatalIf(
 		t,
-		SecretLookup(&next)("ns", "missing") == nil,
+		SecretLookup(&next)("ns", "missing").Data == nil,
 		"%s",
 		"next execution retained the preceding absence",
 	)
@@ -161,7 +161,11 @@ func testBasicAuthFromSecretUnavailableMaterialCase1(t *testing.T, tc *struct {
 	assert.FatalIf(t, parseErr != nil, "%s", parseErr)
 
 	sec := obj.(*manifest.Secret)
-	username, password, err := BasicAuthFromSecret(sec, manifest.DiagnosticFor((*owner), nil), "creds")
+	username, password, err := BasicAuthFromSecret(
+		store.ReferenceFacts{Data: sec, Original: sec, Warnings: result1.Warnings},
+		manifest.DiagnosticFor((*owner), nil),
+		"creds",
+	)
 	if tc.username != "" {
 		assert.FatalIf(
 			t,

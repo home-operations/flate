@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -43,7 +44,7 @@ func TestExecution_PreflightInvalidatesSettlementRoutes(t *testing.T) {
 							return e.AwaitData(
 								ctx,
 								DataWait{
-									Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+									Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
 										t.Error("stale pending settlement resumed")
 										return nil
 									},

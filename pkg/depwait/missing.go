@@ -4,7 +4,9 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // MissingPolicy MUST remain immutable after construction.
@@ -17,19 +19,26 @@ func NewMissingPolicy(kinds []string) *MissingPolicy {
 	return &MissingPolicy{kinds: slices.Clone(kinds)}
 }
 
-// Missing MUST keep unreadability independent of absence permission.
-//
-//nolint:gocritic // References and captured facts remain independent value snapshots.
-func (p *MissingPolicy) Missing(ref manifest.Reference, input store.ReferenceFacts) (bool, bool, bool) {
-	data := ref.NamedResource.KindInfo().Data
-	unreadable := data && ref.Use == "substituteFrom" && ref.Kind == manifest.KindSecret
-	unreadable = unreadable && !ref.Optional && (input.Data == nil || !input.Data.HasKeys())
-	producerAbsence := input.Private || input.Generated && !input.Offline
-	allowed := ref.Optional || producerAbsence
-	if p.AllowsKind(ref.Kind) {
-		allowed = allowed || ref.NamedResource.IsCRD() || data && ref.Use == "valuesFrom"
+// Admission MUST project values policy without importing values into selection.
+func (p *MissingPolicy) Admission(ref *manifest.Reference, input *store.ReferenceFacts) selection.InputAdmission {
+	if !ref.NamedResource.KindInfo().Data {
+		if ref.Optional || ref.NamedResource.IsCRD() && p.AllowsKind(ref.Kind) {
+			return selection.OptionalInput
+		}
+		return selection.RequiredInput
 	}
-	return allowed, unreadable, producerAbsence
+	result, err := values.Classify(ref, input)
+	if err == nil {
+		switch result.State() {
+		case values.Readable, values.Encrypted, values.MissingKey:
+			return selection.AvailableInput
+		case values.Absent, values.Produced:
+			if result.AdmitMissing(p) || result.State() == values.Produced {
+				return selection.OptionalInput
+			}
+		}
+	}
+	return selection.RequiredInput
 }
 
 // AllowsKind MUST share the invocation selection with source acquisition.

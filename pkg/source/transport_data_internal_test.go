@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -16,7 +18,13 @@ func TestResolveTransport_Identity(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
 	secret := &manifest.Secret{StringData: map[string]any{"ca.crt": ca, "unused": "first"}}
-	getter := func(_, _ string) *manifest.Secret { return secret }
+	getter := func(_, _ string) store.ReferenceFacts {
+		secretInput := secret
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	}
 	owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
 	inputs := []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "tls"}, Use: TransportCert}}
 	first, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), inputs)
@@ -72,14 +80,16 @@ func TestResolveTransport_ProxySnapshot(t *testing.T) {
 	selected, err = material.ProxyURL(&url.URL{Scheme: "http", Host: "chart.invalid"})
 	assert.NoError(t, err)
 	assert.Equal(t, selected.Host, "first.invalid:8080")
-	getter := func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{
+	getter := func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{
 			StringData: map[string]any{
 				"address":  "http://explicit.invalid",
 				"username": "user",
 				"password": "password",
 			},
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}
 	explicit, err := ResolveTransport(
 		getter,
@@ -109,10 +119,12 @@ func TestResolveTransport_InputOrder(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			getter := func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{
+			getter := func(_, _ string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{
 					StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"},
 				}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}
 			owner := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "ns", Name: "repo"}
 			ref := &manifest.LocalObjectReference{Name: "creds"}
@@ -182,18 +194,21 @@ func testResolveTransportUnavailableMaterialCase1(t *testing.T, tc *struct {
 
 	var lookup [2]string
 	calls := 0
-	getter := func(ns, name string) *manifest.Secret {
+	getter := func(ns, name string) store.ReferenceFacts {
 		lookup = [2]string{ns, name}
 		calls++
 		if tc.absent {
-			return nil
+			return store.ReferenceFacts{}
 		}
-		return &manifest.Secret{
+
+		secretInput := &manifest.Secret{
 			Name:       "metadata-secret",
 			Namespace:  "elsewhere",
 			StringData: tc.data,
 			Data:       tc.encodedData,
 		}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}
 	owner := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -257,4 +272,58 @@ func testResolveTransportUnavailableMaterialCase1Part1(t *testing.T, err error, 
 	assert.FatalIf(t, missing.Owner != (*owner) ||
 		missing.Secret != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}),
 		"credential identities = %+v", missing)
+}
+
+func TestResolveTransport_CapturedSupply(t *testing.T) {
+	t.Parallel()
+	ca := testutil.SelfSignedCA(t)
+	owner := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
+	for _, tc := range []struct {
+		name      string
+		data      map[string]any
+		raw       map[string]any
+		wantCA    string
+		encrypted string
+		input     TransportInput
+		missing   bool
+		malformed bool
+	}{
+		{name: "malformed CA fallback", data: map[string]any{"ca.crt": ca}, raw: map[string]any{"caFile": "!"}, malformed: true, input: TransportInput{Use: TransportSecret, OptionalTLS: true, CAFallback: true}},
+		{name: "auth only", data: map[string]any{"username": "user", "password": "pass"}, input: TransportInput{Use: TransportSecret, OptionalTLS: true, CAFallback: true}},
+		{name: "address only", data: map[string]any{"address": "http://proxy.invalid:8080"}, input: TransportInput{Use: TransportProxy}},
+		{name: "encrypted CA fallback", data: map[string]any{"username": "user"}, encrypted: "caFile", input: TransportInput{Use: TransportSecret, OptionalTLS: true, CAFallback: true}, missing: true},
+		{name: "encrypted pair half", data: map[string]any{"tls.key": "key"}, encrypted: "tls.crt", input: TransportInput{Use: TransportCert}, missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			secret := &manifest.Secret{Name: "input", Namespace: "apps", StringData: tc.data, Data: tc.raw}
+			facts := store.ReferenceFacts{Data: secret, Generated: true}
+			if tc.encrypted != "" {
+				facts.Warnings = []manifest.Warning{
+					{Category: manifest.WarnSOPSUnreadable, Detail: []string{tc.encrypted}},
+				}
+			}
+			getter := func(string, string) store.ReferenceFacts { return facts }
+			input := tc.input
+			input.Reference = &manifest.LocalObjectReference{Name: secret.Name}
+			material, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), []TransportInput{input})
+			if tc.malformed {
+				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
+				return
+			}
+			assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.missing)
+			if tc.missing {
+				assert.Equal(t, strings.Contains(err.Error(), tc.encrypted), true)
+				return
+			}
+			assert.NoError(t, err)
+			if input.Use == TransportProxy {
+				proxy, proxyErr := material.ProxyURL(&url.URL{Scheme: "https", Host: "source.invalid"})
+				assert.NoError(t, proxyErr)
+				assert.Equal(t, proxy.String(), "http://proxy.invalid:8080")
+			} else {
+				assert.Equal(t, material.Certificate(), [3]string{"", "", tc.wantCA})
+			}
+		})
+	}
 }

@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -83,13 +85,16 @@ func testFetcherBearerTokenReuseCase(t *testing.T, authenticated *bool,
 		repo.SecretRef = &manifest.LocalObjectReference{Name: "registry"}
 	}
 	registryHost := mustURL(t, srv.URL).Host
-	inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+	inputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
 		config := fmt.Sprintf(
 			`{"auths":{%q:{"username":"user","password":%q}}}`,
 			registryHost,
 			password.Load().(string),
 		)
-		return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config}}
+
+		secretInput := &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 
 	owner := cachetest.New(t, t.TempDir(), sourcecache.New)

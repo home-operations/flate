@@ -2,8 +2,8 @@
   ✗  current snapshot: HelmRelease  apps/demo  helm template: execution error at (demo/templates/configmap.yaml:4:20): missing required value
 
   ⚠ warnings (3)
-    [UnresolvedSubstitution] orig snapshot: substituteFrom Secret "unreadable" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
-    [UnresolvedSubstitution] current snapshot: substituteFrom Secret "unreadable" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+    [UnresolvedSubstitution] orig snapshot: substituteFrom Secret "unreadable" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: is produced in the cluster with unknown data; supply it with --supply
+    [UnresolvedSubstitution] current snapshot: substituteFrom Secret "unreadable" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: is produced in the cluster with unknown data; supply it with --supply
     [DiffSuppressed] HelmRelease apps/demo: 1 object not rendered on the current side; diff suppressed (helm template: execution error at (demo/templates/configmap.yaml:4:20): missing required value)
 
   ✗ 1 failed

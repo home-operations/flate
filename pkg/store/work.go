@@ -13,7 +13,8 @@ func (s *Store) admissionWorkSize() int {
 	}
 	count := 0
 	for _, sh := range s.shards {
-		for _, cell := range sh.cells {
+		for id := range sh.cells {
+			cell := sh.cells[id]
 			if cell.generation != 0 {
 				count++
 			}
@@ -27,7 +28,8 @@ func (s *Store) appendAdmissionWork(summary manifest.WorkSummary) manifest.WorkS
 		return summary
 	}
 	for _, sh := range s.shards {
-		for id, cell := range sh.cells {
+		for id := range sh.cells {
+			cell := sh.cells[id]
 			if cell.generation == 0 {
 				continue
 			}

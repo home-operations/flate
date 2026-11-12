@@ -3,6 +3,6 @@
          orig snapshot: required by flux-system/consumer
 
   ⚠ warnings (1)
-    [DiffSuppressed] Kustomization flux-system/consumer: 1 object not rendered on the orig side; diff suppressed (dependencies failed: ConfigMap/flux-system/vars: dependency not found)
+    [DiffSuppressed] Kustomization flux-system/consumer: 1 object not rendered on the orig side; diff suppressed (dependencies failed: ConfigMap/flux-system/vars: not found; supply it with --supply)
 
   ✗ 1 failed · 1 blocked

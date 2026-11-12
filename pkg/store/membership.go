@@ -96,7 +96,7 @@ func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValu
 	}
 	available := cell.rooted || !sh.derived && obj != nil
 	if view == nil && bound && available {
-		return Child{Obj: obj, Doc: cell.document, policy: policy}
+		return Child{Obj: obj, Doc: cell.document, Warnings: cell.warnings, policy: policy}
 	}
 	chosen := sh.captureMembersLocked(id, view)
 	if !cell.rooted && (cell.links == nil || !cell.links.retained.Load()) || !bound {
@@ -117,13 +117,14 @@ func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValu
 	if obj == nil && cell.reference != nil {
 		return cell.reference.child()
 	}
-	return Child{Obj: obj, Doc: cell.document, policy: policy}
+	return Child{Obj: obj, Doc: cell.document, Warnings: cell.warnings, policy: policy}
 }
 
 type regionState struct {
 	id                                  manifest.NamedResource
 	before                              manifest.BaseManifest
 	document                            map[string]any
+	warnings                            []manifest.Warning
 	payload                             *SourceArtifact
 	cell                                objectCell
 	live, static, direct, visible, seed bool
@@ -471,6 +472,7 @@ func (s *Store) captureRegionStateLocked(state *regionState, admissions *[shardC
 	sh.captureLocked(id, new(state.cell), &view)
 	before := view.child
 	state.before, state.document, state.payload = before.Obj, before.Doc, view.payload
+	state.warnings = before.Warnings
 	state.owner, state.source = view.owner, view.source
 	state.visible = !state.cell.hidden && (state.cell.static != nil || len(sh.members[id]) > 0)
 	if state.cell.publication == ^uint64(0) || artifact.publication == ^uint64(0) ||
@@ -578,7 +580,7 @@ func (s *Store) advanceRegionObjectLocked(stateValue *regionState, cell *objectC
 		sh.clearFacetsLocked(id)
 	}
 	cell.policy = after.policy
-	sameDeclaration := reconcileEqual(Child{Obj: state.before, Doc: state.document}, after)
+	sameDeclaration := reconcileEqual(Child{Obj: state.before, Doc: state.document, Warnings: state.warnings}, after)
 	sameAuthority := state.owner == view.owner && state.source.equal(&view.source) && sameDeclaration
 	sameVisibility := cell.retired == state.cell.retired && cell.hidden == state.cell.hidden &&
 		cell.policy == state.cell.policy
@@ -667,6 +669,7 @@ func (u *objectUpdate) advanceCollection(generation uint64) {
 }
 
 type capturedChild struct {
+	Warnings    []manifest.Warning
 	Obj         manifest.BaseManifest
 	Doc         map[string]any
 	Productions []manifest.Production
@@ -677,14 +680,14 @@ type capturedChild struct {
 
 func snapshotChild(child *Child) capturedChild {
 	return capturedChild{
-		Obj: child.Obj, Doc: child.Doc, Productions: child.Productions,
+		Obj: child.Obj, Doc: child.Doc, Productions: child.Productions, Warnings: child.Warnings,
 		Origin: child.Origin, Generated: child.Generated, policy: child.policy,
 	}
 }
 
-func (c capturedChild) input() Child {
+func (c *capturedChild) input() Child {
 	return Child{
-		Obj: c.Obj, Doc: c.Doc, Productions: c.Productions,
+		Obj: c.Obj, Doc: c.Doc, Productions: c.Productions, Warnings: c.Warnings,
 		Origin: c.Origin, Generated: c.Generated, policy: c.policy,
 	}
 }

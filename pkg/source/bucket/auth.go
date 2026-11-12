@@ -17,6 +17,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 type bucketAcquisition struct {
@@ -128,26 +129,35 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 		return nil, errors.New("secretRef requires a SecretGetter")
 	}
 	sec := f.secrets(b.Namespace, b.SecretRef.Name)
-	if sec == nil {
-		return nil, source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), b.SecretRef.Name, "not found")
-	}
-	valueResult, err := sec.Value("accesskey")
-	access := valueResult.Value
+	valueResult, err := source.SecretValue(
+		&sec,
+		new(manifest.DiagnosticFor(b.Named(), b)),
+		b.SecretRef.Name,
+		"accesskey",
+	)
+	access := valueResult.Value()
 	if err != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", b.Namespace, b.SecretRef.Name, err)
 	}
-	value, err := sec.Value("secretkey")
+	value, err := source.SecretValue(&sec, new(manifest.DiagnosticFor(b.Named(), b)), b.SecretRef.Name, "secretkey")
 	if err != nil {
 		return nil, fmt.Errorf("secret %s/%s: %w", b.Namespace, b.SecretRef.Name, err)
 	}
-	if access == "" || value.Value == "" {
+	results := [2]values.Result{valueResult, value}
+	for i := range results {
+		result := &results[i]
+		if result.State() != values.Readable {
+			return nil, source.UnavailableSecret(new(manifest.DiagnosticFor(b.Named(), b)), b.SecretRef.Name, result)
+		}
+	}
+	if access == "" || value.Value() == "" {
 		return nil, source.MissingSecretErr(
 			manifest.DiagnosticFor(b.Named(), b),
 			b.SecretRef.Name,
 			"missing accesskey/secretkey",
 		)
 	}
-	return credentials.NewStaticV4(access, value.Value, ""), nil
+	return credentials.NewStaticV4(access, value.Value(), ""), nil
 }
 
 func machineFilesConfigured() (bool, error) {

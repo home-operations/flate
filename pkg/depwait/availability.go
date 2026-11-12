@@ -7,13 +7,15 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // DataDependency MUST retain the authored reference with its captured facts.
 type DataDependency struct {
 	manifest.Reference
 
-	Input store.ReferenceFacts
+	Input  store.ReferenceFacts
+	Result values.Result
 }
 
 type availability struct {
@@ -23,6 +25,7 @@ type availability struct {
 	Blocked []manifest.NamedResource
 	Failed  []manifest.NamedResource
 	Omit    bool
+	Result  values.Result
 }
 
 // Available waits for offline materializers without making their failure a required cause.
@@ -32,46 +35,57 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 	if message := w.Store.Preflight(); message != "" {
 		return availability{Err: manifest.NewError(manifest.ErrInput, nil, message)}
 	}
+	result, err := values.Classify(new(dep.Reference), new(dep.Input))
+	if err != nil {
+		return availability{Err: err}
+	}
+	dep.Result = result
+	readable := result.Disposition(w.Missing) == values.UseData
+	settledData := dep.Input.Accepted || dep.Input.Original != nil
 	var pending []manifest.NamedResource
-	if dep.Input.Data == nil {
+	if !readable && !settledData {
 		pending = w.Store.UnsettledProducers(dep.NamedResource)
 	}
-	allowed, _, _ := w.Missing.Missing(dep.Reference, dep.Input)
+	allowed := dep.Optional || result.AdmitMissing(w.Missing)
 	var blocked []manifest.NamedResource
 	for _, producer := range dep.Input.Materializers {
-		if producer == w.Parent {
+		if producer == w.Parent || settledData || readable && !w.blocksParent(producer) {
 			continue
 		}
 		cl := w.Classify(ctx, manifest.DependencyRef{NamedResource: producer}, level)
-		if cl.Err != nil {
-			return availability{Err: cl.Err}
-		}
-		if cl.Kind == schedule.Blocked ||
-			cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(pending, producer) {
+		unpublished := cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(pending, producer)
+		if cl.Kind == schedule.Blocked && !readable || unpublished {
 			blocked = append(blocked, producer)
 		}
-		if failure, failed := w.materializerFailure(allowed, producer, &cl); failed {
+		if failure, failed := w.materializerFailure(allowed, readable, producer, &cl); failed {
+			failure.Result = result
 			return failure
 		}
 	}
 	if len(blocked) != 0 {
-		return availability{Kind: schedule.Blocked, Blocked: blocked}
+		return availability{Kind: schedule.Blocked, Blocked: blocked, Result: result}
 	}
-	if dep.Input.Data != nil {
-		return availability{Kind: schedule.Terminal}
+	if readable {
+		return availability{Kind: schedule.Terminal, Result: result}
 	}
 	return w.availableAbsent(ctx, &dep, level, allowed)
 }
 
 func (w *Waiter) materializerFailure(
-	allowed bool,
+	allowed, readable bool,
 	producer manifest.NamedResource,
 	cl *Classification,
 ) (availability, bool) {
+	if cl.Err != nil {
+		return availability{Err: cl.Err}, true
+	}
 	if cl.Kind != schedule.DependencyFailed || allowed {
 		return availability{}, false
 	}
 	status, _ := w.Store.GetStatus(producer)
+	if readable && status.Status != store.StatusFailed {
+		return availability{}, false
+	}
 	if status.Status == store.StatusFailed && !w.blocksParent(producer) {
 		return availability{}, false
 	}
@@ -91,46 +105,26 @@ func (w *Waiter) availableAbsent(
 	level manifest.DrainLevel,
 	allowed bool,
 ) availability {
-	_, _, producerAbsence := w.Missing.Missing(dep.Reference, dep.Input)
-	if producerAbsence || len(dep.Input.Materializers) != 0 {
-		if allowed {
-			return availability{Kind: schedule.Terminal, Omit: true}
+	if dep.Result.State() == values.Absent && len(dep.Input.Materializers) == 0 && (!allowed || dep.Input.Offline) {
+		cl := w.Classify(ctx, dep.DependencyRef, level)
+		if cl.Err != nil {
+			return availability{Err: cl.Err}
 		}
-		return availability{
-			Kind: schedule.DependencyFailed,
-			Reason: manifest.DiagnosticReason{
-				Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
-				Message: dependencyNotFound,
-			},
-		}
-	}
-	if allowed && !dep.Input.Offline {
-		return availability{Kind: schedule.Terminal, Omit: true}
-	}
-	cl := w.Classify(ctx, dep.DependencyRef, level)
-	if cl.Err != nil {
-		return availability{Err: cl.Err}
-	}
-	if cl.Kind == schedule.Blocked {
-		return availability{
-			Kind:    cl.Kind,
-			Reason:  cl.DiagnosticReason(dep.NamedResource),
-			Blocked: []manifest.NamedResource{dep.NamedResource},
+		if cl.Kind == schedule.Blocked {
+			return availability{Kind: cl.Kind, Blocked: []manifest.NamedResource{dep.NamedResource}, Result: dep.Result}
 		}
 	}
 	if allowed {
-		return availability{Kind: schedule.Terminal, Omit: true}
+		return availability{Kind: schedule.Terminal, Omit: true, Result: dep.Result}
 	}
-	if cl.Kind == schedule.Terminal {
-		return availability{
-			Kind: schedule.DependencyFailed,
-			Reason: manifest.DiagnosticReason{
-				Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
-				Message: dependencyNotFound,
-			},
-		}
+	return availability{
+		Kind: schedule.DependencyFailed,
+		Reason: manifest.DiagnosticReason{
+			Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)),
+			Message: dep.Result.Failure().Cause().Error(),
+		},
+		Result: dep.Result,
 	}
-	return availability{Kind: cl.Kind, Reason: cl.DiagnosticReason(dep.NamedResource)}
 }
 
 func (w *Waiter) blocksParent(id manifest.NamedResource) bool {

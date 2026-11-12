@@ -315,7 +315,7 @@ func (s *Store) retireBootstrapMembersLocked(proposal *Emission, region *objectR
 			if supported && cell.static != nil && !cell.rooted && !cell.retired {
 				position, _ := region.position(target)
 				if region.states[position].supportsProducer && cell.bound() &&
-					semanticEqual(Child{Obj: cell.static, Doc: cell.document}, entry.child) {
+					reconcileEqual(Child{Obj: cell.static, Doc: cell.document, Warnings: cell.warnings}, entry.child) {
 					if cell.links == nil {
 						cell.links = sh.newHeadLocked(cell.generation)
 					}

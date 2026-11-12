@@ -39,7 +39,7 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 			InputPath: "input.yaml",
 		},
 	)
-	data := NewStoreProvider(st).Data(target)
+	data := NewStoreProvider(st).Lookup(target).Data
 	assert.Diff(t, slices.Sorted(data.Keys()), []string{"EXTRA", "FIRST"})
 	result1, err := data.Value("FIRST")
 	value := result1.Value
@@ -49,7 +49,7 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 	defer firstOutput.Finish()
 	firstOutput.Complete = true
 	st.RecordEmitted(first.Named(), &firstOutput, nil)
-	data = NewStoreProvider(st).Data(target)
+	data = NewStoreProvider(st).Lookup(target).Data
 	assert.Diff(t, slices.Sorted(data.Keys()), []string{"EXTRA", "FIRST", "SECOND"})
 	result2, err := data.Value("SECOND")
 	value = result2.Value
@@ -59,7 +59,7 @@ func TestStoreProvider_OfflineCandidatePrecedenceAndWithdrawal(t *testing.T) {
 	defer secondOutput.Finish()
 	secondOutput.Complete = true
 	st.RecordEmitted(second.Named(), &secondOutput, nil)
-	assert.Diff(t, NewStoreProvider(st).Data(target).Snapshot(), supplied.Snapshot())
+	assert.Diff(t, NewStoreProvider(st).Lookup(target).Data.Snapshot(), supplied.Snapshot())
 
 	assert.FatalIf(
 		t,
@@ -110,7 +110,7 @@ func TestStoreProvider_OfflineSourceAndRealDataInvalidateCapture(t *testing.T) {
 	reads.GetObject(reads.ID())
 	defer reads.Close()
 	provider := NewStoreProvider(&reads)
-	assert.FatalIf(t, provider.Data(target) != offline, "%s", "offline candidate unavailable")
+	assert.FatalIf(t, provider.Lookup(target).Data != offline, "%s", "offline candidate unavailable")
 
 	assert.Equal(t, len(st.Warnings()), 0)
 	reads.Accept(store.AssessmentReconciled)
@@ -129,18 +129,18 @@ func TestStoreProvider_OfflineSourceAndRealDataInvalidateCapture(t *testing.T) {
 	fresh.Init(st, reads.ID(), nil)
 	defer fresh.Close()
 	next := NewStoreProvider(&fresh)
-	assert.FatalIf(t, next.Data(target) != offline, "%s", "fresh lookup lost candidate")
+	assert.FatalIf(t, next.Lookup(target).Data != offline, "%s", "fresh lookup lost candidate")
 
 	actual := manifest.NewConfigMap(target, map[string]any{"VALUE": "real"})
 	st.AddObject(actual)
 	assert.FatalIf(t, fresh.Valid(), "%s", "real data arrival did not invalidate offline capture")
 	assert.FatalIf(
 		t,
-		provider.Data(target) != offline || next.Data(target) != offline,
+		provider.Lookup(target).Data != offline || next.Lookup(target).Data != offline,
 		"%s",
 		"captured lookup changed during expansion",
 	)
-	assert.FatalIf(t, NewStoreProvider(st).Data(target) != actual, "%s", "fresh lookup retained offline value")
+	assert.FatalIf(t, NewStoreProvider(st).Lookup(target).Data != actual, "%s", "fresh lookup retained offline value")
 }
 
 func TestStoreProvider_PendingIndexedKeysAwaitPublication(t *testing.T) {
@@ -195,7 +195,7 @@ func TestStoreProvider_PendingIndexedKeysAwaitPublication(t *testing.T) {
 	var fresh store.ReadSet
 	fresh.Init(st, reads.ID(), nil)
 	defer fresh.Close()
-	data := NewStoreProvider(&fresh).Data(target)
+	data := NewStoreProvider(&fresh).Lookup(target).Data
 	assert.FatalIf(t, data != nil, "%s", "settled declaration fabricated data")
 	assert.FatalIf(t, st.GetObject(target) != nil, "%s", "remote declaration entered inventory")
 }

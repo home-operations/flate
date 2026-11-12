@@ -253,7 +253,7 @@ func testExecutionSyntheticDependencyReasonsCase(
 						Input:     store.ReferenceFacts{Materializers: []manifest.NamedResource{owner.Named()}},
 					},
 				},
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
 					t.Error("failed input resumed")
 					return nil
 				},

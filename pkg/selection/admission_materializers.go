@@ -12,6 +12,7 @@ import (
 
 type materializerDemand struct {
 	target, consumer   manifest.NamedResource
+	key, use           string
 	source             string
 	application        string
 	ordering, required bool
@@ -73,7 +74,19 @@ func (c *admissionClosure) materializers(
 		return true
 	}
 	target := demand.target
-	if demand.application == "" && c.objects.ReferenceFacts(target, c.facts.SelectionIndex(), consumer).Data != nil {
+	ref := manifest.Reference{
+		Kind:      target.Kind,
+		Group:     target.Group,
+		Namespace: target.Namespace,
+		Name:      target.Name,
+		Key:       demand.key,
+		Use:       demand.use,
+	}
+	if demand.application == "" && c.missing != nil &&
+		c.missing.Admission(
+			new(ref),
+			new(c.objects.ReferenceFacts(target, c.facts.SelectionIndex(), consumer)),
+		) == AvailableInput {
 		return false
 	}
 

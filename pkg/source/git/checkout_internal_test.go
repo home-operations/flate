@@ -382,11 +382,13 @@ func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcher
 			t.Context(),
 			f.Fetch,
 			repo,
-			(testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{
+			(testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{StringData: map[string]any{
 					"identity":    *(*testCaseInput.identity),
 					"known_hosts": "host " + string(ssh.MarshalAuthorizedKey(signer.PublicKey())),
 				}}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}}).readSet(repo),
 			&sourcecache.Policy{},
 			nil,

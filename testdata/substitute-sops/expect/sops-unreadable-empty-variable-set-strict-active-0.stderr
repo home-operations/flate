@@ -4,6 +4,6 @@
   ⚠ warnings (2)
     [SOPSUnreadable] Secret apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
       VALUE
-    [UnresolvedSubstitution] substituteFrom Secret "input" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values
+    [UnresolvedSubstitution] substituteFrom Secret "input" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: key "VALUE" is SOPS-encrypted and unreadable; supply it with --supply
 
   ✗ 1 failed

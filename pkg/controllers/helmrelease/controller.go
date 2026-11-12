@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -30,10 +31,7 @@ type execution struct {
 	preparation helm.Preparation
 
 	run  base.Execution
-	data interface {
-		values.Provider
-		Lookup(manifest.NamedResource) store.ReferenceFacts
-	}
+	data values.Provider
 }
 
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
@@ -227,11 +225,11 @@ func (c *Controller) PreviousRender(
 	if err != nil {
 		return history
 	}
-	var omittedRefs []manifest.NamedResource
+	var omittedRefs []depwait.DataDependency
 	if err = ex.run.AwaitData(ctx, base.DataWait{
 		Inputs: inputs,
-		Resume: func(_ context.Context, _ manifest.DrainLevel, omitted []manifest.NamedResource) error {
-			omittedRefs = requiredValuesOmissions(hr, omitted)
+		Resume: func(_ context.Context, _ manifest.DrainLevel, omitted []depwait.DataDependency) error {
+			omittedRefs = requiredValuesOmissions(omitted)
 			return nil
 		},
 	}, manifest.DrainNone); err != nil {
@@ -245,7 +243,7 @@ func (c *Controller) PreviousRender(
 	request := helm.RenderOptions{
 		Work: reads.Work().Scope().RenderWork(), Options: c.Options,
 		Sources: helm.NewSources(reads), PreparationTasks: c.Tasks,
-		Omitted: omittedRefs,
+		Omitted: omissionIDs(omittedRefs),
 	}
 	ex.prepareRequest(hr, &request)
 	records, found := c.Helm.PreviousRender(ctx, hr, hr.Values, request)

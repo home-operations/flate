@@ -3,6 +3,7 @@ package helmrelease
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -27,12 +28,18 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Without --allow-missing-kinds Secret, a valuesFrom Secret whose only declaration
-// is an in-repo ExternalSecret (a producer) is omitted so the render proceeds —
-// the producer is positive evidence the Secret materializes live. This is the
-// flag-decoupled path: producer-backed refs are dropped regardless of the flag.
-func TestController_ProducerBackedValuesFromOmittedWithoutFlag(t *testing.T) {
+func TestController_ProducerBackedValuesFrom(t *testing.T) {
 	t.Parallel()
+	for _, allowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allowed=%t", allowed), func(t *testing.T) {
+			t.Parallel()
+			testControllerProducerBackedValuesFrom(t, allowed)
+		})
+	}
+}
+
+func testControllerProducerBackedValuesFrom(t *testing.T, allowed bool) {
+	t.Helper()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "mychart/values.yaml", "required: valid\n")
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
@@ -46,7 +53,11 @@ data:
   fallback: {{ .Values.missing | default "fallback" | quote }}
 `)
 
-	c, st := newTestControllerWithOptions(t, &base.Options{})
+	var kinds []string
+	if allowed {
+		kinds = []string{manifest.KindSecret}
+	}
+	c, st := newTestControllerWithOptions(t, &base.Options{Missing: depwait.NewMissingPolicy(kinds)})
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -96,6 +107,7 @@ data:
 	}
 	st.AddObject(hr)
 
+	st.UpdateStatus(testutil.KustomizationID("default", "producer-root"), store.StatusInfo{Status: store.StatusReady})
 	info := reconcileFixture(t, c, hr.Named())
 	assert.FatalIf(
 		t,
@@ -103,6 +115,10 @@ data:
 		"status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)",
 		info,
 	)
+	assert.FatalIf(t, !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+		return w.Resource == hr.Named() && w.Category == manifest.WarnOmittedValues &&
+			strings.Contains(w.Message, "Secret/default/app-values")
+	}), "missing omission warning: %+v", st.Warnings())
 	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(t, !ok, "%v", "HelmRelease artifact was not written")
 	{
@@ -132,9 +148,6 @@ data:
 	}
 }
 
-// Fail-loud safety: without the flag, a missing valuesFrom Secret that has NO
-// declared producer is kept, waited on, and ultimately fails — producer
-// inference must not silently swallow a genuine typo / misconfiguration.
 func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

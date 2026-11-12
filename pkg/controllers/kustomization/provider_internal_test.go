@@ -91,9 +91,9 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			defer execution.run.Close()
 			provider := values.NewStoreProvider(&execution.run.Reads)
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
-			assert.FatalIf(t, provider.Data(external.Named()) != tc.late.(manifest.Data) ||
-				provider.Data(other.Named()) != other.(manifest.Data) ||
-				provider.Data(missing) != nil, "%v", "provider lost repository precedence or exact identity")
+			assert.FatalIf(t, provider.Lookup(external.Named()).Data != tc.late.(manifest.Data) ||
+				provider.Lookup(other.Named()).Data != other.(manifest.Data) ||
+				provider.Lookup(missing).Data != nil, "%v", "provider lost repository precedence or exact identity")
 			assert.FatalIf(
 				t,
 				!provider.Lookup(external.Named()).Data.HasKeys(),
@@ -103,7 +103,7 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 
 			{
 				valueResult, err := values.NewStoreProvider(st).
-					Data(external.Named()).
+					Lookup(external.Named()).Data.
 					Value("VALUE")
 				got := valueResult.Value
 				assert.FatalIf(t, err != nil ||
@@ -135,9 +135,9 @@ func TestSubstitutionProvider_SuppliedLookupAllocations(t *testing.T) {
 			defer execution.run.Close()
 			provider := execution.data
 			id := source.Named()
-			assert.FatalIf(t, provider.Data(id) == nil, "%v", "provider lost supplied identity")
+			assert.FatalIf(t, provider.Lookup(id).Data == nil, "%v", "provider lost supplied identity")
 			{
-				allocs := testing.AllocsPerRun(100, func() { provider.Data(id) })
+				allocs := testing.AllocsPerRun(100, func() { provider.Lookup(id) })
 				assert.FatalIf(t, allocs != 0, "supplied lookup allocated %g times, want 0", allocs)
 			}
 		})

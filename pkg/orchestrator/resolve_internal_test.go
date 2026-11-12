@@ -676,7 +676,15 @@ func (f *r4Fixture) assertOutcome(t *testing.T, required bool, result string) {
 	if required {
 		missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-vars"}
 		assert.Equal(t, info.Status, store.StatusFailed)
-		assert.Diff(t, info.BlockedBy(), []manifest.NamedResource{missing})
+		blocked := []manifest.NamedResource{missing}
+		if f.reader.Kind == manifest.KindHelmRelease {
+			blocked = nil
+			assert.Equal(
+				t, info.Message,
+				"valuesFrom ConfigMap flux-system/cluster-vars not found; supply it with --supply",
+			)
+		}
+		assert.Diff(t, info.BlockedBy(), blocked)
 	} else {
 		assert.Equal(t, info.Status, store.StatusReady)
 		output, _ := f.o.store.Get[*manifest.ConfigMap](

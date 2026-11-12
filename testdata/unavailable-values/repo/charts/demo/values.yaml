@@ -1,0 +1,4 @@
+absent: fallback
+encrypted: fallback
+plain: fallback
+empty: chart-empty

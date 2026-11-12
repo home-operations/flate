@@ -127,7 +127,7 @@ func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.Drai
 	if level < manifest.DrainCascade {
 		return Classification{Kind: schedule.Blocked}
 	}
-	if allowed, _, _ := w.Missing.Missing(manifest.Reference{DependencyRef: *dep}, store.ReferenceFacts{}); allowed {
+	if dep.NamedResource.IsCRD() && w.Missing.AllowsKind(dep.Kind) {
 		return w.artifactReady(dep, level)
 	}
 	return Classification{Kind: schedule.DependencyFailed, Message: dependencyNotFound}

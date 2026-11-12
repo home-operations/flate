@@ -40,7 +40,7 @@ type Execution struct {
 	pending               error
 	resume                func(context.Context, manifest.DrainLevel) error
 	initial               store.StatusInfo
-	unresolved            []manifest.NamedResource
+	unresolved            []depwait.DataDependency
 	recovering            bool
 	generated             []store.Child
 	prepared              bool
@@ -678,152 +678,6 @@ func (e *Execution) admitRender() error {
 	return nil
 }
 
-// DataWait resumes a captured execution after its values inputs settle.
-type DataWait struct {
-	Inputs []depwait.DataDependency
-	// Resume receives sorted, unique omissions, including optional inputs.
-	Resume func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error
-}
-
-// AwaitData retains availability separately from required authored readiness gates.
-func (e *Execution) AwaitData(ctx context.Context, wait DataWait, level manifest.DrainLevel) error {
-	{
-		inputValues := wait.Inputs
-		for inputIndex := range inputValues {
-			input := inputValues[inputIndex]
-
-			if !input.Optional && !input.Input.Private {
-				for _, producer := range input.Input.Materializers {
-					e.Reads.RequireData(producer)
-				}
-			}
-		}
-	}
-	return (&pendingDataError{execution: e, wait: wait}).Settle(ctx, level)
-}
-
-type pendingDataError struct {
-	execution *Execution
-	wait      DataWait
-	blocked   []manifest.NamedResource
-}
-
-func (p *pendingDataError) Error() string { return "waiting for values inputs" }
-func (p *pendingDataError) Unwrap() error { return &depwait.ErrBlocked{Deps: p.blocked} }
-func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel) error {
-	e := p.execution
-	gateErr := e.classify(ctx, level)
-
-	w := e.dependencyWaiter()
-	var omitted []manifest.NamedResource
-	failed, _ := errors.AsType[*manifest.DependencyFailedError](gateErr)
-	p.blocked = p.blocked[:0]
-	if blocked, ok := errors.AsType[*depwait.ErrBlocked](gateErr); ok {
-		p.blocked = append(p.blocked, blocked.Deps...)
-	}
-	{
-		inputValues2 := p.wait.Inputs
-		for inputIndex2 := range inputValues2 {
-			input := inputValues2[inputIndex2]
-
-			result := w.Available(ctx, input, level)
-			if result.Err != nil {
-				return result.Err
-			}
-			if !input.Optional && !input.Input.Private && result.Kind != schedule.Blocked && !result.Omit {
-				e.Reads.RequireData(input.NamedResource)
-			}
-			omit := result.Omit
-			switch result.Kind {
-			case schedule.Blocked:
-				p.blocked = append(p.blocked, result.Blocked...)
-			case schedule.DependencyFailed:
-				failed = p.addFailure(failed, result.Failed, &result.Reason, &input)
-			case schedule.Terminal:
-				if omit {
-					omitted = append(omitted, input.NamedResource)
-				}
-			default:
-				if omit {
-					omitted = append(omitted, input.NamedResource)
-				}
-			}
-		}
-	}
-	if len(p.blocked) != 0 {
-		p.blocked = compactDataIDs(p.blocked)
-		return p
-	}
-	if failed != nil {
-		failed.Failed = compactDataIDs(failed.Failed)
-		return failed
-	}
-	if gateErr != nil {
-		return gateErr
-	}
-	for _, ref := range e.unresolved {
-		e.Reads.AddWarning(
-			manifest.Warning{
-				Category: manifest.WarnUnresolvedSubstitution,
-				Message: fmt.Sprintf(
-					"substituteFrom Secret %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values",
-					ref.Name,
-				),
-			},
-		)
-	}
-	return p.wait.Resume(ctx, level, compactDataIDs(omitted))
-}
-
-func compactDataIDs(ids []manifest.NamedResource) []manifest.NamedResource {
-	slices.SortFunc(ids, manifest.NamedResource.Compare)
-	return slices.Compact(ids)
-}
-
-func (e *Execution) readDataInput(
-	ctx context.Context,
-	id manifest.NamedResource,
-	provider dataLookup,
-) (store.ReferenceFacts, error) {
-	if !e.probe && e.selection != nil {
-		var proof store.ReadSet
-		proof.Init(e.Store, e.Reads.ID(), nil)
-		proof.SetWork(e.Reads.Work())
-		defer proof.Retire()
-		proof.RequireData(id)
-		if _, err := e.KeepEmitted(
-			ctx,
-			manifest.NamedResource{},
-			selection.PrepareRequest{Generation: nil, Reads: &proof, Preparation: &e.AdmissionPreparation},
-		); err != nil {
-			return store.ReferenceFacts{}, err
-		}
-	}
-	if !e.probe && e.existence != nil {
-		if _, err := e.existence.Promote(
-			ctx,
-			selection.PrepareRequest{Reads: &e.Reads, Preparation: &e.AdmissionPreparation},
-			id,
-		); err != nil {
-			return store.ReferenceFacts{}, err
-		}
-	}
-	input := provider.Lookup(id)
-	if !e.probe || e.Reads.GetDeclaration(id) != nil {
-		return input, nil
-	}
-	if e.existence != nil && e.existence.IsFileIndexed(id) {
-		return store.ReferenceFacts{}, errIncompleteHistory
-	}
-	for i := range input.Productions {
-		production := &input.Productions[i]
-		if production.Declaration == (manifest.NamedResource{}) && production.Path != "" {
-			return store.ReferenceFacts{}, errIncompleteHistory
-		}
-	}
-	return input, nil
-}
-
 func (e *Execution) dispatchMissing(ctx context.Context, level manifest.DrainLevel) {
 	id := e.Reads.ID()
 	e.resume = e.requireDeclaration
@@ -847,28 +701,4 @@ func (e *Execution) dispatchMissing(ctx context.Context, level manifest.DrainLev
 		}
 		e.Reads.Accept(e.Disposition)
 	}
-}
-
-func (p *pendingDataError) addFailure(
-	failed *manifest.DependencyFailedError,
-	causes []manifest.NamedResource,
-	reason *manifest.DiagnosticReason,
-	input *depwait.DataDependency,
-) *manifest.DependencyFailedError {
-	e := p.execution
-	if failed == nil {
-		failed = &manifest.DependencyFailedError{
-			Parent:  e.Reads.ID(),
-			Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
-			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
-		}
-	}
-	if len(causes) == 0 {
-		causes = []manifest.NamedResource{input.NamedResource}
-	}
-	for _, cause := range causes {
-		failed.Failed = append(failed.Failed, cause)
-		failed.Reasons[cause] = *reason
-	}
-	return failed
 }

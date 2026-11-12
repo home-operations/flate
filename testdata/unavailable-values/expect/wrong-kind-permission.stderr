@@ -1,0 +1,8 @@
+
+  ✗  HelmRelease  apps/demo  valuesFrom ConfigMap apps/input key "encrypted" is SOPS-encrypted and unreadable; supply it with --supply
+
+  ⚠ warnings (1)
+    [SOPSUnreadable] ConfigMap apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      encrypted
+
+  ✗ 1 failed

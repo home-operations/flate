@@ -7,7 +7,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -64,7 +63,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	second.Init(s, consumer.Named(), nil)
 	second.GetObject(consumer.Named())
 	defer second.Close()
-	resolved := NewStoreProvider(&second).Data(supplied.Named())
+	resolved := NewStoreProvider(&second).Lookup(supplied.Named()).Data
 	assert.FatalIf(t, resolved != repository, "%s", "accepted repository data did not supersede supply")
 	second.Accept(store.AssessmentReconciled)
 	assert.Diff(
@@ -82,7 +81,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	var third store.ReadSet
 	third.Init(s, consumer.Named(), nil)
 	defer third.Close()
-	restored := NewStoreProvider(&third).Data(supplied.Named())
+	restored := NewStoreProvider(&third).Lookup(supplied.Named()).Data
 	valueResult2, valueResultErr := restored.Value("VALUE")
 	value, err = valueResult2.Value, valueResultErr
 	assert.NoError(t, err)
@@ -126,7 +125,7 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 			Substitute: map[string]string{"VALUE": "inline"},
 		},
 	}
-	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, provider, depwait.NewMissingPolicy(nil)))
+	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil)))
 	assert.Equal(t, ks.PostBuild.Substitute["VALUE"], "inline")
 	hr := &manifest.HelmRelease{
 		Name:      "consumer",

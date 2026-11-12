@@ -7,7 +7,6 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
-	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -214,7 +213,7 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 	cm := &manifest.ConfigMap{Name: "cluster-settings", Namespace: "flux-system", Data: data}
 	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 
-	missing := depwait.NewMissingPolicy(nil)
+	missing := testPermissions(nil)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
@@ -246,7 +245,7 @@ spec:
 	provider := &sliceProvider{
 		ConfigMaps: []*manifest.ConfigMap{{Name: "cluster-settings", Namespace: "flux-system", Data: data}},
 	}
-	missing := depwait.NewMissingPolicy(nil)
+	missing := testPermissions(nil)
 	b.ReportAllocs()
 	for b.Loop() {
 		docs, err := manifest.DecodeDocs(strings.NewReader(input), manifest.IncidentalDocuments)
@@ -289,7 +288,7 @@ func BenchmarkStoreProvider_Lookup(b *testing.B) {
 			i := 0
 			b.ReportAllocs()
 			for b.Loop() {
-				if provider.Data(ids[i]) != objects[i] {
+				if provider.Lookup(ids[i]).Data != objects[i] {
 					b.Fatal("lookup returned another input")
 				}
 				i++

@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -143,7 +144,7 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 		ctx,
 		base.DataWait{
 			Inputs: inputs,
-			Resume: func(ctx context.Context, _ manifest.DrainLevel, _ []manifest.NamedResource) error {
+			Resume: func(ctx context.Context, _ manifest.DrainLevel, _ []depwait.DataDependency) error {
 				return c.render(ctx, ks, source, applyIgnore)
 			},
 		},
@@ -267,7 +268,7 @@ func (c *Controller) PreviousRender(
 	}
 	if err = ex.run.AwaitData(ctx, base.DataWait{
 		Inputs: inputs,
-		Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil },
+		Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return nil },
 	}, manifest.DrainNone); err != nil {
 		return history
 	}

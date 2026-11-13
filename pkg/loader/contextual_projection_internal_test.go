@@ -82,6 +82,53 @@ func TestProjectOccurrence_StructuralIdentity(t *testing.T) {
 			assert.Equal(t, unpredicted.facts.policy.Namespace, "")
 		})
 	}
+	t.Run("source-qualified", func(t *testing.T) {
+		t.Parallel()
+		l := New(store.New())
+		l.documents.compact = true
+		l.scopes = &scopeConstruction{}
+		child := &manifest.Kustomization{Name: "child", Path: "./work"}
+		original := compactOccurrence(child, manifest.TemplateProjection{})
+		original.Declaration = occurrenceID{Source: "mounted", File: "shared/child.yaml"}
+		source := manifest.BootstrapSourceID
+		otherSource := source
+		otherSource.Name = "other"
+		visits := []graphVisit{
+			{file: "shared/child.yaml", owner: testutil.KustomizationID("red", "parent"), source: source},
+			{file: "shared/child.yaml", owner: testutil.KustomizationID("blue", "other"), source: source},
+			{file: "shared/child.yaml", owner: testutil.KustomizationID("red", "parent"), source: otherSource},
+		}
+		resolution := substitutionResolution{loader: l}
+		for i := range visits {
+			visits[i].namespace = visits[i].owner.Namespace
+			assert.NoError(
+				t,
+				resolution.resolveContextualObject(
+					t.Context(),
+					&parsedObject{fact: &original, version: "v1"},
+					&visits[i],
+				),
+			)
+		}
+		assert.Equal(t, len(resolution.contextual), len(visits))
+		l.scopes.contextual = resolution.contextual
+		for i := range visits {
+			visit := &visits[i]
+			key := occurrenceContext{original.Declaration, visit.owner, visit.source, visit.graphContext, visit.file}
+			projected, known := l.scopes.contextual[key]
+			assert.Equal(t, known, true)
+			assert.Equal(t, projected.Identity, testutil.KustomizationID(visit.namespace, "child"))
+			assert.Equal(t, projected.Authored, child.Named())
+			assert.Equal(t, projected.Declaration, original.Declaration)
+			again, err := l.projectOccurrence(&original, visit, "v1")
+			assert.NoError(t, err)
+			assert.Equal(t, again.Identity, projected.Identity)
+			assert.Equal(t, again.facts.structural == projected.facts.structural, true)
+		}
+		assert.Equal(t, child.Namespace, "")
+		assert.Equal(t, child.Path, "./work")
+		assert.Equal(t, original.facts.structural.Namespace, "")
+	})
 }
 
 func TestSubstitutionResolution_RestoredCoverage(t *testing.T) {

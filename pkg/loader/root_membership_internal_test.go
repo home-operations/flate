@@ -151,8 +151,10 @@ func TestAdmission_SourceQualifiedMembership(t *testing.T) {
 				}
 				l.Store.SetArtifact(source.Named(), &other)
 			}
+			otherOwner := owner.Clone()
+			otherOwner.Name, otherOwner.Namespace = "second", "other"
 			_, _, next := l.Store.GetEmission(factory.Named())
-			next.Children, next.Complete = []store.Child{{Obj: owner}}, true
+			next.Children, next.Complete = []store.Child{{Obj: owner}, {Obj: otherOwner}}, true
 			l.Store.RecordEmitted(factory.Named(), &next, nil)
 			next.Finish()
 			proposal, err := prepareSelection(
@@ -164,6 +166,7 @@ func TestAdmission_SourceQualifiedMembership(t *testing.T) {
 			assert.NoError(t, err)
 			owned := mode == "local" || mode == "local alias"
 			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), owned)
+			assert.Equal(t, slices.Contains(proposal.Needed, otherOwner.Named()), owned)
 			assert.Equal(
 				t,
 				slices.ContainsFunc(proposal.Objects, func(c store.Child) bool { return c.Obj.Named() == child }),

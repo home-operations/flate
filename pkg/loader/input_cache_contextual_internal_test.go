@@ -3,6 +3,7 @@ package loader
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/selection"
@@ -111,6 +113,175 @@ spec: {type: Static}
 				proposal.Retire()
 			}
 			assert.Diff(t, selected[1], selected[0])
+		})
+	}
+}
+
+//nolint:gocognit // Accepted external frames MUST preserve both diff sides and remove stale declarations during reuse.
+func TestInputCache_ExternalFileDeclarationReplay(t *testing.T) {
+	t.Parallel()
+	for _, transition := range []string{"addition", "removal", "replacement"} {
+		t.Run(transition, func(t *testing.T) {
+			t.Parallel()
+			for _, direction := range []string{"forward", "reverse"} {
+				t.Run(direction, func(t *testing.T) {
+					t.Parallel()
+					root, cacheDir := t.TempDir(), t.TempDir()
+					owner, err := cache.New(t.Context(), cacheDir)
+					assert.NoError(t, err)
+					t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+					if !owner.CanPersistRenders() {
+						t.Fatal("input cache witness requires a clean stamped test binary")
+					}
+					hr := testutil.HelmReleaseID("default", "demo")
+					parent := testutil.KustomizationID("flux-system", "parent")
+					files := externalFileHelmReleaseFiles(t)
+					load := func(files fstest.MapFS, cached bool, accepted bool) *Loader {
+						view, _, viewErr := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+							gittree.ViewOptions{Mode: gittree.Direct, Current: files})
+						assert.NoError(t, viewErr)
+						st := store.New()
+						st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
+						l := New(st)
+						t.Cleanup(l.Close)
+						l.SourceRoot = root
+						if cached {
+							l.Options.Cache = owner
+						}
+						configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{hr}, Changed: true})
+						l.Options.Changes = change.NewSet([]string{"layer/common/child.yaml"})
+						l.documents.compact = true
+						l.mountSources()
+						assert.NoError(t, l.restoreCachedInputs(t.Context()))
+						if accepted {
+							file := filepath.Join(root, "layer", "common", "child.yaml")
+							doc, known := l.documents.cache[file]
+							assert.FatalIf(
+								t,
+								!known || doc.deferred == nil,
+								"external declaration cache frame was not accepted",
+							)
+							assert.Equal(t, len(doc.objects), 0)
+							objects, censusErr := l.documents.censusFile(t.Context(), file, manifest.ParseDocOptions{})
+							assert.NoError(t, censusErr)
+							assert.Equal(t, len(objects), 1)
+							assert.Equal(t, objects[0].fact.Authored, testutil.KustomizationID("flux-system", "child"))
+							assert.Equal(t, objects[0].fact.facts.path, "./payload/one")
+							t.Log("accepted external declaration frame before authored resolution")
+						}
+						_, loadErr := l.Load(t.Context(), filepath.Join(root, "site-a"), manifest.NamedResource{}, nil)
+						assert.NoError(t, loadErr)
+						assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+						return l
+					}
+					type closure struct {
+						Identity, Authored manifest.NamedResource
+						Path               string
+						ChildProductions   []manifest.Production
+						PayloadProductions []manifest.Production
+						Selected           []manifest.NamedResource
+					}
+					snapshot := func(l *Loader, name string) closure {
+						var result closure
+						for _, candidate := range []string{"child", "other"} {
+							id := testutil.KustomizationID("flux-system", candidate)
+							_, known := l.Index.Lookup(id)
+							assert.Equal(t, known, candidate == name)
+							assert.Equal(t, l.Store.GetObject(id) == nil, true)
+						}
+						payload, known := l.Index.Lookup(hr)
+						assert.Equal(t, known, name != "")
+						if name != "" {
+							id := testutil.KustomizationID("flux-system", name)
+							child, found := l.Occurrence(id)
+							assert.FatalIf(t, !found, "child occurrence is absent: %s", id)
+							assert.Equal(t, child.Identity, id)
+							assert.Equal(t, child.Authored, id)
+							assert.Equal(t, child.Path, "./payload/one")
+							assert.Equal(t, child.Declaration.File, "layer/common/child.yaml")
+							record, _ := l.Index.Lookup(id)
+							assert.Equal(t, record.Parent, parent)
+							assert.Equal(t, slices.Contains(testutil.Owners(record.Productions), parent), true)
+							assert.Equal(t, slices.Contains(l.Index.Claims["payload/one/"], id), true)
+							assert.Equal(t, slices.Contains(testutil.Owners(payload.Productions), id), true)
+							result.Identity, result.Authored, result.Path = child.Identity, child.Authored, child.Path
+							result.ChildProductions = slices.Clone(record.Productions)
+							result.PayloadProductions = slices.Clone(payload.Productions)
+						}
+						proposal, prepareErr := prepareSelection(
+							t.Context(),
+							t,
+							l,
+							selection.PrepareRequest{Invocation: true},
+						)
+						assert.NoError(t, prepareErr)
+						result.Selected = slices.Clone(proposal.Selected)
+						assert.Equal(t, slices.Contains(result.Selected, hr), name != "")
+						proposal.Retire()
+						return result
+					}
+					first := load(files, true, false)
+					original := snapshot(first, "child")
+					assert.NoError(t, first.PersistInputs(t.Context()))
+					first.Close()
+					assert.NoError(t, owner.Close())
+					owner, err = cache.New(t.Context(), cacheDir)
+					assert.NoError(t, err)
+					assert.Equal(t, owner.CanPersistRenders(), true)
+					restored := load(files, true, true)
+					assert.Diff(t, snapshot(restored, "child"), original)
+					before, after := externalFileHelmReleaseFiles(t), externalFileHelmReleaseFiles(t)
+					beforeName, afterName := "child", "child"
+					const declaration = "layer/common/child.yaml"
+					absent := []byte(
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: marker, namespace: flux-system}\n",
+					)
+					switch transition {
+					case "addition":
+						before[declaration] = &fstest.MapFile{Data: absent}
+						beforeName = ""
+					case "removal":
+						after[declaration] = &fstest.MapFile{Data: absent}
+						afterName = ""
+					case "replacement":
+						data := strings.Replace(string(after[declaration].Data), "name: child", "name: other", 1)
+						assert.Equal(t, len(data), len(before[declaration].Data))
+						after[declaration] = &fstest.MapFile{Data: []byte(data)}
+						afterName = "other"
+					}
+					if direction == "reverse" {
+						before, after = after, before
+						beforeName, afterName = afterName, beforeName
+					}
+					for _, side := range []struct {
+						files fstest.MapFS
+						name  string
+					}{{before, beforeName}, {after, afterName}} {
+						view, _, viewErr := gittree.New(t.Context(), nil, plumbing.ZeroHash,
+							gittree.ViewOptions{Mode: gittree.Direct, Current: side.files})
+						assert.NoError(t, viewErr)
+						restored.Store.SetArtifact(
+							manifest.BootstrapSourceID,
+							&store.SourceArtifact{LocalPath: root, FS: view},
+						)
+						_, loadErr := restored.Load(
+							t.Context(),
+							filepath.Join(root, "site-a"),
+							manifest.NamedResource{},
+							nil,
+						)
+						assert.NoError(t, loadErr)
+						assert.NoError(t, restored.FinalizeIndex(t.Context(), root, false))
+						fresh := load(side.files, false, false)
+						assert.Diff(t, snapshot(restored, side.name), snapshot(fresh, side.name))
+						construction := restored.construction
+						assert.NoError(t, restored.FinalizeIndex(t.Context(), root, false))
+						assert.Equal(t, restored.construction, construction)
+					}
+					assert.Equal(t, original.Identity, testutil.KustomizationID("flux-system", "child"))
+					assert.Equal(t, original.Path, "./payload/one")
+				})
+			}
 		})
 	}
 }

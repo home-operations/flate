@@ -882,6 +882,38 @@ The CLI corpus claims only the single-tree forms accepted by `cli.Run`.
 The private `decodeGetDocuments` helper remains for changed-only, partial-failure, empty-kind, and cluster tests.
 `writeGetRelease`, `writeFixture`, and the old harness entry points retain other consumers until their owning units migrate.
 
+### External file HelmRelease declarations
+
+`external-file-helmrelease` preserves issue #1539 and the supplied local chart.
+The parent layer references `../common/child.yaml`, which stays within the source repository.
+The child exposes `payload/one/hr.yaml`, with current value `"2"` and baseline value `"1"`.
+
+The six cases cover `test hr`, the named build, and `diff hr` with cold and warm caches.
+Cold cases invoke the affected command first and reset their isolated caches on each replay.
+Warm cases explicitly reuse `@@cache@@` after `test all` and `diff all` prime it.
+Each warm case declares two consecutive affected invocations without another priming command.
+Every warm reset flag is false, and its replay policy is `reuse`.
+The harness compares both complete streams and exit codes on two replays at concurrency 2.
+Only the final test duration uses the documented `<DUR>` replacement.
+
+Expected manifests follow the local chart and the Flux Helm metadata labels.
+Expected test rows and human diffs follow the existing CLI output format.
+
+`external-file-helmrelease/test-cold`: Test the HelmRelease before any broad render with an empty cache.
+
+`external-file-helmrelease/build-cold`: Build the named HelmRelease first with an empty cache.
+
+`external-file-helmrelease/diff-cold`: Compare the HelmRelease first with an empty cache.
+
+`external-file-helmrelease/test-warm`: Prime the cache, then test the HelmRelease twice consecutively.
+
+`external-file-helmrelease/build-warm`: Prime the cache, then build the named HelmRelease twice consecutively.
+
+`external-file-helmrelease/diff-warm`: Prime the cache, then compare the HelmRelease twice consecutively.
+
+The loader tests also use the authored current tree for structural closure and accepted input-cache replay.
+The persistence proof requires a clean test binary with `-buildvcs=true`.
+
 ## Scope migration
 
 `unclaimed-change/unclaimed-path-without-history` retains the authored fixture from flate revision `cf0821e638c7bcb146d6e5b784bef2509c1a1331`.
@@ -1627,7 +1659,8 @@ Each scenario includes a control with the transformation in the raw declaration.
 The tests compare complete stdout, stderr, and exit codes against authored expectations.
 They compare the witness and control, then repeat both sequences with empty caches.
 
-`rendered-declaration-helm` retains the #1539 local chart witness against main after #1542. It covers HelmRelease and full commands across the parent resource boundary.
+`rendered-declaration-helm` retains the #1539 local chart witness across the parent resource boundary.
+The narrow commands require one successful HelmRelease, its rendered ConfigMap, and the value change from `1` to `2`.
 
 `rendered-declaration-helm/witness` cover the commands described above.
 

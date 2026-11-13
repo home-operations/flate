@@ -13,9 +13,9 @@ Available Commands:
   test        Report reconcile status (defaults to all)
 
 Flags:
-  -h, --help               help for flate
-      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
-      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]
-  -v, --version            version for flate
+  -h, --help[=true|false]          help for flate
+      --log-level string           Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress[=true|false]   Hide live progress on stderr [env: FLATE_NO_PROGRESS]
+  -v, --version[=true|false]       version for flate
 
 Use "flate [command] --help" for more information about a command.

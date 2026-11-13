@@ -5,8 +5,8 @@ Usage:
   flate help [command] [flags]
 
 Flags:
-  -h, --help   help for help
+  -h, --help[=true|false]   help for help
 
 Global Flags:
-      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
-      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]
+      --log-level string           Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress[=true|false]   Hide live progress on stderr [env: FLATE_NO_PROGRESS]

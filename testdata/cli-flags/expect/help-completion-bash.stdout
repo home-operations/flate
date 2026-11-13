@@ -23,9 +23,9 @@ Usage:
   flate completion bash
 
 Flags:
-  -h, --help              help for bash
-      --no-descriptions   disable completion descriptions
+  -h, --help[=true|false]              help for bash
+      --no-descriptions[=true|false]   disable completion descriptions
 
 Global Flags:
-      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
-      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]
+      --log-level string           Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress[=true|false]   Hide live progress on stderr [env: FLATE_NO_PROGRESS]

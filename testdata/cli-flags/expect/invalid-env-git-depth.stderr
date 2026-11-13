@@ -1,1 +1,1 @@
-flate error: invalid FLATE_GIT_DEPTH "bad-value": strconv.ParseInt: parsing "bad-value": invalid syntax
+flate error: invalid FLATE_GIT_DEPTH "bad-value": must be an integer

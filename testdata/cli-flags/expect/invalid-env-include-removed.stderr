@@ -1,1 +1,1 @@
-flate error: invalid FLATE_INCLUDE_REMOVED "bad-value": strconv.ParseBool: parsing "bad-value": invalid syntax
+flate error: invalid FLATE_INCLUDE_REMOVED "bad-value": must be true or false

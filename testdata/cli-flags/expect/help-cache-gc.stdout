@@ -4,11 +4,11 @@ Usage:
   flate cache gc [flags]
 
 Flags:
-      --cache-dir string   Prune this cache directory (required) [env: FLATE_CACHE_DIR]
-      --dry-run            List cache entries to prune without deleting them [env: FLATE_DRY_RUN]
-  -h, --help               help for gc
-      --max-age duration   Prune cache entries unused for this duration (0 disables) [env: FLATE_MAX_AGE] (default 720h0m0s)
+      --cache-dir string       Prune this cache directory (required) [env: FLATE_CACHE_DIR]
+      --dry-run[=true|false]   List cache entries to prune without deleting them [env: FLATE_DRY_RUN]
+  -h, --help[=true|false]      help for gc
+      --max-age duration       Prune cache entries unused for this duration (0 disables) [env: FLATE_MAX_AGE] (default 720h0m0s)
 
 Global Flags:
-      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
-      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]
+      --log-level string           Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress[=true|false]   Hide live progress on stderr [env: FLATE_NO_PROGRESS]

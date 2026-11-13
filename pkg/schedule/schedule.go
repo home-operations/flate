@@ -150,7 +150,7 @@ func (s *Scheduler) OnPublication() {
 	s.mu.Unlock()
 }
 
-func (s *Scheduler) complete(n *node, result Result, replace bool) {
+func (s *Scheduler) complete(ctx context.Context, n *node, result Result, replace bool) {
 	previous := n.assessment
 	if replace && previous != nil {
 		previous.Retire()
@@ -162,6 +162,12 @@ func (s *Scheduler) complete(n *node, result Result, replace bool) {
 	}
 	s.mu.Lock()
 	for n.recheck && valid && current != nil {
+		if err := ctx.Err(); err != nil {
+			if s.err == nil && !s.stopped {
+				s.err = err
+			}
+			break
+		}
 		n.recheck = false
 		s.mu.Unlock()
 		valid = current.Valid()
@@ -213,10 +219,11 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	defer stop()
 	level := manifest.DrainNone
 	s.mu.Lock()
-	if s.err == nil {
-		s.err = ctx.Err()
-	}
 	for s.err == nil {
+		if err := ctx.Err(); err != nil {
+			s.err = err
+			break
+		}
 		if len(s.runq) > 0 {
 			level = manifest.DrainNone
 			s.dispatchNextLocked(runCtx)
@@ -293,7 +300,7 @@ func (s *Scheduler) dispatchNextLocked(ctx context.Context) {
 	s.mu.Unlock()
 	s.tasks.Go(ctx, "schedule/"+id.String(), func(ctx context.Context) {
 		var result Result
-		defer func() { s.complete(n, result, true) }()
+		defer func() { s.complete(ctx, n, result, true) }()
 		result = s.disp.Dispatch(ctx, id, manifest.DrainNone, Result{Assessment: n.assessment})
 	})
 	s.mu.Lock()
@@ -319,7 +326,7 @@ func (s *Scheduler) settleLocked(ctx context.Context, parked []*node, level mani
 		current, drain := n.assessment, level
 		s.mu.Unlock()
 		s.tasks.Go(ctx, "schedule/settle/"+n.id.String(), func(ctx context.Context) {
-			defer func() { s.complete(n, Result{Assessment: current}, false) }()
+			defer func() { s.complete(ctx, n, Result{Assessment: current}, false) }()
 			if current.Valid() {
 				current.Settle(ctx, drain)
 			}

@@ -122,7 +122,7 @@ spec:
 		l.documents.read(filepath.Join(artifact, "apps"))
 	}
 	loadProjectionScans(t, l, root, testCaseInput)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	if testCaseInput.pinned || testCaseInput.alias {
 		ks := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)[0]
 		artifact := l.Store.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
@@ -188,7 +188,7 @@ type testAdmitGraphProjectionCase4CompletionState struct {
 
 func testAdmitGraphProjectionCase4Completion(t *testing.T, scope *testAdmitGraphProjectionCase4CompletionState) {
 	t.Helper()
-	(*scope.l).Admit((*scope.root))
+	assert.NoError(t, (*scope.l).Admit(t.Context(), (*scope.root)))
 	if (*scope.original) != nil {
 		assertProjectionAuthored(t, scope)
 	}
@@ -294,7 +294,7 @@ func loadProjectionScans(t *testing.T, l *Loader, root string, testCaseInput *st
 			assert.NoError(t, err)
 		}
 		if testCaseInput.name == "named_ready" && scan == "flux" {
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			if _, ok := l.Index.Lookup(testutil.HelmReleaseID("", "app")); !ok {
 				t.Fatalf("unresolved source records before loading its path: %+v", l.Index.Records)
 			}

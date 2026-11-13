@@ -575,7 +575,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	st.SetArtifact(pinned.Named(), &store.SourceArtifact{
 		LocalPath: t.TempDir(), LocalRoot: root, Key: "pinned", Content: "pinned", FS: fstest.MapFS{},
 	})
-	d.loader.Admit(root)
+	assert.NoError(t, d.loader.Admit(t.Context(), root))
 	for i, subpath := range []string{"./", "./nested"} {
 		ks := &manifest.Kustomization{
 			Name: fmt.Sprintf("claim-%d", i), Namespace: "apps", Path: subpath,
@@ -599,7 +599,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 	relative, err := filepath.Rel(root, file)
 	assert.NoError(t, err)
 	d.loader.Index.Records[dirty.Named()] = manifest.DiscoveryRecord{File: filepath.ToSlash(relative), Path: file}
-	d.loader.Admit(root)
+	assert.NoError(t, d.loader.Admit(t.Context(), root))
 	claims := d.pinnedWorkingTreeClaims(root, d.loader.PathObjects())
 	assert.FatalIf(t, len(claims.claims) == 0, "overlapping pinned claims are absent: %+v", d.loader.PathObjects())
 	assert.Equal(
@@ -615,7 +615,7 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias(t *testing.T)
 		),
 		true,
 	)
-	d.discardPinnedWorkingTreeFiles(root)
+	assert.NoError(t, d.discardPinnedWorkingTreeFiles(t.Context(), root))
 	assert.Equal(t, st.GetObject(id) == alias.object, true)
 	publishedArtifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	assert.Equal(t, publishedArtifact.SameMaterial(alias.artifact), true)

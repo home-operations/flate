@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,39 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestSessionBindEntry_CancellationDuringRound(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{"kustomization.yaml": {Data: []byte("resources: []\n")}}
+	input := &store.SourceArtifact{LocalPath: root, FS: files}
+	st := store.New()
+	bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
+	st.AddObject(bootstrap)
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l := loader.New(st)
+	l.SourceRoot = root
+	a := &Admission{input: input, path: root, loader: l, entryDemand: true}
+	d := &Session{cfg: Config{Store: st, Input: input, Path: root}, loader: l, entryAdmission: a}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	publications := 0
+	unsubscribe := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id.ReportHidden() {
+			publications++
+			replacement := *input
+			replacement.Content = "replacement"
+			st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+			cancel()
+		}
+	}, false)
+	defer unsubscribe()
+	bound, err := d.bindEntry(ctx, root)
+	assert.Equal(t, publications, 1)
+	assert.Equal(t, bound == nil, true)
+	assert.Equal(t, err, ctx.Err())
+	assert.Equal(t, errors.Is(err, context.Canceled), true)
+}
 
 type entryApplicationCase struct {
 	name, owner, kind, url, path                               string

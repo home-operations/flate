@@ -71,7 +71,7 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 	for id := range l.Index.Files() {
 		assert.FatalIf(t, st.GetObject(id) != nil, "evidence became runnable before admission: %s", id)
 	}
-	l.Admit(dir)
+	assert.NoError(t, l.Admit(t.Context(), dir))
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
 			t.Parallel()

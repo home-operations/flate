@@ -187,7 +187,9 @@ func (o *Orchestrator) bootstrap(ctx context.Context) error {
 	if err := o.prepareBootstrap(ctx); err != nil {
 		return err
 	}
-	o.completeBootstrap()
+	if err := o.completeBootstrap(ctx); err != nil {
+		return err
+	}
 	if err := o.prepareInvocation(ctx); err != nil {
 		return err
 	}

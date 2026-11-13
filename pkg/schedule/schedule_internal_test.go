@@ -82,6 +82,93 @@ type admissionTasks struct {
 	names []string
 }
 
+//nolint:containedctx // The test adapter MUST intercept standard context cancellation registration.
+type deferredCancellationContext struct {
+	context.Context
+}
+
+// Hiding the parent's cancel registration forces AfterFunc through this test seam.
+func (deferredCancellationContext) Value(any) any { return nil }
+
+func (deferredCancellationContext) AfterFunc(func()) func() bool {
+	return func() bool { return true }
+}
+
+func TestScheduler_RunCancellationDuringRound(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	id := testutil.KustomizationID("ns", "next")
+	var runs atomic.Int64
+	sweeps := 0
+	var s *Scheduler
+	s = New(task.NewBounded(2), sweepDispatcher{
+		dispatchFunc: func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
+			runs.Add(1)
+			return Result{}
+		},
+		sweep: func(context.Context) []NodeID {
+			sweeps++
+			if sweeps != 1 {
+				return nil
+			}
+			cancel()
+			s.OnArrival(id, true)
+			return []NodeID{id}
+		},
+	})
+	err := s.Run(deferredCancellationContext{Context: ctx})
+	assert.Equal(t, errors.Is(err, context.Canceled), true)
+	assert.Equal(t, runs.Load(), int64(0))
+	assert.Equal(t, sweeps, 2)
+	assert.Equal(t, s.inFlight, 0)
+	assert.Equal(t, s.stopped, true)
+}
+
+func TestScheduler_CompleteCancellationDuringRound(t *testing.T) {
+	t.Parallel()
+	tasks := task.NewBounded(2)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	id := testutil.KustomizationID("ns", "reader")
+	captured := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+	release := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+	var validations, retired, closed atomic.Int64
+	previous := &testAssessment{retire: func() { retired.Add(1) }}
+	current := &testAssessment{
+		valid: func() bool {
+			call := validations.Add(1)
+			if call <= 2 {
+				close(captured[call-1])
+				tasks.YieldSlot(func() { <-release[call-1] })
+			}
+			return true
+		},
+		close: func() { closed.Add(1) },
+	}
+	s := New(tasks, dispatchFunc(func(context.Context, NodeID, manifest.DrainLevel, Result) Result {
+		return Result{Assessment: current}
+	}))
+	s.Seed([]NodeID{id})
+	s.nodes[id].assessment = previous
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	<-captured[0]
+	s.invalidate([]NodeID{id})
+	close(release[0])
+	<-captured[1]
+	s.invalidate([]NodeID{id})
+	cancel()
+	close(release[1])
+	assert.Equal(t, errors.Is(<-done, context.Canceled), true)
+	assert.Equal(t, validations.Load(), int64(2))
+	assert.Equal(t, retired.Load(), int64(1))
+	assert.Equal(t, closed.Load(), int64(1))
+	assert.Equal(t, s.inFlight, 0)
+	assert.Equal(t, s.nodes[id].recheck, false)
+	assert.Equal(t, s.nodes[id].assessment == current, true)
+}
+
 func (ts *admissionTasks) Go(ctx context.Context, name string, fn func(context.Context)) {
 	ts.names = append(ts.names, name)
 	ts.Service.Go(ctx, name, fn)

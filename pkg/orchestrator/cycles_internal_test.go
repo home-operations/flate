@@ -60,7 +60,7 @@ func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 	o.store.AddObject(makeKS("b", "ns", idA))
 	o.store.AddObject(makeKS("extra", "ns"))
 
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 
 	a, _ := o.store.GetObject(idA).(*manifest.Kustomization)
 	b, _ := o.store.GetObject(idB).(*manifest.Kustomization)
@@ -93,7 +93,7 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
 	o.store.AddObject(makeKS("b", "ns", idA))
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 	{
 		msg, ok := capturedPreflight(o.store, idA)
 		assert.FatalIf(
@@ -106,7 +106,7 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 	}
 
 	o.store.AddObject(makeKS("a", "ns"))
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 	for _, id := range []manifest.NamedResource{idA, idB} {
 		{
 			msg, ok := capturedPreflight(o.store, id)
@@ -123,7 +123,7 @@ func TestFailDependsOnCycles_InvalidatesResolvedMembers(t *testing.T) {
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
 	o.store.AddObject(makeKS("b", "ns", idA))
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 	var reads store.ReadSet
 	reads.Init(o.store, idB, nil)
 	reads.GetObject(idB)
@@ -135,7 +135,7 @@ func TestFailDependsOnCycles_InvalidatesResolvedMembers(t *testing.T) {
 	}, false)
 
 	o.store.AddObject(makeKS("a", "ns"))
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 
 	changed := slices.Collect(o.store.Sweep())
 	assert.FatalIf(
@@ -154,9 +154,9 @@ func TestFailDependsOnCycles_EmittedAfterCapture(t *testing.T) {
 	parent := makeKS("parent", "ns")
 	st.AddObjects([]manifest.BaseManifest{a, parent})
 	o := &Orchestrator{store: st, depGraph: newDependencyGraph()}
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 	unsubCycle := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		o.updateDependencyGraphFor(id)
+		assert.NoError(t, o.updateDependencyGraphFor(t.Context(), id))
 	}, false)
 	defer unsubCycle()
 	c := base.New(st, tasks)
@@ -327,7 +327,7 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 			deps = []manifest.NamedResource{ids[i+1]}
 		}
 		o.store.AddObject(makeKS(ids[i].Name, ids[i].Namespace, deps...))
-		o.updateDependencyGraphFor(ids[i])
+		assert.NoError(t, o.updateDependencyGraphFor(t.Context(), ids[i]))
 	}
 	{
 		got := o.depGraph.Failures()
@@ -341,7 +341,7 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 	}
 
 	o.store.AddObject(makeKS(ids[nodeCount-1].Name, ids[nodeCount-1].Namespace, ids[0]))
-	o.updateDependencyGraphFor(ids[nodeCount-1])
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), ids[nodeCount-1]))
 
 	failures := o.depGraph.Failures()
 	assert.FatalIf(
@@ -377,11 +377,11 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 	o.store.AddObject(makeKS("a", "ns", idB))
-	o.updateDependencyGraphFor(idA)
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), idA))
 	o.store.AddObject(makeKS("b", "ns", idC))
-	o.updateDependencyGraphFor(idB)
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), idB))
 	o.store.AddObject(makeKS("c", "ns", idA))
-	o.updateDependencyGraphFor(idC)
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), idC))
 
 	for _, id := range []manifest.NamedResource{idA, idB, idC} {
 		{
@@ -399,7 +399,7 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 
 	// Rewrite c to drop its dep on a; cycle dissolves.
 	o.store.AddObject(makeKS("c", "ns"))
-	o.updateDependencyGraphFor(idC)
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), idC))
 
 	for _, id := range []manifest.NamedResource{idA, idB, idC} {
 		{
@@ -422,12 +422,12 @@ func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
 		Name: "x", Namespace: "ns",
 		DependsOn: []helmv2.DependencyReference{{Name: idY.Name, Namespace: idY.Namespace}},
 	})
-	o.updateDependencyGraphFor(idX)
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), idX))
 	o.store.AddObject(&manifest.HelmRelease{
 		Name: "y", Namespace: "ns",
 		DependsOn: []helmv2.DependencyReference{{Name: idX.Name, Namespace: idX.Namespace}},
 	})
-	o.updateDependencyGraphFor(idY)
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), idY))
 
 	for _, id := range []manifest.NamedResource{idX, idY} {
 		{
@@ -489,12 +489,12 @@ func TestDependencyCycles_WarningsDeduplicate(t *testing.T) {
 		to := testutil.KustomizationID("ns", fmt.Sprintf("ks-%02d", (i+1)%members))
 		wg.Go(func() {
 			o.depGraph.ReplaceEdges(from, []manifest.NamedResource{to})
-			o.syncPreflightFailures()
+			assert.NoError(t, o.syncPreflightFailures(t.Context()))
 		})
 	}
 	wg.Wait()
 	for range 2 {
-		o.syncPreflightFailures()
+		assert.NoError(t, o.syncPreflightFailures(t.Context()))
 		warnings := o.store.Warnings()
 		if len(warnings) != 1 || warnings[0].Category != manifest.WarnDependencyCycle || warnings[0].Count != 1 ||
 			len(o.preflightFailures) != members {
@@ -502,7 +502,7 @@ func TestDependencyCycles_WarningsDeduplicate(t *testing.T) {
 		}
 	}
 	{
-		got := testing.AllocsPerRun(10, o.syncPreflightFailures)
+		got := testing.AllocsPerRun(10, func() { assert.NoError(t, o.syncPreflightFailures(t.Context())) })
 		assert.FatalIf(
 			t,
 			got > members,

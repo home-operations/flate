@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/pkg/selection"
 
@@ -21,11 +23,49 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
+	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
+
+func TestAdmitEntry_CancellationDuringRound(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: []\n")},
+	}}
+	st := store.New()
+	l := loader.New(st)
+	full, err := selection.New(st, l, selection.Request{})
+	assert.NoError(t, err)
+	l.Options.Session = full
+	session, err := discovery.Begin(t.Context(), discovery.Config{Path: root, Store: st, Loader: l, Input: input})
+	assert.NoError(t, err)
+	t.Cleanup(session.Close)
+	assert.NoError(t, constructDiscoveredSource(t.Context(), st, session.Admission(), manifest.BootstrapSourceID))
+	o := &Orchestrator{store: st, loader: l, selection: full, admission: session.Admission()}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	publications := 0
+	unsubscribe := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id.Kind == manifest.KindKustomization && id.ReportHidden() {
+			publications++
+			replacement := *input
+			replacement.Content = "replacement"
+			st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+			cancel()
+		}
+	}, false)
+	defer unsubscribe()
+	accepted, err := o.admitEntry(ctx)
+	assert.Equal(t, publications, 1)
+	assert.Equal(t, accepted, false)
+	assert.Equal(t, errors.Is(err, context.Canceled), true)
+	assert.Equal(t, err, ctx.Err())
+}
 
 func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
 	t.Parallel()

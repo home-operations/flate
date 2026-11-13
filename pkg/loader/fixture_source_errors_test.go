@@ -40,7 +40,7 @@ func TestLoader_FixtureHeldDecodeErrors(t *testing.T) {
 				heldLoader.SourceRoot = fixture.Repo
 				_, err := heldLoader.Load(t.Context(), filepath.Join(fixture.Repo, held), manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
-				heldLoader.Admit(fixture.Repo)
+				assert.NoError(t, heldLoader.Admit(t.Context(), fixture.Repo))
 				assert.FatalIf(
 					t,
 					!errors.Is(heldLoader.EntryFailure(t.Context(), fixture.Repo), manifest.ErrInput),

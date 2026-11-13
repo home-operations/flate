@@ -78,7 +78,7 @@ func TestAdmit_SelfProducedTransformerIdentity(t *testing.T) {
 		_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps", "apps"))
 		assert.NoError(t, err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 
 	for _, tc := range []struct {
 		name, namespace string
@@ -510,7 +510,7 @@ func TestAdmit_UnloadedAncestorNamespace(t *testing.T) {
 	_, err := l.Load(t.Context(), filepath.Join(root, "apps", "outside", "selected"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	owners := l.Kustomizations()
 
 	assert.FatalIf(t, len(owners) != 1 || owners[0].Obj.(*manifest.Kustomization).TargetNamespace != "" ||
@@ -577,7 +577,7 @@ func testAdmitSelfProducedTransformerIdentityNamespacePredictionDeclinesComponen
 		_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry"))
 		assert.NoError(t, err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		_, found := l.Index.Lookup(testutil.KustomizationID("forbidden", "child"))
 		assert.FatalIf(t, found, "%s", "scope namespace prediction accepted a Component-only proof")
@@ -738,7 +738,7 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
 				t.Fatalf("decode errors after mount version %d: %v", version, retainedErrorsForTest((*scope.l)))
 			}
 		}
-		(*scope.l).Admit((*scope.root))
+		assert.NoError(t, (*scope.l).Admit(t.Context(), (*scope.root)))
 		(*scope.check)(ns)
 	}
 	{
@@ -751,7 +751,7 @@ func testStampTransformerTargetNamespacesNamespaceTransformerCaseCompletion(
 			(*scope.source).Named(),
 			&store.SourceArtifact{Key: "removed", LocalRoot: (*scope.root), LocalPath: (*scope.local)},
 		)
-		(*scope.l).Admit((*scope.root))
+		assert.NoError(t, (*scope.l).Admit(t.Context(), (*scope.root)))
 		for _, name := range []string{"gpu-operator", "explicit"} {
 			id := testutil.KustomizationID("", name)
 			_, indexed := (*scope.l).Index.Lookup(id)

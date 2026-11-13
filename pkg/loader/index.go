@@ -31,7 +31,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 			return err
 		}
 	}
-	l.prepareIndexScopes(repoRoot, freeze)
+	if err := l.prepareIndexScopes(ctx, repoRoot, freeze); err != nil {
+		return err
+	}
 	if l.documents.compact && l.indexDerived && l.derived == l.construction {
 		if freeze {
 			l.freezeConstruction()
@@ -320,7 +322,7 @@ func (l *Loader) publishFrozenRecords() {
 	}
 }
 
-func (l *Loader) prepareIndexScopes(repoRoot string, freeze bool) {
+func (l *Loader) prepareIndexScopes(ctx context.Context, repoRoot string, freeze bool) error {
 	if l.scopes == nil || !l.scopes.complete || l.documents.compact && freeze {
 		l.ensureScopes()
 		if repoRoot != "" {
@@ -330,8 +332,9 @@ func (l *Loader) prepareIndexScopes(repoRoot string, freeze bool) {
 				l.scopes.sources[scope].ready = true
 			}
 		}
-		l.admit(repoRoot, nil)
+		return l.admit(ctx, repoRoot, nil)
 	}
+	return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 }
 
 func (l *Loader) resetDerivedProductions() {

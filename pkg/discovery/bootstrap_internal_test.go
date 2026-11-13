@@ -67,7 +67,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	id := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindGitRepository,
@@ -395,7 +395,7 @@ spec:
 		Namespace: "apps",
 		Name:      "source",
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	if testCaseInput.role == "terminal" {
 		l.Index.Records[id] = manifest.DiscoveryRecord{
 			Authored: id,

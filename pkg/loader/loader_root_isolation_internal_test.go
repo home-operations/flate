@@ -72,7 +72,7 @@ func testLoaderIndependentRootsCase(t *testing.T, testCaseInput *string,
 		_, err := l.Load(t.Context(), filepath.Join(root, dir), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	child := testutil.KustomizationID("apps", "child")
 	{
 		_, ok := l.Index.Lookup(child)
@@ -89,7 +89,7 @@ func testLoaderIndependentRootsCase(t *testing.T, testCaseInput *string,
 	independent.Store.AddObject(l.Store.GetObject(testutil.KustomizationID("apps", "owner")))
 	_, err := independent.Load(t.Context(), filepath.Join(root, "builder"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	independent.Admit(root)
+	assert.NoError(t, independent.Admit(t.Context(), root))
 	assert.FatalIf(
 		t,
 		independent.Store.GetObject(child) != nil,

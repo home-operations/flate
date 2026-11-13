@@ -312,10 +312,10 @@ spec: {interval: 1m, chartRef: {kind: OCIRepository, name: chart}}
 	_, err := l.Load(t.Context(), entry, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	owner := testutil.KustomizationID("apps", "owner")
-	l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
+	assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 		Root: entry, Source: manifest.BootstrapSourceID,
 		Owner: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named(),
-	}), builtObjectsForTest(t, testutil.KustomizationYAML("owner", "apps", "  path: ./workload\n")))
+	}), builtObjectsForTest(t, testutil.KustomizationYAML("owner", "apps", "  path: ./workload\n"))))
 	evidence := l.RootEvidence(owner, nil, true)
 	assert.Equal(t, selection.Root(evidence).Independent, false)
 	assert.Equal(t, evidence.Scope.Prepared, true)

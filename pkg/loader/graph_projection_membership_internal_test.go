@@ -242,7 +242,7 @@ spec:
 		Name:      "factory",
 	}
 	for range 2 {
-		l.Admit(root)
+		assert.NoError(t, l.Admit(t.Context(), root))
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 		assert.Equal(t, l.candidates[child].Obj.(*manifest.Kustomization).Path, "first")
 		for reader := range l.Index.ReadersOfFile("second/cm.yaml") {
@@ -328,7 +328,7 @@ func testAdmitGraphProjectionMembershipNamespaceAuthority(t *testing.T) {
 			l.SourceRoot = root
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			ext := manifest.NamedResource{
 				Group:     manifest.SourceDomain,
 				Kind:      manifest.KindGitRepository,
@@ -361,7 +361,7 @@ func testAdmitGraphProjectionMembershipNamespaceAuthority(t *testing.T) {
 			candidate := l.candidates[testutil.KustomizationID("media", "child")].Obj
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			assert.Equal(t, check(), first)
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			assert.Equal(t, check(), first)
 			assert.Equal(t, l.candidates[testutil.KustomizationID("media", "child")].Obj, candidate)
@@ -424,7 +424,7 @@ func testAdmitGraphProjectionCase(t *testing.T, testCaseInput *struct {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	ext := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
 		Kind:      manifest.KindGitRepository,
@@ -508,7 +508,7 @@ func testAdmitGraphProjectionCase2(t *testing.T, testCaseInput *struct {
 	assert.NoError(t, err)
 	_, err = l.Load(t.Context(), filepath.Join(root, "apps", "component"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "authored", Name: "child"}
 	r, indexed := l.Index.Lookup(id)
 	assert.FatalIf(t, !indexed, "component record missing: %s", id)
@@ -557,7 +557,7 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 
 	id := testutil.KustomizationID("apps", "sibling")
 	candidate, ok := l.candidates[id].Obj.(*manifest.Kustomization)
@@ -662,7 +662,7 @@ func testAdmitGraphProjectionPathWitnessConstructionLifetime(t *testing.T) {
 	assert.NoError(t, err)
 	witnesses := l.PathObjects()
 	assert.Equal(t, len(witnesses), 2)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.Equal(t, len(l.PathObjects()), 1)
 	paths := make([]string, 0, len(witnesses))
 	for i := range witnesses {

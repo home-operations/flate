@@ -140,7 +140,7 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	id := testutil.KustomizationID("authored", "dual")
 	{
 		_, ok := l.Index.Lookup(
@@ -397,7 +397,7 @@ func testFinalizeIndexInputCoordinatesAndAdmissionCase(
 	}
 	l.SourceRoot = root
 	admitForTest(s, root)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	admitted := selection.Root(
 		rootAtForTest(
 			l,

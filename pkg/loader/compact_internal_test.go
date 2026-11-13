@@ -106,14 +106,14 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	var first manifest.BaseManifest
 	for child, err := range l.Sources(t.Context()) {
 		assert.NoError(t, err)
 		first = child.Obj
 	}
 	assert.FatalIf(t, first == nil, "%s", "source declaration was not hydrated")
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for child, err := range l.Sources(t.Context()) {
 		assert.NoError(t, err)
 		assert.Equal(t, child.Obj, first)
@@ -128,7 +128,7 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 	}})
 	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for child, err := range l.Sources(t.Context()) {
 		assert.NoError(t, err)
 		assert.Equal(t, child.Obj == first, false)
@@ -289,7 +289,7 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			configureSelection(t, l, selection.Request{Changed: true})
 			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			assert.Equal(t, len(l.Kustomizations()), 0)
 			id := testutil.KustomizationID("apps", "owner")
 			predicted, ok := l.CatalogObject(id).(*manifest.Kustomization)
@@ -313,9 +313,9 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			assert.NoError(t, err)
 			children := builtObjectsForTest(t, string(data))
 			native := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
-			l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
+			assert.NoError(t, l.RegisterBuilt(t.Context(), supportedBuiltInputForTest(l, &BuiltInput{
 				Root: filepath.Join(root, "entry"), Owner: native.Named(), Source: manifest.BootstrapSourceID,
-			}), children)
+			}), children))
 			defer l.Retire()
 			owners := l.Kustomizations()
 			assert.Equal(t, len(owners), 1)

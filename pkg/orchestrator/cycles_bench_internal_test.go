@@ -36,6 +36,7 @@ import (
 //
 // Phase 2.6 target: ≥10× improvement.
 func BenchmarkFailDependsOnCycles_Incremental(b *testing.B) {
+	ctx := b.Context()
 	const nodeCount = 1000
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 
@@ -62,7 +63,9 @@ func BenchmarkFailDependsOnCycles_Incremental(b *testing.B) {
 		// the listener once. We measure the cost of running that
 		// listener N times against the pre-built store state.
 		for _, id := range ids {
-			o.updateDependencyGraphFor(id)
+			if err := o.updateDependencyGraphFor(ctx, id); err != nil {
+				b.Fatal(err)
+			}
 		}
 	}
 }
@@ -72,6 +75,7 @@ func BenchmarkFailDependsOnCycles_Incremental(b *testing.B) {
 // startup). This is the cost of the rebuild that happens BEFORE any
 // listener fires; the incremental path takes over after.
 func BenchmarkFailDependsOnCycles_Bootstrap(b *testing.B) {
+	ctx := b.Context()
 	const nodeCount = 1000
 	o := &Orchestrator{store: store.New(), depGraph: newDependencyGraph()}
 
@@ -90,7 +94,9 @@ func BenchmarkFailDependsOnCycles_Bootstrap(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		o.failDependsOnCycles()
+		if err := o.failDependsOnCycles(ctx); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

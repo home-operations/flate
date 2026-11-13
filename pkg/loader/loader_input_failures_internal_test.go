@@ -190,7 +190,7 @@ func TestLoader_InvalidBuilderStopsRawDescent(t *testing.T) {
 			l := New(store.New())
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			{
 				_, ok := l.Index.Lookup(testutil.KustomizationID("apps", "raw"))
 				assert.FatalIf(t, ok, "%s", "invalid builder admitted raw resource")

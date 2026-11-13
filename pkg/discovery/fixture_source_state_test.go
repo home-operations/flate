@@ -67,7 +67,7 @@ func TestDiscovery_FixtureHeldErrorsAcrossNamespaces(t *testing.T) {
 			l.SourceRoot = fixture.Repo
 			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "broken"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(fixture.Repo)
+			assert.NoError(t, l.Admit(t.Context(), fixture.Repo))
 			assert.FatalIf(
 				t,
 				!errors.Is(l.EntryFailure(t.Context(), fixture.Repo), manifest.ErrInput),
@@ -153,7 +153,7 @@ func TestDiscovery_FixtureInheritedHeldErrors(t *testing.T) {
 			l.SourceRoot = fixture.Repo
 			_, err := l.Load(t.Context(), filepath.Join(fixture.Repo, "held"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(fixture.Repo)
+			assert.NoError(t, l.Admit(t.Context(), fixture.Repo))
 			assert.FatalIf(
 				t,
 				!errors.Is(l.EntryFailure(t.Context(), fixture.Repo), manifest.ErrInput),

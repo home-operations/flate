@@ -36,7 +36,7 @@ func testAdmitGraphProjectionBootstrapDocumentOwners(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for _, name := range []string{"self", "excluded"} {
 		id := testutil.KustomizationID("apps", name)
 		assert.FatalIf(t, l.Store.GetObject(id) != nil ||
@@ -52,7 +52,7 @@ func testAdmitGraphProjectionBootstrapDocumentOwners(t *testing.T) {
 			assert.FatalIf(t, !ok, "lost inactive evidence: %s", id)
 		}
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.FatalIf(t, selection.Root(rootAtForTest(l, l.IndexedObject(
 		testutil.KustomizationID("apps", "self"),

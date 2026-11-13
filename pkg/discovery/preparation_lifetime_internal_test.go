@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -156,5 +157,61 @@ func TestPreparePendingProducer_ReferencedSubstitutionSupport(t *testing.T) {
 		assert.Equal(t, frame.children[0].Obj.(*manifest.Kustomization).Path, "./"+target)
 		assert.Equal(t, frame.support.Valid(), true)
 		assert.Equal(t, owner.PostBuild.Substitute == nil, true)
+	}
+}
+
+func TestPrepareProducer_RegistrationCancellation(t *testing.T) {
+	t.Parallel()
+	for _, route := range []string{"producer", "pending producer", "qualification"} {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
+			st := store.New()
+			source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+			st.SetArtifact(manifest.BootstrapSourceID, source)
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."}
+			st.AddObject(owner)
+			l := loader.New(st)
+			defer l.Close()
+			l.SourceRoot = root
+			d := Session{cfg: Config{Store: st, Trees: testTrees(t)}, loader: l}
+			defer d.Close()
+			failure := errors.New("retained binding failure")
+			d.binding.Producer, d.binding.Failure = owner.Named(), failure
+			prepared, err := d.prepareDocuments(t.Context(), owner, source, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, prepared.complete, true)
+			assert.Equal(t, prepared.registered, false)
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			switch route {
+			case "producer":
+				err = d.prepareProducer(ctx, owner, source, nil)
+			case "pending producer":
+				var registered bool
+				registered, err = d.preparePendingProducer(ctx, owner, nil)
+				assert.Equal(t, registered, false)
+			case "qualification":
+				var reads store.ReadSet
+				reads.Init(st, owner.Named(), nil)
+				defer reads.Retire()
+				defer reads.ReleaseCapture()
+				q := &entryQualification{loader: l, session: &d}
+				walk := qualificationWalk{q: q, store: st, reads: &reads}
+				err = walk.prepare(ctx, &applicationEvidence{object: owner}, owner, source)
+				assert.Equal(t, q.changed, false)
+			}
+			assert.Equal(t, errors.Is(err, context.Canceled), true)
+			assert.Equal(t, prepared.registered, false)
+			assert.Equal(t, d.prepared[owner.Named()], prepared)
+			assert.Equal(t, d.binding.Failure, failure)
+			d.Close()
+			st.SetArtifact(
+				manifest.BootstrapSourceID,
+				&store.SourceArtifact{LocalPath: root + "-replacement", FS: source.FS},
+			)
+			assert.Equal(t, slices.Contains(slices.Collect(st.Sweep()), owner.Named()), false)
+		})
 	}
 }

@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -28,6 +30,58 @@ func (b *preflightSnapshotError) Error() string {
 		}
 	}
 	return "entry binding failed"
+}
+
+func TestUpdateDependencyGraphFor_CancellationDuringRound(t *testing.T) {
+	t.Parallel()
+	a, entry := makeKS("a", "ns"), makeKS("entry", "ns")
+	barrier := &preflightSnapshotError{
+		pause: [2]int64{2}, reached: [2]chan struct{}{make(chan struct{})},
+		release: [2]chan struct{}{make(chan struct{})},
+	}
+	o := &Orchestrator{
+		store: store.New(), depGraph: newDependencyGraph(),
+		entryBinding: discovery.Binding{Producer: entry.Named(), Failure: barrier},
+	}
+	o.store.AddObjects([]manifest.BaseManifest{a, entry})
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- o.updateDependencyGraphFor(ctx, a.Named()) }()
+	<-barrier.reached[0]
+	o.store.AddObject(makeKS("a", "ns", a.Named()))
+	cancel()
+	close(barrier.release[0])
+	assert.Equal(t, errors.Is(<-done, context.Canceled), true)
+	assert.Equal(t, len(o.depGraph.Failures()), 0)
+	assert.Equal(t, barrier.calls.Load(), int64(2))
+}
+
+func TestSyncPreflightFailures_CancellationDuringRound(t *testing.T) {
+	t.Parallel()
+	a, entry := makeKS("a", "ns"), makeKS("entry", "ns")
+	barrier := &preflightSnapshotError{
+		pause: [2]int64{2}, reached: [2]chan struct{}{make(chan struct{})},
+		release: [2]chan struct{}{make(chan struct{})},
+	}
+	o := &Orchestrator{
+		store: store.New(), depGraph: newDependencyGraph(),
+		entryBinding: discovery.Binding{Producer: entry.Named(), Failure: barrier},
+	}
+	o.store.AddObjects([]manifest.BaseManifest{a, entry})
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- o.syncPreflightFailures(ctx) }()
+	<-barrier.reached[0]
+	o.depGraph.ReplaceEdges(a.Named(), []manifest.NamedResource{a.Named()})
+	cancel()
+	close(barrier.release[0])
+	assert.Equal(t, errors.Is(<-done, context.Canceled), true)
+	assert.Equal(t, barrier.calls.Load(), int64(2))
+	assert.Diff(t, o.preflightFailures, map[manifest.NamedResource]string{entry.Named(): "entry binding failed"})
 }
 
 func TestSyncPreflightFailures_OverlappingPublishers(t *testing.T) {
@@ -90,19 +144,19 @@ func TestSyncPreflightFailures_StaleWritesAfterClear(t *testing.T) {
 		entryBinding: discovery.Binding{Producer: entry.Named(), Failure: barrier},
 	}
 	o.store.AddObjects([]manifest.BaseManifest{a, b, entry})
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 	message, _ := capturedPreflight(o.store, a.Named())
 	olderDone := make(chan struct{})
 	go func() {
-		o.updateDependencyGraphFor(a.Named())
+		assert.NoError(t, o.updateDependencyGraphFor(t.Context(), a.Named()))
 		close(olderDone)
 	}()
 	<-barrier.reached[0]
 	o.store.AddObject(makeKS("b", "ns"))
-	o.updateDependencyGraphFor(b.Named())
+	assert.NoError(t, o.updateDependencyGraphFor(t.Context(), b.Named()))
 	close(barrier.release[0])
 	<-barrier.reached[1]
-	o.syncPreflightFailures()
+	assert.NoError(t, o.syncPreflightFailures(t.Context()))
 	assert.Diff(t, o.preflightFailures, map[manifest.NamedResource]string{entry.Named(): "entry binding failed"})
 	for _, id := range []manifest.NamedResource{a.Named(), b.Named()} {
 		cleared, _ := capturedPreflight(o.store, id)
@@ -153,9 +207,9 @@ func testOverlappingPreflightPublishers(t *testing.T, introduction, olderFirst, 
 	}
 	o.store.AddObjects([]manifest.BaseManifest{a, b, entry, extra})
 	o.store.SetPreflight(extra.Named(), "unrelated acyclic failure")
-	o.failDependsOnCycles()
+	assert.NoError(t, o.failDependsOnCycles(t.Context()))
 	unsub := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-		o.updateDependencyGraphFor(id)
+		assert.NoError(t, o.updateDependencyGraphFor(t.Context(), id))
 	}, false)
 	defer unsub()
 

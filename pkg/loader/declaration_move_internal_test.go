@@ -72,7 +72,7 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 					configureSelection(t, l, selection.Request{Changed: true})
 					_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 					assert.NoError(t, err)
-					l.Admit(root)
+					assert.NoError(t, l.Admit(t.Context(), root))
 					assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 					loaders[side], stores[side], inputs[side] = l, st, input
 				}
@@ -132,7 +132,7 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 			_, err := l.Load(t.Context(), filepath.Join(root, directory), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 		}
-		l.Admit(root)
+		assert.NoError(t, l.Admit(t.Context(), root))
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 		loaders[side] = l
 	}

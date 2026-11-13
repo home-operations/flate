@@ -144,6 +144,9 @@ func (r *renderInvocation) planTree(
 	}
 	planning.configureSources(true)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		if err := reconcileConstruction(ctx, session.PendingSources(), controller, r.budget); err != nil {
 			return nil, err
 		}

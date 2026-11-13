@@ -1,18 +1,22 @@
 package orchestrator
 
 import (
+	"context"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (o *Orchestrator) failDependsOnCycles() {
+func (o *Orchestrator) failDependsOnCycles(ctx context.Context) error {
 	o.rebuildDependencyGraphFromStore()
-	o.syncPreflightFailures()
+	return o.syncPreflightFailures(ctx)
 }
 
-func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
+func (o *Orchestrator) updateDependencyGraphFor(ctx context.Context, id manifest.NamedResource) error {
 	for {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		obj, policy := o.store.Lookup(id)
 		var buf [8]manifest.NamedResource
 		var deps []manifest.NamedResource
@@ -20,17 +24,23 @@ func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
 			deps = sameKindDepTargets(obj, buf[:0])
 		}
 		o.depGraph.ReplaceEdges(id, deps)
-		o.syncPreflightFailures()
+		if err := o.syncPreflightFailures(ctx); err != nil {
+			return err
+		}
 		current, currentPolicy := o.store.Lookup(id)
 		if current == obj && currentPolicy == policy {
-			return
+			return nil
 		}
 	}
 }
 
-func (o *Orchestrator) syncPreflightFailures() {
+//nolint:gocognit // Cancellation MUST share the existing convergence and publication frame.
+func (o *Orchestrator) syncPreflightFailures(ctx context.Context) error {
 	var previous map[manifest.NamedResource]string
 	for {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		paths := o.depGraph.Failures()
 		var failures map[manifest.NamedResource]string
 		if len(paths) != 0 || o.entryBinding.Failure != nil {
@@ -71,7 +81,7 @@ func (o *Orchestrator) syncPreflightFailures() {
 			o.store.SetPreflight(id, failures[id])
 		}
 		if o.depGraph.failuresCurrent(paths) {
-			return
+			return nil
 		}
 		previous = failures
 	}

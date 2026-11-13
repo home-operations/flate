@@ -30,14 +30,14 @@ func testRegisterBuiltStandaloneRootsInactivePackageBatch(t *testing.T) {
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	obj := &manifest.ConfigMap{Name: "injected", Namespace: "apps"}
-	l.RegisterBuilt(
+	assert.NoError(t, l.RegisterBuilt(t.Context(),
 		supportedBuiltInputForTest(l, &BuiltInput{
 			Root:   filepath.Join(root, "target"),
 			Source: manifest.BootstrapSourceID,
 			Owner:  testutil.KustomizationID("apps", "entry"),
 		}),
 		[]store.Child{{Obj: obj}},
-	)
+	))
 	{
 		_, indexed := l.Index.Lookup(obj.Named())
 		assert.FatalIf(

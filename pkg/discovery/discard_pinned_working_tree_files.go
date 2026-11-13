@@ -23,13 +23,15 @@ import (
 // must be discarded before the committed subtree supplies discovery metadata.
 // Resolved sources must retain their objects and artifacts so a pinned root
 // claim cannot replace its own source with a working-tree alias.
-func (d *Session) discardPinnedWorkingTreeFiles(repoRoot string) {
-	d.loader.Admit(repoRoot)
+func (d *Session) discardPinnedWorkingTreeFiles(ctx context.Context, repoRoot string) error {
+	if err := d.loader.Admit(ctx, repoRoot); err != nil {
+		return err
+	}
 	occurrences := d.loader.PathObjects()
 	pinnedWorkingTreeClaimsResult1 := d.pinnedWorkingTreeClaims(repoRoot, occurrences)
 	prefixes, pinnedSources := pinnedWorkingTreeClaimsResult1.claims, pinnedWorkingTreeClaimsResult1.sources
 	if len(prefixes) == 0 {
-		return
+		return nil
 	}
 	for id, record := range d.loader.Index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
 		if _, resolved := d.resolvedSources.snapshot()[id]; resolved {
@@ -44,6 +46,7 @@ func (d *Session) discardPinnedWorkingTreeFiles(repoRoot string) {
 		d.cfg.Store.DeleteObject(id)
 		delete(d.loader.Index.Records, id)
 	}
+	return nil
 }
 
 type pinnedClaims struct {
@@ -433,7 +436,9 @@ func (d *Session) preparePendingProducer(
 	if !guard.Valid() {
 		return false, nil
 	}
-	d.registerProducer(prepared)
+	if err := d.registerProducer(ctx, prepared); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 

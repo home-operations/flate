@@ -315,7 +315,7 @@ func testFinalizeIndexResourceMembershipCase(
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	if got := selection.Root(rootAtForTest(l, l.IndexedObject(
 		testutil.KustomizationID("apps", "stray"),

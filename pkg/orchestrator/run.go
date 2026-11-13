@@ -186,7 +186,10 @@ func (o *Orchestrator) run(ctx context.Context) error {
 		if !id.KindInfo().Render {
 			return
 		}
-		o.updateDependencyGraphFor(id)
+		// Only caller cancellation can fail publication; Scheduler.Run returns it.
+		if err := o.updateDependencyGraphFor(ctx, id); err != nil {
+			return
+		}
 	}, false)
 	defer unsubCycles()
 

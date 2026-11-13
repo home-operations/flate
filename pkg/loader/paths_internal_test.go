@@ -174,7 +174,7 @@ spec: {target: {name: vars}, dataFrom: [{extract: {key: vars}}]}
 	assert.NoError(t, err)
 	_, err = l.Load(t.Context(), filepath.Join(root, "children"), testutil.KustomizationID("apps", "owner"), nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	file := filepath.Join(root, "children", "objects.yaml")
 	assert.Equal(t, l.documents.cache[file].coverage, manifest.ApplicationDocuments)
 	producer := manifest.NamedResource{

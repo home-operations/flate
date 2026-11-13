@@ -2,6 +2,7 @@
 package selection
 
 import (
+	"context"
 	"iter"
 	"path/filepath"
 	"strings"
@@ -76,16 +77,24 @@ type staticScope interface {
 // ReduceStatic yields exact parent-directory reads to its caller. The caller MUST
 // complete each read before resuming and exhaust the iterator before publication.
 // No borrowed input or mutable result escapes this construction call.
-func ReduceStatic[S staticScope](scope S) iter.Seq[string] {
-	return func(read func(string) bool) {
+func ReduceStatic[S staticScope](ctx context.Context, scope S) iter.Seq2[string, error] {
+	return func(read func(string, error) bool) {
+		if err := ctx.Err(); err != nil {
+			read("", err)
+			return
+		}
 		scope.ResetStatic()
 		for i := range scope.Contributions() {
 			controlContribution(scope, i)
 		}
-		if !seedFiles(scope, read) {
+		if !seedFiles(ctx, scope, read) {
 			return
 		}
 		for {
+			if err := ctx.Err(); err != nil {
+				read("", err)
+				return
+			}
 			changed := false
 			for i := range scope.Contributions() {
 				changed = propagateContribution(scope, i) || changed
@@ -93,6 +102,10 @@ func ReduceStatic[S staticScope](scope S) iter.Seq[string] {
 			if !changed {
 				break
 			}
+		}
+		if err := ctx.Err(); err != nil {
+			read("", err)
+			return
 		}
 		finishStatic(scope)
 	}
@@ -177,8 +190,13 @@ func propagateContribution[S staticScope](scope S, i int) bool {
 	return changed
 }
 
-func seedFiles[S staticScope](scope S, read func(string) bool) bool {
+//nolint:gocognit // Cancellation MUST surround each borrowed read before eligibility publication.
+func seedFiles[S staticScope](ctx context.Context, scope S, read func(string, error) bool) bool {
 	for file, doc := range scope.Files() {
+		if err := ctx.Err(); err != nil {
+			read("", err)
+			return false
+		}
 		if scope.PlainEntry() != "" && filepath.Dir(file) == scope.PlainEntry() && doc.Loaded && !scope.Terminal(file) {
 			markFile(scope, file, RootEligible)
 			continue
@@ -186,7 +204,11 @@ func seedFiles[S staticScope](scope S, read func(string) bool) bool {
 		if doc.Eligibility != RootUnknown || !doc.ObjectsKnown {
 			continue
 		}
-		if !read(filepath.Dir(file)) {
+		if !read(filepath.Dir(file), nil) {
+			return false
+		}
+		if err := ctx.Err(); err != nil {
+			read("", err)
 			return false
 		}
 		if scope.DirectoryFile(filepath.Dir(file)) != "" || scope.Terminal(file) {

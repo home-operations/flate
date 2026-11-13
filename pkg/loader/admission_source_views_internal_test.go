@@ -48,7 +48,7 @@ func TestAdmit_SourceKinds(t *testing.T) {
 
 			assert.FatalIf(t, original == nil, "%s", "source not loaded")
 
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			projected := raw
 			projected.Namespace = "apps"
 			assert.FatalIf(t, l.Store.GetObject(projected) == nil, "projected source %s missing", projected)
@@ -226,7 +226,7 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 		_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps"))
 		assert.NoError(t, err)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for _, obj := range l.Store.ListObjects("", "") {
 		if obj.Named().Kind == manifest.KindKustomization {
 			continue
@@ -238,11 +238,11 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 	}
 	_, err := l.Load(t.Context(), filepath.Join(root, "apps"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	l.Store.AddObject(
 		&manifest.Kustomization{Name: "owner", Namespace: "owner", Path: "./apps", TargetNamespace: "media"},
 	)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	for _, id := range []manifest.NamedResource{
 		{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "media", Name: "apps"},
 		{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "media", Name: "inputs"},

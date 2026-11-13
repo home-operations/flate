@@ -102,6 +102,9 @@ func (d *constructionDispatcher) Sweep(_ context.Context, _ bool) []schedule.Nod
 
 func (o *Orchestrator) finishInitialAdmission(ctx context.Context) error {
 	for {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		if err := o.installAdmission(ctx); err != nil {
 			return err
 		}
@@ -119,6 +122,9 @@ func (o *Orchestrator) finishInitialAdmission(ctx context.Context) error {
 
 func (o *Orchestrator) constructDiscovery(ctx context.Context) (*discovery.Result, error) {
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		if err := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); err != nil {
 			return nil, err
 		}

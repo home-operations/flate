@@ -56,7 +56,7 @@ func testAdmitGraphProjectionEffectiveNamesIncludeNamespaceTransformation(t *tes
 			},
 		)
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	for id := range l.Index.Records {
 		assert.FatalIf(t, id.Kind == "Namespace", "inventory-only resource entered the production index: %s", id)
@@ -199,7 +199,7 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 
 	projected := testutil.KustomizationID("apps", "sibling")
 	authored := testutil.KustomizationID("flux-system", "sibling")
@@ -251,7 +251,7 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	assert.Equal(t, l.candidates[projected].Obj, candidate)
 	assert.Equal(t, l.Store.GetObject(projected), manifest.BaseManifest(first))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.FatalIf(t, check() != first, "%s", "repeat admission replaced the stable projected candidate")
 }
@@ -277,7 +277,7 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 			)
 		}
 	}
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	sibling := testutil.KustomizationID("apps", "sibling")
 	assert.FatalIf(t, l.Store.GetObject(sibling) != nil, "%s", "omitted bootstrap sibling admitted")
 	doc := l.candidates[sibling].Doc
@@ -288,7 +288,7 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 		doc,
 	)
 	l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"})
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)

@@ -209,7 +209,7 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	input := *o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	input.FS = cancelProbeFS{FS: input.FS, cancel: cancel}
 	o.store.SetArtifact(manifest.BootstrapSourceID, &input)
-	o.completeBootstrap()
+	assert.NoError(t, o.completeBootstrap(t.Context()))
 	// Clean builds exercise lookup cancellation; dirty builds must leave the probe unopened.
 	if !o.cache.CanPersistRenders() {
 		o.configureControllers()
@@ -513,7 +513,7 @@ spec:
 		supplied := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
 		assert.Equal(t, fresh.store.GetObject(supplied) != nil, true)
 	}
-	fresh.completeBootstrap()
+	assert.NoError(t, fresh.completeBootstrap(t.Context()))
 	assert.NoError(t, fresh.prepareInvocation(t.Context()))
 	assert.NoError(t, fresh.installAdmission(t.Context()))
 	assert.Equal(t, fresh.admissionPreparation == nil, true)
@@ -753,7 +753,7 @@ spec:
 	t.Cleanup(func() { fresh.stop() })
 	if (*testCaseInput) == "helm_values_from" {
 		assert.NoError(t, fresh.prepareBootstrap(t.Context()))
-		fresh.completeBootstrap()
+		assert.NoError(t, fresh.completeBootstrap(t.Context()))
 		supplied := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
 		var entryReads store.ReadSet
 		entryReads.Init(fresh.store, fresh.entryBinding.Producer, nil)

@@ -32,7 +32,7 @@ func TestClaims_RefreshDoesNotPublish(t *testing.T) {
 
 	assert.FatalIf(t, st.GetObject(id) != nil, "%s", "claims published an indexed owner")
 
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	owner := st.GetObject(id)
 
 	assert.FatalIf(t, owner == nil, "%s", "admission did not publish the owner")
@@ -44,7 +44,7 @@ func TestClaims_RefreshDoesNotPublish(t *testing.T) {
 
 	assert.FatalIf(t, st.GetObject(id) != owner, "%s", "claims retired an owner after reader replacement")
 
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 
 	assert.FatalIf(t, st.GetObject(id) != nil, "%s", "admission retained the replaced reader's owner")
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:funlen // Claims and restoration worklists MUST grow in this frame to retain stack allocation.
+//nolint:funlen,gocognit // Claims and restoration worklists MUST grow in this frame to retain stack allocation.
 func (c *admissionClosure) start(
 	ctx context.Context,
 	materializers func(materializerDemand, manifest.NamedResource) bool,
@@ -76,6 +76,9 @@ func (c *admissionClosure) start(
 	}
 	c.queue = slices.Grow(c.queue, len(c.states))
 	for {
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+		}
 		c.prepareInitialChanges(seeds, edges)
 		//nolint:intrange // Change propagation MUST extend the worklist during traversal.
 		for cursor := 0; cursor < len(c.queue); cursor++ {

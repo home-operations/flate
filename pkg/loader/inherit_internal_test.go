@@ -33,7 +33,7 @@ func TestAdmit_UnchangedInputs(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	before := l.Kustomizations()
 	assert.Equal(t, len(before), 4)
 	for _, child := range before {
@@ -44,7 +44,8 @@ func TestAdmit_UnchangedInputs(t *testing.T) {
 			child.Doc,
 		)
 	}
-	allocs := testing.AllocsPerRun(10, func() { l.Admit(root) })
+	ctx := t.Context()
+	allocs := testing.AllocsPerRun(10, func() { assert.NoError(t, l.Admit(ctx, root)) })
 	t.Logf("unchanged admission: %.0f allocations", allocs)
 	assert.FatalIf(t, allocs > 3, "unchanged admission repeated scope work: %.0f allocations", allocs)
 	assert.FatalIf(
@@ -78,7 +79,7 @@ func TestAdmitsRoot_PlainDiscoveryShortcut(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	id := testutil.KustomizationID("apps", "one")
 	file := filepath.Join(root, "peers.yaml")
 	allocs := testing.AllocsPerRun(10, func() {
@@ -119,7 +120,7 @@ data: {value: before}
 	configureSelection(t, l, selection.Request{})
 	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.Equal(t, l.scopes.complete, true)
 	sync := testutil.KustomizationID("flux-system", "sync")
 	prediction, present := l.catalogOccurrence(sync)
@@ -127,7 +128,7 @@ data: {value: before}
 	assert.Equal(t, prediction.requiresBuild, true)
 	assert.Equal(t, st.GetDeclaration(sync) == nil, true)
 	assert.Equal(t, st.GetDeclaration(testutil.KustomizationID("flux-system", "apps")) != nil, true)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.Equal(t, l.scopes.complete, true)
 	assert.Equal(t, st.GetDeclaration(sync) == nil, true)
 
@@ -138,7 +139,7 @@ data: {value: before}
 	st.SetArtifact(manifest.BootstrapSourceID, &replacement)
 	_, err = l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	prediction, present = l.catalogOccurrence(sync)
 	assert.Equal(t, present, true)
 	assert.Equal(t, prediction.requiresBuild, false)
@@ -159,11 +160,11 @@ func TestAdmit_ContextualNamespaceReusesOwners(t *testing.T) {
 	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	before := l.kustomizations()
 	assert.Equal(t, len(before), 2)
 	generation := l.construction
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.Equal(t, l.construction, generation)
 	after := l.kustomizations()
 	assert.Equal(t, slices.EqualFunc(before, after, func(a, b store.Child) bool { return a.Obj == b.Obj }), true)

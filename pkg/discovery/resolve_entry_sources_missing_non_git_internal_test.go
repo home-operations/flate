@@ -211,7 +211,7 @@ func TestResolveEntrySources_IndexedDeclarations(t *testing.T) {
 		assert.NoError(t, err)
 		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
-		l.Admit(root)
+		assert.NoError(t, l.Admit(t.Context(), root))
 		id := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
 			Kind:      manifest.KindOCIRepository,
@@ -249,7 +249,7 @@ func TestResolveEntrySources_IndexedDeclarations(t *testing.T) {
 			assert.NoError(t, err)
 			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			l.Admit(root)
+			assert.NoError(t, l.Admit(t.Context(), root))
 			assert.Equal(t, st.GetObject(requester.Named()) == nil, true)
 			if stored {
 				st.AddObject(requester)
@@ -455,7 +455,7 @@ func testResolveEntrySourcesIndexedDeclarationsCase(
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	ignored := testutil.KustomizationID("apps", "ignored")
 	_, ignoredIndexed := l.Index.Lookup(ignored)
 	assert.Equal(t, ignoredIndexed, false)

@@ -170,7 +170,7 @@ func TestCompleteBootstrap_Cancellation(t *testing.T) {
 	assert.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	o.completeBootstrap()
+	assert.NoError(t, o.completeBootstrap(t.Context()))
 	o.cfg.ExternalChanges = change.NewSet([]string{"flux/emitter.yaml"})
 	err = o.prepareInvocation(ctx)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)

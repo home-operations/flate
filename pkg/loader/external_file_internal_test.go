@@ -52,7 +52,7 @@ func TestFinalizeIndex_ExternalFileStructuralClosure(t *testing.T) {
 	l.Options.Changes = change.NewSet([]string{"payload/one/hr.yaml"})
 	_, err := l.Load(t.Context(), filepath.Join(root, "site-a"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
-	l.Admit(root)
+	assert.NoError(t, l.Admit(t.Context(), root))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	assert.Equal(t, l.frozen, false)
 	occurrence, known := l.Occurrence(child)

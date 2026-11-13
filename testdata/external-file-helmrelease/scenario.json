@@ -1,0 +1,820 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "d5f77eac528960264c8706e735a5e0cb90e8d46c",
+    "paths": [
+      "issue #1539",
+      "issue #1544"
+    ],
+    "reductions": "Preserve the supplied external-file Kustomization, local chart, and current/base values."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.com/repo.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.com/repo.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "name": "repo-base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    },
+    {
+      "name": "baseline-base",
+      "repository": "baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "name": "test-cold",
+      "description": "External file declaration with cold cache.",
+      "setup": [
+        {
+          "commit": "repo-base"
+        },
+        {
+          "commit": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "test-warm",
+      "description": "External file declaration with warm cache.",
+      "setup": [
+        {
+          "commit": "repo-base"
+        },
+        {
+          "commit": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "prime-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/prime-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "prime-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path-orig",
+              "@@baseline@@/site-a",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/prime-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test-again",
+          "invoke": {
+            "argv": [
+              "test",
+              "hr",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "build-cold",
+      "description": "External file declaration with cold cache.",
+      "setup": [
+        {
+          "commit": "repo-base"
+        },
+        {
+          "commit": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "demo",
+              "-n",
+              "default",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "build-warm",
+      "description": "External file declaration with warm cache.",
+      "setup": [
+        {
+          "commit": "repo-base"
+        },
+        {
+          "commit": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "prime-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/prime-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "prime-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path-orig",
+              "@@baseline@@/site-a",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/prime-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "demo",
+              "-n",
+              "default",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-again",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "demo",
+              "-n",
+              "default",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "diff-cold",
+      "description": "External file declaration with cold cache.",
+      "setup": [
+        {
+          "commit": "repo-base"
+        },
+        {
+          "commit": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path-orig",
+              "@@baseline@@/site-a",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "diff-warm",
+      "description": "External file declaration with warm cache.",
+      "setup": [
+        {
+          "commit": "repo-base"
+        },
+        {
+          "commit": "baseline-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "prime-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/prime-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "prime-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path-orig",
+              "@@baseline@@/site-a",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/prime-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path-orig",
+              "@@baseline@@/site-a",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff-again",
+          "invoke": {
+            "argv": [
+              "diff",
+              "hr",
+              "--path-orig",
+              "@@baseline@@/site-a",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/hr-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/charts/demo/Chart.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "baseline/charts/demo/templates/cm.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "baseline/layer/common/child.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "baseline/layer/site-a/kustomization.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "baseline/payload/one/hr.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "baseline/site-a/parent.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "baseline/site-a/sync.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "expect/hr-build.stdout",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "expect/hr-diff.stdout",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "expect/hr-test.stdout",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "expect/prime-diff.stdout",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "expect/prime-test.stdout",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "repo/charts/demo/Chart.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "repo/layer/common/child.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "repo/layer/site-a/kustomization.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "repo/payload/one/hr.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "repo/site-a/parent.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    },
+    {
+      "path": "repo/site-a/sync.yaml",
+      "cases": [
+        "test-cold",
+        "test-warm",
+        "build-cold",
+        "build-warm",
+        "diff-cold",
+        "diff-warm"
+      ],
+      "purpose": "Authored issue input or independently specified complete command output."
+    }
+  ]
+}

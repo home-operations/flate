@@ -70,9 +70,9 @@
             ],
             "cache": {},
             "expect": {
-              "stdout": "expect/empty.stdout",
-              "stderr": "expect/build.stderr",
-              "code": 1
+              "stdout": "expect/build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
             }
           }
         },
@@ -94,7 +94,7 @@
             ],
             "cache": {},
             "expect": {
-              "stdout": "expect/empty.stdout",
+              "stdout": "expect/diff-hr.stdout",
               "stderr": "expect/empty.stderr",
               "code": 0
             }
@@ -277,18 +277,18 @@
       "purpose": "Reported tree or independently authored complete expectation."
     },
     {
-      "path": "expect/empty.stdout",
+      "path": "expect/diff-hr.stdout",
       "cases": [
         "witness"
       ],
-      "purpose": "Required base result under Ruling 3."
+      "purpose": "HelmRelease-scoped ConfigMap value change from 1 to 2."
     },
     {
-      "path": "expect/build.stderr",
+      "path": "expect/build.stdout",
       "cases": [
         "witness"
       ],
-      "purpose": "Required base result under Ruling 3."
+      "purpose": "Local chart ConfigMap with Flux Helm labels and current value 2."
     }
   ]
 }

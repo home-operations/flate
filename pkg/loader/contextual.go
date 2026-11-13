@@ -254,13 +254,14 @@ func (p *substitutionResolution) resolveContextualObject(
 	if err != nil {
 		return err
 	}
-	if !projected.facts.uncertain && sameOccurrenceProjection(&projected, o) {
+	structuralEvidence := visit.deferDecode && !hasSubstitutions
+	if !structuralEvidence && !projected.facts.uncertain && sameOccurrenceProjection(&projected, o) {
 		return nil
 	}
 	old, known := l.scopes.contextual[key]
 	if known && old.facts.census == projected.facts.census && sameOccurrenceProjection(&old, &projected) {
 		projected = old
-	} else if hasSubstitutions || projected.facts.uncertain {
+	} else if hasSubstitutions || projected.facts.uncertain || structuralEvidence {
 		p.contextualChanged = true
 	}
 	if p.contextual == nil {

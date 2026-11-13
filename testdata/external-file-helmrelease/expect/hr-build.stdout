@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  v: "2"
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: demo
+    helm.toolkit.fluxcd.io/namespace: default
+  name: demo
+  namespace: default

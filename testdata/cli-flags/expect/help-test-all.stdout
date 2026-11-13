@@ -4,25 +4,25 @@ Usage:
   flate test all [flags]
 
 Flags:
-      --allow-missing-kinds strings     Tolerate missing input kinds (comma-separated values) [env: FLATE_ALLOW_MISSING_KINDS]
-  -a, --api-versions string             Set Helm cluster APIs (comma-separated values) [env: FLATE_API_VERSIONS]
-      --base string                     Compare with a Git revision (exclusive with --path-orig) [env: FLATE_BASE]
-      --cache-dir string                Store fetched sources and renders in this directory [env: FLATE_CACHE_DIR]
-      --concurrency int                 Limit parallel reconciles (0 means unbounded) [env: FLATE_CONCURRENCY] (default <CONCURRENCY_DEFAULT>)
-      --disable-chart-digest-tracking   Omit digest suffixes from OCI chart versions [env: FLATE_DISABLE_CHART_DIGEST_TRACKING]
-      --enable-dns                      Enable DNS lookups in Helm templates [env: FLATE_ENABLE_DNS]
-      --git-depth int                   Set Git fetch depth (0 means full history) [env: FLATE_GIT_DEPTH] (default 1)
-  -h, --help                            help for all
-      --kube-version string             Set the cluster Kubernetes version for Helm [env: FLATE_KUBE_VERSION] (default "1.37.2")
-  -n, --namespace string                Select resources in this namespace [env: FLATE_NAMESPACE]
-  -p, --path string                     Read Flux manifests from this directory [env: FLATE_PATH] (default ".")
-  -P, --path-orig string                Compare with a baseline directory (exclusive with --base) [env: FLATE_PATH_ORIG]
-      --registry-config string          Read OCI credentials from a native Docker or Helm store [env: FLATE_REGISTRY_CONFIG]
-      --restrict-egress                 Block private-address fetches and local Git transports [env: FLATE_RESTRICT_EGRESS]
-      --skip-kinds strings              Exclude output kinds (comma-separated values) [env: FLATE_SKIP_KINDS] (default [Secret,CustomResourceDefinition])
-      --strict-substitutions            Reject undefined substitutions without defaults [env: FLATE_STRICT_SUBSTITUTIONS]
-      --supply stringArray              Read reference-only YAML objects (repeatable flag) [env: FLATE_SUPPLY]
+      --allow-missing-kinds strings                  Tolerate missing input kinds (comma-separated values) [env: FLATE_ALLOW_MISSING_KINDS]
+  -a, --api-versions string                          Set Helm cluster APIs (comma-separated values) [env: FLATE_API_VERSIONS]
+      --base string                                  Compare with a Git revision (exclusive with --path-orig) [env: FLATE_BASE]
+      --cache-dir string                             Store fetched sources and renders in this directory [env: FLATE_CACHE_DIR]
+      --concurrency int                              Limit parallel reconciles (0 means unbounded) [env: FLATE_CONCURRENCY] (default <CONCURRENCY_DEFAULT>)
+      --disable-chart-digest-tracking[=true|false]   Omit digest suffixes from OCI chart versions [env: FLATE_DISABLE_CHART_DIGEST_TRACKING]
+      --enable-dns[=true|false]                      Enable DNS lookups in Helm templates [env: FLATE_ENABLE_DNS]
+      --git-depth int                                Set Git fetch depth (0 means full history) [env: FLATE_GIT_DEPTH] (default 1)
+  -h, --help[=true|false]                            help for all
+      --kube-version string                          Set the cluster Kubernetes version for Helm [env: FLATE_KUBE_VERSION] (default "1.37.2")
+  -n, --namespace string                             Select resources in this namespace [env: FLATE_NAMESPACE]
+  -p, --path string                                  Read Flux manifests from this directory [env: FLATE_PATH] (default ".")
+  -P, --path-orig string                             Compare with a baseline directory (exclusive with --base) [env: FLATE_PATH_ORIG]
+      --registry-config string                       Read OCI credentials from a native Docker or Helm store [env: FLATE_REGISTRY_CONFIG]
+      --restrict-egress[=true|false]                 Block private-address fetches and local Git transports [env: FLATE_RESTRICT_EGRESS]
+      --skip-kinds strings                           Exclude output kinds (comma-separated values) [env: FLATE_SKIP_KINDS] (default [Secret,CustomResourceDefinition])
+      --strict-substitutions[=true|false]            Reject undefined substitutions without defaults [env: FLATE_STRICT_SUBSTITUTIONS]
+      --supply stringArray                           Read reference-only YAML objects (repeatable flag) [env: FLATE_SUPPLY]
 
 Global Flags:
-      --log-level string   Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
-      --no-progress        Hide live progress on stderr [env: FLATE_NO_PROGRESS]
+      --log-level string           Set log level: debug,info,warn,error [env: FLATE_LOG_LEVEL] (default "error")
+      --no-progress[=true|false]   Hide live progress on stderr [env: FLATE_NO_PROGRESS]

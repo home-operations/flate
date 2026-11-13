@@ -286,3 +286,48 @@ func TestSubstitutionResolution_FileCoverage(t *testing.T) {
 	cancel()
 	assert.Equal(t, resolution.resolveVisit(ctx, &visit), ctx.Err())
 }
+
+func TestLoad_PreparedOwnerRetainsInputDeclarations(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", "namespace: apps\nresources: [owner.yaml]\n")
+	testutil.WriteFile(t, root, "entry/owner.yaml", testutil.KustomizationYAML("owner", "", "  path: ./workload\n"))
+	testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: [source.yaml, release.yaml]\n")
+	testutil.WriteFile(t, root, "workload/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: chart, namespace: apps}
+spec: {url: "oci://fixture.invalid/chart", ref: {tag: "1.0.0"}, interval: 1m}
+`)
+	testutil.WriteFile(t, root, "workload/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: peer, namespace: apps}
+spec: {interval: 1m, chartRef: {kind: OCIRepository, name: chart}}
+`)
+	st := store.New()
+	admitForTest(st, root)
+	l := New(st)
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{Changed: true})
+	entry := filepath.Join(root, "entry")
+	_, err := l.Load(t.Context(), entry, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	owner := testutil.KustomizationID("apps", "owner")
+	l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
+		Root: entry, Source: manifest.BootstrapSourceID,
+		Owner: manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).Named(),
+	}), builtObjectsForTest(t, testutil.KustomizationYAML("owner", "apps", "  path: ./workload\n")))
+	evidence := l.RootEvidence(owner, nil, true)
+	assert.Equal(t, selection.Root(evidence).Independent, false)
+	assert.Equal(t, evidence.Scope.Prepared, true)
+	assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(owner), false)
+	_, err = l.Load(t.Context(), filepath.Join(root, "workload"), owner, nil)
+	assert.NoError(t, err)
+	for _, id := range []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "chart"},
+		{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "peer"},
+	} {
+		assert.Equal(t, l.CatalogObject(id) != nil, true)
+		assert.Equal(t, st.GetDeclaration(id) == nil, true)
+		assert.Equal(t, l.Options.Session.Snapshot().Reconcile(id), false)
+	}
+}

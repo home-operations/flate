@@ -113,6 +113,9 @@ func TestStoreProvider_OfflineSourceAndRealDataInvalidateCapture(t *testing.T) {
 	assert.FatalIf(t, provider.Lookup(target).Data != offline, "%s", "offline candidate unavailable")
 
 	assert.Equal(t, len(st.Warnings()), 0)
+	classified, err := Classify(&manifest.Reference{NamedResource: target}, new(provider.Lookup(target)))
+	assert.NoError(t, err)
+	classified.ReportWarnings(&reads)
 	reads.Accept(store.AssessmentReconciled)
 	advisories := st.Warnings()
 	assert.FatalIf(t, len(advisories) != 1 || advisories[0].Category != manifest.WarnSOPSUnreadable ||

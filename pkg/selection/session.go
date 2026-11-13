@@ -23,14 +23,11 @@ type Session struct {
 	catalog  atomic.Pointer[admissionCatalog]
 }
 
-// New returns nil for unrestricted full execution.
+// New MUST retain an admission session for every request.
 func New(st *store.Store, facts census, request Request) (*Session, error) {
-	if !request.Changed &&
-		(len(request.Roots) == 0 || request.includesRenderKinds(true) && request.Roots[0].Namespace == "") {
-		return nil, nil //nolint:nilnil // A nil session is the unrestricted execution contract.
-	}
 	s := &Session{store: st, facts: facts, request: request}
-	s.decision.Store(&Decision{seed: maphash.MakeSeed()})
+	s.decision.Store(&Decision{seed: maphash.MakeSeed(), unrestricted: !request.Changed &&
+		(len(request.Roots) == 0 || request.includesRenderKinds(true) && request.Roots[0].Namespace == "")})
 	return s, nil
 }
 
@@ -50,7 +47,9 @@ func (s *Session) DiscardConstruction() {
 	s.mu.Lock()
 	current := s.decision.Load()
 	if !current.execution {
-		s.decision.Store(&Decision{seed: current.seed, revision: current.revision + 1})
+		s.decision.Store(
+			&Decision{seed: current.seed, revision: current.revision + 1, unrestricted: current.unrestricted},
+		)
 	}
 	s.mu.Unlock()
 }
@@ -61,6 +60,9 @@ func (s *Session) Include(id manifest.NamedResource) {
 		return
 	}
 	decision := s.Snapshot()
+	if decision.unrestricted {
+		return
+	}
 	s.store.SetIncluded(
 		id,
 		decision.execution && decision.Reconcile(id),

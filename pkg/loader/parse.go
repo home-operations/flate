@@ -170,16 +170,19 @@ func (r documentReader) decodeFileObjects(
 	return nil
 }
 
-//nolint:gocritic // Immutable reader values retain their original snapshot semantics.
+//nolint:gocritic,gocognit // The immutable census MUST transfer each document and its payload under one retention decision.
 func (r documentReader) censusFile(
 	ctx context.Context,
 	path string,
 	opts manifest.ParseDocOptions,
 ) ([]parsedObject, error) {
 	r.restore(path)
-	if cached := r.cache[path]; (cached.objects != nil || cached.decodeErr != nil) &&
-		covers(cached.coverage, r.intent) {
-		return applicationView(cached.objects, cached.coverage, r.intent), cached.decodeErr
+	previous := r.cache[path]
+	eager := !r.eager || !slices.ContainsFunc(previous.objects, func(child parsedObject) bool {
+		return child.fact != nil && child.fact.object == nil
+	})
+	if (previous.objects != nil || previous.decodeErr != nil) && covers(previous.coverage, r.intent) && eager {
+		return applicationView(previous.objects, previous.coverage, r.intent), previous.decodeErr
 	}
 	facts := []parsedObject{}
 	var projectionErr error
@@ -205,6 +208,8 @@ func (r documentReader) censusFile(
 			}
 		}
 		o := compactOccurrence(child.Obj, projection)
+		o.requiresBuild = child.collection
+		o.facts.collection = child.collection
 		o.facts.substituteDisabled = child.substituteDisabled
 		o.facts.declared = child.declared
 		origin := new(r).localPath(path)
@@ -227,13 +232,18 @@ func (r documentReader) censusFile(
 				[]manifest.DocOccurrence{{Document: child.Doc, Ordinal: child.outcome.Ordinal}},
 			)
 		}
-		manifest.ReleaseDoc(child.Doc)
+		var retained map[string]any
+		if r.eager {
+			o.object, retained = child.Obj, child.Doc
+		} else {
+			manifest.ReleaseDoc(child.Doc)
+		}
 		outcome := child.outcome
 		outcome.Document = nil
 		facts = append(
 			facts,
 			parsedObject{
-				Obj:      structural,
+				Obj: structural, Doc: retained,
 				Warnings: child.Warnings,
 				item:     child.item,
 				fact:     &o,
@@ -421,7 +431,7 @@ func (r *documentReader) prepareStream(input io.Reader, opts manifest.ParseDocOp
 				continue
 			}
 			child := r.prepareStreamObject(opts, new(leaf))
-			child.item = item
+			child.item, child.collection = item, collection
 			yield(child)
 		}
 		if collection {

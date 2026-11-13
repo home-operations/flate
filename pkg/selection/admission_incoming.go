@@ -16,6 +16,10 @@ func (c *admissionClosure) selectIncoming(id manifest.NamedResource) error {
 		return nil
 	}
 	eligible := c.session.request.Matches(id)
+	if c.decision.unrestricted {
+		c.add(id, admissionRole{needed: true, selected: eligible, dirty: true, ordinary: true})
+		return nil
+	}
 	var affected, footprintRead bool
 	if eligible && !c.session.request.Changed {
 		role.needed, role.selected, role.dirty = true, true, true

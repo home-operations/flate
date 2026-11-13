@@ -203,7 +203,7 @@ spec:
 		_, ok := o.index.Lookup(rsID)
 		assert.FatalIf(t, ok, "%v", "fixture ResourceSet must only exist in render output")
 	}
-	res, err := o.collectResult(o.run(t.Context()))
+	res, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil, "Render: %v", err)
 	ksID := testutil.KustomizationID("flux-system", "apps")

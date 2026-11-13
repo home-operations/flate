@@ -144,8 +144,10 @@ type ReferenceFacts struct {
 	Materializers               []manifest.NamedResource
 	Generated, Offline, Private bool
 	Accepted                    bool
-	Productions                 []manifest.Production
-	ReferenceData               []manifest.ReferenceData
+	// Private preparation MUST remain distinct from authored-consumer input authority.
+	Prepared      bool
+	Productions   []manifest.Production
+	ReferenceData []manifest.ReferenceData
 }
 
 // Productions merges discovery evidence with accepted reverse memberships into a read-only snapshot.
@@ -171,6 +173,9 @@ func (s *Store) ReferenceFacts(
 
 	consumer manifest.NamedResource,
 ) ReferenceFacts {
+	if index == nil {
+		index = s.index.Load()
+	}
 	result := productionResult{facts: true}
 	s.visitProductions(id, index, &result)
 	var candidates []manifest.ReferenceData
@@ -187,7 +192,7 @@ func (s *Store) ReferenceFacts(
 	return facts.resolve(
 		id,
 
-		&referenceResolution{consumer: consumer, reference: result.reference},
+		&referenceResolution{index: index, consumer: consumer, reference: result.reference},
 	)
 }
 
@@ -801,4 +806,8 @@ func (r *productionResult) captureReferenceLocked(sh *shard, id manifest.NamedRe
 	}
 	r.reference = view.reference
 	r.accepted = view.accepted || view.owner != nil
+}
+
+func preparedDeclaration(record *manifest.DiscoveryRecord, object manifest.BaseManifest) bool {
+	return record.Builder != "" && record.Declaration == object
 }

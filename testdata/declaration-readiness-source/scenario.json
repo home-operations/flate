@@ -1,0 +1,163 @@
+{
+  "source": {
+    "repository": "jfroy/flatops",
+    "revision": "a2e1cbf6cae6742b624ea66db20ce064f9a2f014",
+    "paths": [
+      "kubernetes/cluster/ks.yaml",
+      "kubernetes/apps/kube-system/coredns",
+      "kubernetes/apps/kube-system/kustomization.yaml",
+      "kubernetes/transformers/transformer.yaml"
+    ],
+    "reductions": "Retain the namespace transform, parent preparation, absent required Secret, and blocked source. Replace remote content with a fixture.invalid URL and generated values."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "source",
+      "description": "A deferred parent retains its source diagnostic without child execution.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/source-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/source-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/source-build.stderr",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/source-test.stdout",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/apps/kube-system/coredns/app/kustomization.yaml",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/apps/kube-system/coredns/app/release.yaml",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/apps/kube-system/coredns/app/source.yaml",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/apps/kube-system/coredns/ks.yaml",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/apps/kube-system/kustomization.yaml",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/apps/kube-system/transformer.yaml",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/flux/root.yaml",
+      "cases": [
+        "source"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    }
+  ]
+}

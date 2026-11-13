@@ -22,6 +22,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // Result summarizes what discovery hydrated into the store.
@@ -120,7 +121,7 @@ type Session struct {
 
 // Run requires the caller to reconcile PendingSources whenever it returns no result.
 func (d *Session) Run(ctx context.Context) (*Result, error) {
-	if d.loader.Options.Session != nil {
+	if !d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
 		return d.runSelected(ctx)
 	}
 	if d.built {
@@ -204,7 +205,7 @@ func (d *Session) finishDiscovery(
 			return nil, err
 		}
 	}
-	if l.Options.Session == nil {
+	if l.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
 		if err := l.PromoteOrphans(ctx); err != nil {
 			return nil, err
 		}
@@ -399,7 +400,7 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 		return d.entryState.changed, nil
 	}
 	sourceID, _, _ := kustomize.SourceInput(d.cfg.Store, ks)
-	if d.cfg.Trees == nil || sourceID == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+	if d.cfg.Trees == nil || sourceID == nil || !d.canPrepare(ks) {
 		return false, nil
 	}
 	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered &&
@@ -418,7 +419,7 @@ func (d *Session) prepareStandaloneEntry(ctx context.Context, repoRoot string, l
 }
 
 func (d *Session) requiresEntry() bool {
-	if d.loader == nil || d.loader.Options.Session == nil {
+	if d.loader == nil || d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
 		return d.hasEntryBuilder()
 	}
 	return d.entryDemand || d.entryReceiptRequest != nil
@@ -568,7 +569,7 @@ func (d *Session) entryCandidateReady(
 	reads *store.ReadSet,
 	candidate *manifest.Kustomization,
 ) bool {
-	if candidate.PostBuild != nil && len(candidate.PostBuild.SubstituteFrom) != 0 {
+	if !d.canPrepare(candidate) {
 		return len(candidate.DependsOn) == 0
 	}
 	if d.cfg.Trees == nil {
@@ -609,7 +610,11 @@ func (d *Session) prepareDocuments(
 		frame.retire(d.cfg.Store)
 		return nil, manifest.NewError(manifest.ErrInput, nil, "construction support changed")
 	}
-	prepared, err := kustomize.Prepare(ks, nil, d.loader.Options.Missing)
+	var provider values.Provider
+	if ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+		provider = values.NewStoreProvider(&frame.support)
+	}
+	prepared, err := kustomize.Prepare(ks, provider, d.loader.Options.Missing)
 	if err != nil {
 		frame.err, frame.complete = err, ctx.Err() == nil
 		return frame, err

@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -167,8 +168,17 @@ func (l *Loader) eligibleKustomizations(kss []store.Child) []store.Child {
 		return kss
 	}
 	return slices.DeleteFunc(kss, func(child store.Child) bool {
-		return l.inactiveKustomization(child.Obj.Named())
+		id := child.Obj.Named()
+		if l.inactiveKustomization(id) {
+			return true
+		}
+		return l.kustomizationNeedsBuild(id) && l.Store.GetDeclaration(id) == nil
 	})
+}
+
+func (l *Loader) kustomizationNeedsBuild(id manifest.NamedResource) bool {
+	occurrence, known := l.catalogOccurrence(id)
+	return known && occurrence.requiresBuild && l.Index.Records[id].Builder == ""
 }
 
 func (l *Loader) inactiveKustomization(id manifest.NamedResource) bool {
@@ -228,9 +238,21 @@ func (l *Loader) eachIndexedKustomization(yield func(store.Child)) {
 			occurrence.facts.structural.Named() == id {
 			child.Obj = occurrence.facts.structural
 		}
-		if _, ok := child.Obj.(*manifest.Kustomization); ok {
-			yield(child)
+		ks, ok := child.Obj.(*manifest.Kustomization)
+		if !ok {
+			continue
 		}
+		// Self-application MUST wait for preparation before claiming its construction inputs.
+		if l.kustomizationNeedsBuild(id) && safepath.Contains(
+			filepath.Join(
+				SourceView(l.Store, ks.EffectiveSourceID(), l.SourceRoot).Path,
+				manifest.NormalizeClaimBase(ks.Path),
+			),
+			r.Path,
+		) {
+			continue
+		}
+		yield(child)
 	}
 }
 
@@ -263,7 +285,10 @@ func (l *Loader) IndexedObject(id manifest.NamedResource, r manifest.DiscoveryRe
 
 // References yields immutable authored reference evidence without hydrating its declaration.
 func (l *Loader) References(id manifest.NamedResource) iter.Seq[manifest.Reference] {
-	if occurrence, ok := l.catalogOccurrence(id); ok {
+	if record, ok := l.Index.Lookup(id); ok && record.Builder != "" && record.Declaration != nil {
+		return manifest.References(record.Declaration, manifest.ReferenceRelations)
+	}
+	if occurrence, ok := l.catalogOccurrence(id); ok && !l.documents.eager {
 		return occurrence.references()
 	}
 	record, _ := l.Index.Lookup(id)
@@ -290,8 +315,9 @@ func (l *Loader) Load(
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(resultErr)
 	}()
-	l.documents.compact = l.Options.Session != nil
-	l.documents.recordInputs = l.documents.compact && l.Options.Cache != nil && l.Options.Cache.CanPersistRenders()
+	l.configureDocuments()
+	l.documents.recordInputs = l.documents.compact && !l.documents.eager &&
+		l.Options.Cache != nil && l.Options.Cache.CanPersistRenders()
 	l.mountSources()
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -315,16 +341,15 @@ func (l *Loader) Load(
 	l.ensureScopes()
 	reader, view := l.documents, l.physicalView()
 	evidence := view.rootFacts(owner, l, nil)
-	ordinary := !l.frozen && selection.Root(evidence).Independent &&
-		evidence.Occurrence.Declaration != (selection.OccurrenceID{})
-	if purpose := l.constructionPurpose.Load(); purpose != nil {
-		ordinary = ordinary || slices.Contains(*purpose, owner)
-	}
+	purpose := l.constructionPurpose.Load()
 	switch {
 	case !reader.compact,
 		owner == (manifest.NamedResource{}),
 		l.Options.Session.Snapshot().OrdinaryDemand(owner),
-		ordinary:
+		!l.frozen && evidence.Scope.Prepared,
+		!l.frozen && selection.Root(evidence).Independent &&
+			evidence.Occurrence.Declaration != (selection.OccurrenceID{}),
+		purpose != nil && slices.Contains(*purpose, owner):
 	default:
 		reader.intent = manifest.ApplicationDocuments
 	}
@@ -353,6 +378,7 @@ func (l *Loader) Load(
 	if reader.intent != manifest.ApplicationDocuments {
 		l.markInitialFiles(abs, files)
 	}
+
 	l.scopes.scanned[abs] = reader.intent
 	if l.documents.compact {
 		l.construction++
@@ -867,4 +893,9 @@ func (l *Loader) declarationLocated(id manifest.NamedResource, objects admission
 	record, _ := l.Index.Lookup(id)
 	return record.Path != "" || record.Builder != "" || objects.GetDeclaration(id) != nil ||
 		selection.Root(l.roots.get(record.Parent).view()).Independent
+}
+
+func (l *Loader) configureDocuments() {
+	l.documents.compact = l.Options.Session != nil || l.Options.ParsedInputs != nil && l.Options.ParsedInputs.compact
+	l.documents.eager = l.Options.Session.Snapshot().Output(manifest.NamedResource{})
 }

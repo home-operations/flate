@@ -148,6 +148,7 @@ func (e *Execution) DataInputs(
 		if err != nil {
 			return nil, err
 		}
+		result.ReportWarnings(&e.Reads)
 		if result.Disposition(e.Missing) == values.Unresolved {
 			e.Unreadable = append(e.Unreadable, ref.NamedResource)
 			e.unresolved = append(e.unresolved, depwait.DataDependency{Reference: ref, Input: input, Result: result})
@@ -249,7 +250,7 @@ func (e *Execution) readDataInput(
 	id manifest.NamedResource,
 	provider dataLookup,
 ) (store.ReferenceFacts, error) {
-	if !e.probe && e.selection != nil {
+	if !e.probe && !e.selection.Snapshot().Output(manifest.NamedResource{}) {
 		var proof store.ReadSet
 		proof.Init(e.Store, e.Reads.ID(), nil)
 		proof.SetWork(e.Reads.Work())

@@ -1,0 +1,10 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: cluster-resources, namespace: flux-system}
+spec:
+  dependsOn:
+    - {apiVersion: v1, kind: ConfigMap, name: cluster-vars}
+  resources:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: must-not-render, namespace: apps}

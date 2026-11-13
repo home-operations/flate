@@ -62,7 +62,7 @@ spec:
 	}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	assert.NoError(t, err)
 	assert.NoError(t, o.bootstrap(t.Context()))
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	owner := testutil.KustomizationID("apps", "sync")

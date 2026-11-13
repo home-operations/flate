@@ -1,0 +1,6 @@
+resources: [platform.yaml, ks.yaml, rs.yaml, velero.yaml]
+configMapGenerator:
+- name: cluster-vars
+  namespace: flux-system
+  envs: [.cluster-vars.env]
+  options: {disableNameSuffixHash: true}

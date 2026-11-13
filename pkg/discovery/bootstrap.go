@@ -7,16 +7,13 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
-	"net/url"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/go-git/go-git/v6/plumbing"
-	"github.com/go-git/go-git/v6/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -297,9 +294,9 @@ func (d *Session) entrySourceGroups(
 				entrySourceGroupFor(groups, application.Source).entry = true
 			}
 		}
-	}
-	if err := d.addLoadedSources(ctx, groups, allowMissing); err != nil {
-		return nil, err
+		if err := d.addLoadedSources(ctx, groups, allowMissing); err != nil {
+			return nil, err
+		}
 	}
 	if allowMissing {
 		d.addMissingSources(groups)
@@ -312,39 +309,45 @@ func (d *Session) addLoadedSources(
 	groups map[manifest.NamedResource]*entrySourceGroup,
 	allowMissing bool,
 ) error {
-	if d.loader == nil {
-		return nil
-	}
-	restricted := d.loader.Options.Session != nil
+	restricted := !d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
 	for child, err := range d.loader.Sources(ctx) {
 		if err != nil {
 			return err
 		}
 		id := child.Obj.Named()
+		evidence := d.loader.RootEvidence(id, nil, true)
+		if evidence.Occurrence.RequiresBuild && evidence.Record.Builder == "" {
+			continue
+		}
 		group := entrySourceGroupFor(groups, id)
 		group.object, group.document = child.Obj, child.Doc
-		group.required = group.required || restricted && selection.Root(d.loader.RootEvidence(id, nil, true)).Admitted
+		root := selection.Root(evidence)
+		group.projected = !root.Admitted && evidence.Occurrence.Declaration == (selection.OccurrenceID{}) &&
+			evidence.Record.Builder == "" && d.cfg.Store.GetDeclaration(id) == nil
+		group.required = group.required || restricted && root.Admitted
 	}
 	{
 		childValues := d.loader.PathObjects()
 		for childIndex := range childValues {
 			child := childValues[childIndex]
+			if child.RequiresBuild {
+				continue
+			}
 
 			application, valid := manifest.ApplicationFor(partitionObject(&child))
 			if valid {
 				group := entrySourceGroupFor(groups, application.Source)
 				group.entry = group.entry || d.admission().appliesEntry(&application)
 			}
-			if application.Declaration != nil {
-				group := entrySourceGroupFor(groups, application.Source)
-				group.project(application.Declaration)
-				group.required = group.required || group.entry
-				continue
-			}
 			ref, _, _ := child.SourcePath()
 			group := groups[ref]
 			declared := group != nil && group.object != nil
-			if allowMissing || declared || d.cfg.Store.GetObject(ref) != nil {
+			switch {
+			case application.Declaration != nil:
+				group := entrySourceGroupFor(groups, application.Source)
+				group.project(application.Declaration)
+				group.required = group.required || group.entry
+			case allowMissing || declared || d.cfg.Store.GetObject(ref) != nil:
 				reference := sourceReference(partitionObject(&child), ref)
 				addEntrySource(groups, ref, child.Identity, &reference)
 			}
@@ -380,7 +383,11 @@ func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]*en
 			}) {
 			continue
 		}
-		if !selection.Root(d.loader.RootEvidence(id, nil, true)).Admitted {
+		evidence := d.loader.RootEvidence(id, nil, true)
+		prepared := !evidence.Occurrence.RequiresBuild || evidence.Record.Builder != ""
+		eager := d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) &&
+			evidence.Scope.EntryKustomize && evidence.Scope.Eligibility != selection.RootInactive && prepared
+		if !selection.Root(evidence).Admitted && !eager {
 			continue
 		}
 		for ref := range d.loader.References(id) {
@@ -409,7 +416,7 @@ func (d *Session) entrySourceObject(
 		}
 		return group.object
 	}
-	restricted := d.loader != nil && d.loader.Options.Session != nil
+	restricted := d.loader != nil && !d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
 	obj := d.cfg.Store.GetObject(id)
 	if previous, seen := d.resolvedSources.snapshot()[id]; seen && previous.synthetic &&
 		obj == previous.object &&
@@ -482,7 +489,7 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) bool {
 	previous := d.resolvedSources.snapshot()[id]
 	refresh := previous.artifact != nil && previous.input != candidate.input
 	object := d.cfg.Store.GetObject(id)
-	restricted := d.loader != nil && d.loader.Options.Session != nil
+	restricted := d.loader != nil && !d.loader.Options.Session.Snapshot().Output(manifest.NamedResource{})
 	replacing := restricted && object != nil && object != candidate.object
 	projecting := d.finalized && candidate.projected && d.cfg.Store.GetDeclaration(id) == nil
 	d.resolvedSources.publish(candidate, candidate.synthetic || replacing || projecting)
@@ -815,35 +822,4 @@ func (a *Admission) Warnings() []manifest.Warning {
 	}
 	slices.SortFunc(warnings, manifest.CompareWarning)
 	return warnings
-}
-
-func normalizeGitURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	endpoint, err := transport.ParseURL(raw)
-	if err != nil {
-		return ""
-	}
-	switch strings.ToLower(endpoint.Scheme) {
-	case "http", "https", "ssh", "git":
-	default:
-		return ""
-	}
-	host, remotePath := strings.Trim(endpoint.Host, "[]"), endpoint.Path
-	if strings.Contains(raw, "://") {
-		parsed, err := url.Parse(raw)
-		if err != nil {
-			return ""
-		}
-		host, remotePath = parsed.Hostname(), parsed.Path
-	}
-	if host == "" || strings.ContainsAny(host, "/\\") || remotePath == "" {
-		return ""
-	}
-	remotePath = strings.TrimSuffix(remotePath, "/")
-	remotePath = strings.TrimSuffix(remotePath, ".git")
-	remotePath = strings.TrimPrefix(remotePath, "/")
-	if remotePath == "" {
-		return ""
-	}
-	return strings.ToLower(host + "/" + remotePath)
 }

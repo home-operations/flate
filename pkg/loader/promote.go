@@ -209,6 +209,9 @@ func (l *Loader) builtRecord(
 	}
 	var authored store.Child
 	raw, _ := l.Index.Lookup(id)
+	if occurrence, found := l.catalogOccurrence(id); found && occurrence.facts.collection {
+		raw = manifest.DiscoveryRecord{}
+	}
 	if raw.Path == "" && id.Namespace != "" {
 		if occurrence, known := l.catalogOccurrence(id); known && occurrence.Authored.Namespace == "" {
 			bare := id
@@ -235,7 +238,7 @@ func (l *Loader) builtRecord(
 					func(file string) bool { return evidence.Delta.FileChanged(location, file) },
 				)
 		}
-		if !same && original.Doc != nil {
+		if !same && original.Obj != nil {
 			same = l.stampedBuiltEqual(obj, &original, input)
 		}
 		if same {
@@ -482,7 +485,7 @@ func (l *Loader) retainBuiltDeclaration(
 	id manifest.NamedResource,
 ) {
 	raw := *rawValue
-	if l.documents.compact {
+	if l.documents.compact && !l.documents.eager {
 		record.Authored, record.Path = raw.Authored, raw.Path
 		if raw.Authored != id {
 			record.File = raw.File
@@ -495,8 +498,16 @@ func (l *Loader) stampedBuiltEqual(obj manifest.BaseManifest, originalValue *sto
 	same := false
 	original := *originalValue
 	input := *inputValue
-	if object := l.Store.GetObject(input.Owner); manifest.KindOf(object).Parent {
-		doc := manifest.DeepCopyMap(original.Doc)
+	if object := l.CatalogObject(input.Owner); manifest.KindOf(object).Parent {
+		doc := original.Doc
+		if doc == nil {
+			var err error
+			doc, err = manifest.ObjectDocument(original.Obj.Named(), original.Obj)
+			if err != nil {
+				return false
+			}
+		}
+		doc = manifest.DeepCopyMap(doc)
 		object.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
 		parsed, err := manifest.ParseDoc(
 			doc,
@@ -516,7 +527,7 @@ func (l *Loader) setBuiltProduction(
 	builder := record.Builder
 	input := *inputValue
 	record.Refs = discoveryReferences(nil, obj)
-	if selection.Root(l.roots.get(id).view()).Independent {
+	if selection.Root(l.roots.get(id).view()).Independent && record.Authored != (manifest.NamedResource{}) {
 		record.Parent = manifest.NamedResource{}
 		record.Productions = slices.DeleteFunc(record.Productions, func(production manifest.Production) bool {
 			return production.Owner != (manifest.NamedResource{}) && production.Owner != id

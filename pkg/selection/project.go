@@ -405,6 +405,9 @@ func (s *selectionSide) unchangedDeclaration(
 }
 
 func (s *selectionSide) statusOf(id manifest.NamedResource) (store.StatusInfo, bool) {
+	if info, known := s.run.Failed[id]; known {
+		return info, true
+	}
 	if info, known := s.run.Store.GetStatus(id); known {
 		return info, true
 	}

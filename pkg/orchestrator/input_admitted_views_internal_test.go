@@ -313,7 +313,7 @@ func unavailableSourceAdmittedViews(t *testing.T, statementInput *testRenderTree
 	o.Store().SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: (*statementInput.headRoot)})
 	o.Store().
 		UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "fixture unavailable payload"})
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(result.Close)
 	assert.FatalIf(
 		t,

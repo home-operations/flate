@@ -62,7 +62,7 @@ func (o *Orchestrator) constructDiscovery(ctx context.Context) (*discovery.Resul
 		}
 		var result *discovery.Result
 		var err error
-		if o.selection == nil {
+		if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 			result, err = o.session.Run(ctx)
 		} else {
 			result, err = o.session.Freeze(ctx)

@@ -136,7 +136,7 @@ func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 			fetcher := &advisorySourceFetcher{root: root}
 			o.src.Fetchers[manifest.KindGitRepository] = fetcher
 			assert.NoError(t, o.bootstrap(t.Context()))
-			result, err := o.collectResult(o.run(t.Context()))
+			result, err := o.collectResult(t.Context(), o.run(t.Context()))
 			t.Cleanup(result.Close)
 			assert.NoError(t, err)
 			assert.Equal(t, len(result.Failed), 0)
@@ -198,7 +198,7 @@ func testRenderTreesClusterAdvisoriesWarmAcquisitionTail(
 						info,
 					)
 				}
-				result, err := o.collectResult(nil)
+				result, err := o.collectResult(t.Context(), nil)
 				t.Cleanup(result.Close)
 				assert.NoError(t, err)
 				assert.Diff(t, outputByParent(result.Manifests), before)

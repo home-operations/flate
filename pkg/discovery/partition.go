@@ -213,7 +213,8 @@ func (p *entryPlanner) reach(ctx context.Context, root *entryRoot) error {
 			p.head++
 			continue
 		}
-		if _, _, hasPath := visit.occurrence.SourcePath(); !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
+		_, _, hasPath := visit.occurrence.SourcePath()
+		if visit.occurrence.RequiresBuild || !hasPath && !visit.occurrence.Identity.KindInfo().Runnable {
 			root.Occurrences = append(root.Occurrences, *visit.occurrence)
 			p.seen[occurrenceIdentity(visit.occurrence)] = true
 			p.queue[p.head] = partitionVisit{}
@@ -364,6 +365,9 @@ func (p *entryPlanner) source(
 	object := partitionObject(visit.occurrence)
 	application, _ := manifest.ApplicationFor(object)
 	selected, projected, producers := visit.scope.source(id)
+	if selected != nil && selected.RequiresBuild {
+		return nil, nil //nolint:nilnil // Unprepared predictions MUST NOT supply source material.
+	}
 
 	group := entrySourceGroup{
 		scoped: true, required: true, reference: *reference, producers: producers,

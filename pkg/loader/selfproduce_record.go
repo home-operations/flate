@@ -40,7 +40,7 @@ func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact 
 		return
 	}
 
-	o.requiresBuild = pr.visit.requiresBuild && pr.visit.owner == (manifest.NamedResource{})
+	o.requiresBuild = o.requiresBuild || pr.visit.requiresBuild || b.locations[id].requiresBuild
 	r := b.idx.Records[id]
 	if r.Authored == (manifest.NamedResource{}) {
 		r.Authored, r.Path, r.File = o.Authored, pr.visit.file, pr.coordinate

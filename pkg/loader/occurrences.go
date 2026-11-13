@@ -54,6 +54,7 @@ type occurrenceFacts struct {
 	path                            string
 	hasPath, namespaced, uncertain  bool
 	retained                        bool
+	collection                      bool
 	structural                      *manifest.Kustomization
 	catalog                         manifest.BaseManifest
 	reverse                         []manifest.NamedResource
@@ -241,7 +242,11 @@ func (l *Loader) appendIndexedPathObjects(objects []authoredOccurrence) []author
 			continue
 		}
 		if _, _, applies := object.SourcePath(); applies {
-			objects = append(objects, authoredOccurrence{Identity: id, Authored: id, object: object})
+			occurrence, _ := l.catalogOccurrence(id)
+			objects = append(objects, authoredOccurrence{
+				Identity: id, Authored: id, object: object,
+				requiresBuild: occurrence.requiresBuild && l.Index.Records[id].Builder == "",
+			})
 		}
 	}
 	return objects
@@ -760,7 +765,7 @@ func (l *Loader) visitOccurrences(vValue *graphVisit, yield func(authoredOccurre
 			if err != nil {
 				return err
 			}
-			o.Identity = id
+			o.Identity, o.requiresBuild = id, o.requiresBuild || v.requiresBuild
 			yield(o)
 		}
 	}
@@ -781,6 +786,9 @@ func (l *Loader) readOccurrence(
 		for i := range objects {
 			object := &objects[i]
 			if object.outcome.Ordinal == reader.coordinate.Document && object.item == reader.coordinate.item {
+				if object.fact != nil && object.fact.object != nil {
+					return []store.Child{{Obj: object.fact.object, Doc: object.Doc, Warnings: object.Warnings}}, nil
+				}
 				payload = object.payload
 				warnings = object.Warnings
 				break

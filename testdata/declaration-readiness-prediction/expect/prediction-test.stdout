@@ -1,0 +1,8 @@
+
+  ✓  OCIRepository  flux-system/flux-system
+  ✗  entry          path "flux"  kustomize build flux: loading KV pairs: env source files: [.cluster-vars.env]: resolve flux/.cluster-vars.env: stat flux/.cluster-vars.env: file does not exist
+  ⊘  Kustomization  flux-system/cluster-config  blocked by flux-system/cluster-vars (not found)
+  ⊘  Kustomization  flux-system/platform  blocked by flux-system/cluster-vars (not found)
+  ⊘  ResourceSet    flux-system/cluster-resources  blocked by flux-system/cluster-vars (not found)
+
+  ✗ 1 passed · 1 failed · 3 blocked   <DUR>

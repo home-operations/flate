@@ -361,7 +361,7 @@ func TestRender_ChangedSubstitutedChildPath(t *testing.T) {
 			localErr := o.bootstrap(t.Context())
 			assert.FatalIf(t, localErr != nil, "%v", localErr)
 		}
-		result, err := o.collectResult(o.run(t.Context()))
+		result, err := o.collectResult(t.Context(), o.run(t.Context()))
 		t.Cleanup(result.Close)
 		assert.FatalIf(t, err != nil, "%v", err)
 		return result
@@ -521,7 +521,7 @@ func testRenderChangedPathUsesStaticReadersCase(
 		o, err := newTestOrchestrator(t, (*testCaseInput.tree), Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.NoError(t, o.bootstrap(t.Context()))
-		result, err := o.collectResult(o.run(t.Context()))
+		result, err := o.collectResult(t.Context(), o.run(t.Context()))
 		t.Cleanup(result.Close)
 		assert.NoError(t, err)
 		o.stop()

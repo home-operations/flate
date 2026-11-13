@@ -2,7 +2,6 @@ package selection
 
 import (
 	"cmp"
-	"iter"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -187,21 +186,6 @@ func (c *admissionClosure) occurrenceMount(id manifest.NamedResource, root strin
 		return facts.Mounted
 	}
 	return nil
-}
-
-//nolint:gocritic // The iterator MUST capture an immutable occurrence snapshot.
-func (o OccurrenceFacts) references() iter.Seq[manifest.Reference] {
-	return func(yield func(manifest.Reference) bool) {
-		for i := range o.Refs {
-			ref := o.Refs[i]
-			if ref.NamespaceDefault {
-				ref.Namespace = o.Identity.Namespace
-			}
-			if !yield(ref) {
-				return
-			}
-		}
-	}
 }
 
 func opaqueOccurrence(facts *OccurrenceFacts, targets []manifest.ProducerTarget) bool {

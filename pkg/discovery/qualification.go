@@ -279,7 +279,7 @@ func (q *entryQualification) advance(ctx context.Context, a *Admission, st *stor
 		}
 	}
 	if q.closed ||
-		len(q.matches) != 0 && q.loader.Options.Session == nil {
+		len(q.matches) != 0 && q.loader.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
 		if err := walk.observe(ctx); err != nil {
 			return err
 		}
@@ -295,6 +295,9 @@ func (q *entryQualification) advance(ctx context.Context, a *Admission, st *stor
 //nolint:nilnil // Unavailable declarations leave the supported prefix pending.
 func (w *qualificationWalk) root(ctx context.Context, root *selection.OccurrenceFacts) (*applicationEvidence, error) {
 	object := w.store.GetDeclaration(root.Identity)
+	if root.RequiresBuild && object == nil {
+		return nil, nil
+	}
 	if object != nil {
 		object = w.reads.GetDeclaration(root.Identity)
 	}
@@ -643,7 +646,7 @@ func (w *qualificationWalk) construct(
 		source := ks.EffectiveSourceID()
 		input, _ = w.reads.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 	}
-	if input == nil || w.q.trees == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+	if input == nil || w.q.trees == nil || !w.q.session.canPrepare(ks) {
 		return qualificationBatch{}, nil
 	}
 	root := filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(ks.Path))

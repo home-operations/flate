@@ -66,7 +66,7 @@ func TestRender_ComponentSecretProducerSelection(t *testing.T) {
 					assert.NoError(t, err)
 					t.Cleanup(o.stop)
 					assert.NoError(t, o.bootstrap(t.Context()))
-					result, err := o.collectResult(o.run(t.Context()))
+					result, err := o.collectResult(t.Context(), o.run(t.Context()))
 					assert.NoError(t, err)
 					t.Cleanup(result.Close)
 					decision := o.selection.Snapshot()
@@ -229,7 +229,7 @@ func TestRender_ProducerSubstitutionExclusions(t *testing.T) {
 				Namespace: "paperwork", Name: "paperless",
 			}
 			assert.Equal(t, uint64(len(o.store.Productions(declaration, o.loader.Index))), tc.attempts)
-			result, err := o.collectResult(o.run(t.Context()))
+			result, err := o.collectResult(t.Context(), o.run(t.Context()))
 			if tc.field == "" {
 				assert.NoError(t, err)
 			} else {

@@ -26,6 +26,7 @@ type scopeContribution struct {
 	context        graphContext
 	unshared       bool
 	active         bool
+	applies        bool
 	membershipOnly bool
 	input          int
 }
@@ -87,7 +88,7 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 	return walk.visits
 }
 
-func (l *Loader) visitScope(rootArg *graphVisit, membershipOnly bool) []graphVisit {
+func (l *Loader) visitScope(rootArg *graphVisit, membershipOnly bool) {
 	root := *rootArg
 
 	root.role = kustomizeinput.Resource
@@ -128,10 +129,10 @@ func (l *Loader) visitScope(rootArg *graphVisit, membershipOnly bool) []graphVis
 			visits = append(visits, l.scopeWalk(new(child))...)
 		}
 	}
-	return l.recordScopeVisits(&root, visits, membershipOnly, unshared)
+	l.recordScopeVisits(&root, visits, membershipOnly, unshared)
 }
 
-func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, membershipOnly, unshared bool) []graphVisit {
+func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, membershipOnly, unshared bool) {
 	l.scopes.contributions = append(
 		l.scopes.contributions,
 		scopeContribution{
@@ -145,6 +146,8 @@ func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, member
 		},
 	)
 	contribution := len(l.scopes.contributions) - 1
+	applies := root.owner != (manifest.NamedResource{}) ||
+		l.entry == entryKustomize && filepath.Join(root.root, root.dir) == l.entryPath
 	for i := range visits {
 		v := &visits[i]
 		ref := scopeVisit{contribution: contribution, visit: i}
@@ -155,8 +158,24 @@ func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, member
 		if v.origin != "" && v.origin != v.file && v.origin != v.localFile {
 			l.scopes.visits[v.origin] = append(l.scopes.visits[v.origin], ref)
 		}
+		if applies || l.documents.eager || v.role != kustomizeinput.Resource {
+			continue
+		}
+		objects := l.documents.cache[v.file].objects
+		for j := range objects {
+			child := &objects[j]
+			object := child.Obj
+			application := false
+			if child.fact != nil {
+				object = child.fact.facts.catalog
+				application = child.fact.facts.hasPath
+			} else if object != nil {
+				_, _, application = object.SourcePath()
+			}
+			applies = applies || manifest.KindOf(object).Runnable || application
+		}
 	}
-	return visits
+	l.scopes.contributions[contribution].applies = applies
 }
 
 func (l *Loader) scopeWork(root *graphVisit) *manifest.WorkRecord {

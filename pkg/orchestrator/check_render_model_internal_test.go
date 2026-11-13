@@ -381,7 +381,7 @@ func TestRenderTrees_IndependentModel(t *testing.T) {
 			final := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
 			first.Retire()
 			assert.FatalIf(t, !final.Valid(), "%v", "final live execution is invalid")
-			result, err := o.collectResult(nil)
+			result, err := o.collectResult(t.Context(), nil)
 			t.Cleanup(result.Close)
 			assert.FatalIf(t, err != nil, "%v", err)
 			{

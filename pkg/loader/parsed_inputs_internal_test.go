@@ -121,7 +121,9 @@ func TestParsedInputs_PhysicalReplayLifetime(t *testing.T) {
 				st.SetArtifact(manifest.BootstrapSourceID, input)
 				l := New(st)
 				l.SourceRoot, l.Options.ParsedInputs = root, parsed
-				configureSelection(t, l, selection.Request{Changed: compact})
+				if compact {
+					configureSelection(t, l, selection.Request{Changed: compact})
+				}
 				_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 				occurrences, err := l.Occurrences(t.Context(), root, "")

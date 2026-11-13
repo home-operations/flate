@@ -418,7 +418,7 @@ func TestRender_SubstitutionLateConsumer(t *testing.T) {
 		),
 	}
 	o.store.AddObject(rs)
-	res, err := o.collectResult(o.run(t.Context()))
+	res, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil, "%v", err)
 	{
@@ -544,7 +544,7 @@ func testBootstrapSubstitutionCollisionsCase(
 		err := o.bootstrap(t.Context())
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	res, err := o.collectResult(o.run(t.Context()))
+	res, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil, "%v", err)
 	id := testutil.KustomizationID("apps", "consumer")
@@ -629,13 +629,15 @@ func testRenderSubstitutionLateProducerCase(t *testing.T, testCaseInput testRend
 	}
 
 	external := source.Obj.Named()
+	supplied := o.store.ReferenceFacts(external, nil, manifest.NamedResource{}).Data
 	assert.FatalIf(
 		t,
-		o.store.ReferenceFacts(external, nil, manifest.NamedResource{}).Data == nil || !o.store.ReportHidden(external) ||
-			len(renderersForTest(o.index, external)) != 0,
+		supplied == nil || !o.store.ReportHidden(external) ||
+			o.store.HasInventory(testutil.KustomizationID("apps", "producer")),
 		"%v",
-		"test requires producer unknown at bootstrap",
+		"producer output must remain absent at bootstrap",
 	)
+	assert.Diff(t, supplied.Snapshot(), source.Obj.(manifest.Data).Snapshot())
 	var mu sync.Mutex
 	var order []string
 	unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
@@ -648,7 +650,7 @@ func testRenderSubstitutionLateProducerCase(t *testing.T, testCaseInput testRend
 		}
 	}, false)
 	t.Cleanup(unsub)
-	res, err := o.collectResult(o.run(t.Context()))
+	res, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil, "%v", err)
 	consumer := testutil.KustomizationID("apps", "consumer")

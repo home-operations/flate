@@ -483,7 +483,7 @@ func TestRender_SubstitutionDeferredEntry(t *testing.T) {
 		"%v",
 		"deferred entry published an effective child during discovery",
 	)
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(result.Close)
 	assert.FatalIf(t, err != nil,
 		"deferred entry did not progress: %v; failed=%v blocked=%v",

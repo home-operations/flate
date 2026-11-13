@@ -419,8 +419,7 @@ func (d *Session) preparePendingProducer(
 		objects = guard
 	}
 	input, _, err := kustomize.SourceInput(objects, ks)
-	if err != nil || !guard.Valid() || d.cfg.Trees == nil ||
-		ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+	if err != nil || !guard.Valid() || d.cfg.Trees == nil || !d.canPrepare(ks) {
 		return false, nil //nolint:nilerr // Unavailable inputs defer preparation to reconciliation.
 	}
 	if previous, ok := d.prepared[ks.Named()]; ok && previous.registered &&

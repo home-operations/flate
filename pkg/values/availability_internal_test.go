@@ -139,3 +139,57 @@ func testClassifySelectedEvidence(t *testing.T, kind string, tc *classificationC
 		})
 	}
 }
+
+func TestClassify_PrivateEncryptedAuthority(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}
+	for _, tc := range []struct {
+		name                         string
+		accepted, readable, prepared bool
+		state                        State
+		warnings                     int
+	}{
+		{name: "private prepared unreadable", prepared: true, state: Absent},
+		{name: "stored unreadable", state: Encrypted, warnings: 1},
+		{name: "accepted unreadable", prepared: true, accepted: true, state: Encrypted, warnings: 1},
+		{name: "private readable", prepared: true, readable: true, state: Encrypted, warnings: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var keys map[string]any
+			if tc.readable {
+				keys = map[string]any{"plain": "value"}
+			}
+			data := manifest.NewSecret(id, nil, keys)
+			input := store.ReferenceFacts{
+				Data:     data,
+				Original: data,
+				Private:  true,
+				Offline:  true,
+				Prepared: tc.prepared,
+				Accepted: tc.accepted,
+				Warnings: []manifest.Warning{
+					{Resource: id, Category: manifest.WarnSOPSUnreadable, Detail: []string{"encrypted"}},
+				},
+			}
+			result, err := Classify(&manifest.Reference{NamedResource: id, Use: "substituteFrom"}, &input)
+			assert.NoError(t, err)
+			assert.Equal(t, result.State(), tc.state)
+			st := store.New()
+			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+			st.AddObject(owner)
+			var reads store.ReadSet
+			reads.Init(st, owner.Named(), nil)
+			reads.GetObject(owner.Named())
+			defer reads.Retire()
+			result.ReportWarnings(&reads)
+			result.ReportWarnings(&reads)
+			assert.Equal(t, len(st.Warnings()), 0)
+			reads.Accept(store.AssessmentReconciled)
+			assert.Equal(t, len(st.Warnings()), tc.warnings)
+			if tc.state == Absent {
+				assert.Equal(t, result.Data() == nil, true)
+			}
+		})
+	}
+}

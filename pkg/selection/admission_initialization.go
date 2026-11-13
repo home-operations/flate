@@ -440,6 +440,9 @@ func (c *admissionClosure) recordDirectState(
 	state.direct, state.directKnown = changed, state.initialKnown
 	state.requested = state.requested || c.namedSelection(id)
 	state.eligible = record.Origin.Policy(id, nil).Root && c.session.request.Matches(id)
+	if state.eligible && c.decision.unrestricted {
+		state.eligible = c.rootEvidence(id).Admitted || c.objects.GetDeclaration(id) != nil
+	}
 	state.declarationChanged = state.eligible && !changed &&
 		(c.fileChanged(c.source(id), record.File) || c.inputsChanged(c.source(id), record.Inputs))
 	for next := state.claim; next != 0; next = claims[next-1].next {

@@ -1,0 +1,330 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "ad21386f54e437d139a3f670a5603aef25edfa39",
+    "paths": [
+      "m00nwtchr/homelab-cluster",
+      "ionfury/homelab",
+      "jfroy/flatops"
+    ],
+    "reductions": "Retain private encrypted component data, failed native entry, and blocked coredns source. Inputs contain synthetic values only."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "secret",
+      "description": "Prepared data and diagnostic-only declarations retain main output.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/secret-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/secret-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "secret-allowed",
+      "description": "Prepared data and diagnostic-only declarations retain main output.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/secret-allowed-test.stdout",
+              "stderr": "expect/secret-allowed.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/secret-allowed-build.stdout",
+              "stderr": "expect/secret-allowed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "secret-supplied",
+      "description": "Supplied encrypted data retains its independent input authority.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--supply",
+              "@@repo@@/supply/secret.yaml"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/secret-allowed-test.stdout",
+              "stderr": "expect/secret-allowed.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap",
+              "--supply",
+              "@@repo@@/supply/secret.yaml"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/secret-allowed-build.stdout",
+              "stderr": "expect/secret-allowed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/secret-allowed-build.stdout",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/secret-allowed-test.stdout",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/secret-allowed.stderr",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/secret-build.stderr",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/secret-test.stdout",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/component/kustomization.yaml",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/component/secret.yaml",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/flux/rs.yaml",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/work/cm.yaml",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/work/kustomization.yaml",
+      "cases": [
+        "secret",
+        "secret-allowed",
+        "secret-supplied"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/supply/secret.yaml",
+      "cases": [
+        "secret-supplied"
+      ],
+      "purpose": "Explicit encrypted supply has authority independent of private preparation."
+    }
+  ]
+}

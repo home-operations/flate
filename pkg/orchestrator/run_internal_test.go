@@ -423,7 +423,8 @@ func testOrchestratorExistenceFinalAliasWarnings(t *testing.T) {
 		o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
 		assert.NoError(t, err)
 		assert.NoError(t, o.bootstrap(t.Context()))
-		assert.Equal(t, o.selection == nil, true)
+		assert.Equal(t, o.selection != nil, true)
+		assert.Equal(t, o.selection.Snapshot().Output(manifest.NamedResource{}), true)
 		assert.Equal(t, o.preparation == nil, true)
 		o.configureControllers()
 		consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
@@ -452,7 +453,7 @@ func testOrchestratorExistenceFinalAliasWarnings(t *testing.T) {
 			assert.Equal(t, status.Status, store.StatusReady)
 		}
 		o.tasks.BlockTillDone()
-		result, collectErr := o.collectResult(nil)
+		result, collectErr := o.collectResult(t.Context(), nil)
 		assert.NoError(t, collectErr)
 		t.Cleanup(result.Close)
 		return result
@@ -620,7 +621,7 @@ func renderBootstrapAliasOrder(t *testing.T, root, order string, valid bool) *Re
 	}
 	fetcher := &generatedOCIFetcher{err: errors.New("unexpected remote fetch")}
 	o.src.Fetchers[id.Kind] = fetcher
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	assert.Equal(t, err != nil, !valid)
 	assert.Equal(t, fetcher.calls.Load(), int64(0))
 	failure, failed := result.Failed[chart.Named()]

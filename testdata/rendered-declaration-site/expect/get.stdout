@@ -1,0 +1,3 @@
+NAMESPACE      NAME                    PATH
+flux-system    Kustomization/child     ./payload/two
+flux-system    Kustomization/root-b    ./layer/site-b

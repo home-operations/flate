@@ -275,7 +275,7 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 // StatusUpdated event when the StatusInfo rollup changes. Snapshot
 // exposes the full condition state. An empty reason derives the normal reason from status.
 func (s *Store) UpdateStatus(id manifest.NamedResource, info StatusInfo) {
-	s.setCondition(id, new(readyCondition(info.Status, info.Reason, info.Message)), info.applyingObjects, nil)
+	s.setCondition(id, new(readyCondition(info.Status, info.Reason, info.Message)), info.applyingObjects, info.failure)
 }
 
 // ReportProgress dispatches transient phase text without changing Ready conditions.
@@ -289,12 +289,16 @@ func (s *Store) ReportProgress(id manifest.NamedResource, message string) {
 
 // UpdateFailure atomically records a terminal error and its immediate failed dependencies.
 func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
-	message := err.Error()
-	var failure *dependencyFailure
+	s.UpdateStatus(id, FailureStatus(err))
+}
+
+// FailureStatus retains detached dependency provenance without publishing a condition.
+func FailureStatus(err error) StatusInfo {
+	info := StatusInfo{Status: StatusFailed, Reason: StatusReason(ReasonFailed), Message: err.Error()}
 	if dep, ok := errors.AsType[*manifest.DependencyFailedError](err); ok {
-		failure = newDependencyFailure(dep)
+		info.failure = newDependencyFailure(dep)
 	}
-	s.setCondition(id, new(readyCondition(StatusFailed, "", message)), 0, failure)
+	return info
 }
 
 // SetCondition upserts cond into the resource's condition list keyed

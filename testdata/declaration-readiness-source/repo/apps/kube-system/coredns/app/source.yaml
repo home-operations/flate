@@ -1,0 +1,4 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: coredns}
+spec: {url: 'oci://fixture.invalid/coredns', ref: {tag: '1.0.0'}}

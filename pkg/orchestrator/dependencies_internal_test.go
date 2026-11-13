@@ -51,7 +51,7 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 					"flux-system",
 					"apps",
 				), "raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
-			res, err := o.collectResult(o.run(t.Context()))
+			res, err := o.collectResult(t.Context(), o.run(t.Context()))
 			t.Cleanup(res.Close)
 			assert.FatalIf(
 				t,

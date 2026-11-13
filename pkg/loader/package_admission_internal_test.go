@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -248,20 +249,45 @@ func TestPackages_AdmissionRetiresWorkingTreeEvidence(t *testing.T) {
 
 func TestOccurrenceObject_SourceDeclarations(t *testing.T) {
 	t.Parallel()
-	for _, compact := range []bool{false, true} {
-		t.Run(strconv.FormatBool(compact), func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		compact bool
+		changed bool
+		raw     bool
+	}{
+		{name: "false"},
+		{name: "true", compact: true, changed: true},
+		{name: "eager_collection", compact: true},
+		{name: "noncompact", raw: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			files := sourceDeclarationsForTest(compact)
-			input := &store.SourceArtifact{LocalPath: root, FS: files}
+			files := sourceDeclarationsForTest(tc.compact)
+			reads := map[string]*atomic.Int64{}
+			for name := range files {
+				reads[name] = &atomic.Int64{}
+			}
+			input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{FS: files, reads: reads}}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			l := New(st)
 			l.SourceRoot = root
-			configureSelection(t, l, selection.Request{Changed: compact})
+			if !tc.raw {
+				configureSelection(t, l, selection.Request{Changed: tc.changed})
+			}
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
-			assertSourceDeclarationsForTest(t, l, input, compact)
+			before := map[string]int64{}
+			for name, count := range reads {
+				before[name] = count.Load()
+			}
+			assertSourceDeclarationsForTest(t, l, input, tc.compact)
+			if !tc.changed {
+				for name, count := range reads {
+					assert.Equal(t, count.Load(), before[name])
+				}
+			}
 		})
 	}
 }
@@ -331,7 +357,7 @@ func assertSourceDeclarationsForTest(t *testing.T, l *Loader, input *store.Sourc
 				commit = strings.Repeat("b", 40)
 			}
 			assert.Equal(t, git.Reference.Commit, commit)
-			if compact {
+			if compact && !l.documents.eager {
 				assert.Equal(t, occurrence.Object, manifest.BaseManifest(nil))
 			}
 		}

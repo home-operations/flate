@@ -300,6 +300,9 @@ func (in *Input) sourceCurrent() bool {
 
 func (in *Input) productionCurrent() bool {
 	cell := in.cell(producerFacet)
+	if !in.cell(objectFacet).current() {
+		return false
+	}
 	return cell == nil || cell.head == nil ||
 		cell.absent == nil && cell.head.generation.Load() == cell.generation.Load()
 }

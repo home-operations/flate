@@ -1,0 +1,6 @@
+
+  ✓  Kustomization  flux-system/cluster-apps
+  ⊘  Kustomization  kube-system/coredns  blocked by kube-system/cluster-ipv6-config (not found)
+  ⊘  OCIRepository  kube-system/coredns  blocked by kube-system/cluster-ipv6-config (not found)
+
+  ✗ 1 passed · 2 blocked   <DUR>

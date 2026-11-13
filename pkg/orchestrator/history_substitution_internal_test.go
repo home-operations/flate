@@ -189,7 +189,7 @@ func testBuildChangeFilterEffectiveSubstitutionHistoryCase(
 	}
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	t.Log("changed-only render")
-	head, err := fresh.collectResult(fresh.run(t.Context()))
+	head, err := fresh.collectResult(t.Context(), fresh.run(t.Context()))
 	t.Cleanup(head.Close)
 	assert.NoError(t, err)
 	if testCaseInput.same {

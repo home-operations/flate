@@ -1,0 +1,6 @@
+
+  ✗  entry  path "flux"  kustomize build flux: loading KV pairs: env source files: [.cluster-vars.env]: resolve flux/.cluster-vars.env: stat flux/.cluster-vars.env: file does not exist
+  ✗  ConfigMap  flux-system/cluster-vars  not found
+         required by flux-system/cluster-config, flux-system/platform, flux-system/cluster-resources
+
+  ✗ 2 failed · 3 blocked

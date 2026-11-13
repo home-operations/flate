@@ -61,13 +61,14 @@ type cachedOccurrence struct {
 	Size    int   `json:"Size,omitempty"`
 	payload *inputPayload
 
-	Ordinal  int                    `json:"Ordinal,omitempty"`
-	Item     int                    `json:"Item,omitempty"`
-	Version  string                 `json:"Version,omitempty"`
-	Identity manifest.NamedResource `json:"Identity"`
-	Authored manifest.NamedResource `json:"Authored"`
-	Catalog  json.RawMessage        `json:"Catalog,omitempty"`
-	Facts    cachedOccurrenceFacts  `json:"Facts"`
+	Ordinal       int                    `json:"Ordinal,omitempty"`
+	Item          int                    `json:"Item,omitempty"`
+	RequiresBuild bool                   `json:"RequiresBuild,omitempty"`
+	Version       string                 `json:"Version,omitempty"`
+	Identity      manifest.NamedResource `json:"Identity"`
+	Authored      manifest.NamedResource `json:"Authored"`
+	Catalog       json.RawMessage        `json:"Catalog,omitempty"`
+	Facts         cachedOccurrenceFacts  `json:"Facts"`
 }
 
 type cachedOccurrenceFacts struct {
@@ -78,6 +79,7 @@ type cachedOccurrenceFacts struct {
 	Namespaced         bool                      `json:"Namespaced,omitempty"`
 	Uncertain          bool                      `json:"Uncertain,omitempty"`
 	Retained           bool                      `json:"Retained,omitempty"`
+	Collection         bool                      `json:"Collection,omitempty"`
 	Reverse            []manifest.NamedResource  `json:"Reverse,omitempty"`
 	Refs               []manifest.Reference      `json:"Refs,omitempty"`
 	TemplateInputs     []manifest.TemplateInput  `json:"TemplateInputs,omitempty"`
@@ -104,7 +106,7 @@ type inputFrame struct {
 type inputFrameContent struct{ Origin, URL, Content string }
 
 func (l *Loader) restoreCachedInputs(ctx context.Context) error {
-	if !l.documents.compact || l.Options.Cache == nil || !l.Options.Cache.CanPersistRenders() {
+	if !l.documents.compact || l.documents.eager || l.Options.Cache == nil || !l.Options.Cache.CanPersistRenders() {
 		return nil
 	}
 	maps.DeleteFunc(l.inputCaches, func(root string, state *inputCache) bool {
@@ -168,7 +170,7 @@ func (r documentReader) restoreCachedFile(absolute string) {
 			catalog: catalog, reverse: f.Reverse, refs: f.Refs, templateInputs: f.TemplateInputs,
 			roots: f.Roots, targets: f.Targets, authoredTargets: f.AuthoredTargets,
 			needsCandidates: f.NeedsCandidates, policy: f.Policy, labels: f.Labels, labeled: f.Labeled,
-			substituteDisabled: f.SubstituteDisabled,
+			substituteDisabled: f.SubstituteDisabled, collection: f.Collection,
 		}
 		facts.census = facts
 		facts.structural, _ = catalog.(*manifest.Kustomization)
@@ -180,7 +182,7 @@ func (r documentReader) restoreCachedFile(absolute string) {
 				Document: saved.Ordinal,
 				item:     saved.Item,
 			},
-			Identity: saved.Identity,
+			Identity: saved.Identity, requiresBuild: saved.RequiresBuild,
 			Authored: saved.Authored,
 			facts:    facts,
 		}
@@ -318,7 +320,7 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 		}
 		saved.Objects = append(saved.Objects, cachedOccurrence{
 			Ordinal: object.outcome.Ordinal, Item: object.item, Version: object.version,
-			Identity: occurrence.Identity, Authored: occurrence.Authored,
+			Identity: occurrence.Identity, Authored: occurrence.Authored, RequiresBuild: occurrence.requiresBuild,
 			Catalog: catalog, payload: object.payload,
 			Facts: cachedOccurrenceFacts{
 				Declared:           facts.declared,
@@ -335,10 +337,10 @@ func cacheInput(name, digest string, doc *document) (cachedInput, bool, error) {
 				Targets:            facts.targets,
 				AuthoredTargets:    facts.authoredTargets,
 				NeedsCandidates:    facts.needsCandidates,
-				SubstituteDisabled: facts.substituteDisabled,
-				Policy:             facts.policy,
-				Labels:             facts.labels,
-				Labeled:            facts.labeled,
+				SubstituteDisabled: facts.substituteDisabled, Collection: facts.collection,
+				Policy:  facts.policy,
+				Labels:  facts.labels,
+				Labeled: facts.labeled,
 			},
 		})
 	}

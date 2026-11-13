@@ -289,9 +289,10 @@ func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeI
 		reads.Init((*inputs.st), (*inputs.ks).Named(), nil)
 		reads.GetObject(reads.ID())
 		defer reads.Close()
+		input := values.NewStoreProvider(&reads).Lookup((*inputs.id))
 		assert.FatalIf(
 			t,
-			values.NewStoreProvider(&reads).Lookup((*inputs.id)).Data == nil,
+			input.Data == nil,
 			"%s",
 			"captured generator data missing",
 		)
@@ -299,6 +300,9 @@ func testFinalizeIndexGeneratorDataCase1Tail(t *testing.T, inputs *testFinalizeI
 		if got := (*inputs.st).Warnings(); len(got) != 0 {
 			t.Fatalf("unaccepted lookup published warnings: %+v", got)
 		}
+		result, err := values.Classify(&manifest.Reference{NamedResource: *inputs.id, Use: "substituteFrom"}, &input)
+		assert.NoError(t, err)
+		result.ReportWarnings(&reads)
 		reads.Accept(store.AssessmentReconciled)
 		warnings := (*inputs.st).Warnings()
 		assert.FatalIf(t, len(warnings) != 1 || warnings[0].Category != manifest.WarnSOPSUnreadable ||

@@ -1,0 +1,19 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: platform-config}
+spec:
+  interval: 1h
+  path: ./work
+  sourceRef: {kind: OCIRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: cluster-vars}]
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: platform-resources}
+spec:
+  interval: 1h
+  path: ./work
+  sourceRef: {kind: OCIRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: cluster-vars}, {kind: ConfigMap, name: platform-versions}]

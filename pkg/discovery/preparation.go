@@ -4,7 +4,30 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
+
+func (d *Session) canPrepare(ks *manifest.Kustomization) bool {
+	if ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0 {
+		return true
+	}
+	application := manifest.EntryApplication{Source: ks.EffectiveSourceID(), Path: ks.Path}
+	// Entry self-appliers MUST resolve referenced values through ordinary execution.
+	if d.admission().appliesEntry(&application) {
+		return false
+	}
+	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
+		if ref.Use != "substituteFrom" {
+			continue
+		}
+		input := d.cfg.Store.ReferenceFacts(ref.NamedResource, d.loader.Index, ks.Named())
+		value, err := values.Classify(&ref, &input)
+		if err != nil || value.State() != values.Readable {
+			return false
+		}
+	}
+	return true
+}
 
 func (q *entryQualification) close() {
 	q.preparation.Retire()

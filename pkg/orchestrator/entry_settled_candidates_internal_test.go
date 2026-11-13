@@ -111,7 +111,7 @@ func renderSettledEntryCandidates(t *testing.T, tree *Tree, first string) Render
 		second:              second,
 		ready:               make(chan struct{}),
 	}
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	assert.Diff(t, published, []string{first, second})

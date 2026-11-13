@@ -214,7 +214,8 @@ func testSourceRevalidationChangedOnly(t *testing.T, snapshots []Tree, direction
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 1)
 		full[side] = runs[0]
-		assert.Equal(t, full[side].selection == nil, true)
+		assert.Equal(t, full[side].selection != nil, true)
+		assert.Equal(t, full[side].selection.Snapshot().Output(manifest.NamedResource{}), true)
 		assert.Equal(t, len(outputByParent(full[side].Result.Manifests)[stable]), 1)
 		assert.Equal(t, workCounts(full[side].Result.Work, stable, manifest.WorkKustomize),
 			manifest.WorkCounts{Attempts: 1, Completed: 1})

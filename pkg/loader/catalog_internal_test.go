@@ -73,7 +73,8 @@ func TestCatalog_FreezeAndClose(t *testing.T) {
 			var err error
 			l.Options.Session, err = selection.New(st, l, request)
 			assert.NoError(t, err)
-			assert.Equal(t, l.Options.Session != nil, restricted)
+			assert.Equal(t, l.Options.Session != nil, true)
+			assert.Equal(t, l.Options.Session.Snapshot().Output(manifest.NamedResource{}), !restricted)
 			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			construction := l.RootEvidence(child, nil, true)

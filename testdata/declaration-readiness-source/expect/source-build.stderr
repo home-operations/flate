@@ -1,0 +1,5 @@
+
+  ✗  Secret  kube-system/cluster-ipv6-config  not found
+         required by Kustomization kube-system/coredns, OCIRepository kube-system/coredns
+
+  ✗ 1 failed · 2 blocked

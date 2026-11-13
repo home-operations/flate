@@ -90,7 +90,7 @@ func selectionNamespacesForTest(
 	st *store.Store,
 	index *manifest.DiscoveryIndex,
 ) map[string]struct{} {
-	if session == nil {
+	if session.Snapshot().Output(manifest.NamedResource{}) {
 		return nil
 	}
 	var namespaces map[string]struct{}

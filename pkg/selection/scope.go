@@ -430,7 +430,8 @@ func (s *selectionSide) prepareFailedStatuses(
 		if seen[id] {
 			continue
 		}
-		hidden := s.run.Store.ReportHidden(id)
+		_, live := s.run.Store.GetStatus(id)
+		hidden := live && s.run.Store.ReportHidden(id)
 		if hidden {
 			if _, selected := s.result.Failed[id]; !selected || !id.KindInfo().Render {
 				continue

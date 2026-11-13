@@ -90,6 +90,9 @@ func (l *Loader) scopeSource(stateArg *sourceState) int {
 }
 
 func (l *Loader) ensureScopes() {
+	if l.locations == nil {
+		l.locations = make(map[manifest.NamedResource]authoredOccurrence)
+	}
 	if l.scopes == nil {
 		l.scopes = &scopeConstruction{
 			walks:   map[graphContext]scopeTraversal{},

@@ -404,7 +404,9 @@ func (s *Store) addObject(update *objectUpdate) {
 			sh.captureLocked(id, new(cell), &u.effective)
 		}
 		sh.mu.RUnlock()
-		u.classified = update.classified && rawDeclarationAuthority(index, id, true)
+		record, _ := index.Lookup(id)
+		u.classified = update.classified &&
+			(rawDeclarationAuthority(index, id, true) || preparedDeclaration(&record, obj))
 		u.independent = rawDeclarationAuthority(index, id, false)
 		u.compare()
 		if u.equalVisible() {

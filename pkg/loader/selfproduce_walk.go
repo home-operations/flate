@@ -42,6 +42,7 @@ func (ds *productionDeclarations) recordContributions(
 				for vIndex := range vValues {
 					v := vValues[vIndex]
 					v.owner, v.source = contribution.owner, contribution.source
+					v.requiresBuild = v.requiresBuild && contribution.applies
 					if err := record(ctx, v); err != nil {
 						return err
 					}
@@ -58,20 +59,21 @@ func (ds *productionDeclarations) recordStandalone(
 	ctx context.Context,
 	b *selfProduceBuilder,
 	record func(context.Context, graphVisit) error,
-	walks []graphVisit,
+	contribution *scopeContribution,
 ) error {
 	{
-		vValues3 := walks
+		vValues3 := contribution.visits
 		for vIndex3 := range vValues3 {
 			v := vValues3[vIndex3]
 			v.owner = manifest.NamedResource{}
 			v.source = manifest.BootstrapSourceID
+			v.requiresBuild = v.requiresBuild && contribution.applies
 			if err := record(ctx, v); err != nil {
 				return err
 			}
 		}
 	}
-	b.joinProductions(*ds, walks)
+	b.joinProductions(*ds, contribution.visits)
 	*ds = nil
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 )
 
 type referenceResolution struct {
+	index     *manifest.DiscoveryIndex
 	consumer  manifest.NamedResource
 	reads     *ReadSet
 	reference *Declaration
@@ -41,13 +42,10 @@ func (f *ReferenceFacts) resolve(
 			}
 		}
 	}
-	if scope.reads != nil {
-		for warningIndex := range input.Warnings {
-			warning := input.Warnings[warningIndex]
-			warning.Resource = id
-			scope.reads.AddWarning(warning)
-		}
-	}
+
+	consumer, known := scope.index.Lookup(owner)
+	input.Prepared = known && consumer.Authored == (manifest.NamedResource{}) &&
+		input.Private && !production.independent
 	return input.resolveReference(id, scope)
 }
 
@@ -98,6 +96,7 @@ func (sc *referenceResolution) applySupplied(id manifest.NamedResource, f *Refer
 	if supplied == nil {
 		return
 	}
+	f.Prepared = false
 	if len(sc.reference.Warnings) != 0 {
 		f.Warnings = append(slices.Clone(f.Warnings), sc.reference.Warnings...)
 	}
@@ -122,6 +121,9 @@ func (r *ReadSet) ReferenceFacts(
 
 	consumer manifest.NamedResource,
 ) ReferenceFacts {
+	if index == nil {
+		index = r.store.index.Load()
+	}
 	input := r.input(id)
 	r.Capture(input)
 	var data manifest.Data
@@ -150,6 +152,6 @@ func (r *ReadSet) ReferenceFacts(
 	return facts.resolve(
 		id,
 
-		&referenceResolution{consumer: consumer, reads: r, reference: input.view.reference},
+		&referenceResolution{index: index, consumer: consumer, reads: r, reference: input.view.reference},
 	)
 }

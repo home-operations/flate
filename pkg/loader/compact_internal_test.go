@@ -7,6 +7,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"sigs.k8s.io/kustomize/kyaml/filesys"
+
+	internalkustomize "github.com/home-operations/flate/internal/kustomize"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -286,14 +290,55 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(root)
+			assert.Equal(t, len(l.Kustomizations()), 0)
+			id := testutil.KustomizationID("apps", "owner")
+			predicted, ok := l.CatalogObject(id).(*manifest.Kustomization)
+			assert.FatalIf(t, !ok, "missing namespace prediction")
+			assert.Equal(t, predicted.TargetNamespace, tc.namespace)
+			paths := l.PathObjects()
+			pathIndex := slices.IndexFunc(paths, func(o selection.OccurrenceFacts) bool { return o.Identity == id })
+			assert.FatalIf(t, pathIndex < 0, "missing path prediction")
+			assert.Equal(t, paths[pathIndex].RequiresBuild, true)
+			fs := filesys.MakeFsInMemory()
+			for name, file := range input {
+				target := filepath.Join(root, name)
+				assert.NoError(t, fs.MkdirAll(filepath.Dir(target)))
+				assert.NoError(t, fs.WriteFile(target, file.Data))
+			}
+			internalkustomize.BuildMutex.Lock()
+			result, buildErr := internalkustomize.Build(fs, filepath.Join(root, "entry"))
+			internalkustomize.BuildMutex.Unlock()
+			assert.NoError(t, buildErr)
+			data, err := result.AsYaml()
+			assert.NoError(t, err)
+			children := builtObjectsForTest(t, string(data))
+			native := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{})
+			l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
+				Root: filepath.Join(root, "entry"), Owner: native.Named(), Source: manifest.BootstrapSourceID,
+			}), children)
+			defer l.Retire()
 			owners := l.Kustomizations()
 			assert.Equal(t, len(owners), 1)
-			assert.Equal(t, owners[0].Obj.(*manifest.Kustomization).TargetNamespace, tc.namespace)
+			owner := owners[0].Obj.(*manifest.Kustomization)
+			assert.Equal(t, owner.TargetNamespace, tc.namespace)
+			wantPath := "./payload"
+			if tc.field == "spec.path" {
+				wantPath = "apps"
+			}
+			assert.Equal(t, owner.Path, wantPath)
+			paths = l.PathObjects()
+			pathIndex = slices.IndexFunc(paths, func(o selection.OccurrenceFacts) bool { return o.Identity == id })
+			assert.FatalIf(t, pathIndex < 0, "missing prepared path")
+			assert.Equal(t, paths[pathIndex].RequiresBuild, false)
+			_, preparedPath, applies := paths[pathIndex].SourcePath()
+			assert.Equal(t, applies, true)
+			assert.Equal(t, preparedPath, wantPath)
+
 			l.PreferExisting = true
 			_, err = l.Load(t.Context(), filepath.Join(root, "mounted", "payload"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-			id := manifest.NamedResource{
+			id = manifest.NamedResource{
 				Group:     manifest.SourceDomain,
 				Kind:      manifest.KindOCIRepository,
 				Namespace: tc.namespace,

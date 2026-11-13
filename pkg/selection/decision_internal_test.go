@@ -25,6 +25,16 @@ func TestFilter_UniversalAndRestricted(t *testing.T) {
 	), universal.version()
 	assert.Equal(t, needed && selected && dirty, true)
 	assert.Equal(t, revision, uint64(0))
+	full, err := New(store.New(), &publicationFacts{}, Request{})
+	assert.NoError(t, err)
+	assert.FatalIf(t, full == nil, "unrestricted request has no session")
+	decision := full.Snapshot()
+	assert.FatalIf(t, decision == nil, "unrestricted session has no decision")
+	assert.Equal(t, decision.roles(id), uint8(0))
+	assert.Equal(t, decision.Reconcile(id), true)
+	assert.Equal(t, decision.Output(id), true)
+	assert.Equal(t, decision.Changed(id), true)
+	assert.Equal(t, decision.OrdinaryDemand(id), true)
 	restricted := newPublicationSession(t).Snapshot()
 	assert.Equal(t, restricted != nil, true)
 	assert.Equal(t, restricted.Reconcile(id), false)
@@ -358,6 +368,39 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 	assert.Equal(t, session.Snapshot().Output(provisional), true)
 	assert.Equal(t, session.Snapshot().Output(settled), true)
 
+	t.Run("unrestricted inclusion", func(t *testing.T) {
+		t.Parallel()
+		session, err := New(store.New(), &publicationFacts{}, Request{})
+		assert.NoError(t, err)
+		assert.FatalIf(t, session == nil, "unrestricted request has no session")
+		object := &manifest.Kustomization{Name: "included", Namespace: "apps"}
+		var notifications atomic.Int64
+		t.Cleanup(session.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+			assert.Equal(t, id, object.Named())
+			notifications.Add(1)
+		}, false))
+		session.store.AddObject(object)
+		assert.Equal(t, notifications.Load(), int64(1))
+		for _, stage := range []CommitStage{Construction, Execution} {
+			proposal := publicationProposal(session, &Admission{
+				Needed: []manifest.NamedResource{object.Named()}, Ordinary: []manifest.NamedResource{object.Named()},
+			}, session.Snapshot().version())
+			_, committed, err := session.publishProposal(t.Context(), proposal, stage)
+			assert.NoError(t, err)
+			assert.Equal(t, committed, true)
+			beforeInclude := notifications.Load()
+			session.Include(object.Named())
+			var reads store.ReadSet
+			reads.Init(session.store, object.Named(), nil)
+			assert.Equal(t, reads.Admitted(), true)
+			assert.Equal(t, reads.OrdinaryDemand(object.Named()), true)
+			session.store.Retire(&reads)
+			assert.Equal(t, session.Snapshot().Reconcile(object.Named()), true)
+			assert.Equal(t, session.Snapshot().Output(object.Named()), true)
+			assert.Equal(t, notifications.Load(), beforeInclude)
+		}
+	})
+
 	t.Run("carried identity", func(t *testing.T) {
 		t.Parallel()
 		session := newPublicationSession(t)
@@ -416,12 +459,24 @@ func TestDecision_FirstExecutionReplacesConstruction(t *testing.T) {
 func TestSession_DiscardConstructionPreservesExecution(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name  string
-		stage CommitStage
-	}{{"construction", Construction}, {"execution", Execution}} {
+		name         string
+		stage        CommitStage
+		unrestricted bool
+	}{
+		{"construction", Construction, false},
+		{"execution", Execution, false},
+		{"unrestricted construction", Construction, true},
+		{"unrestricted execution", Execution, true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			session := newPublicationSession(t)
+			if tc.unrestricted {
+				var err error
+				session, err = New(store.New(), &publicationFacts{}, Request{})
+				assert.NoError(t, err)
+				assert.FatalIf(t, session == nil, "unrestricted request has no session")
+			}
 			id := testutil.KustomizationID("apps", "candidate")
 			proposal := publicationProposal(session, new(Admission{
 				Needed: []manifest.NamedResource{id}, Selected: []manifest.NamedResource{id},
@@ -436,11 +491,19 @@ func TestSession_DiscardConstructionPreservesExecution(t *testing.T) {
 			session.DiscardConstruction()
 			current := session.Snapshot()
 			assert.Equal(t, accepted.Reconcile(id), true)
-			assert.Equal(t, current.Reconcile(id), tc.stage == Execution)
-			assert.Equal(t, current.Output(id), tc.stage == Execution)
-			assert.Equal(t, current.Changed(id), tc.stage == Execution)
-			assert.Equal(t, current.OrdinaryDemand(id), tc.stage == Execution)
+			assert.Equal(t, current.Reconcile(id), tc.unrestricted || tc.stage == Execution)
+			assert.Equal(t, current.Output(id), tc.unrestricted || tc.stage == Execution)
+			assert.Equal(t, current.Changed(id), tc.unrestricted || tc.stage == Execution)
+			assert.Equal(t, current.OrdinaryDemand(id), tc.unrestricted || tc.stage == Execution)
 			assert.Equal(t, current == accepted, tc.stage == Execution)
+			if tc.unrestricted {
+				absent := testutil.KustomizationID("apps", "absent")
+				assert.Equal(t, current.roles(absent), uint8(0))
+				assert.Equal(t, current.Reconcile(absent), true)
+				assert.Equal(t, current.Output(absent), true)
+				assert.Equal(t, current.Changed(absent), true)
+				assert.Equal(t, current.OrdinaryDemand(absent), true)
+			}
 			if tc.stage == Construction {
 				assert.Equal(t, current.version() > accepted.version(), true)
 				assert.Equal(t, session.publish(stale, accepted, accepted), false)

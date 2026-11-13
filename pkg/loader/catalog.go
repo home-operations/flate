@@ -27,6 +27,7 @@ type physicalView struct {
 	sourceRoot  string
 	entry       entryKind
 	compact     bool
+	eager       bool
 }
 
 // DetachCatalog keeps borrowed catalog facts alive beyond Loader.Close.
@@ -77,7 +78,7 @@ func (l *Loader) physicalView() physicalView {
 	return physicalView{
 		index: l.Index, locations: l.locations, roots: &l.roots, files: l.documents.cache,
 		candidates: l.candidates, nativeEntry: l.nativeEntry,
-		sourceRoot: l.SourceRoot, entry: l.entry, compact: l.documents.compact,
+		sourceRoot: l.SourceRoot, entry: l.entry, compact: l.documents.compact, eager: l.documents.eager,
 	}
 }
 
@@ -272,14 +273,14 @@ func (v *physicalView) rootScope(live *Loader, input *rootScopeInput) rootEviden
 			Path: record.Path, Eligibility: doc.eligible, Records: v.index.Records, Claims: v.index.Claims,
 			Loaded: doc.loaded, Bootstrap: doc.bootstrap, Initial: doc.initial, Terminal: terminal,
 			NativeOperand: native, NativeEntry: v.nativeEntry != nil && v.nativeEntry.Named() == id,
-			EntryKustomize: v.entry == entryKustomize, Compact: v.compact,
+			EntryKustomize: v.entry == entryKustomize, Compact: v.compact && !v.eager,
 			Owners: input.admission.owners, Peers: input.admission.peers,
 			Candidate: v.candidates[id].Obj != nil,
 		},
 	}
 	previous, known := v.roots.lookup(id)
 	switch {
-	case !known || live == nil:
+	case !known, live == nil:
 	case prepared:
 		evidence = *previous
 	case !doc.initial:

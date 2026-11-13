@@ -193,3 +193,53 @@ func TestSourceAdmission_ConcurrentReplacement(t *testing.T) {
 		})
 	}
 }
+
+func TestGetDeclaration_PreparedIdentityLifecycle(t *testing.T) {
+	t.Parallel()
+	for _, replacement := range []string{"source", "owner", "generation", "removal"} {
+		t.Run(replacement, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			source := manifest.BootstrapSourceID
+			owner := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			child := emissionChild("child", "prepared")
+			id := child.Obj.Named()
+			authored := id
+			authored.Namespace = ""
+			s.AddObject(owner)
+			s.SetArtifact(source, &SourceArtifact{Content: "first", FS: fstest.MapFS{}})
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				id: {
+					Authored:     authored,
+					Path:         "child.yaml",
+					File:         "kustomization.yaml",
+					Builder:      "kustomization.yaml",
+					BuilderOwner: owner.Named(),
+					Parent:       owner.Named(),
+					Declaration:  child.Obj,
+					Productions:  []manifest.Production{{Owner: owner.Named(), Source: source}},
+				},
+			}})
+			var reads ReadSet
+			reads.Init(s, manifest.NamedResource{}, nil)
+			defer reads.Retire()
+			child.SourceSupport = source
+			assert.Equal(t, reads.SourceAdmission(id, source), true)
+			reads.Admit(child, source, manifest.NamedResource{})
+			assert.Equal(t, s.GetDeclaration(id), child.Obj)
+			switch replacement {
+			case "source":
+				s.SetArtifact(source, &SourceArtifact{Content: "second", FS: fstest.MapFS{}})
+			case "generation":
+				s.RecordEmitted(owner.Named(), &Emission{Complete: true}, nil)
+			case "removal":
+				s.DeleteObject(owner.Named())
+			default:
+				next := owner.Clone()
+				next.Path = "replacement"
+				s.AddObject(next)
+			}
+			assert.Equal(t, s.GetDeclaration(id), nil)
+		})
+	}
+}

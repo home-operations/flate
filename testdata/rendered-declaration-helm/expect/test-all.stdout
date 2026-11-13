@@ -1,0 +1,7 @@
+
+  ✓  Kustomization  flux-system/child
+  ✓  Kustomization  flux-system/flux-system
+  ✓  Kustomization  flux-system/parent
+  ✓  HelmRelease    default/demo
+
+  ✓ 4 passed   <DUR>

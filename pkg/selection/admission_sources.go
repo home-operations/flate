@@ -147,33 +147,35 @@ func (c *admissionClosure) reverse(
 	ref := *refValue
 
 	if object != nil {
-		for input := range manifest.References(object, manifest.ReferenceRelations) {
+		refs := manifest.References(object, manifest.ReferenceRelations)
+		if occurrence, authored := c.projectedOccurrence(id, object); authored {
+			refs = occurrence.references()
+		}
+		for input := range refs {
 			if input.AffectedInput() && input.NamedResource == ref.NamedResource {
 				return true
 			}
 		}
 		return false
 	}
-	if occurrence, ok := c.catalogOccurrence(id); ok {
-		{
-			originalValues := occurrence.Refs
-			for originalIndex := range originalValues {
-				original := originalValues[originalIndex]
-				if !slices.Contains(occurrence.Reverse, original.NamedResource) {
-					continue
-				}
-				input := original.NamedResource
-				if original.NamespaceDefault {
-					input.Namespace = id.Namespace
-				}
-				if input == ref.NamedResource {
-					return true
-				}
-			}
-		}
-		return false
+	occurrence, ok := c.catalogOccurrence(id)
+	if !ok {
+		return ref.ContentInput()
 	}
-	return ref.ContentInput()
+	for i := range occurrence.Refs {
+		original := &occurrence.Refs[i]
+		if !slices.Contains(occurrence.Reverse, original.NamedResource) {
+			continue
+		}
+		input := original.NamedResource
+		if original.NamespaceDefault {
+			input.Namespace = id.Namespace
+		}
+		if input == ref.NamedResource {
+			return true
+		}
+	}
+	return false
 }
 
 type completeChangedClaimState struct {

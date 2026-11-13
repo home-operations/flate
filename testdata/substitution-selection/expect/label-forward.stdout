@@ -1,0 +1,14 @@
+--- ConfigMap default/out (readers)
++++ ConfigMap default/out (readers)
+@@ -1 +1,11 @@
++apiVersion: v1
++data:
++  value: selected
++kind: ConfigMap
++metadata:
++  labels:
++    resourceset.fluxcd.controlplane.io/name: peers
++    resourceset.fluxcd.controlplane.io/namespace: flux-system
++  name: out
++  namespace: default
+ 

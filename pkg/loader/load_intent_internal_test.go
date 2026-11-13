@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -207,4 +208,81 @@ func TestDecodeFileObjects_ApplicationPrecondition(t *testing.T) {
 			assert.Equal(t, application.Path, "./entry")
 		})
 	}
+}
+
+type applicationReads struct{ reads int }
+
+func (p *applicationReads) MarshalJSON() ([]byte, error) {
+	p.reads++
+	return []byte(`{
+ "kind": "GitRepository",
+ "url": "https://example.invalid/repo",
+ "ref": "refs/heads/main",
+ "path": "./apps"
+}`), nil
+}
+
+func TestCensusFile_ApplicationCoverage(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		coverage manifest.DocumentRole
+		reads    int
+	}{
+		{"application", manifest.ApplicationDocuments, 0},
+		{"incidental", manifest.IncidentalDocuments, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			probe := &applicationReads{}
+			application := &manifest.RawObject{
+				Kind: "FluxInstance", APIVersion: manifest.FluxOperatorDomain + "/v1",
+				Name: "cluster", Namespace: "apps", Spec: map[string]any{"sync": probe},
+			}
+			objects := []parsedObject{{Obj: application}}
+			if tc.coverage != manifest.ApplicationDocuments {
+				objects = append(objects, parsedObject{Obj: &manifest.ConfigMap{Name: "vars", Namespace: "apps"}})
+			}
+			reader := documentReader{
+				compact: true, intent: manifest.ApplicationDocuments,
+				cache: map[string]document{"objects.yaml": {objects: objects, coverage: tc.coverage}},
+			}
+			got, err := reader.censusFile(t.Context(), "objects.yaml", manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			assert.Equal(t, len(got), 1)
+			assert.Equal(t, got[0].Obj == application, true)
+			assert.Equal(t, probe.reads, tc.reads)
+		})
+	}
+}
+
+func TestSubstitutionResolution_FileCoverage(t *testing.T) {
+	t.Parallel()
+	l := New(store.New())
+	l.SourceRoot = t.TempDir()
+	l.ensureScopes()
+	l.documents.compact = true
+	l.documents.intent = manifest.ApplicationDocuments
+	probe := &applicationReads{}
+	application := &manifest.RawObject{
+		Kind: "FluxInstance", APIVersion: manifest.FluxOperatorDomain + "/v1",
+		Name: "cluster", Namespace: "apps", Spec: map[string]any{"sync": probe},
+	}
+	fact := compactOccurrence(application, manifest.TemplateProjection{})
+	file := filepath.Join(l.SourceRoot, "application.yaml")
+	l.documents.cache[file] = document{
+		coverage: manifest.IncidentalDocuments, objects: []parsedObject{{fact: &fact}},
+	}
+	probe.reads = 0
+	resolution := substitutionResolution{loader: l, full: true}
+	visit := graphVisit{file: file}
+	assert.NoError(t, resolution.resolveVisit(t.Context(), &visit))
+	assert.NoError(t, resolution.resolveVisit(t.Context(), &visit))
+	assert.Equal(t, probe.reads, 1)
+	visit.owner = testutil.KustomizationID("apps", "another")
+	assert.NoError(t, resolution.resolveVisit(t.Context(), &visit))
+	assert.Equal(t, probe.reads, 2)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	assert.Equal(t, resolution.resolveVisit(ctx, &visit), ctx.Err())
 }

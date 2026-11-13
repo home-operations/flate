@@ -1,0 +1,4 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: reader-owner, namespace: flux-system}
+spec: {path: ./readers, postBuild: {substitute: {SELF: excluded, PEER: reader-value}}}

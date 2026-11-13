@@ -1,0 +1,10 @@
+--- ResourceSetInputProvider flux-system/y (a)
++++ ResourceSetInputProvider flux-system/y (a)
+@@ -9,6 +9,6 @@
+   namespace: flux-system
+ spec:
+   defaultValues:
+-    v: "1"
++    v: "2"
+   type: Static
+ 

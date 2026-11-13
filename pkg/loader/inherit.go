@@ -16,10 +16,10 @@ import (
 // Admit resolves scope evidence and publishes independently runnable discovery roots.
 func (l *Loader) Admit(repoRoot string) {
 	l.mountSources()
-	l.admit(repoRoot)
+	l.admit(repoRoot, nil)
 }
 
-func (l *Loader) admit(repoRoot string) {
+func (l *Loader) admit(repoRoot string, prediction map[string]nsResolution) {
 	l.projectTemplates()
 	l.ensureScopes()
 	kss := l.kustomizations()
@@ -27,6 +27,9 @@ func (l *Loader) admit(repoRoot string) {
 		return
 	}
 
+	if prediction == nil {
+		prediction = map[string]nsResolution{}
+	}
 	if l.documents.compact {
 		l.construction++
 	}
@@ -52,7 +55,7 @@ func (l *Loader) admit(repoRoot string) {
 		for dir := range selection.ReduceStatic(staticScope{loader: l}) {
 			l.documents.read(dir)
 		}
-		if !l.projectAuthored(repoRoot) {
+		if !l.projectAuthored(repoRoot, prediction) {
 			l.scopes.complete = true
 			return
 		}
@@ -91,7 +94,10 @@ func (l *Loader) anchorRoot(repoRoot, dir string) bool {
 	return owned
 }
 
-func (l *Loader) projectAuthored(repoRoot string) bool {
+func (l *Loader) projectAuthored(repoRoot string, prediction map[string]nsResolution) bool {
+	if prediction == nil {
+		prediction = map[string]nsResolution{}
+	}
 	indexed := l.indexAuthoredRecords()
 	scopes := make(map[string]rootAdmission)
 	raw := indexed[:0]
@@ -117,7 +123,7 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 		}
 		start = end
 	}
-	authored2 := l.desiredAuthored(raw, repoRoot)
+	authored2 := l.desiredAuthored(raw, repoRoot, prediction)
 	for id := range l.candidates {
 		obj := l.candidates[id]
 		if r, ok := l.Index.Lookup(id); ok && r.Path == "" && r.Authored == (manifest.NamedResource{}) {
@@ -140,6 +146,7 @@ type authoredState struct {
 func (l *Loader) desiredAuthored(
 	raw []authoredRecord,
 	repoRoot string,
+	prediction map[string]nsResolution,
 ) authoredState {
 	next := l.scopes.records
 	if next == nil {
@@ -154,12 +161,14 @@ func (l *Loader) desiredAuthored(
 	clear(objects)
 	state := authoredState{records: next, objects: objects}
 	l.retainBuiltDeclarations(&state)
-	prediction := map[string]nsResolution{}
 	{
 		indexedValues := raw
 		for indexedIndex := range indexedValues {
 			indexed := indexedValues[indexedIndex]
 			r := l.Index.Records[indexed.id]
+			if r.Path == "" {
+				r = manifest.DiscoveryRecord{Authored: indexed.authored, Path: indexed.path, File: indexed.file}
+			}
 			if next[indexed.id].Builder != "" {
 				continue
 			}
@@ -170,7 +179,8 @@ func (l *Loader) desiredAuthored(
 				prediction2 := l.predictNamespaces(ks, repoRoot, new(r), prediction)
 				authored.Obj, forced = prediction2.object, prediction2.forced
 			}
-			if l.documents.compact && l.projectAuthoredOccurrence(&state, &r, &authored, forced) {
+			if (l.documents.compact || l.contextualDeclaration(r.Path, r.Authored)) &&
+				l.projectAuthoredOccurrence(&state, &r, &authored, forced) {
 				continue
 			}
 			if authored.Obj == nil {
@@ -232,14 +242,17 @@ func (l *Loader) projectAuthoredOccurrence(
 		}
 		state.records[projected.Identity] = next
 		l.publishAuthoredLocation(&projected)
-		if projected.Identity.Name == projected.Authored.Name {
-			l.publishAuthoredObject(state.objects, projected.Identity, authored.Obj, record)
+		l.publishAuthoredObject(state.objects, projected.Identity, authored.Obj, record)
+		if !l.documents.compact {
+			child := state.objects[projected.Identity]
+			child.Doc, child.Warnings = authored.Doc, authored.Warnings
+			state.objects[projected.Identity] = child
 		}
 	}
 	projected := l.projectAuthoredVisits(record, &structured, input.version, publish)
 	if !projected {
 		for _, namespace := range l.recordNamespaces(record, forced) {
-			publish(inAuthoredNamespace(&structured, namespace), manifest.Production{})
+			publish(l.inAuthoredNamespace(&structured, namespace), manifest.Production{})
 		}
 	}
 	return true
@@ -261,18 +274,24 @@ func (l *Loader) projectAuthoredVisits(
 		if visit.role != kustomizeinput.Resource || visit.file != record.Path && visit.origin != record.Path {
 			continue
 		}
-		occurrence := *structured
-		identity, err := l.projectIdentity(occurrence.Authored, visit, version, occurrence.facts.namespaced)
+		context := *visit
+		context.owner, context.source = contribution.owner, contribution.source
+		occurrence, err := l.projectOccurrence(structured, &context, version)
+		identity := occurrence.Identity
 		if err != nil {
 			// Production finalization reports invalid upstream identity projections.
 			return true
 		}
-		occurrence.Identity = identity
+		if occurrence.facts.uncertain {
+			projected = true
+			continue
+		}
 		occurrence.requiresBuild = visit.requiresBuild && contribution.owner == (manifest.NamedResource{})
 		production := manifest.Production{
 			Owner: contribution.owner, Source: contribution.source,
 			Authored: record.Authored, Path: record.Path, File: record.File,
 		}
+		projectOccurrenceProduction(&occurrence, &production)
 		if production.Owner == (manifest.NamedResource{}) &&
 			(occurrence.requiresBuild || identity.Name != occurrence.Authored.Name) {
 			production.Owner = manifest.NewEntryKustomization(production.Source, contribution.context.dir, manifest.NamedResource{}).
@@ -392,6 +411,22 @@ func (l *Loader) authoredOccurrence(file string, id manifest.NamedResource) (par
 	for objectIndex := range slices.Backward(objects) {
 		object := objects[objectIndex]
 		if occurrence := object.fact; occurrence != nil && occurrence.Authored == id {
+			return object, true
+		}
+		if object.Obj != nil && object.outcome.Err == nil && object.Obj.Named() == id {
+			projection, _ := manifest.ProjectProducer(object.Obj, nil)
+			fact := compactOccurrence(object.Obj, projection)
+			fact.facts.substituteDisabled = object.substituteDisabled
+			origin := new(l.documents).localPath(file)
+			root := new(l.documents).mountedRoot(origin)
+			relative, _ := filepath.Rel(root, origin)
+			fact.Declaration = occurrenceID{
+				Source:   root,
+				File:     filepath.ToSlash(relative),
+				Document: object.outcome.Ordinal,
+				item:     object.item,
+			}
+			object.fact = &fact
 			return object, true
 		}
 	}

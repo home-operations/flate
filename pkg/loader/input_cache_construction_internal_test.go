@@ -1,8 +1,11 @@
 package loader
 
 import (
+	"reflect"
 	"testing"
 	"testing/fstest"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -110,6 +113,17 @@ func TestInputCache_IncompleteAcceptanceMatchesCold(t *testing.T) {
 	root := t.TempDir()
 	files := fstest.MapFS{
 		"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: object}\n")},
+		"owner.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec: {path: ./children, postBuild: {substitute: {NAME: resolved, NS: work}}}\n",
+			),
+		},
+		"children/child.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: '${NAME}', namespace: '${NS}'}\nspec: {path: ./payload}\n",
+			),
+		},
+		"payload/kustomization.yaml": {Data: []byte("resources: []\n")},
 	}
 	owner, err := cache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
@@ -135,5 +149,24 @@ func TestInputCache_IncompleteAcceptanceMatchesCold(t *testing.T) {
 	cold := cachedFixtureLoader(t, root, files, nil)
 	defer cold.Close()
 	assert.Diff(t, restored.Index, cold.Index)
+	assert.NoError(t, restored.FinalizeIndex(t.Context(), root, true))
+	assert.NoError(t, cold.FinalizeIndex(t.Context(), root, true))
+	assert.Diff(t, restored.Index, cold.Index)
+	id := manifest.NamedResource{
+		Group:     manifest.FluxKustomizeDomain,
+		Kind:      manifest.KindKustomization,
+		Namespace: "work",
+		Name:      "resolved",
+	}
+	got, found := restored.Occurrence(id)
+	assert.Equal(t, found, true)
+	want, found := cold.Occurrence(id)
+	assert.Equal(t, found, true)
+	if diff := cmp.Diff(want, got, cmp.Exporter(func(reflect.Type) bool { return true })); diff != "" {
+		t.Errorf("mismatch (-want +got):\n%s", diff)
+	}
+	assert.Equal(t, got.Authored.Name, "${NAME}")
+	assert.Equal(t, got.Authored.Namespace, "${NS}")
+	assert.Equal(t, got.Declaration.File, "children/child.yaml")
 	assert.NoError(t, restored.PersistInputs(t.Context()))
 }

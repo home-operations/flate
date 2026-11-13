@@ -16,6 +16,36 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`substitution-selection/` preserves the three supplied reproductions for issue #1531.
+The fixture harness creates both committed snapshots and both comparison directions.
+Each case compares complete stdout, stderr, and exits twice with concurrency `2`.
+The second replay reuses its private caches.
+The expectations retain the reviewed literals from the original regression tests.
+Case 1 follows Flux YAML conversion, so `x` becomes the number `1`.
+Case 2 retains its ResourceSet and provider declarations.
+Generated values, shared owner contexts, and label membership retain separate witnesses.
+An optional absent ConfigMap leaves the child identity unknown during static resolution.
+Rendering applies the default name, and both diff directions retain the changed output.
+
+| Case | Behavior |
+| --- | --- |
+| `substitution-selection/case1-forward` | Compare complete builds and the forward diff for case1. |
+| `substitution-selection/case1-reverse` | Compare complete builds and the reverse diff for case1. |
+| `substitution-selection/case2-forward` | Compare complete builds and the forward diff for case2. |
+| `substitution-selection/case2-reverse` | Compare complete builds and the reverse diff for case2. |
+| `substitution-selection/case3-forward` | Compare complete builds and the forward diff for case3. |
+| `substitution-selection/case3-reverse` | Compare complete builds and the reverse diff for case3. |
+| `substitution-selection/identity-inline-forward` | Compare complete builds and the forward diff for identity-inline. |
+| `substitution-selection/identity-inline-reverse` | Compare complete builds and the reverse diff for identity-inline. |
+| `substitution-selection/identity-generated-forward` | Compare complete builds and the forward diff for identity-generated. |
+| `substitution-selection/identity-generated-reverse` | Compare complete builds and the reverse diff for identity-generated. |
+| `substitution-selection/identity-shared-forward` | Compare complete builds and the forward diff for identity-shared. |
+| `substitution-selection/identity-shared-reverse` | Compare complete builds and the reverse diff for identity-shared. |
+| `substitution-selection/identity-unknown-forward` | Render an unknown child identity through its owner and compare the forward diff. |
+| `substitution-selection/identity-unknown-reverse` | Render an unknown child identity through its owner and compare the reverse diff. |
+| `substitution-selection/label-forward` | Compare complete builds and the forward diff for label. |
+| `substitution-selection/label-reverse` | Compare complete builds and the reverse diff for label. |
+
 `unavailable-values/` covers absent, encrypted, and cluster-produced Helm values with a local chart.
 Two runs compare complete output and exit codes with fresh caches and two workers.
 Readable siblings, missing keys, kind permission, and supplied precedence retain explicit assertions.

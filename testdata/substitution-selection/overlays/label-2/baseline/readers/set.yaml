@@ -1,0 +1,12 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: peers, namespace: flux-system}
+spec:
+  inputsFrom:
+  - selector:
+      matchExpressions: [{key: peer, operator: NotIn, values: ["${SELF}"]}]
+  resources:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: out, namespace: default}
+    data: {value: "<< inputs.value >>"}

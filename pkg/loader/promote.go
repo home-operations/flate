@@ -190,7 +190,7 @@ func (l *Loader) RegisterBuilt(
 	}
 	l.publishBuiltRecords(&input, docs, records, authored)
 	l.scopes.complete = false
-	l.admit(sourceRoot)
+	l.admit(sourceRoot, nil)
 	retained = input.Support.Valid()
 	if previous != nil && previous.Support != input.Support {
 		l.Store.Retire(previous.Support)

@@ -12,6 +12,8 @@ import (
 )
 
 // FinalizeIndex freezes source-qualified graph contributions before reconciliation.
+//
+//nolint:gocognit // Finalization MUST retain contextual resolution, input hydration, and freeze ordering.
 func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool) error {
 	if err := ctx.Err(); err != nil {
 		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
@@ -37,7 +39,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		return nil
 	}
 	l.resetDerivedProductions()
-	l.refreshIndexParents(repoRoot)
+	if err := l.resolveAuthored(ctx, repoRoot); err != nil {
+		return err
+	}
 	emittedFiles := map[string][]manifest.NamedResource{}
 	if err := l.buildProductions(ctx, repoRoot, emittedFiles); err != nil {
 		return err
@@ -49,6 +53,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 	if err := l.resolvePaths(ctx); err != nil {
 		return err
 	}
+	l.retainUnknownOwnerReach()
 	l.completeIndexInputs(repoRoot)
 	if err := l.captureNativeRoots(repoRoot); err != nil {
 		return err
@@ -325,7 +330,7 @@ func (l *Loader) prepareIndexScopes(repoRoot string, freeze bool) {
 				l.scopes.sources[scope].ready = true
 			}
 		}
-		l.admit(repoRoot)
+		l.admit(repoRoot, nil)
 	}
 }
 
@@ -358,6 +363,7 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 		l.scopes.claims = claims
 	}
 	own := l.indexClaimOwners()
+	parents := l.contextualParents()
 	//nolint:gocritic // The iterator supplies a value snapshot that this loop updates before publication.
 	for id, r := range l.Index.Files() {
 		kind := id.KindInfo()
@@ -367,6 +373,8 @@ func (l *Loader) refreshIndexParents(repoRoot string) {
 		}
 		if selection.Root(l.roots.get(id).view()).Independent {
 			r.Parent = manifest.NamedResource{}
+		} else if owner := parents[id]; kind.Parent && owner != (manifest.NamedResource{}) {
+			r.Parent = owner
 		} else if kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
 			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
 				r.Parent = parent
@@ -483,7 +491,14 @@ func (l *Loader) recordInputReferences(
 	record *manifest.DiscoveryRecord,
 ) iter.Seq[manifest.Reference] {
 	var refs iter.Seq[manifest.Reference]
-	if object := l.Store.GetDeclaration(id); object != nil {
+	object := l.Store.GetDeclaration(id)
+	if occurrence, known := l.locations[id]; known && record.Builder == "" {
+		if object == nil || object == occurrence.object || object == occurrence.facts.catalog ||
+			object == l.candidates[id].Obj {
+			return occurrence.references()
+		}
+	}
+	if object != nil {
 		refs = manifest.References(object, manifest.ReferenceRelations)
 	} else if child := l.candidates[id]; child.Obj != nil && record.Path == "" {
 		refs = manifest.References(child.Obj, manifest.ReferenceRelations)

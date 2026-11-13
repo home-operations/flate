@@ -1,0 +1,4 @@
+---
+{apiVersion: kustomize.toolkit.fluxcd.io/v1, kind: Kustomization, metadata: {name: parent-blue, namespace: flux-system}, spec: {path: ./ks, sourceRef: {kind: GitRepository, name: flux-system}, postBuild: {substitute: {NAME: child-blue, NS: blue}}}}
+---
+{apiVersion: kustomize.toolkit.fluxcd.io/v1, kind: Kustomization, metadata: {name: parent-red, namespace: flux-system}, spec: {path: ./ks, sourceRef: {kind: GitRepository, name: flux-system}, postBuild: {substitute: {NAME: child-red, NS: red}}}}

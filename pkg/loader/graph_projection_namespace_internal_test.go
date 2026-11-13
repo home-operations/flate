@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -245,7 +247,7 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	}
 	first := check()
 	candidate := l.candidates[projected].Obj
-	assert.Equal(t, l.projectAuthored(root), false)
+	assert.Equal(t, l.projectAuthored(root, nil), false)
 	assert.Equal(t, l.candidates[projected].Obj, candidate)
 	assert.Equal(t, l.Store.GetObject(projected), manifest.BaseManifest(first))
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -353,9 +355,11 @@ func TestProjectAuthoredVisits_PhysicalCoordinates(t *testing.T) {
 		name       string
 		active     bool
 		membership bool
+		contextual bool
 		role       kustomizeinput.Role
 		want       bool
 	}{
+		{name: "contextual", active: true, contextual: true, role: kustomizeinput.Resource, want: true},
 		{name: "resource", active: true, role: kustomizeinput.Resource, want: true},
 		{name: "inactive", role: kustomizeinput.Resource},
 		{name: "membership", active: true, membership: true, role: kustomizeinput.Resource},
@@ -377,6 +381,29 @@ func TestProjectAuthoredVisits_PhysicalCoordinates(t *testing.T) {
 			l.scopes.contributions[0].active = tc.active
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input"}
 			occurrence := authoredOccurrence{Authored: id, Identity: id, facts: &occurrenceFacts{namespaced: true}}
+			if tc.contextual {
+				id.Name, id.Namespace = "${NAME}", "${NS}"
+				occurrence.Authored, occurrence.Identity = id, id
+				occurrence.Declaration = occurrenceID{Source: l.SourceRoot, File: "original/input.yaml", Document: 1}
+				occurrence.facts.uncertain = true
+				parent := &manifest.Kustomization{
+					Name: owner.Name, Namespace: owner.Namespace,
+					PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"NAME": "input", "NS": "apps"}},
+				}
+				l.Store.AddObject(parent)
+				l.Index.Records[owner] = manifest.DiscoveryRecord{Declaration: parent}
+				visit := l.scopes.contributions[0].visits[0]
+				visit.owner, visit.source = owner, manifest.BootstrapSourceID
+				resolution := substitutionResolution{loader: l}
+				resolved, err := resolution.resolveOccurrence(t.Context(), &occurrence, &visit, "v1")
+				assert.NoError(t, err)
+				assert.Equal(t, resolved.facts.uncertain, false)
+				l.scopes.contextual = map[occurrenceContext]authoredOccurrence{
+					{occurrence.Declaration, visit.owner, visit.source, visit.graphContext, visit.file}: resolved,
+				}
+				_, indexed := l.Index.Lookup(id)
+				assert.Equal(t, indexed, false)
+			}
 			for _, path := range []string{file, origin} {
 				var identities []manifest.NamedResource
 				record := manifest.DiscoveryRecord{Path: path, Authored: id}
@@ -386,6 +413,8 @@ func TestProjectAuthoredVisits_PhysicalCoordinates(t *testing.T) {
 					"v1",
 					func(o authoredOccurrence, p manifest.Production) {
 						identities = append(identities, o.Identity)
+						assert.Equal(t, o.Authored, id)
+						assert.Equal(t, o.Declaration, occurrence.Declaration)
 						assert.Equal(t, p.Owner, owner)
 						assert.Equal(t, p.Source, manifest.BootstrapSourceID)
 						assert.Equal(t, p.Path, path)

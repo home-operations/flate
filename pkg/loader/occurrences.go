@@ -46,24 +46,31 @@ type producerFact struct {
 }
 
 type occurrenceFacts struct {
-	declared                       string
-	source                         manifest.NamedResource
-	path                           string
-	hasPath, namespaced, uncertain bool
-	retained                       bool
-	structural                     *manifest.Kustomization
-	catalog                        manifest.BaseManifest
-	reverse                        []manifest.NamedResource
-	refs                           []manifest.Reference
-	templateInputs                 []manifest.TemplateInput
-	templateObjects                []manifest.BaseManifest
-	roots                          []string
-	targets, authoredTargets       []manifest.ProducerTarget
-	needsCandidates                bool
-	substituteDisabled             bool
-	policy                         *manifest.EmissionPolicy
-	labels                         map[string]string
-	labeled                        bool
+	// Census identity MUST survive projection and change when a declaration is reparsed.
+	census                          *occurrenceFacts
+	projection                      []string
+	declared                        string
+	source                          manifest.NamedResource
+	path                            string
+	hasPath, namespaced, uncertain  bool
+	retained                        bool
+	structural                      *manifest.Kustomization
+	catalog                         manifest.BaseManifest
+	reverse                         []manifest.NamedResource
+	refs                            []manifest.Reference
+	templateInputs                  []manifest.TemplateInput
+	templateObjects                 []manifest.BaseManifest
+	roots                           []string
+	targets, authoredTargets        []manifest.ProducerTarget
+	needsCandidates                 bool
+	substituteDisabled, substituted bool
+	policy                          *manifest.EmissionPolicy
+	labels                          map[string]string
+	labeled                         bool
+}
+
+func (f *occurrenceFacts) indexed() bool {
+	return f.retained || len(f.targets) != 0 || f.needsCandidates
 }
 
 func (f *occurrenceFacts) opaque(targets []manifest.ProducerTarget) bool {
@@ -104,6 +111,7 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 		needsCandidates: manifest.ProducerNeedsCandidates(obj),
 		roots:           slices.Collect(manifest.RenderRoots(obj)),
 	}
+	facts.census = facts
 	facts.templateInputs = projection.Inputs
 	facts.templateObjects = projection.Objects
 	facts.targets = append(facts.targets, projection.Targets...)
@@ -129,13 +137,14 @@ func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplatePr
 		}
 	}
 	id := obj.Named()
+	facts.substituted = facts.indexed() && facts.hasSubstitutions(id)
 	if manifest.HasEnvsubstReference(id.Name) {
 		id.Name, facts.uncertain = "", true
 	}
 	if manifest.HasEnvsubstReference(id.Namespace) {
 		id.Namespace, facts.uncertain = "", true
 	}
-	return authoredOccurrence{Identity: id, Authored: id, facts: facts}
+	return authoredOccurrence{Identity: id, Authored: obj.Named(), facts: facts}
 }
 
 // PackageEvidence retains package provenance and shared root admission.

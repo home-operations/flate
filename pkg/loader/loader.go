@@ -224,6 +224,10 @@ func (l *Loader) eachIndexedKustomization(yield func(store.Child)) {
 		if r.Builder != "" && r.Declaration != nil {
 			child.Obj = r.Declaration
 		}
+		if occurrence, known := l.locations[id]; known && occurrence.facts.structural != nil &&
+			occurrence.facts.structural.Named() == id {
+			child.Obj = occurrence.facts.structural
+		}
 		if _, ok := child.Obj.(*manifest.Kustomization); ok {
 			yield(child)
 		}

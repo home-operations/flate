@@ -120,7 +120,7 @@ func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) 
 			return child.outcome.Ordinal != r.coordinate.Document || child.item != r.coordinate.item
 		})
 	}
-	return applicationView(out, r.intent), nil
+	return applicationView(out, r.cache[path].coverage, r.intent), nil
 }
 
 //nolint:gocritic // Immutable reader values retain their original snapshot semantics.
@@ -179,7 +179,7 @@ func (r documentReader) censusFile(
 	r.restore(path)
 	if cached := r.cache[path]; (cached.objects != nil || cached.decodeErr != nil) &&
 		covers(cached.coverage, r.intent) {
-		return applicationView(cached.objects, r.intent), cached.decodeErr
+		return applicationView(cached.objects, cached.coverage, r.intent), cached.decodeErr
 	}
 	facts := []parsedObject{}
 	var projectionErr error
@@ -449,8 +449,8 @@ func covers(coverage, intent manifest.DocumentRole) bool {
 		(coverage == manifest.IncidentalDocuments || coverage == manifest.RequiredDocuments)
 }
 
-func applicationView(objects []parsedObject, intent manifest.DocumentRole) []parsedObject {
-	if intent != manifest.ApplicationDocuments {
+func applicationView(objects []parsedObject, coverage, intent manifest.DocumentRole) []parsedObject {
+	if intent != manifest.ApplicationDocuments || coverage == intent {
 		return objects
 	}
 	var applications []parsedObject

@@ -1,0 +1,23 @@
+--- ConfigMap default/cm-one (payload/one)
++++ ConfigMap default/cm-one (payload/one)
+@@ -4,6 +4,7 @@
+ kind: ConfigMap
+ metadata:
+   labels:
++    edited: "true"
+     kustomize.toolkit.fluxcd.io/name: consumer
+     kustomize.toolkit.fluxcd.io/namespace: flux-system
+   name: cm-one
+
+--- Kustomization flux-system/consumer (layer/common)
++++ Kustomization flux-system/consumer (layer/common)
+@@ -7,6 +7,9 @@
+   name: consumer
+   namespace: flux-system
+ spec:
++  commonMetadata:
++    labels:
++      edited: "true"
+   interval: 10m
+   path: ./payload/one
+   prune: true

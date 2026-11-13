@@ -1,6 +1,7 @@
 package selection
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -211,6 +212,57 @@ func TestAdmission_MaterializerTargetLifetime(t *testing.T) {
 			assert.Equal(t, pending, tc.pending)
 			assert.Equal(t, closure.role(producer.Named()).needed, tc.want)
 			assert.Equal(t, closure.role(producer.Named()).selected, false)
+		})
+	}
+}
+
+func TestAdmission_PreparedOrdinaryDeclaration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		object manifest.BaseManifest
+		admit  bool
+	}{
+		{name: "runnable producer", object: &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "prepared", Namespace: "apps"}, admit: true},
+		{name: "unavailable secret", object: &manifest.Secret{Name: "prepared", Namespace: "apps"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "factory"}
+			st.AddObject(parent)
+			id := tc.object.Named()
+			child := store.Child{Obj: tc.object}
+			facts := &solverFacts{
+				store: st,
+				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					id: {Builder: "factory/kustomization.yaml", BuilderOwner: parent.Named(), Parent: parent.Named()},
+				}},
+				candidates: map[manifest.NamedResource]store.Child{id: child},
+				roots: map[manifest.NamedResource]RootEvidence{
+					id: {BuiltCurrent: true, BuiltChild: child},
+				},
+			}
+			session, err := New(st, facts, Request{Changed: true})
+			assert.NoError(t, err)
+			var required store.ReadSet
+			required.Init(st, (&manifest.Kustomization{Name: "consumer", Namespace: "apps"}).Named(), nil)
+			defer required.Retire()
+			required.RequireData(id)
+			proposal, err := prepareSolver(t.Context(), t, session, PrepareRequest{Reads: &required})
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			assert.Equal(t, slices.Contains(proposal.Needed, id), true)
+			assert.Equal(t, slices.Contains(proposal.Ordinary, id), true)
+			assert.Equal(
+				t,
+				slices.ContainsFunc(
+					proposal.Objects,
+					func(object store.Child) bool { return object.Obj.Named() == id },
+				),
+				tc.admit,
+			)
+			assert.Equal(t, st.GetDeclaration(id), manifest.BaseManifest(nil))
 		})
 	}
 }

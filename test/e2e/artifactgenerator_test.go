@@ -18,6 +18,13 @@ func TestE2E_ArtifactGenerator(t *testing.T) {
 		{"artifact-reach", "artifact-generator--emitted-changed-only-diff"},
 		{"artifact-reach", "artifact-generator--input-source-changed-only"},
 		{"artifact-reach", "artifact-generator--input-source-changed-only-reverse-committed"},
+		{"artifact-reach", "artifact-generator--copied-input"},
+		{"artifact-reach", "artifact-generator--copied-whole-source"},
+		{"artifact-reach", "artifact-generator--copied-whole-source-reverse-committed"},
+		{"artifact-reach", "artifact-generator--copied-renamed-destination"},
+		{"artifact-reach", "artifact-generator--copied-unrelated-path"},
+		{"artifact-reach", "artifact-generator--copied-consumer-edit"},
+		{"artifact-reach", "artifact-generator--copied-reverse-committed"},
 		{"artifact-convergence", "artifact-generator--consumed-input-convergence"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

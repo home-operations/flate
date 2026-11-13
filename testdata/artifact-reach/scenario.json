@@ -146,6 +146,68 @@
       "time": "2000-01-01T00:00:00Z",
       "parents": [],
       "overlay": "u2-generator-inputs-configmap-file-baseline"
+    },
+    {
+      "repository": "repo",
+      "name": "copied-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "copied-before"
+    },
+    {
+      "repository": "baseline",
+      "name": "copied-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "overlay": "copied-before"
+    },
+    {
+      "repository": "repo",
+      "name": "copied-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "copied-before"
+      ],
+      "overlay": "copied-after"
+    },
+    {
+      "repository": "repo",
+      "name": "whole-source-before",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "copied-before"
+      ],
+      "overlay": "copied-whole-source"
+    },
+    {
+      "repository": "repo",
+      "name": "whole-source-after",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "whole-source-before"
+      ],
+      "overlay": "copied-after"
+    },
+    {
+      "repository": "baseline",
+      "name": "whole-source-baseline",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "copied-baseline"
+      ],
+      "overlay": "copied-whole-source"
     }
   ],
   "overlays": [
@@ -356,6 +418,84 @@
     {
       "name": "u2-generator-inputs-configmap-file-after",
       "directory": "overlays/u2-generator-inputs-configmap-file-after"
+    },
+    {
+      "name": "copied-before",
+      "directory": "overlays/copied-before",
+      "operations": [
+        {
+          "delete": "repo/after.yaml"
+        },
+        {
+          "delete": "repo/app"
+        },
+        {
+          "delete": "repo/generators"
+        },
+        {
+          "delete": "repo/bootstrap"
+        },
+        {
+          "delete": "repo/before.yaml"
+        },
+        {
+          "delete": "repo/shared"
+        },
+        {
+          "delete": "repo/unrelated"
+        },
+        {
+          "delete": "repo/emitted"
+        },
+        {
+          "delete": "baseline/after.yaml"
+        },
+        {
+          "delete": "baseline/app"
+        },
+        {
+          "delete": "baseline/generators"
+        },
+        {
+          "delete": "baseline/bootstrap"
+        },
+        {
+          "delete": "baseline/before.yaml"
+        },
+        {
+          "delete": "baseline/shared"
+        },
+        {
+          "delete": "baseline/unrelated"
+        },
+        {
+          "delete": "baseline/emitted"
+        }
+      ]
+    },
+    {
+      "name": "copied-after",
+      "directory": "overlays/copied-after"
+    },
+    {
+      "name": "copied-destination",
+      "directory": "overlays/copied-destination"
+    },
+    {
+      "name": "copied-unrelated",
+      "directory": "overlays/copied-unrelated"
+    },
+    {
+      "name": "copied-consumer",
+      "directory": "overlays/copied-consumer"
+    },
+    {
+      "name": "copied-reset",
+      "directory": "overlays/copied-reset"
+    },
+    {
+      "name": "copied-whole-source",
+      "directory": "overlays/copied-whole-source"
     }
   ],
   "cases": [
@@ -1030,6 +1170,816 @@
             "expect": {
               "stdout": "expect/u2-inputs-configmap-file-reverse.stdout",
               "stderr": "expect/u2-inputs-configmap-file-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--copied-input",
+      "description": "Copied Git bytes reach both diffs. Cache reuse and changed-input invalidation preserve exact output.",
+      "setup": [
+        {
+          "commit": "copied-after"
+        },
+        {
+          "commit": "copied-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "cold-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--only-kinds=ConfigMap"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/copied-build.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reused-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--only-kinds=ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-build.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "forward-all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-forward.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "forward-ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-forward.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed-forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:copied-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-forward.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "checkout-before",
+          "edit": {
+            "overlay": "copied-reset"
+          }
+        },
+        {
+          "id": "invalidated-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--only-kinds=ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-before.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--copied-whole-source",
+      "description": "One whole-source copy exposes payload edits in both diff commands and directions, with committed inputs, shallow baseline history, and cache invalidation.",
+      "setup": [
+        {
+          "commit": "whole-source-after"
+        },
+        {
+          "commit": "whole-source-baseline"
+        },
+        {
+          "shallow": "copied-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "cold-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--only-kinds=ConfigMap"
+            ],
+            "cache": {
+              "name": "default",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/copied-build.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reused-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--only-kinds=ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-build.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "forward-all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-forward.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "forward-ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-forward.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reverse-all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@baseline@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@repo@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-reverse.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "reverse-ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@baseline@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@repo@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-reverse.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed-forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:whole-source-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-forward.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed-forward-ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:whole-source-before@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-forward.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "checkout-before",
+          "edit": {
+            "overlay": "copied-reset"
+          }
+        },
+        {
+          "id": "invalidated-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--only-kinds=ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-before.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--copied-whole-source-reverse-committed",
+      "description": "Both diff commands reverse whole-source payload changes from a before checkout that retains both commits.",
+      "setup": [
+        {
+          "commit": "whole-source-before"
+        },
+        {
+          "commit": "whole-source-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "committed-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:whole-source-after@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-reverse.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "committed-reverse-ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:whole-source-after@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-reverse.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--copied-renamed-destination",
+      "description": "Renamed artifact destinations retain the original input coordinates.",
+      "setup": [
+        {
+          "commit": "copied-after"
+        },
+        {
+          "commit": "copied-baseline"
+        },
+        {
+          "overlay": "copied-destination"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "--only-kinds=ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-build.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-renamed.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-renamed.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--copied-unrelated-path",
+      "description": "Unrelated Git paths cannot provide generated-source reader evidence.",
+      "setup": [
+        {
+          "commit": "copied-before"
+        },
+        {
+          "commit": "copied-baseline"
+        },
+        {
+          "overlay": "copied-destination"
+        },
+        {
+          "overlay": "copied-unrelated"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-empty.stdout",
+              "stderr": "expect/copied-unrelated.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-empty.stdout",
+              "stderr": "expect/copied-unrelated.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--copied-consumer-edit",
+      "description": "Consumer-only edits demand the generator on both sides of the diff.",
+      "setup": [
+        {
+          "commit": "copied-before"
+        },
+        {
+          "commit": "copied-baseline"
+        },
+        {
+          "overlay": "copied-consumer"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-consumer-all.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "ks",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "consumer",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-consumer-ks.stdout",
+              "stderr": "expect/copied.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-generator--copied-reverse-committed",
+      "description": "The before checkout retains both commits for the reverse comparison.",
+      "setup": [
+        {
+          "commit": "copied-before"
+        },
+        {
+          "commit": "copied-baseline"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "committed-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--concurrency=2",
+              "--no-progress",
+              "--cache-dir",
+              "@@cache@@",
+              "-o",
+              "diff",
+              "--base",
+              "@@commit:copied-after@@"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/copied-reverse.stdout",
+              "stderr": "expect/copied.stderr",
               "code": 0
             }
           }
@@ -1920,6 +2870,357 @@
         "discovery-index--changed-only-generator-inputs-configmap-file"
       ],
       "purpose": "Reviewed expected CLI stream."
+    },
+    {
+      "path": "overlays/copied-before/repo/site-a/sync.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/repo/site-a/parent.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/repo/layer/common/bundle-a.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/repo/payload/one/kustomization.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/repo/payload/one/cm.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/repo/renamed-artifact/unrelated.txt",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/baseline/site-a/sync.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/baseline/site-a/parent.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/baseline/layer/common/bundle-a.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/baseline/payload/one/kustomization.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/baseline/payload/one/cm.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-before/baseline/renamed-artifact/unrelated.txt",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-after/repo/payload/one/cm.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-destination/repo/layer/common/bundle-a.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-destination/baseline/layer/common/bundle-a.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-unrelated/repo/renamed-artifact/unrelated.txt",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-consumer/repo/layer/common/bundle-a.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "expect/copied-build.stdout",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "expect/copied-before.stdout",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "expect/copied-forward.stdout",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "expect/copied-reverse.stdout",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "expect/copied-empty.stdout",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "expect/copied.stderr",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "expect/copied-consumer-ks.stdout",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "expect/copied-consumer-all.stdout",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-renamed-destination",
+        "artifact-generator--copied-unrelated-path",
+        "artifact-generator--copied-consumer-edit",
+        "artifact-generator--copied-reverse-committed"
+      ],
+      "purpose": "Authored copied-input regression and complete CLI expectation."
+    },
+    {
+      "path": "overlays/copied-reset/repo/payload/one/cm.yaml",
+      "cases": [
+        "artifact-generator--copied-input",
+        "artifact-generator--copied-reverse-committed",
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "Restore copied bytes to prove cache invalidation."
+    },
+    {
+      "path": "expect/copied-renamed.stdout",
+      "cases": [
+        "artifact-generator--copied-renamed-destination"
+      ],
+      "purpose": "Reviewed path-qualified diff for the renamed destination."
+    },
+    {
+      "path": "expect/copied-unrelated.stderr",
+      "cases": [
+        "artifact-generator--copied-unrelated-path"
+      ],
+      "purpose": "Reviewed unavailable-source warnings when the consumer remains outside the changed output."
+    },
+    {
+      "path": "overlays/copied-whole-source/repo/layer/common/bundle-a.yaml",
+      "cases": [
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "One whole-source copy without a pattern, retaining the payload/one consumer."
+    },
+    {
+      "path": "overlays/copied-whole-source/baseline/layer/common/bundle-a.yaml",
+      "cases": [
+        "artifact-generator--copied-whole-source",
+        "artifact-generator--copied-whole-source-reverse-committed"
+      ],
+      "purpose": "One whole-source copy without a pattern, retaining the payload/one consumer."
     }
   ]
 }

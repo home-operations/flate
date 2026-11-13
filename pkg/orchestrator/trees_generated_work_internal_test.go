@@ -486,13 +486,6 @@ func assertGeneratedSourcePreparation(t *testing.T, run Rendered, treeValue *Tre
 	acquisition, cache := manifest.WorkCounts{}, manifest.WorkCounts{}
 	switch kind {
 	case manifest.KindExternalArtifact:
-		preparation = manifest.WorkCounts{
-			Attempts:      2,
-			Completed:     1,
-			Failures:      1,
-			OwnerPrepares: 2,
-			FileEntries:   1,
-		}
 		generator := manifest.NamedResource{
 			Group:     "source.extensions.fluxcd.io",
 			Kind:      "ArtifactGenerator",

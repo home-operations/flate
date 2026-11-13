@@ -27,6 +27,7 @@ func TestResolveRoot_ConfinedCapturedSource(t *testing.T) {
 		{name: "absolute root", path: "/inputs"},
 		{name: "remote root", path: "https://fixture.invalid/inputs"},
 		{name: "missing root", path: "absent"},
+		{name: "missing ancestor", path: "absent/../inputs"},
 		{name: "file root", path: "inputs/file"},
 		{name: "unavailable source", path: "inputs"},
 		{name: "replaced source", path: "inputs"},

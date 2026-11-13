@@ -136,9 +136,10 @@ type regionState struct {
 }
 
 type objectRegion struct {
-	positions map[manifest.NamedResource]int
-	states    []regionState
-	reserve   int
+	positions   map[manifest.NamedResource]int
+	states      []regionState
+	reserve     int
+	publication bool
 }
 
 func newObjectRegion(capacity int, storage []regionState) objectRegion {
@@ -185,6 +186,7 @@ func (r objectRegion) add(id manifest.NamedResource, direct, independent bool) o
 }
 
 func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResource) objectRegion {
+	region.publication = producer != (manifest.NamedResource{})
 	capacity := s.regionCapacityLocked(&region)
 	region.reserve = capacity
 	if region.positions != nil && capacity > cap(region.states) {
@@ -546,12 +548,17 @@ func (s *Store) publishRegionVisibilityLocked(region objectRegion) {
 		sh := s.shardFor(id)
 		sh.derived = true
 		if slot := sh.slots[id]; slot != nil {
-			if slot.current.Load() != nil && (slot.visible.Load() != state.live || slot.hidden.Load() == state.live) &&
+			// Declared outputs MUST retain prospective producer evidence until output or withdrawal establishes absence.
+			withdrawn := slot.hidden.Load() || state.before != nil || region.publication
+			contributor := s.coverage[id]
+			pending := contributor != nil && contributor.declaredOutputs
+			hidden := !state.live && (withdrawn || !pending)
+			if (slot.visible.Load() != state.live || slot.hidden.Load() != hidden) &&
 				slot.generation == state.producerGeneration {
 				slot.authority = sh.advanceLocked(slot.authority)
 			}
 			slot.visible.Store(state.live)
-			slot.hidden.Store(!state.live)
+			slot.hidden.Store(hidden)
 		}
 	}
 }

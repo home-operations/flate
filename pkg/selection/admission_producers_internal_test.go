@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
@@ -96,17 +97,24 @@ func TestAdmission_ProducerFrontierRequiresCurrentRelation(t *testing.T) {
 	}
 }
 
+//nolint:gocognit // Each lineage mutation MUST exercise the same retained obligation and capture.
 func TestAdmission_ProducerFrontierLineage(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, beforePath, beforeFile, afterPath, afterFile string
 		source, authored, declaration                      bool
+		runnable, sourceTarget, replaceDeclaration         bool
 		want                                               bool
 	}{
 		{name: "resolved path", beforeFile: "child.yaml", afterPath: "/source/child.yaml", afterFile: "child.yaml", want: true},
 		{name: "diff coordinate", beforePath: "/source/child.yaml", beforeFile: "../fetched/child.yaml", afterPath: "/source/child.yaml", afterFile: "child.yaml", want: true},
 		{name: "rebound path", beforePath: "/source/child.yaml", beforeFile: "child.yaml", afterPath: "/replacement/child.yaml", afterFile: "child.yaml"},
 		{name: "foreign source", source: true},
+		{name: "foreign source with runnable declaration", source: true, runnable: true},
+		{name: "foreign authored with runnable declaration", authored: true, runnable: true},
+		{name: "replaced declaration", runnable: true, replaceDeclaration: true},
+		{name: "raw source file", sourceTarget: true, beforePath: "/source/artifact.yaml", afterPath: "/source/artifact.yaml", beforeFile: "artifact.yaml", afterFile: "artifact.yaml"},
+		{name: "nonlocal runnable declaration", runnable: true, beforePath: "/source/generator.yaml", afterPath: "/source/generator.yaml", beforeFile: "generator.yaml", afterFile: "../outside/generator.yaml"},
 		{name: "foreign authored", authored: true},
 		{name: "nonlocal", beforePath: "/source/child.yaml", beforeFile: "child.yaml", afterPath: "/source/child.yaml", afterFile: "../outside/child.yaml", declaration: true},
 	} {
@@ -116,14 +124,32 @@ func TestAdmission_ProducerFrontierLineage(t *testing.T) {
 			owner := &manifest.Kustomization{Name: "factory", Namespace: "apps"}
 			st.AddObject(owner)
 			consumer := (&manifest.HelmRelease{Name: "application", Namespace: "apps"}).Named()
+			if tc.sourceTarget {
+				consumer = (&manifest.ExternalArtifact{Name: "application", Namespace: "apps"}).Named()
+			}
+			generator := &manifest.RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1",
+				Kind:       "ArtifactGenerator",
+				Name:       "generator",
+				Namespace:  "apps",
+			}
+			if tc.runnable {
+				st.AddObject(generator)
+			}
 			production := manifest.Production{
 				Owner: owner.Named(), Source: manifest.BootstrapSourceID, Path: tc.beforePath, File: tc.beforeFile,
 			}
 			if tc.declaration {
 				production.Declaration = consumer
 			}
+			if tc.runnable {
+				production.Declaration = generator.Named()
+			}
 			current := production
 			current.Path, current.File = tc.afterPath, tc.afterFile
+			if tc.replaceDeclaration {
+				current.Declaration.Name = "replacement"
+			}
 			if tc.source {
 				current.Source.Name = "replacement"
 			}
@@ -148,6 +174,10 @@ func TestAdmission_ProducerFrontierLineage(t *testing.T) {
 			assert.NoError(t, err)
 			defer proposal.Retire()
 			assert.Equal(t, len(slices.Collect(proposal.Demands())) != 0, tc.want)
+			if tc.runnable {
+				assert.Equal(t, slices.Contains(proposal.Needed, generator.Named()), false)
+				assert.Equal(t, slices.Contains(slices.Collect(proposal.reads.Inputs()), generator.Named()), false)
+			}
 		})
 	}
 }
@@ -360,6 +390,146 @@ func TestAdmission_ProjectedProductionLifetime(t *testing.T) {
 			assert.Equal(t, slices.ContainsFunc(closure.productions(target), func(p manifest.Production) bool {
 				return p.Owner == producer.Named()
 			}), tc.want)
+		})
+	}
+}
+
+//nolint:gocognit // Source readiness and producer lifetime MUST share one retained obligation across the state table.
+func TestAdmission_ProducerFrontierGeneratedSource(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"index-only", "unpublished declaration", "completed parent", "partial parent", "declaration without content", "metadata without files", "available", "failed generator", "withdrawn", "replacement"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "factory"}
+			generator := &manifest.RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1",
+				Kind:       "ArtifactGenerator",
+				Name:       "generator",
+				Namespace:  "apps",
+			}
+			target := (&manifest.ExternalArtifact{Name: "bundle", Namespace: "apps"}).Named()
+			st.AddObject(parent)
+			production := manifest.Production{
+				Owner:       parent.Named(),
+				Declaration: generator.Named(),
+				Authored:    generator.Named(),
+				Source:      manifest.BootstrapSourceID,
+				Path:        "/source/factory/generator.yaml",
+				File:        "factory/generator.yaml",
+			}
+			facts := &solverFacts{
+				store: st,
+				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					target: {Productions: []manifest.Production{production}},
+					generator.Named(): {
+						Path:        production.Path,
+						File:        production.File,
+						Declaration: generator,
+						Parent:      parent.Named(),
+					},
+				}},
+			}
+			session, err := New(st, facts, Request{Changed: true})
+			assert.NoError(t, err)
+			preparation := &Preparation{closure: admissionClosure{session: session, facts: facts}}
+			defer preparation.Retire()
+			previous := &Admission{preparation: preparation}
+			closure := admissionClosure{session: session, facts: facts, proposal: previous, objects: st}
+			closure.requestProducer(target, &production)
+			accepted := previous.result()
+			previous.Retire()
+			assert.Equal(t, st.GetDeclaration(generator.Named()), manifest.BaseManifest(nil))
+			assert.Equal(t, production.Materializer(target), parent.Named())
+			physical := state == "index-only" || state == "unpublished declaration"
+			if state == "unpublished declaration" {
+				record := facts.index.Records[generator.Named()]
+				record.BuilderOwner, record.Builder = parent.Named(), "factory/kustomization.yaml"
+				record.Authored = generator.Named()
+				record.Authored.Namespace = ""
+				record.Productions = []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}
+				facts.index.Records[generator.Named()] = record
+				st.SetDiscoveryIndex(&facts.index)
+				st.AddObject(generator)
+				assert.Equal(t, st.GetObject(generator.Named()), manifest.BaseManifest(generator))
+				assert.Equal(t, st.GetDeclaration(generator.Named()), manifest.BaseManifest(nil))
+			}
+			if !physical {
+				st.RecordEmitted(
+					parent.Named(),
+					&store.Emission{
+						Complete:    state != "partial parent",
+						Fingerprint: "initial",
+						Children:    []store.Child{{Obj: generator, Generated: true}},
+					},
+					nil,
+				)
+			}
+			switch state {
+			case "declaration without content":
+				st.AddObject(&manifest.ExternalArtifact{Name: target.Name, Namespace: target.Namespace})
+			case "metadata without files":
+				st.SetArtifact(target, &store.SourceArtifact{Content: "metadata"})
+			case "available":
+				st.SetArtifact(target, &store.SourceArtifact{Content: "content", FS: fstest.MapFS{}})
+			case "failed generator":
+				st.UpdateStatus(generator.Named(), store.StatusInfo{Status: store.StatusFailed})
+			case "withdrawn":
+				facts.index.Records[target] = manifest.DiscoveryRecord{}
+			}
+			proposal, err := session.RefreshProducers(t.Context(), &accepted, PrepareRequest{Preparation: &preparation})
+			assert.NoError(t, err)
+			defer proposal.Retire()
+			demands := slices.Collect(proposal.Demands())
+			execution := !physical && state != "available" && state != "failed generator" && state != "withdrawn"
+			assert.Equal(t, len(demands), map[bool]int{false: 0, true: 1}[physical])
+			for _, demand := range demands {
+				assert.Equal(t, demand.Identity, parent.Named())
+				assert.Equal(t, manifest.KindOf(demand.Witness).Structural, true)
+			}
+			assert.Equal(t, len(proposal.Needed), 0)
+			assert.Equal(t, len(proposal.Ordinary), 0)
+			assert.Equal(t, len(proposal.producers) != 0, physical || execution)
+			if state == "declaration without content" {
+				var required store.ReadSet
+				required.Init(st, manifest.NamedResource{}, nil)
+				defer required.Retire()
+				required.Require(manifest.DependencyRef{NamedResource: target, Artifact: true})
+				var publication *Preparation
+				defer func() { publication.Retire() }()
+				ordinary, ordinaryErr := session.prepareTest(
+					t.Context(),
+					PrepareRequest{Reads: &required, Preparation: &publication},
+				)
+				assert.NoError(t, ordinaryErr)
+				defer ordinary.Retire()
+				assert.Equal(t, slices.ContainsFunc(ordinary.producers, func(obligation producerObligation) bool {
+					return obligation.consumer == target && obligation.production == production
+				}), true)
+			}
+			captured := proposal.reads
+			snapshot := session.Snapshot()
+			_, committed, err := session.publishProposal(t.Context(), proposal, Execution)
+			assert.NoError(t, err)
+			assert.Equal(t, committed, false)
+			assert.Equal(t, session.Snapshot() == snapshot, true)
+			if state == "replacement" {
+				replacement := *generator
+				replacement.Spec = map[string]any{
+					"sources": []any{map[string]any{"kind": "GitRepository", "name": "replacement"}},
+				}
+				st.RecordEmitted(
+					parent.Named(),
+					&store.Emission{
+						Complete:    true,
+						Fingerprint: "replacement",
+						Children:    []store.Child{{Obj: &replacement, Generated: true}},
+					},
+					nil,
+				)
+				assert.Equal(t, st.GetObject(generator.Named()) == &replacement, true)
+				assert.Equal(t, captured.Valid(), false)
+			}
 		})
 	}
 }

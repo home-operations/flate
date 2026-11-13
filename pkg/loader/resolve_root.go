@@ -2,6 +2,7 @@ package loader
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"path"
 	"path/filepath"
@@ -38,22 +39,26 @@ func (l *Loader) ResolveRoot(
 	return resolved, valid, nil
 }
 
-type admissionRootView struct {
+type sourcePathView struct {
 	fs.FS
 
-	valid bool
+	valid, missing bool
 }
 
-func (v *admissionRootView) Lstat(name string) (fs.FileInfo, error) {
+func (v *sourcePathView) Lstat(name string) (fs.FileInfo, error) {
 	info, err := fs.Lstat(v.FS, strings.TrimLeft(filepath.ToSlash(name), "/"))
 	if err != nil {
-		v.valid = false
+		if errors.Is(err, fs.ErrNotExist) {
+			v.missing = true
+		} else {
+			v.valid = false
+		}
 	}
 	//nolint:wrapcheck // SecureJoinVFS requires the original filesystem error and path contract.
 	return info, err
 }
 
-func (v *admissionRootView) Readlink(name string) (string, error) {
+func (v *sourcePathView) Readlink(name string) (string, error) {
 	target, err := fs.ReadLink(v.FS, strings.TrimLeft(filepath.ToSlash(name), "/"))
 	resolved := path.Join(path.Dir(strings.TrimLeft(name, "/")), target)
 	if err != nil || path.IsAbs(target) || resolved == ".." || strings.HasPrefix(resolved, "../") {
@@ -64,23 +69,35 @@ func (v *admissionRootView) Readlink(name string) (string, error) {
 }
 
 func resolveRoot(objects sourceStore, source manifest.NamedResource, root string) (string, bool) {
-	if root == "" || path.IsAbs(root) || strings.Contains(root, "://") || strings.HasPrefix(path.Clean(root), "../") ||
-		path.Clean(root) == ".." {
-		return "", false
-	}
 	art, _ := objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 	if art == nil || art.FS == nil {
 		return "", false
 	}
-	view := &admissionRootView{FS: art.FS, valid: true}
-	resolved, err := securejoin.SecureJoinVFS("/", root, view)
-	if err != nil || !view.valid {
+	view := sourcePathView{FS: art.FS}
+	resolved, valid := view.resolve(root)
+	if !valid || view.missing {
+		return "", false
+	}
+	info, err := fs.Stat(art.FS, resolved)
+	return resolved, err == nil && info.IsDir()
+}
+
+func (v *sourcePathView) resolve(name string) (string, bool) {
+	v.valid, v.missing = true, false
+	if name == "" || path.IsAbs(name) || strings.Contains(name, "://") {
+		return "", false
+	}
+	clean := path.Clean(name)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", false
+	}
+	resolved, err := securejoin.SecureJoinVFS("/", name, v)
+	if err != nil || !v.valid {
 		return "", false
 	}
 	resolved = strings.TrimPrefix(filepath.ToSlash(resolved), "/")
 	if resolved == "" {
 		resolved = "."
 	}
-	info, err := fs.Stat(art.FS, resolved)
-	return resolved, err == nil && info.IsDir()
+	return resolved, true
 }

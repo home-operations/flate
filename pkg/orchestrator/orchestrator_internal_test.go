@@ -129,14 +129,6 @@ func TestRenderTrees_MissingPath(t *testing.T) {
 	assert.FatalIf(t, !strings.Contains(err.Error(), "tree path is required"), "missing path diagnostic: %v", err)
 }
 
-// TestDetectOrphans drives the orphan-detection logic in isolation —
-// no controllers, just the store / sourceFiles wiring the orchestrator
-// builds during Bootstrap. Three scenarios:
-//
-//  1. Truly orphaned child (file under parent path, never emitted by
-//     parent's render): downgraded.
-//  2. Root-level resource (no covering parent): NOT downgraded.
-//  3. Child re-emitted by parent (WasRendered set): NOT downgraded.
 func TestDetectOrphans(t *testing.T) {
 	t.Parallel()
 	parent := &manifest.Kustomization{
@@ -169,8 +161,6 @@ func TestDetectOrphans(t *testing.T) {
 		o.store.AddObject(ks)
 	}
 	o.store.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	// Mark emittedChild as rendered by its parent — simulates the
-	// AddObject + RecordEmitted call cluster-apps's render would make.
 	publishFixture(t, o.store, parent.Named(), []manifest.NamedResource{emittedChild.Named()})
 
 	failed := map[manifest.NamedResource]store.StatusInfo{
@@ -209,6 +199,20 @@ func TestDetectOrphans(t *testing.T) {
 		},
 	})
 	assert.Diff(t, o.detectOrphans(failed, o.reportOwnership(o.reportingClaims())), orphans)
+	generated := &manifest.Kustomization{
+		Name: "generated", Namespace: "flux-system", Path: "./kubernetes/standalone",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindExternalArtifact, Name: "generated", Namespace: "flux-system",
+		},
+	}
+	o.store.AddObject(generated)
+	o.store.UpdateStatus(generated.Named(), store.StatusInfo{Status: store.StatusReady})
+	for _, declared := range []bool{false, true} {
+		if declared {
+			o.store.AddObject(&manifest.ExternalArtifact{Name: "generated", Namespace: "flux-system"})
+		}
+		assert.Diff(t, o.detectOrphans(failed, o.reportOwnership(o.reportingClaims())), orphans)
+	}
 }
 
 // TestDetectOrphans_NonReconcilableKindsIgnored — ConfigMaps and

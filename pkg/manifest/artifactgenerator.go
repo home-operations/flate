@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"path"
 	"slices"
 	"strings"
 
@@ -39,9 +40,9 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 	var captures []string
 	pattern := view.str("pathPattern")
 	if len(candidates) != 0 && pattern != "" {
-		alias, path, ok := strings.Cut(pattern, "/")
+		alias, patternPath, ok := strings.Cut(pattern, "/")
 		if ok && strings.HasPrefix(alias, "@") && len(alias) > 1 {
-			_, captures, _ = artifactTokens(path, nil, true)
+			_, captures, _ = artifactTokens(patternPath, nil, true)
 		}
 	}
 	for _, entry := range entries {
@@ -179,23 +180,57 @@ func (r *RawObject) references(yield func(Reference) bool) {
 			"",
 			r.Namespace,
 		)
+		files := view.inputPaths(source.Alias)
 		if !yield(
 			Reference{
-				NamedResource:   id,
-				Use:             "artifact",
-				readsSourceTree: true,
-				bindsSource:     true,
-				Position:        i,
-				Content:         true,
-				Gate:            GateArtifacts,
-				Artifact:        true,
-				ArtifactOnly:    true,
-				ArtifactStages:  GateArtifacts,
+				NamedResource:    id,
+				Use:              "artifact",
+				readsSourceTree:  true,
+				bindsSource:      true,
+				Position:         i,
+				NamespaceDefault: source.Namespace == "",
+				Files:            files,
+				Subtree:          len(files) != 0,
+				Content:          true,
+				Gate:             GateArtifacts,
+				Artifact:         true,
+				ArtifactOnly:     true,
+				ArtifactStages:   GateArtifacts,
 			},
 		) {
 			return
 		}
 	}
+}
+
+func (v artifactGeneratorView) inputPaths(alias string) []string {
+	if alias == "" {
+		return nil
+	}
+	var files []string
+	add := func(value string) {
+		input, name, found := strings.Cut(value, "/")
+		input, marked := strings.CutPrefix(input, "@")
+		if !found || !marked || input != alias {
+			return
+		}
+		// Variable components describe potential reads, including absent matches on either diff side.
+		if variable := strings.IndexAny(name, "*?[{"); variable >= 0 {
+			name = path.Dir(name[:variable])
+		}
+		name = path.Clean(name)
+		if !slices.Contains(files, name) {
+			files = append(files, name)
+		}
+	}
+	add(v.str("pathPattern"))
+	for _, artifact := range v.entries("artifacts") {
+		for _, operation := range v.child(artifact).entries("copy") {
+			add(v.child(operation).str("from"))
+		}
+	}
+	slices.Sort(files)
+	return files
 }
 
 const (

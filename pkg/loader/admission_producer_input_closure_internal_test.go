@@ -88,69 +88,105 @@ func TestFilter_ReferenceSnapshotUnchanged(t *testing.T) {
 
 func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 	t.Parallel()
-	target := manifest.NamedResource{
-		Group:     manifest.SourceDomain,
-		Kind:      manifest.KindExternalArtifact,
-		Namespace: "apps",
-		Name:      "app-api",
+	for _, declared := range []bool{false, true} {
+		name := "missing artifact declaration"
+		if declared {
+			name = "declaration without content"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			target := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindExternalArtifact,
+				Namespace: "apps",
+				Name:      "app-api",
+			}
+			producer := &manifest.Kustomization{
+				Name:      "producer",
+				Namespace: "apps",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind: manifest.KindExternalArtifact,
+					Name: target.Name,
+				},
+			}
+			consumer := &manifest.Kustomization{
+				Name:      "consumer",
+				Namespace: "apps",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind: manifest.KindExternalArtifact,
+					Name: target.Name,
+				},
+			}
+			other := &manifest.Kustomization{Name: "other", Namespace: "apps"}
+			declaration := manifest.NamedResource{
+				Group:     "source.extensions.fluxcd.io",
+				Kind:      "ArtifactGenerator",
+				Namespace: "apps",
+				Name:      "generator",
+			}
+			otherTarget := target
+			otherTarget.Name = "app-unrelated"
+			idx := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				consumer.Named(): {File: "consumer.yaml"},
+				producer.Named(): {File: "producer.yaml"},
+				other.Named():    {File: "other.yaml"},
+				target: {
+					Productions: []manifest.Production{
+						{Owner: producer.Named(), Declaration: declaration},
+						{Owner: producer.Named(), Declaration: declaration},
+						{Owner: other.Named(), Path: "artifact.yaml", File: "artifact.yaml"},
+					},
+				},
+				otherTarget: {Productions: []manifest.Production{{Owner: other.Named(), Declaration: declaration}}},
+			}}
+			objects := filtertest.MapLister{
+				consumer.Named(): consumer,
+				producer.Named(): producer,
+				other.Named():    other,
+			}
+			objects[declaration] = &manifest.RawObject{
+				APIVersion: "source.extensions.fluxcd.io/v1beta1",
+				Kind:       declaration.Kind,
+				Name:       declaration.Name,
+				Namespace:  declaration.Namespace,
+			}
+			if declared {
+				objects[target] = &manifest.ExternalArtifact{Name: target.Name, Namespace: target.Namespace}
+			}
+			f := newAdmission(
+				t,
+				admissionConfig{
+					changes:   change.NewSet([]string{"consumer.yaml"}),
+					index:     idx,
+					inventory: objects,
+					root:      "",
+				},
+			)
+			if !f.Reconcile(producer.Named()) || f.Reconcile(other.Named()) || f.Reconcile(otherTarget) {
+				t.Fatalf("production closure: %v", f.KeepNames())
+			}
+			assert.Diff(t, f.productionOwners(target), []manifest.NamedResource{producer.Named()})
+			assert.Equal(t, f.Reconcile(declaration), true)
+			assert.Equal(t, slices.Contains(f.pending.Ordinary, declaration), true)
+			assert.Equal(t, f.Output(declaration), false)
+			sentinel := &manifest.Kustomization{Name: "sentinel", Namespace: "apps"}
+			f.AddEmitted(producer.Named(), new(store.Child{Obj: sentinel}), objects)
+			assert.FatalIf(
+				t,
+				f.Reconcile(sentinel.Named()),
+				"%s",
+				"dependency-only materializer included unrelated output",
+			)
+			child := &manifest.Kustomization{Name: "runtime", Namespace: "apps", SourceRef: consumer.SourceRef}
+			f.AddEmitted(consumer.Named(), new(store.Child{Obj: child}), objects)
+			assert.FatalIf(
+				t,
+				!f.Reconcile(child.Named()) || !f.Reconcile(producer.Named()),
+				"%s",
+				"runtime content dependency lost its producer",
+			)
+		})
 	}
-	producer := &manifest.Kustomization{
-		Name:      "producer",
-		Namespace: "apps",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: target.Name},
-	}
-	consumer := &manifest.Kustomization{
-		Name:      "consumer",
-		Namespace: "apps",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: target.Name},
-	}
-	other := &manifest.Kustomization{Name: "other", Namespace: "apps"}
-	declaration := manifest.NamedResource{
-		Group:     "source.extensions.fluxcd.io",
-		Kind:      "ArtifactGenerator",
-		Namespace: "apps",
-		Name:      "generator",
-	}
-	otherTarget := target
-	otherTarget.Name = "app-unrelated"
-	idx := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		consumer.Named(): {File: "consumer.yaml"},
-		producer.Named(): {File: "producer.yaml"},
-		other.Named():    {File: "other.yaml"},
-		target: {
-			Productions: []manifest.Production{
-				{Owner: producer.Named(), Declaration: declaration},
-				{Owner: producer.Named(), Declaration: declaration},
-				{Owner: other.Named(), Path: "artifact.yaml", File: "artifact.yaml"},
-			},
-		},
-		otherTarget: {Productions: []manifest.Production{{Owner: other.Named(), Declaration: declaration}}},
-	}}
-	objects := filtertest.MapLister{consumer.Named(): consumer, producer.Named(): producer, other.Named(): other}
-	f := newAdmission(
-		t,
-		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: idx, inventory: objects, root: ""},
-	)
-	if !f.Reconcile(producer.Named()) || f.Reconcile(other.Named()) || f.Reconcile(otherTarget) {
-		t.Fatalf("production closure: %v", f.KeepNames())
-	}
-	assert.Diff(t, f.productionOwners(target), []manifest.NamedResource{producer.Named()})
-	sentinel := &manifest.Kustomization{Name: "sentinel", Namespace: "apps"}
-	f.AddEmitted(producer.Named(), new(store.Child{Obj: sentinel}), objects)
-	assert.FatalIf(
-		t,
-		f.Reconcile(sentinel.Named()),
-		"%s",
-		"dependency-only materializer included unrelated output",
-	)
-	child := &manifest.Kustomization{Name: "runtime", Namespace: "apps", SourceRef: consumer.SourceRef}
-	f.AddEmitted(consumer.Named(), new(store.Child{Obj: child}), objects)
-	assert.FatalIf(
-		t,
-		!f.Reconcile(child.Named()) || !f.Reconcile(producer.Named()),
-		"%s",
-		"runtime content dependency lost its producer",
-	)
 }
 
 func TestFilter_DeclarationSourceChange(t *testing.T) {

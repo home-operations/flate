@@ -677,7 +677,7 @@ func (c *admissionClosure) finishAdmission(
 		}
 		if state.role.needed && id.KindInfo().Runnable {
 			evidence := c.declarationEvidence(id)
-			if !evidence.known() {
+			if !evidence.known() || id.KindInfo().SourceArtifact && c.producerPending(id) {
 				productions := c.productions(id)
 				for i := range productions {
 					c.requestProducer(id, &productions[i])

@@ -65,15 +65,21 @@ func (c *admissionClosure) producerWitness(obligation *producerObligation) (stor
 	) {
 		return store.Child{}, false
 	}
-	if c.objects.GetDeclaration(obligation.consumer) != nil {
+	if !c.producerPending(obligation.consumer) {
 		return store.Child{}, false
 	}
-	facts := c.capturedRoot(obligation.consumer)
-	if facts.BuiltCurrent && facts.BuiltChild.Obj != nil {
+	structural := retained.Materializer(obligation.consumer)
+	owner := c.proposal.reads.Materializer(obligation.consumer, *retained)
+	object := c.objects.GetDeclaration(owner)
+	if object == nil && owner != structural {
+		owner = structural
+		object = c.objects.GetDeclaration(owner)
+	}
+	status, _ := c.objects.GetStatus(owner)
+	if status.Outcome() == store.OutcomeFailed {
 		return store.Child{}, false
 	}
-	owner := retained.Materializer(obligation.consumer)
-	if object := c.objects.GetDeclaration(owner); object != nil {
+	if object != nil {
 		return store.Child{Obj: object}, true
 	}
 	record, _ := c.facts.SelectionIndex().Lookup(owner)
@@ -84,6 +90,18 @@ func (c *admissionClosure) producerWitness(obligation *producerObligation) (stor
 		}
 	}
 	return store.Child{}, true
+}
+
+func (c *admissionClosure) producerPending(id manifest.NamedResource) bool {
+	if id.KindInfo().SourceArtifact {
+		artifact, _ := c.objects.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+		return artifact == nil || artifact.FS == nil
+	}
+	if c.objects.GetDeclaration(id) != nil {
+		return false
+	}
+	facts := c.capturedRoot(id)
+	return !facts.BuiltCurrent || facts.BuiltChild.Obj == nil
 }
 
 // RefreshProducers MUST recheck the exact pending production after its native prerequisite changes.
@@ -129,7 +147,7 @@ func (s *Session) RefreshProducers(
 			continue
 		}
 		closure.requestProducer(obligation.consumer, &obligation.production)
-		if child.Obj != nil {
+		if child.Obj != nil && manifest.KindOf(child.Obj).Structural {
 			closure.acquire(Demand{Identity: child.Obj.Named(), Witness: child.Obj})
 		}
 	}

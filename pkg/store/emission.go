@@ -217,9 +217,10 @@ func (e *Emission) shadows(bindingValue *sourceBinding) bool {
 }
 
 type contributor struct {
-	slot    *producerSlot
-	records []footprint
-	binding sourceBinding
+	slot            *producerSlot
+	records         []footprint
+	binding         sourceBinding
+	declaredOutputs bool
 }
 
 type footprint struct {

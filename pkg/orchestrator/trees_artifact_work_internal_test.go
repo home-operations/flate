@@ -138,13 +138,29 @@ func assertArtifactSelection(t *testing.T, trees []Tree, full [2]*Result) {
 		assert.NoError(t, err)
 		outputs := make([][]manifest.DocumentBatch, 0, len(runs))
 		for _, run := range runs {
-			assert.Diff(t, visibleWitnessOutput(run.Result), witnessOutput(full[run.ID.Side], nil))
+			assert.Diff(
+				t,
+				visibleWitnessOutput(run.Result),
+				witnessOutput(full[run.ID.Side], []manifest.NamedResource{consumer, generator}),
+			)
 			assert.Equal(t, len(outputByParent(run.Result.Manifests)[stable]), 0)
 			assert.Equal(t, workCounts(run.Result.Work, stable, manifest.WorkKustomize), manifest.WorkCounts{})
-			assert.Equal(t, workCounts(run.Result.Work, consumer, manifest.WorkKustomize), manifest.WorkCounts{})
-			assert.Equal(t, workCounts(run.Result.Work, generator, manifest.WorkEvaluation), manifest.WorkCounts{})
-			assert.Equal(t, workCounts(run.Result.Work, generator, manifest.WorkAcquisition), manifest.WorkCounts{})
-			assert.Equal(t, run.Store().GetArtifact(artifact, store.ArtifactContent) == nil, true)
+			assert.Equal(
+				t,
+				workCounts(run.Result.Work, consumer, manifest.WorkKustomize),
+				manifest.WorkCounts{Attempts: 1, Completed: 1},
+			)
+			assert.Equal(
+				t,
+				workCounts(run.Result.Work, generator, manifest.WorkEvaluation),
+				manifest.WorkCounts{Attempts: 1, Completed: 1},
+			)
+			assert.Equal(
+				t,
+				workCounts(run.Result.Work, generator, manifest.WorkAcquisition),
+				manifest.WorkCounts{Attempts: 1, Completed: 1, LocalAcquisitions: 1},
+			)
+			assert.Equal(t, run.Store().GetArtifact(artifact, store.ArtifactContent) != nil, true)
 			for recordIndex := range run.Result.Work {
 				record := run.Result.Work[recordIndex]
 				assert.Equal(t, record.Key.Tree, run.ID)

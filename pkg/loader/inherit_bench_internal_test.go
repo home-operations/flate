@@ -33,7 +33,7 @@ func BenchmarkProjectAuthored_SharedBootstrapPath(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if l.projectAuthored(root) {
+		if l.projectAuthored(root, nil) {
 			b.Fatal("unchanged projection changed")
 		}
 	}

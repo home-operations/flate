@@ -1,0 +1,5 @@
+{apiVersion: fluxcd.controlplane.io/v1, kind: ResourceSetInputProvider, metadata: {name: y, namespace: flux-system, labels: {peer: y}},
+ spec: {type: Static, defaultValues: {v: "2"}}}
+---
+{apiVersion: fluxcd.controlplane.io/v1, kind: ResourceSet, metadata: {name: peers, namespace: flux-system},
+ spec: {inputsFrom: [{kind: ResourceSetInputProvider, selector: {matchExpressions: [{key: peer, operator: NotIn, values: ["${SELF}"]}]}}], resources: []}}

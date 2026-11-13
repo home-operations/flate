@@ -13,7 +13,10 @@ func ResolveStaticValue(
 	provider Provider,
 	missing missingPolicy,
 ) (string, bool) {
-	parent = parent.Clone()
+	parent = new(*parent)
+	if parent.PostBuild != nil {
+		parent.PostBuild = new(*parent.PostBuild)
+	}
 	unknownInputs := false
 	var inline map[string]string
 	if parent.PostBuild != nil {

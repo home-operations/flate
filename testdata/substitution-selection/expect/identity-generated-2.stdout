@@ -1,0 +1,42 @@
+---
+apiVersion: v1
+data:
+  v: "2"
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: a
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: out
+  namespace: default
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: parent
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: a
+  namespace: flux-system
+spec:
+  path: ./a
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: v1
+data:
+  NAME: a
+kind: ConfigMap
+metadata:
+  annotations:
+    config.kubernetes.io/origin: |
+      configuredIn: kustomization.yaml
+      configuredBy:
+        apiVersion: builtin
+        kind: ConfigMapGenerator
+  labels:
+    kustomize.toolkit.fluxcd.io/name: vars
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: settings
+  namespace: flux-system

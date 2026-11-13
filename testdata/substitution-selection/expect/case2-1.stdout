@@ -1,0 +1,33 @@
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: a
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+  name: peers
+  namespace: flux-system
+spec:
+  inputsFrom:
+  - kind: ResourceSetInputProvider
+    selector:
+      matchExpressions:
+      - key: peer
+        operator: NotIn
+        values:
+        - x
+  resources: []
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: a
+    kustomize.toolkit.fluxcd.io/namespace: flux-system
+    peer: "y"
+  name: "y"
+  namespace: flux-system
+spec:
+  defaultValues:
+    v: "1"
+  type: Static

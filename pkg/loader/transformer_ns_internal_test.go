@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -799,4 +800,53 @@ func replaceTransformerMount(
 			FS:        input,
 		},
 	)
+}
+
+func TestDesiredAuthored_NamespacePredictionLifetime(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	var reads atomic.Int64
+	files := fstest.MapFS{
+		"apps/storage/kustomization.yaml": {
+			Data: []byte("resources: [app/ks.yaml]\ntransformers: [transformers]\n"),
+		},
+		"apps/storage/transformers/kustomization.yaml": {
+			Data: []byte("namespace: storage\nresources: [../../../transformers]\n"),
+		},
+		"transformers/kustomization.yaml": {Data: []byte("resources: [transformer.yaml]\n")},
+		"transformers/transformer.yaml":   {Data: []byte(namespaceTransformer)},
+	}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{
+		LocalPath: root,
+		FS:        parsedReadFS{FS: files, reads: map[string]*atomic.Int64{"transformers/transformer.yaml": &reads}},
+	})
+	l := New(st)
+	l.SourceRoot = root
+	l.documents.compact = true
+	l.mountSources()
+	l.ensureScopes()
+	l.documents.read(filepath.Join(root, "apps", "storage"))
+	child := leafKS("child", "./leaf")
+	fact := compactOccurrence(child, manifest.TemplateProjection{})
+	file := filepath.Join(root, "apps", "storage", "app", "ks.yaml")
+	l.documents.cache[file] = document{objects: []parsedObject{{fact: &fact}}}
+	l.Index.Records[child.Named()] = manifest.DiscoveryRecord{
+		Path:     file,
+		File:     "apps/storage/app/ks.yaml",
+		Authored: child.Named(),
+	}
+	raw := []authoredRecord{{id: child.Named(), authored: child.Named(), path: file, file: "apps/storage/app/ks.yaml"}}
+	prediction := map[string]nsResolution{}
+	first := l.desiredAuthored(raw, root, prediction)
+	effective := testutil.KustomizationID("storage", "child")
+	assert.Equal(t, first.records[effective].Authored, child.Named())
+	assert.Equal(t, reads.Load(), int64(1))
+	second := l.desiredAuthored(raw, root, prediction)
+	assert.Equal(t, second.records[effective].Authored, child.Named())
+	assert.Equal(t, reads.Load(), int64(1))
+	fresh := l.desiredAuthored(raw, root, map[string]nsResolution{})
+	assert.Equal(t, fresh.records[effective].Authored, child.Named())
+	assert.Equal(t, reads.Load(), int64(2))
+	assert.Equal(t, child.TargetNamespace, "")
 }

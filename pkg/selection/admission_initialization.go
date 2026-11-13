@@ -364,8 +364,8 @@ func (s *admissionSeeds) scanReferences(
 		if !c.reverse(id, obj, new(ref)) {
 			continue
 		}
-		inputs, err := c.matchingInputs(new(ref), true)
-		if err != nil {
+		inputs, known, err := c.matchingInputs(new(ref), true)
+		if err != nil || !known {
 			continue
 		}
 		for _, input := range inputs {

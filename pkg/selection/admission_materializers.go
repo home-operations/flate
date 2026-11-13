@@ -136,18 +136,24 @@ func (c *admissionClosure) admitMaterializer(id manifest.NamedResource, demand *
 func (c *admissionClosure) matchingInputs(
 	refValue *manifest.Reference,
 	reverse bool,
-) ([]manifest.NamedResource, error) {
+) ([]manifest.NamedResource, bool, error) {
 	ref := *refValue
+	if manifest.HasEnvsubstReference(ref.Name) || manifest.HasEnvsubstReference(ref.Namespace) {
+		return nil, false, nil
+	}
 	if ref.Name != "" {
 		c.inputScratch[0] = ref.NamedResource
-		return c.inputScratch[:], nil
+		return c.inputScratch[:], true, nil
 	}
 	if ref.Selector == nil {
-		return nil, nil
+		return nil, true, nil
+	}
+	if !selectorComplete(&ref) {
+		return nil, false, nil
 	}
 	matcher, err := ref.Matcher(ref.Selector)
 	if err != nil {
-		return nil, err
+		return nil, true, err
 	}
 	var inputs []manifest.NamedResource
 	target := ref.NamedResource
@@ -184,7 +190,7 @@ func (c *admissionClosure) matchingInputs(
 		}
 	}
 	slices.SortFunc(inputs, manifest.NamedResource.Compare)
-	return inputs, nil
+	return inputs, true, nil
 }
 
 func (c *admissionClosure) retainIndexedMaterializers(candidates *[2][]*OccurrenceFacts) {
@@ -534,12 +540,12 @@ func (c *admissionClosure) selectorInputMatches(
 		object = c.facts.AdmissionCandidate(id).Obj
 	}
 	matched := false
-	if object != nil {
+	if occurrence, authored := c.projectedOccurrence(id, object); authored {
+		matched = matcher.Matches(id, occurrence.Labels)
+	} else if object != nil {
 		if labeled, ok := object.(interface{ GetLabels() map[string]string }); ok {
 			matched = matcher.Matches(id, labeled.GetLabels())
 		}
-	} else if occurrence, ok := c.catalogOccurrence(id); ok {
-		matched = matcher.Matches(id, occurrence.Labels)
 	}
 	if !matched && reverse && c.context.SideKnown {
 		if _, _, paired := c.delta(source); paired {

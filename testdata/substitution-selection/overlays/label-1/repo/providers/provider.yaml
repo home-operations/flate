@@ -1,0 +1,4 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata: {name: provider, namespace: flux-system, labels: {peer: "${PEER}"}}
+spec: {type: Static, defaultValues: {value: selected}}

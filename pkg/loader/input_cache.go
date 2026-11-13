@@ -170,7 +170,9 @@ func (r documentReader) restoreCachedFile(absolute string) {
 			needsCandidates: f.NeedsCandidates, policy: f.Policy, labels: f.Labels, labeled: f.Labeled,
 			substituteDisabled: f.SubstituteDisabled,
 		}
+		facts.census = facts
 		facts.structural, _ = catalog.(*manifest.Kustomization)
+		facts.substituted = facts.indexed() && facts.hasSubstitutions(saved.Authored)
 		occurrence := &authoredOccurrence{
 			Declaration: occurrenceID{
 				Source:   source,

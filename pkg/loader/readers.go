@@ -200,10 +200,8 @@ func (rf *readerFinalizer) collect(ctx context.Context,
 		return nil
 	}
 	rf.visited[id] = struct{}{}
-	if rf.loader.documents.compact {
-		if occurrence, ok := rf.loader.locations[id]; ok {
-			return rf.collectOccurrence(ctx, &occurrence, consumer, materialize)
-		}
+	if occurrence, ok := rf.loader.locations[id]; ok {
+		return rf.collectOccurrence(ctx, &occurrence, consumer, materialize)
 	}
 	for ref := range manifest.References(rf.object(id), manifest.ReferenceRelations) {
 		if err := rf.observe(ctx, new(ref), consumer, materialize); err != nil {

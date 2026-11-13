@@ -30,11 +30,16 @@ func (c *admissionClosure) references(
 	obj manifest.BaseManifest,
 ) iter.Seq[manifest.Reference] {
 	return func(yield func(manifest.Reference) bool) {
-		if obj == nil {
+		var refs iter.Seq[manifest.Reference]
+		if occurrence, authored := c.projectedOccurrence(id, obj); authored {
+			refs = occurrence.references()
+		} else if obj == nil {
 			c.yieldIndexedReferences(id, yield)
 			return
+		} else {
+			refs = manifest.References(obj, manifest.ReferenceRelations)
 		}
-		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		for ref := range refs {
 			if !yield(ref) {
 				return
 			}
@@ -47,6 +52,25 @@ func (c *admissionClosure) references(
 			}
 		}
 	}
+}
+
+func (c *admissionClosure) projectedOccurrence(
+	id manifest.NamedResource,
+	object manifest.BaseManifest,
+) (OccurrenceFacts, bool) {
+	if c.incoming(id).Obj != nil || c.facts.SelectionIndex().Records[id].Builder != "" {
+		return OccurrenceFacts{}, false
+	}
+	occurrence, known := c.catalogOccurrence(id)
+	if !known {
+		return occurrence, false
+	}
+	if object == nil || object == occurrence.Object || object == occurrence.Catalog ||
+		object == c.facts.AdmissionCandidate(id).Obj {
+		return occurrence, true
+	}
+	child := c.children[id]
+	return occurrence, object == child.Obj && child.SourceSupport != (manifest.NamedResource{})
 }
 
 func (c *admissionClosure) declarationSource(id manifest.NamedResource) string {
@@ -268,14 +292,6 @@ func (c *admissionClosure) completeCoversDeclaration(id manifest.NamedResource, 
 }
 
 func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yield func(manifest.Reference) bool) {
-	if occurrence, ok := c.catalogOccurrence(id); ok {
-		for ref := range occurrence.references() {
-			if !yield(ref) {
-				return
-			}
-		}
-		return
-	}
 	if child := c.facts.AdmissionCandidate(id); child.Obj != nil && c.facts.SelectionIndex().Records[id].Builder != "" {
 		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
 			if !yield(ref) {
@@ -284,6 +300,15 @@ func (c *admissionClosure) yieldIndexedReferences(id manifest.NamedResource, yie
 		}
 		return
 	}
+	if occurrence, ok := c.catalogOccurrence(id); ok {
+		for ref := range occurrence.references() {
+			if !yield(ref) {
+				return
+			}
+		}
+		return
+	}
+
 	for _, ref := range c.record(id).Refs {
 		if !yield(manifest.Reference{NamedResource: ref, Content: true}) {
 			return
@@ -318,8 +343,14 @@ func (c *admissionClosure) extendProductions(
 	) {
 		return
 	}
-	record, _ := c.facts.SelectionIndex().Lookup(id)
+	record, indexed := c.indexedRecord(id)
 	extended := false
+	if !indexed && record.Authored != (manifest.NamedResource{}) {
+		c.extendProductionInput(
+			id, record.Productions,
+			&productionExtension{record: &record, productions: productions, state: state, extended: &extended},
+		)
+	}
 	for source := range c.proposal.Request.Changes.Sources() {
 		evidence := c.boundSource(source)
 		delta := evidence.Changes
@@ -335,7 +366,7 @@ func (c *admissionClosure) extendProductions(
 				continue
 			}
 			c.extendProductionInput(
-				input.Productions,
+				id, input.Productions,
 				&productionExtension{record: &record, productions: productions, state: state, extended: &extended},
 			)
 		}
@@ -349,14 +380,26 @@ type productionExtension struct {
 	extended    *bool
 }
 
-func (c *admissionClosure) extendProductionInput(input []manifest.Production, scope *productionExtension) {
+func (c *admissionClosure) extendProductionInput(
+	target manifest.NamedResource,
+	input []manifest.Production,
+	scope *productionExtension,
+) {
 	{
 		productionValues := input
 		for productionIndex := range productionValues {
 			production := productionValues[productionIndex]
 			owner := production.Owner
 			if scope.record.File != "" && scope.record.File != production.File ||
-				!c.declarationLocated(owner, c.objects) {
+				!c.declarationLocated(owner, c.objects) || !c.readerEmissionAllowed(target, owner) {
+				continue
+			}
+			if !c.materializerOutputMatches(
+				owner,
+				func(id manifest.NamedResource, _ manifest.BaseManifest, _ *manifest.DiscoveryRecord) bool {
+					return matchesMaterializerIdentity(target, id)
+				},
+			).include {
 				continue
 			}
 			c.qualifyProductionSource(&production)

@@ -71,8 +71,8 @@ func (c *admissionClosure) reverseInputRole(
 		if !c.reverse(id, c.incoming(id).Obj, new(ref)) {
 			continue
 		}
-		inputs, err := c.matchingInputs(new(ref), true)
-		if err != nil {
+		inputs, known, err := c.matchingInputs(new(ref), true)
+		if err != nil || !known {
 			continue
 		}
 		for _, input := range inputs {
@@ -186,11 +186,11 @@ func (c *admissionClosure) selectInputReader(id, reader manifest.NamedResource) 
 			ref.Namespace != id.Namespace {
 			continue
 		}
-		inputs, err := c.matchingInputs(new(ref), true)
+		inputs, known, err := c.matchingInputs(new(ref), true)
 		if err != nil {
 			return err
 		}
-		if !slices.Contains(inputs, id) {
+		if !known || !slices.Contains(inputs, id) {
 			continue
 		}
 		if comparison := c.outputChanged(reader, new(ref), object); comparison.Known && !comparison.Changed {

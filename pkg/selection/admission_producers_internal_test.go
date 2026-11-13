@@ -304,3 +304,62 @@ func TestAdmission_ProducerFrontierSourceDerivation(t *testing.T) {
 		})
 	}
 }
+
+func TestAdmission_ProjectedProductionLifetime(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, namespace  string
+		output, complete bool
+		nonmatching      bool
+		foreignNamespace bool
+		want             bool
+	}{
+		{name: "indexed", want: true},
+		{name: "partial", output: true, want: true},
+		{name: "partial exact namespace", namespace: "apps", output: true, want: true},
+		{name: "complete", output: true, complete: true, want: true},
+		{name: "complete nonmatching", output: true, complete: true, nonmatching: true},
+		{name: "foreign namespace", foreignNamespace: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", TargetNamespace: "apps"}
+			if tc.foreignNamespace {
+				producer.TargetNamespace = "other"
+			}
+			st.AddObject(producer)
+			authored := &manifest.OCIRepository{Name: "shared", Namespace: tc.namespace}
+			target := authored.WithNamespace("apps").Named()
+			production := manifest.Production{
+				Owner: producer.Named(), Source: manifest.BootstrapSourceID,
+				Authored: authored.Named(), File: "source.yaml",
+			}
+			occurrence := applicationOccurrence(authored, t.TempDir())
+			occurrence.Identity = target
+			facts := &solverFacts{
+				store: st,
+				index: manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					producer.Named(): {Path: "producer.yaml", File: "producer.yaml"},
+					authored.Named(): {
+						Path: "source.yaml", File: "source.yaml", Authored: authored.Named(),
+						Productions: []manifest.Production{production},
+					},
+				}},
+				occurrences: map[manifest.NamedResource]OccurrenceFacts{target: occurrence},
+			}
+			if tc.output {
+				var children []store.Child
+				if tc.complete && !tc.nonmatching {
+					children = []store.Child{{Obj: authored.WithNamespace(target.Namespace)}}
+				}
+				st.RecordEmitted(producer.Named(), &store.Emission{Children: children, Complete: tc.complete}, nil)
+				st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
+			}
+			closure := solverClosure(t, st, facts)
+			assert.Equal(t, slices.ContainsFunc(closure.productions(target), func(p manifest.Production) bool {
+				return p.Owner == producer.Named()
+			}), tc.want)
+		})
+	}
+}

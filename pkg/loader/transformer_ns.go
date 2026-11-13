@@ -58,7 +58,7 @@ func (l *Loader) predictNamespaces(
 	if res.ns == "" || ks.TargetNamespace != "" {
 		return namespacePrediction{object: ks, forced: forced}
 	}
-	updated := ks.Clone()
+	updated := new(*ks)
 	updated.TargetNamespace = res.ns
 	return namespacePrediction{object: updated, forced: forced}
 }

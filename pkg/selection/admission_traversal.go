@@ -158,9 +158,12 @@ func (c *admissionClosure) selectReferenceInputs(
 	materializers func(materializerDemand, manifest.NamedResource) bool,
 ) error {
 	ref := *refValue
-	inputs, err := c.matchingInputs(new(ref), false)
+	inputs, known, err := c.matchingInputs(new(ref), false)
 	if err != nil {
 		return err
+	}
+	if !known {
+		return nil
 	}
 	for _, input := range inputs {
 		c.add(input, admissionRole{needed: true, ordinary: true, dirty: c.states[input].changed})

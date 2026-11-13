@@ -1,0 +1,3093 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "ef748ebcd095bf273670c7fa41cba4f5ba532142",
+    "paths": [
+      "pkg/loader/paths.go",
+      "pkg/selection/admission_materializers.go"
+    ],
+    "reductions": "Owner-supplied issue #1531 reproductions and authored generated-value, shared-base, and label-membership variants against the pinned selection mechanisms. Expectations move unchanged from the reviewed test literals."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": ""
+    },
+    {
+      "name": "baseline",
+      "directory": ""
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "case1-forward-repo-before",
+      "overlay": "case1-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case1-forward-repo-after",
+      "overlay": "case1-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "case1-forward-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "case1-forward-baseline-before",
+      "overlay": "case1-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case1-reverse-repo-before",
+      "overlay": "case1-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case1-reverse-repo-after",
+      "overlay": "case1-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "case1-reverse-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "case1-reverse-baseline-before",
+      "overlay": "case1-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case2-forward-repo-before",
+      "overlay": "case2-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case2-forward-repo-after",
+      "overlay": "case2-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "case2-forward-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "case2-forward-baseline-before",
+      "overlay": "case2-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case2-reverse-repo-before",
+      "overlay": "case2-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case2-reverse-repo-after",
+      "overlay": "case2-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "case2-reverse-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "case2-reverse-baseline-before",
+      "overlay": "case2-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case3-forward-repo-before",
+      "overlay": "case3-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case3-forward-repo-after",
+      "overlay": "case3-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "case3-forward-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "case3-forward-baseline-before",
+      "overlay": "case3-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case3-reverse-repo-before",
+      "overlay": "case3-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "case3-reverse-repo-after",
+      "overlay": "case3-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "case3-reverse-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "case3-reverse-baseline-before",
+      "overlay": "case3-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-inline-forward-repo-before",
+      "overlay": "case3-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-inline-forward-repo-after",
+      "overlay": "case3-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "identity-inline-forward-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "identity-inline-forward-baseline-before",
+      "overlay": "case3-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-inline-reverse-repo-before",
+      "overlay": "case3-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-inline-reverse-repo-after",
+      "overlay": "case3-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "identity-inline-reverse-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "identity-inline-reverse-baseline-before",
+      "overlay": "case3-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-generated-forward-repo-before",
+      "overlay": "identity-generated-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-generated-forward-repo-after",
+      "overlay": "identity-generated-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "identity-generated-forward-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "identity-generated-forward-baseline-before",
+      "overlay": "identity-generated-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-generated-reverse-repo-before",
+      "overlay": "identity-generated-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-generated-reverse-repo-after",
+      "overlay": "identity-generated-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "identity-generated-reverse-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "identity-generated-reverse-baseline-before",
+      "overlay": "identity-generated-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-shared-forward-repo-before",
+      "overlay": "identity-shared-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-shared-forward-repo-after",
+      "overlay": "identity-shared-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "identity-shared-forward-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "identity-shared-forward-baseline-before",
+      "overlay": "identity-shared-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-shared-reverse-repo-before",
+      "overlay": "identity-shared-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-shared-reverse-repo-after",
+      "overlay": "identity-shared-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "identity-shared-reverse-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "identity-shared-reverse-baseline-before",
+      "overlay": "identity-shared-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "label-forward-repo-before",
+      "overlay": "label-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "label-forward-repo-after",
+      "overlay": "label-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "label-forward-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "label-forward-baseline-before",
+      "overlay": "label-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "label-reverse-repo-before",
+      "overlay": "label-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "label-reverse-repo-after",
+      "overlay": "label-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "label-reverse-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "label-reverse-baseline-before",
+      "overlay": "label-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-unknown-forward-repo-before",
+      "overlay": "identity-unknown-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-unknown-forward-repo-after",
+      "overlay": "identity-unknown-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "identity-unknown-forward-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "identity-unknown-forward-baseline-before",
+      "overlay": "identity-unknown-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-unknown-reverse-repo-before",
+      "overlay": "identity-unknown-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "identity-unknown-reverse-repo-after",
+      "overlay": "identity-unknown-1",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "identity-unknown-reverse-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "identity-unknown-reverse-baseline-before",
+      "overlay": "identity-unknown-2",
+      "author": "Test",
+      "email": "test@example.com",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    }
+  ],
+  "overlays": [
+    {
+      "name": "case1-1",
+      "directory": "overlays/case1-1"
+    },
+    {
+      "name": "case1-2",
+      "directory": "overlays/case1-2"
+    },
+    {
+      "name": "case2-1",
+      "directory": "overlays/case2-1"
+    },
+    {
+      "name": "case2-2",
+      "directory": "overlays/case2-2"
+    },
+    {
+      "name": "case3-1",
+      "directory": "overlays/case3-1"
+    },
+    {
+      "name": "case3-2",
+      "directory": "overlays/case3-2"
+    },
+    {
+      "name": "identity-generated-1",
+      "directory": "overlays/identity-generated-1"
+    },
+    {
+      "name": "identity-generated-2",
+      "directory": "overlays/identity-generated-2"
+    },
+    {
+      "name": "identity-shared-1",
+      "directory": "overlays/identity-shared-1"
+    },
+    {
+      "name": "identity-shared-2",
+      "directory": "overlays/identity-shared-2"
+    },
+    {
+      "name": "label-1",
+      "directory": "overlays/label-1"
+    },
+    {
+      "name": "label-2",
+      "directory": "overlays/label-2"
+    },
+    {
+      "name": "identity-unknown-1",
+      "directory": "overlays/identity-unknown-1"
+    },
+    {
+      "name": "identity-unknown-2",
+      "directory": "overlays/identity-unknown-2"
+    }
+  ],
+  "cases": [
+    {
+      "name": "case1-forward",
+      "description": "Compare complete builds and the forward diff for case1.",
+      "setup": [
+        {
+          "commit": "case1-forward-repo-after"
+        },
+        {
+          "commit": "case1-forward-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case1-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case1-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:case1-forward-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case1-forward.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "case1-reverse",
+      "description": "Compare complete builds and the reverse diff for case1.",
+      "setup": [
+        {
+          "commit": "case1-reverse-repo-after"
+        },
+        {
+          "commit": "case1-reverse-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case1-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case1-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:case1-reverse-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case1-reverse.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "case2-forward",
+      "description": "Compare complete builds and the forward diff for case2.",
+      "setup": [
+        {
+          "commit": "case2-forward-repo-after"
+        },
+        {
+          "commit": "case2-forward-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case2-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case2-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:case2-forward-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case2-forward.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "case2-reverse",
+      "description": "Compare complete builds and the reverse diff for case2.",
+      "setup": [
+        {
+          "commit": "case2-reverse-repo-after"
+        },
+        {
+          "commit": "case2-reverse-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case2-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case2-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:case2-reverse-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case2-reverse.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "case3-forward",
+      "description": "Compare complete builds and the forward diff for case3.",
+      "setup": [
+        {
+          "commit": "case3-forward-repo-after"
+        },
+        {
+          "commit": "case3-forward-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:case3-forward-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-forward.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "case3-reverse",
+      "description": "Compare complete builds and the reverse diff for case3.",
+      "setup": [
+        {
+          "commit": "case3-reverse-repo-after"
+        },
+        {
+          "commit": "case3-reverse-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:case3-reverse-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-reverse.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-inline-forward",
+      "description": "Compare complete builds and the forward diff for identity-inline.",
+      "setup": [
+        {
+          "commit": "identity-inline-forward-repo-after"
+        },
+        {
+          "commit": "identity-inline-forward-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:identity-inline-forward-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-forward.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-inline-reverse",
+      "description": "Compare complete builds and the reverse diff for identity-inline.",
+      "setup": [
+        {
+          "commit": "identity-inline-reverse-repo-after"
+        },
+        {
+          "commit": "identity-inline-reverse-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:identity-inline-reverse-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-reverse.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-generated-forward",
+      "description": "Compare complete builds and the forward diff for identity-generated.",
+      "setup": [
+        {
+          "commit": "identity-generated-forward-repo-after"
+        },
+        {
+          "commit": "identity-generated-forward-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-generated-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-generated-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:identity-generated-forward-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-generated-forward.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-generated-reverse",
+      "description": "Compare complete builds and the reverse diff for identity-generated.",
+      "setup": [
+        {
+          "commit": "identity-generated-reverse-repo-after"
+        },
+        {
+          "commit": "identity-generated-reverse-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-generated-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-generated-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:identity-generated-reverse-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-generated-reverse.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-shared-forward",
+      "description": "Compare complete builds and the forward diff for identity-shared.",
+      "setup": [
+        {
+          "commit": "identity-shared-forward-repo-after"
+        },
+        {
+          "commit": "identity-shared-forward-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-shared-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-shared-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:identity-shared-forward-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-shared-forward.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-shared-reverse",
+      "description": "Compare complete builds and the reverse diff for identity-shared.",
+      "setup": [
+        {
+          "commit": "identity-shared-reverse-repo-after"
+        },
+        {
+          "commit": "identity-shared-reverse-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-shared-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-shared-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:identity-shared-reverse-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/identity-shared-reverse.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "label-forward",
+      "description": "Compare complete builds and the forward diff for label.",
+      "setup": [
+        {
+          "commit": "label-forward-repo-after"
+        },
+        {
+          "commit": "label-forward-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/label-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/label-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:label-forward-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff",
+              "--skip-kinds",
+              "ResourceSet,ResourceSetInputProvider"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/label-forward.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "label-reverse",
+      "description": "Compare complete builds and the reverse diff for label.",
+      "setup": [
+        {
+          "commit": "label-reverse-repo-after"
+        },
+        {
+          "commit": "label-reverse-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/label-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/label-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:label-reverse-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff",
+              "--skip-kinds",
+              "ResourceSet,ResourceSetInputProvider"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/label-reverse.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-unknown-forward",
+      "description": "Render the owner when an optional absent input leaves the child identity unknown.",
+      "setup": [
+        {
+          "commit": "identity-unknown-forward-repo-after"
+        },
+        {
+          "commit": "identity-unknown-forward-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:identity-unknown-forward-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-forward.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "identity-unknown-reverse",
+      "description": "Render the owner when an optional absent input leaves the child identity unknown.",
+      "setup": [
+        {
+          "commit": "identity-unknown-reverse-repo-after"
+        },
+        {
+          "commit": "identity-unknown-reverse-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {},
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build-before",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "baseline",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-2.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "build-after",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--concurrency",
+              "2"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-1.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/root",
+              "--base",
+              "@@commit:identity-unknown-reverse-repo-before@@",
+              "--concurrency",
+              "2",
+              "--output",
+              "diff"
+            ],
+            "cache": {
+              "name": "repo",
+              "reset": false
+            },
+            "expect": {
+              "stdout": "expect/case3-reverse.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "case1/new/a/vars.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case1/new/b/out.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case1/new/ks/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case1/new/root/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case1/old/a/vars.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case1/old/b/out.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case1/old/ks/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case1/old/root/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case2/new/a/sets.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case2/new/root/ks.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case2/old/a/sets.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case2/old/root/ks.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case3/new/a/out.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case3/new/ks/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "case3/new/root/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "expect/case1-1.stdout",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case1-2.stdout",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case1-forward.stdout",
+      "cases": [
+        "case1-forward"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case1-reverse.stdout",
+      "cases": [
+        "case1-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case2-1.stdout",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case2-2.stdout",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case2-forward.stdout",
+      "cases": [
+        "case2-forward"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case2-reverse.stdout",
+      "cases": [
+        "case2-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case3-1.stdout",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse",
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case3-2.stdout",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse",
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case3-forward.stdout",
+      "cases": [
+        "case3-forward",
+        "identity-inline-forward",
+        "identity-unknown-forward"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/case3-reverse.stdout",
+      "cases": [
+        "case3-reverse",
+        "identity-inline-reverse",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "case1-forward",
+        "case1-reverse",
+        "case2-forward",
+        "case2-reverse",
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse",
+        "identity-generated-forward",
+        "identity-generated-reverse",
+        "identity-shared-forward",
+        "identity-shared-reverse",
+        "label-forward",
+        "label-reverse",
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/identity-generated-1.stdout",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/identity-generated-2.stdout",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/identity-generated-forward.stdout",
+      "cases": [
+        "identity-generated-forward"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/identity-generated-reverse.stdout",
+      "cases": [
+        "identity-generated-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/identity-shared-1.stdout",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/identity-shared-2.stdout",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/identity-shared-forward.stdout",
+      "cases": [
+        "identity-shared-forward"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/identity-shared-reverse.stdout",
+      "cases": [
+        "identity-shared-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/label-1.stdout",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/label-2.stdout",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/label-forward.stdout",
+      "cases": [
+        "label-forward"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "expect/label-reverse.stdout",
+      "cases": [
+        "label-reverse"
+      ],
+      "purpose": "Complete authored output and exit expectation."
+    },
+    {
+      "path": "overlays/case1-1/baseline/a/vars.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-1/baseline/b/out.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-1/baseline/ks/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-1/baseline/root/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-1/repo/a/vars.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-1/repo/b/out.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-1/repo/ks/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-1/repo/root/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-2/baseline/a/vars.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-2/baseline/b/out.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-2/baseline/ks/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-2/baseline/root/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-2/repo/a/vars.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-2/repo/b/out.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-2/repo/ks/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case1-2/repo/root/ks.yaml",
+      "cases": [
+        "case1-forward",
+        "case1-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case2-1/baseline/a/sets.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case2-1/baseline/root/ks.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case2-1/repo/a/sets.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case2-1/repo/root/ks.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case2-2/baseline/a/sets.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case2-2/baseline/root/ks.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case2-2/repo/a/sets.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case2-2/repo/root/ks.yaml",
+      "cases": [
+        "case2-forward",
+        "case2-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-1/baseline/a/out.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-1/baseline/ks/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-1/baseline/root/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-1/repo/a/out.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-1/repo/ks/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-1/repo/root/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-2/baseline/a/out.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-2/baseline/ks/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-2/baseline/root/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-2/repo/a/out.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-2/repo/ks/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/case3-2/repo/root/ks.yaml",
+      "cases": [
+        "case3-forward",
+        "case3-reverse",
+        "identity-inline-forward",
+        "identity-inline-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-1/baseline/a/out.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-1/baseline/ks/ks.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-1/baseline/root/ks.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-1/baseline/vars/kustomization.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-1/repo/a/out.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-1/repo/ks/ks.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-1/repo/root/ks.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-1/repo/vars/kustomization.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-2/baseline/a/out.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-2/baseline/ks/ks.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-2/baseline/root/ks.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-2/baseline/vars/kustomization.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-2/repo/a/out.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-2/repo/ks/ks.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-2/repo/root/ks.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-generated-2/repo/vars/kustomization.yaml",
+      "cases": [
+        "identity-generated-forward",
+        "identity-generated-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-1/baseline/a/out.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-1/baseline/ks/ks.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-1/baseline/root/ks.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-1/repo/a/out.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-1/repo/ks/ks.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-1/repo/root/ks.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-2/baseline/a/out.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-2/baseline/ks/ks.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-2/baseline/root/ks.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-2/repo/a/out.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-2/repo/ks/ks.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-shared-2/repo/root/ks.yaml",
+      "cases": [
+        "identity-shared-forward",
+        "identity-shared-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-1/baseline/providers/provider.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-1/baseline/readers/set.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-1/baseline/root/providers.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-1/baseline/root/readers.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-1/repo/providers/provider.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-1/repo/readers/set.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-1/repo/root/providers.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-1/repo/root/readers.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-2/baseline/providers/provider.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-2/baseline/readers/set.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-2/baseline/root/providers.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-2/baseline/root/readers.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-2/repo/providers/provider.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-2/repo/readers/set.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-2/repo/root/providers.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/label-2/repo/root/readers.yaml",
+      "cases": [
+        "label-forward",
+        "label-reverse"
+      ],
+      "purpose": "Authored reproduction snapshot or contextual identity input."
+    },
+    {
+      "path": "overlays/identity-unknown-1/baseline/a/out.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-1/baseline/ks/ks.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-1/baseline/root/ks.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-1/repo/a/out.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-1/repo/ks/ks.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-1/repo/root/ks.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-2/baseline/a/out.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-2/baseline/ks/ks.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-2/baseline/root/ks.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-2/repo/a/out.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-2/repo/ks/ks.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    },
+    {
+      "path": "overlays/identity-unknown-2/repo/root/ks.yaml",
+      "cases": [
+        "identity-unknown-forward",
+        "identity-unknown-reverse"
+      ],
+      "purpose": "Child identity stays unknown until rendering applies its default."
+    }
+  ]
+}

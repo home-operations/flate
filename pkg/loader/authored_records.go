@@ -20,6 +20,17 @@ func (l *Loader) indexAuthoredRecords() []authoredRecord {
 			indexed = append(indexed, authoredRecord{id: id, authored: r.Authored, path: r.Path, file: r.File})
 		}
 	}
+	for key := range l.scopes.contextual {
+		occurrence := l.scopes.contextual[key]
+		if occurrence.facts.uncertain || !occurrence.facts.retained {
+			continue
+		}
+		file := key.file
+		indexed = append(indexed, authoredRecord{
+			id: occurrence.Identity, authored: occurrence.Authored,
+			path: file, file: l.fileCoordinate(file),
+		})
+	}
 	l.scopes.authored = indexed
 	slices.SortFunc(indexed, func(a, b authoredRecord) int {
 		if a.path != b.path {

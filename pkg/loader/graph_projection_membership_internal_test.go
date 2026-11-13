@@ -595,7 +595,7 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 	l.Store.DeleteObject(sourceID)
 	l.Store.AddObject(publishedSource)
 	assert.Equal(t, l.Store.GetObject(sourceID), publishedSource)
-	assert.Equal(t, l.projectAuthored(root), false)
+	assert.Equal(t, l.projectAuthored(root, nil), false)
 	assert.Equal(t, l.candidates[id].Obj, manifest.BaseManifest(candidate))
 	assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(candidate))
 	assert.Equal(t, l.candidates[sourceID].Obj, manifest.BaseManifest(source))
@@ -614,14 +614,14 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 	l.Store.DeleteObject(id)
 	l.Store.AddObject(published)
 	assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(published))
-	assert.Equal(t, l.projectAuthored(root), false)
+	assert.Equal(t, l.projectAuthored(root, nil), false)
 	assert.Equal(t, l.candidates[id].Obj, manifest.BaseManifest(candidate))
 	assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(published))
 
 	incompatible := candidate.Clone()
 	incompatible.TargetNamespace = "media"
 	l.Store.AddObject(incompatible)
-	assert.Equal(t, l.projectAuthored(root), true)
+	assert.Equal(t, l.projectAuthored(root, nil), true)
 	assert.Equal(t, l.candidates[id].Obj, manifest.BaseManifest(candidate))
 	assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(candidate))
 
@@ -631,7 +631,7 @@ func testAdmitGraphProjectionProjectionCompatibility(t *testing.T) {
 	child.Obj = stale
 	l.candidates[id] = child
 	l.Store.AddObject(stale)
-	assert.Equal(t, l.projectAuthored(root), true)
+	assert.Equal(t, l.projectAuthored(root, nil), true)
 	refreshed, ok := l.candidates[id].Obj.(*manifest.Kustomization)
 	assert.FatalIf(
 		t,

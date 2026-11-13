@@ -3,6 +3,12 @@ package substitution_test
 import "testing"
 
 //nolint:paralleltest // The corpus harness changes process-global state.
+func TestE2E_SubstitutedSelection(t *testing.T) {
+	runSubstitutionCases(t, "substitution-selection",
+		"case1-forward", "case1-reverse", "case2-forward", "case2-reverse", "case3-forward", "case3-reverse")
+}
+
+//nolint:paralleltest // The corpus harness changes process-global state.
 func TestE2E_SubstitutionProducerRendering(t *testing.T) {
 	runSubstitutionCases(t, "substitute-producers",
 		"substitution-producer-rendering-configmap-full",
@@ -15,6 +21,11 @@ func TestE2E_SubstitutionProducerRendering(t *testing.T) {
 		"substitution-producer-rendering-secret-direct",
 		"substitution-producer-rendering-secret-inherited",
 	)
+}
+
+//nolint:paralleltest // The corpus harness changes process-global state.
+func TestE2E_SubstitutedLabelMembership(t *testing.T) {
+	runSubstitutionCases(t, "substitution-selection", "label-forward", "label-reverse")
 }
 
 //nolint:paralleltest // The corpus harness changes process-global state.

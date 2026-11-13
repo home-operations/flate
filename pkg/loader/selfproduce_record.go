@@ -23,26 +23,23 @@ func (pr *productionRecorder) record(b *selfProduceBuilder, l *Loader, childArg 
 
 func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact *authoredOccurrence, version string) {
 	o := *fact
-	if !o.facts.retained && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
+	if !o.facts.indexed() {
 		return
 	}
-	authored := o.Authored
-	if o.facts.uncertain {
-		authored = o.facts.catalog.Named()
-	}
-	id, err := l.projectIdentity(authored, new(pr.visit), version, o.facts.namespaced)
+	projected, err := l.projectOccurrence(&o, &pr.visit, version)
 	if err != nil {
 		pr.projectionErr = err
 		return
 	}
+	o = projected
+	id := o.Identity
 	if o.facts.uncertain {
 		b.recordProducer(&producerDeclaration{
-			fact: &o, visit: pr.visit, identity: id, authored: authored,
+			fact: &o, visit: pr.visit, identity: id, authored: o.Authored,
 		}, nil)
 		return
 	}
 
-	o.Identity = id
 	o.requiresBuild = pr.visit.requiresBuild && pr.visit.owner == (manifest.NamedResource{})
 	r := b.idx.Records[id]
 	if r.Authored == (manifest.NamedResource{}) {
@@ -63,6 +60,7 @@ func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact 
 	if pr.visit.owner != (manifest.NamedResource{}) && id.KindInfo().Runnable && b.store.GetObject(id) == nil {
 		p.Path = ""
 	}
+	projectOccurrenceProduction(&o, &p)
 	if !slices.Contains(r.Productions, p) {
 		r.Productions = append(r.Productions, p)
 	}
@@ -79,6 +77,7 @@ func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact 
 }
 
 type objectProduction struct {
+	fact               *authoredOccurrence
 	object             manifest.BaseManifest
 	kind               manifest.KindInfo
 	resolved           manifest.NamedResource
@@ -86,6 +85,7 @@ type objectProduction struct {
 	substituteDisabled bool
 }
 
+//nolint:gocognit // Physical and contextual declarations MUST retain one producer publication decision.
 func (pr *productionRecorder) projectObject(
 	b *selfProduceBuilder,
 	l *Loader,
@@ -106,19 +106,51 @@ func (pr *productionRecorder) projectObject(
 		return objectProduction{}, false
 	}
 	resolved := manifest.Resolve(obj.Named(), pr.visit.namespace, pr.visit.fallback)
-	id := resolved
+	production := objectProduction{
+		object: obj, kind: info, resolved: resolved, identity: resolved,
+		substituteDisabled: child.substituteDisabled,
+	}
+	if occurrence, known := l.authoredOccurrence(
+		pr.visit.file,
+		obj.Named(),
+	); known &&
+		l.contextualDeclaration(pr.visit.file, obj.Named()) {
+		projected, err := l.projectOccurrence(occurrence.fact, &pr.visit, version)
+		if err != nil {
+			pr.projectionErr = err
+			return objectProduction{}, false
+		}
+		if projected.facts.uncertain {
+			if !pr.visit.deferMaterialization {
+				b.recordProducer(
+					&producerDeclaration{
+						fact:     &projected,
+						visit:    pr.visit,
+						identity: projected.Identity,
+						authored: projected.Authored,
+					},
+					nil,
+				)
+			}
+			return objectProduction{}, false
+		}
+		production.fact, production.identity = &projected, projected.Identity
+		return production, true
+	}
 	if owner, _ := b.idx.Lookup(pr.visit.owner); pr.visit.owner == obj.Named() || owner.Authored == obj.Named() {
-		id = pr.visit.owner
+		production.identity = pr.visit.owner
 	} else if info.Runnable && (pr.visit.namePrefix != "" || pr.visit.nameSuffix != "") {
-		id, pr.projectionErr = l.projectIdentity(obj.Named(), new(pr.visit), version, manifest.KindOf(obj).Namespaced())
+		production.identity, pr.projectionErr = l.projectIdentity(
+			obj.Named(),
+			new(pr.visit),
+			version,
+			manifest.KindOf(obj).Namespaced(),
+		)
 		if pr.projectionErr != nil {
 			return objectProduction{}, false
 		}
 	}
-	return objectProduction{
-		object: obj, kind: info, resolved: resolved, identity: id,
-		substituteDisabled: child.substituteDisabled,
-	}, true
+	return production, true
 }
 
 func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilder, l *Loader) {
@@ -134,7 +166,11 @@ func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilde
 		if op.identity.Name != op.object.Named().Name {
 			r.Path = ""
 		}
-		r.Refs = discoveryReferences(nil, projected)
+		if op.fact != nil {
+			r.Refs = authoredReferences(op.fact)
+		} else {
+			r.Refs = discoveryReferences(nil, projected)
+		}
 	}
 	p := manifest.Production{
 		Owner:    pr.visit.owner,
@@ -150,13 +186,22 @@ func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilde
 	if ks, ok := b.store.Get[*manifest.Kustomization](pr.visit.owner); ok {
 		p.Source = ks.EffectiveSourceID()
 	}
+	if op.fact != nil {
+		projectOccurrenceProduction(op.fact, &p)
+	}
 	if !slices.Contains(r.Productions, p) {
 		r.Productions = append(r.Productions, p)
 	}
 	b.idx.Records[op.identity] = r
 	b.recordApplication(
 		l,
-		&producerDeclaration{obj: projected, identity: op.identity, authored: op.object.Named(), visit: pr.visit},
+		&producerDeclaration{
+			obj:      projected,
+			fact:     op.fact,
+			identity: op.identity,
+			authored: op.object.Named(),
+			visit:    pr.visit,
+		},
 	)
 	op.recordDeclaration(pr, b, projected, needsCandidates)
 	if op.kind.Structural {
@@ -182,6 +227,7 @@ func (op *objectProduction) recordDeclaration(
 		if needsCandidates {
 			pr.declarations = append(pr.declarations, declaration)
 		} else {
+			declaration.fact = op.fact
 			b.recordProducer(new(declaration), nil)
 		}
 	}

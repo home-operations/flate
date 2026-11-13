@@ -1,0 +1,2 @@
+{apiVersion: kustomize.toolkit.fluxcd.io/v1, kind: Kustomization, metadata: {name: a, namespace: flux-system},
+ spec: {path: ./a, sourceRef: {kind: GitRepository, name: flux-system}, postBuild: {substitute: {SELF: x}}}}

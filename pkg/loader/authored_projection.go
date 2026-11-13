@@ -6,15 +6,28 @@ import (
 )
 
 func (l *Loader) publishAuthoredLocation(projected *authoredOccurrence) {
-	if old, known := l.locations[projected.Identity]; known && old.facts == projected.facts {
-		projected.object = old.object
+	previous, known := l.locations[projected.Identity]
+	sameCensus := known && previous.facts != nil && previous.facts.census != nil &&
+		previous.facts.census == projected.facts.census
+	equivalent := sameCensus && sameOccurrenceProjection(&previous, projected) &&
+		projected.facts.catalog.ProjectionCompatible(previous.facts.catalog)
+	if known && (previous.facts == projected.facts || equivalent) {
+		projected.facts, projected.object = previous.facts, previous.object
 	}
-	if projected.object == nil && projected.facts.catalog.Named() != projected.Identity {
-		if projected.facts.catalog.Named().Name == projected.Identity.Name {
-			projected.object = projected.facts.catalog.WithNamespace(projected.Identity.Namespace)
+	if projected.facts.catalog.Named() != projected.Identity {
+		facts := *projected.facts
+		if facts.catalog.Named().Name == projected.Identity.Name {
+			facts.catalog = facts.catalog.WithNamespace(projected.Identity.Namespace)
 		} else {
-			projected.object = manifest.CatalogObject(projected.facts.catalog, projected.Identity)
+			facts.catalog = manifest.CatalogObject(facts.catalog, projected.Identity)
 		}
+		projected.facts = &facts
+		if projected.object == nil {
+			projected.object = facts.catalog
+		}
+	}
+	if l.locations == nil {
+		l.locations = map[manifest.NamedResource]authoredOccurrence{}
 	}
 	l.locations[projected.Identity] = *projected
 }
@@ -27,19 +40,25 @@ func (l *Loader) publishAuthoredObject(
 ) {
 	r := *recordArg
 
-	if authored != nil {
+	if authored == nil {
+		if previous := l.candidates[identity]; previous.Obj != nil {
+			if current, ok := l.Index.Lookup(identity); ok && current.Path == r.Path && current.Authored == r.Authored {
+				objects[identity] = previous
+			}
+		}
+		return
+	}
+	{
 		object := authored
 		if previous := l.candidates[identity]; previous.Obj != nil && object.ProjectionCompatible(previous.Obj) {
 			object = previous.Obj
 		}
-		if object.Named().Namespace != identity.Namespace {
+		if object.Named().Name != identity.Name {
+			object = manifest.CatalogObject(object, identity)
+		} else if object.Named().Namespace != identity.Namespace {
 			object = object.WithNamespace(identity.Namespace)
 		}
 		objects[identity] = store.Child{Obj: object}
-	} else if previous := l.candidates[identity]; previous.Obj != nil {
-		if current, ok := l.Index.Lookup(identity); ok && current.Path == r.Path && current.Authored == r.Authored {
-			objects[identity] = previous
-		}
 	}
 }
 
@@ -55,12 +74,19 @@ func withAuthoredStructure(occurrenceValue *authoredOccurrence, authored manifes
 	return o
 }
 
-func inAuthoredNamespace(occurrenceValue *authoredOccurrence, namespace string) authoredOccurrence {
+func (l *Loader) inAuthoredNamespace(occurrenceValue *authoredOccurrence, namespace string) authoredOccurrence {
 	o := *occurrenceValue
 
 	projected := o
 	if o.facts.namespaced {
 		projected.Identity.Namespace = namespace
+	}
+	if structural := projected.facts.structural; structural != nil &&
+		(structural.Named() != projected.Identity || structural.TargetNamespace != projected.facts.policy.Namespace) {
+		facts := *projected.facts
+		previous := l.locations[projected.Identity]
+		facts.projectStructure(projected.Identity, &previous)
+		projected.facts = &facts
 	}
 	return projected
 }
@@ -113,4 +139,11 @@ func (l *Loader) authoredManifestRecord(
 		record.Refs = discoveryReferences(nil, projected)
 	}
 	return record
+}
+
+func projectOccurrenceProduction(occurrence *authoredOccurrence, production *manifest.Production) {
+	if len(occurrence.facts.authoredTargets) != 0 {
+		production.Declaration = occurrence.Identity
+		production.Path = ""
+	}
 }

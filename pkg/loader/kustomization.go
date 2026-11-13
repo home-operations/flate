@@ -336,10 +336,16 @@ type builderDocument struct {
 }
 
 func (r *documentReader) read(dir string) builderDocument {
-	r.restore(dir)
-	cached, seen := r.cache[dir]
-	if seen &&
-		(cached.body != nil || cached.searched || cached.pathState == pathFile || cached.pathState == pathMissing) {
+	cached := r.cache[dir]
+	complete := cached.body != nil || cached.searched ||
+		cached.pathState == pathFile || cached.pathState == pathMissing
+	if !complete || cached.deferred != nil {
+		r.restore(dir)
+		cached = r.cache[dir]
+		complete = cached.body != nil || cached.searched ||
+			cached.pathState == pathFile || cached.pathState == pathMissing
+	}
+	if complete {
 		return builderDocument{body: cached.body, file: cached.file}
 	}
 	if cached.objects != nil {

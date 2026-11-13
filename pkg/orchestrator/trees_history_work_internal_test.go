@@ -10,19 +10,21 @@ import (
 	"strings"
 	"testing"
 
-	git "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	git "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
+//nolint:gocritic // Callers MUST retain both repository coordinates and commit identity.
 func crdMutationHistoryFixture(t *testing.T, tc crdMutationCase) (Tree, string, plumbing.Hash) {
 	t.Helper()
 	tree := crdWorkTree(t, tc.before, tc.foreign)
@@ -290,7 +292,10 @@ func testCRDMutationHistoryWorkCase(t *testing.T, tc *crdMutationCase) {
 		full[side] = runs[0].Result
 	}
 	cache := cachetest.New(t, "", sourcecache.New)
-	resolved, err := baseline.AutoResolve(t.Context(), tree.Path, base.String(), cache)
+	resolved, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: tree.Path, Base: base.String(), Cache: cache},
+	)
 	assert.NoError(t, err)
 	trees := historyWorkTrees(resolved, "crd-cluster", tree.SelfURLs)
 	var previous []byte
@@ -334,7 +339,10 @@ func testHistoryWorkWitnessCase(t *testing.T, name *string) {
 		full[side] = runs[0].Result
 	}
 	cache := cachetest.New(t, "", sourcecache.New)
-	resolved, err := baseline.AutoResolve(t.Context(), filepath.Join(root, "flux"), ref, cache)
+	resolved, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: filepath.Join(root, "flux"), Base: ref, Cache: cache},
+	)
 	assert.NoError(t, err)
 	cfg := Config{RecordWork: true, Concurrency: 2}
 	trees := historyWorkTrees(resolved, ".", nil)

@@ -427,6 +427,7 @@ linters:
         - stdlib
         - ^github\.com/home-operations/flate/pkg/schedule\.Dispatcher$
         - ^github\.com/home-operations/flate/pkg/values\.Provider$
+        - ^github\.com/home-operations/flate/pkg/source/git\.Connection$
     errorlint:
       errorf: true
       asserts: true

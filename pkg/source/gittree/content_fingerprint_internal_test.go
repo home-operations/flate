@@ -10,7 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -61,7 +61,7 @@ func testFSContentFingerprintNativeMembership(t *testing.T) {
 		assert.Equal(
 			t,
 			input.FileDigests()[name],
-			manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, files[name].Data)),
+			manifest.Fingerprint(testutil.GitBlobHash(t, files[name].Data)),
 		)
 	}
 }
@@ -93,7 +93,7 @@ func testFSContentFingerprintFreshAdmission(t *testing.T) {
 	assert.Equal(
 		t,
 		second.FS.(*FS).FileDigests()["file"],
-		manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("after"))),
+		manifest.Fingerprint(testutil.GitBlobHash(t, []byte("after"))),
 	)
 	retained, err := first.ContentFingerprint(t.Context(), first.FS)
 	assert.NoError(t, err)
@@ -152,7 +152,7 @@ func testFSContentFingerprintContentCanceled(t *testing.T) {
 		assert.Equal(
 			t,
 			input.FileDigests()[name],
-			manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(data))),
+			manifest.Fingerprint(testutil.GitBlobHash(t, []byte(data))),
 		)
 	}
 	reads := reader.reads.Load()
@@ -233,7 +233,7 @@ func testFSContentFingerprintIteration(t *testing.T, mode *string, i int, keys *
 			assert.Equal(
 				t,
 				input.FileDigests()[name],
-				manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, file.Data)),
+				manifest.Fingerprint(testutil.GitBlobHash(t, file.Data)),
 			)
 		}
 	}
@@ -392,7 +392,7 @@ func testFSContentFingerprintCase2(t *testing.T, name *string,
 		assert.Equal(
 			t,
 			input.FileDigests()[name],
-			manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(data))),
+			manifest.Fingerprint(testutil.GitBlobHash(t, []byte(data))),
 		)
 	}
 	assert.Equal(t, reader.reads.Load(), int64(2))

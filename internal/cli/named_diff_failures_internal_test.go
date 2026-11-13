@@ -57,7 +57,7 @@ func TestRun_NamedScope_DiffFatalWriteError(t *testing.T) {
 	root, orig := writeNamedScopeFixture(t), writeNamedScopeFixture(t)
 	appendScopeSpec(t, root, "cluster/hr.yaml", "  dependsOn: [{name: missing}]\n")
 	want := errors.New("fatal diagnostic write failed")
-	cmd := New("test")
+	cmd := New("test", RunConfig{})
 	cmd.SetContext(t.Context())
 	cmd.SetArgs(
 		[]string{

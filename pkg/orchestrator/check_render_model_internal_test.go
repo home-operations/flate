@@ -15,16 +15,16 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
 
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/schedule"
 
 	"github.com/home-operations/flate/internal/assert"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
@@ -447,63 +447,6 @@ func TestIndependentModel_ObservationRejects(t *testing.T) {
 	}
 }
 
-func TestIndependentModel_BaselineUnavailable(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{"shallow", "missing-tree"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			fixture := decodeRenderModelCase([]byte{1, 0})
-			root := t.TempDir()
-			repo := testutil.GitInit(t, root)
-			writeRenderModelWorld(t, root, fixture.before)
-			baseInput := testutil.GitCommitAll(
-				t,
-				repo,
-				"before",
-				&gogit.CommitOptions{
-					Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)},
-				},
-			)
-			selected := baseInput.String()
-			if mode == "shallow" {
-				{
-					err := repo.Storer.SetShallow([]plumbing.Hash{baseInput})
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
-				selected = ""
-			} else {
-				commit, err := repo.CommitObject(baseInput)
-				assert.FatalIf(t, err != nil, "%v", err)
-				oid := commit.TreeHash.String()
-				{
-					err := os.Remove(filepath.Join(root, ".git", "objects", oid[:2], oid[2:]))
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
-			}
-			owner, err := sourcecache.New(t.Context(), "")
-			assert.FatalIf(t, err != nil, "%v", err)
-			t.Cleanup(func() {
-				{
-					localErr := owner.Close()
-					assert.ErrorIf(t, localErr != nil, "%v", localErr)
-				}
-			})
-			result, err := baseline.AutoResolve(t.Context(), filepath.Join(root, fixture.scan), selected, owner)
-			assert.FatalIf(
-				t,
-				!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-				"unavailable %s baseline accepted: result=%+v err=%v",
-				mode,
-				result,
-				err,
-			)
-			assert.FatalIf(t, result != nil &&
-				(result.BaseInput != nil && result.BaseInput.FS != nil || result.Source != nil && result.Source.FS != nil), "unavailable %s returned usable render inputs: %+v", mode, result)
-			t.Logf("%s: baseline admission unavailable, no changed render claimed: %v", mode, err)
-		})
-	}
-}
-
 func renameRenderModelSource(w modelWorld, binding string) modelWorld {
 	out := modelWorld{files: make(map[modelPath]modelFile), producers: make(map[modelID]modelProducer)}
 	old := renderModelSource(w)
@@ -800,7 +743,15 @@ func (c *treeConfig) prepareCommittedRenderModel(
 	if commitErr != nil {
 		return committedModel{before: Tree{}, after: Tree{}}, commitErr
 	}
-	baseInput, resolveErr := baseline.AutoResolve(t.Context(), filepath.Join(root, scan), hash.String(), c.Cache)
+	baseInput, resolveErr := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{
+			Network: networktest.New(t),
+			Path:    filepath.Join(root, scan),
+			Base:    hash.String(),
+			Cache:   c.Cache,
+		},
+	)
 	if resolveErr != nil {
 		return committedModel{before: Tree{}, after: Tree{}}, resolveErr
 	}

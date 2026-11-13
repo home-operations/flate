@@ -4,10 +4,10 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"net/url"
 
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
+	gitssh "github.com/go-git/go-git/v6/plumbing/transport/ssh"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -16,15 +16,14 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-//nolint:ireturn // The go-git transport contract shares one authentication interface for HTTP and SSH.
 func (f *operation) resolveAuth(
 	repo *manifest.GitRepository,
 	sec *store.ReferenceFacts,
-	endpoint *transport.Endpoint,
-) (transport.AuthMethod, error) {
+	endpoint *url.URL,
+) (any, error) {
 	owner := manifest.DiagnosticFor(repo.Named(), repo)
 	if repo.SecretRef == nil {
-		if endpoint.Protocol == sshScheme {
+		if endpoint.Scheme == sshScheme {
 			return nil, source.MissingSecretErr(
 				owner,
 				"",
@@ -36,7 +35,7 @@ func (f *operation) resolveAuth(
 	if f.secrets == nil {
 		return nil, errors.New("secretRef requires a SecretGetter")
 	}
-	if endpoint.Protocol == sshScheme {
+	if endpoint.Scheme == sshScheme {
 		auth, err := f.resolveSSHAuth(repo, sec, endpoint)
 		if err != nil {
 			return nil, err
@@ -70,7 +69,7 @@ func (f *operation) resolveAuth(
 func (f *operation) resolveSSHAuth(
 	repo *manifest.GitRepository,
 	sec *store.ReferenceFacts,
-	endpoint *transport.Endpoint,
+	endpoint *url.URL,
 ) (*gitssh.PublicKeys, error) {
 	owner := manifest.DiagnosticFor(repo.Named(), repo)
 	identity, valueErr := source.SecretValue(sec, &owner, repo.SecretRef.Name, "identity")
@@ -90,7 +89,11 @@ func (f *operation) resolveSSHAuth(
 	}
 	var auth *gitssh.PublicKeys
 	if identity.Value() != "" {
-		auth, valueErr = gitssh.NewPublicKeys(cmp.Or(endpoint.User, "git"), []byte(identity.Value()), password.Value())
+		auth, valueErr = gitssh.NewPublicKeys(
+			cmp.Or(endpoint.User.Username(), "git"),
+			[]byte(identity.Value()),
+			password.Value(),
+		)
 		if valueErr != nil {
 			if _, missing := errors.AsType[*ssh.PassphraseMissingError](
 				valueErr,

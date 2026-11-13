@@ -13,10 +13,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5/plumbing"
-	merklefs "github.com/go-git/go-git/v5/utils/merkletrie/filesystem"
-	"github.com/go-git/go-git/v5/utils/merkletrie/noder"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6/plumbing"
+	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	merklefs "github.com/go-git/go-git/v6/utils/merkletrie/filesystem"
+	"github.com/go-git/go-git/v6/utils/merkletrie/noder"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -117,7 +118,7 @@ func (g *FS) identifyFiles(ctx context.Context, inventory fingerprintInventory, 
 		case err != nil:
 			return err
 		default:
-			files[name] = manifest.Fingerprint(identity)
+			files[name] = manifest.Fingerprint([formatcfg.SHA1Size]byte(identity.Bytes()))
 		}
 	}
 	return nil
@@ -300,7 +301,7 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 			return plumbing.ZeroHash, err
 		}
 		if node != nil {
-			identity = plumbing.Hash(node.Hash()[:len(identity)])
+			identity, _ = plumbing.FromBytes(node.Hash()[:formatcfg.SHA1Size])
 		}
 	}
 	if identity != plumbing.ZeroHash {
@@ -312,7 +313,9 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
-		return plumbing.ComputeHash(plumbing.BlobObject, data), nil
+		hasher := plumbing.NewHasher(formatcfg.SHA1, plumbing.BlobObject, int64(len(data)))
+		_, _ = hasher.Write(data)
+		return hasher.Sum(), nil
 	}
 	file, err := g.OpenRegular(name)
 	if err != nil {
@@ -326,7 +329,7 @@ func (s *fileIdentity) identify(ctx context.Context, g *FS, name string) (plumbi
 		const bufferSize = 32 * 1024
 		s.buffer = make([]byte, bufferSize)
 	}
-	hasher := plumbing.NewHasher(plumbing.BlobObject, info.Size())
+	hasher := plumbing.NewHasher(formatcfg.SHA1, plumbing.BlobObject, info.Size())
 	n, err := io.CopyBuffer(hasher, identityReader{ctx: ctx, input: file}, s.buffer)
 	if err == nil && n != info.Size() {
 		err = &fs.PathError{Op: "read", Path: name, Err: io.ErrUnexpectedEOF}

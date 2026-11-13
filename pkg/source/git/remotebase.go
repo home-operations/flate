@@ -8,12 +8,12 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/storage"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/storage"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -83,7 +83,7 @@ func (f *Fetcher) FetchRemoteBase(
 		&policy,
 		func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 			return f.produceRemoteGitBase(ctx, storer, worktree, &remoteBaseProducerState{
-				request: request, repo: repo, pinned: pinned, work: policy.Work, protocol: endpoint.Protocol,
+				request: request, repo: repo, pinned: pinned, work: policy.Work, protocol: endpoint.Scheme,
 				input: &input, identity: &identity, content: content,
 			})
 		},
@@ -161,10 +161,18 @@ func (f *Fetcher) produceRemoteGitBase(
 		return plumbing.ZeroHash, err
 	}
 	if !scope.pinned {
+		client, clientErr := NewClient(ClientConfig{Transports: f.GitTransports, Network: f.Network})
+		if clientErr != nil {
+			return plumbing.ZeroHash, clientErr
+		}
 		fetchContextErr := (&gitAcquisition{timeout: scope.request.Timeout, work: scope.work, protocol: scope.protocol}).fetchRevision(
 			ctx,
 			cloned,
-			&git.FetchOptions{RefSpecs: []config.RefSpec{fetchAllRefs}, Tags: git.NoTags},
+			&git.FetchOptions{
+				ClientOptions: client.options,
+				RefSpecs:      []config.RefSpec{fetchAllRefs},
+				Tags:          git.NoTags,
+			},
 		)
 		if fetchContextErr != nil && !errors.Is(fetchContextErr, git.NoErrAlreadyUpToDate) {
 			return plumbing.ZeroHash, fmt.Errorf("fetch git revision: %w", fetchContextErr)

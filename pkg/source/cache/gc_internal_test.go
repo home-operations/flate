@@ -15,9 +15,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/storage"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/storage"
 	"github.com/google/go-cmp/cmp"
 	"github.com/opencontainers/go-digest"
 

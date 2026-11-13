@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -68,7 +69,7 @@ func testSSHAcquisition(t *testing.T, repo *manifest.GitRepository, secret *mani
 	var reads store.ReadSet
 	reads.Init(st, repo.Named(), nil)
 	defer reads.Close()
-	fetcher := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	fetcher := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	artifact, err := fetchtest.Fetch(t.Context(), fetcher.Fetch, repo, &reads, &sourcecache.Policy{}, nil)
 	if mode == "agent" || mode == "absent" {
 		missing, ok := errors.AsType[*source.MissingSecretError](err)

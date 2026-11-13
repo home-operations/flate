@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,13 +15,13 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/storer"
-	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	"github.com/go-git/go-git/v6/storage"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -247,12 +248,17 @@ func (f *Fixture) applyOverlay(tb testing.TB, name string) {
 
 // Load permits Git transport only to a declared repository's origin URL.
 //
-//nolint:ireturn // go-git's server.Loader contract requires storer.Storer.
-func (f *Fixture) Load(endpoint *transport.Endpoint) (storer.Storer, error) {
+
+type borrowedStorage struct{ storage.Storer }
+
+// Load MUST borrow fixture storage so connection cleanup cannot close it.
+//
+//nolint:ireturn // The upstream loader contract requires storage.Storer.
+func (f *Fixture) Load(endpoint *url.URL) (storage.Storer, error) {
 	for _, r := range f.schema.Repositories {
 		for _, remote := range r.Remotes {
 			if remote.URL == endpoint.String() {
-				return f.repositories[r.Name].Storer, nil
+				return borrowedStorage{f.repositories[r.Name].Storer}, nil
 			}
 		}
 	}

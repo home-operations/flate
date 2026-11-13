@@ -106,7 +106,12 @@ func testResolveProxyCase1(t *testing.T, tc struct {
 		return
 	}
 	assert.NoError(t, err)
-	assert.Equal(t, material.ProxyComponents(), [3]string{"http://proxy.example.com:8080", "alice", "hunter2"})
+	assert.FatalIf(t, material.proxy == nil, "explicit proxy material is absent")
+	assert.Equal(
+		t,
+		[3]string{material.proxy.Address, material.proxy.Username, material.proxy.Password},
+		[3]string{"http://proxy.example.com:8080", "alice", "hunter2"},
+	)
 	selected, err := material.ProxyURL(&url.URL{Scheme: "http", Host: "target.invalid"})
 	assert.NoError(t, err)
 	assert.Equal(t, selected.User.String(), "alice:hunter2")

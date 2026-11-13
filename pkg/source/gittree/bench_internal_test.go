@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -27,6 +27,8 @@ import (
 // same packfile-backed read path as a production source fetch (a loose
 // PlainInit repo would shadow the pack with unpacked objects and
 // understate the read cost).
+//
+//nolint:gocritic // The benchmark MUST retain the repository owner with its packed commit.
 func benchRepo(b *testing.B, n int) (*git.Repository, plumbing.Hash) {
 	b.Helper()
 	src := b.TempDir()
@@ -55,7 +57,7 @@ func benchRepo(b *testing.B, n int) (*git.Repository, plumbing.Hash) {
 	})
 
 	clone := b.TempDir()
-	cloned, err := git.PlainClone(clone, false, &git.CloneOptions{URL: src})
+	cloned, err := git.PlainClone(clone, &git.CloneOptions{URL: src})
 	assert.FatalIf(b, err != nil, "PlainClone: %v", err)
 	head, err := cloned.Head()
 	assert.FatalIf(b, err != nil, "Head: %v", err)
@@ -68,7 +70,12 @@ func BenchmarkView_Packed(b *testing.B) {
 	wt, err := repo.Worktree()
 	assert.NoError(b, err)
 
-	current, _, err := New(b.Context(), backing, plumbing.ZeroHash, ViewOptions{Mode: Direct, Worktree: wt.Filesystem})
+	current, _, err := New(
+		b.Context(),
+		backing,
+		plumbing.ZeroHash,
+		ViewOptions{Mode: Direct, Worktree: wt.Filesystem()},
+	)
 	assert.NoError(b, err)
 
 	for _, name := range []string{"Source", "LazyBase", "SelectedBody", "ReadAll"} {

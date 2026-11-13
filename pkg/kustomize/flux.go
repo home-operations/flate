@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 	"sigs.k8s.io/kustomize/api/resmap"
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"

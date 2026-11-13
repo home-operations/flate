@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/selection"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
@@ -340,7 +341,10 @@ data: {VALUE: available}
 	} else {
 		testutil.GitCommitAll(t, repo, "optional input appears", options)
 		cache := cachetest.New(t, t.TempDir(), sourcecache.New)
-		inputs, err = baseline.AutoResolve(t.Context(), root, base.String(), cache)
+		inputs, err = baseline.AutoResolve(
+			t.Context(),
+			baseline.Config{Network: networktest.New(t), Path: root, Base: base.String(), Cache: cache},
+		)
 	}
 	assert.NoError(t, err)
 	{
@@ -603,9 +607,12 @@ func testOptionalInputPairedSidesCase(t *testing.T, testCaseInput *struct {
 			testutil.GitCommitAll(t, repo, "input change", options)
 			resolved, localErr := baseline.AutoResolve(
 				t.Context(),
-				root,
-				base.String(),
-				cachetest.New(t, "", sourcecache.New),
+				baseline.Config{
+					Network: networktest.New(t),
+					Path:    root,
+					Base:    base.String(),
+					Cache:   cachetest.New(t, "", sourcecache.New),
+				},
 			)
 			assert.NoError(t, localErr)
 			changes, pair = resolved.Changes, [2]*store.SourceArtifact{resolved.BaseInput, resolved.Source}

@@ -6,15 +6,16 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/assert"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 
-	objectcache "github.com/go-git/go-git/v5/plumbing/cache"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	objectcache "github.com/go-git/go-git/v6/plumbing/cache"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -90,7 +91,7 @@ func TestFetcher_NarrowInitialFetchSkipsOtherRefs(t *testing.T) {
 
 	root := t.TempDir()
 	cache := cachetest.New(t, root, sourcecache.New)
-	f := &Fetcher{Cache: cache, Depth: 1}
+	f := &Fetcher{Network: networktest.New(t), Cache: cache, Depth: 1}
 	repo := &manifest.GitRepository{
 		Name: "t", Namespace: "flux-system",
 		URL:       "file://" + src,

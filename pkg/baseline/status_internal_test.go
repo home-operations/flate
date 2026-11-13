@@ -3,14 +3,15 @@ package baseline
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/utils/merkletrie"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/utils/merkletrie"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -30,7 +31,7 @@ func TestStatus_MetadataObservation(t *testing.T) {
 	})
 	original, err := repo.Worktree()
 	assert.NoError(t, err)
-	counted := &countedMetadata{Filesystem: original.Filesystem}
+	counted := &countedMetadata{Filesystem: original.Filesystem()}
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
 	location.Repository, err = git.Open(repo.Storer, counted)
@@ -99,9 +100,9 @@ func TestStatus_Cancellation(t *testing.T) {
 	original, err := directory.Worktree(directory.Artifact().FS.(*gittree.FS))
 	assert.NoError(t, err)
 	cancel()
-	_, err = original.Filesystem.ReadDir("")
+	_, err = original.Filesystem().ReadDir("")
 	assert.FatalIf(t, !errors.Is(err, context.Canceled), "metadata read ignored cancellation: %v", err)
-	_, err = (selection{repo: repo}).worktreeChanges(ctx, original, nil)
+	_, err = (&selection{repo: repo}).worktreeChanges(ctx, original, nil)
 	assert.FatalIf(t, !errors.Is(err, context.Canceled), "observation ignored cancellation: %v", err)
 }
 
@@ -111,7 +112,7 @@ type countedMetadata struct {
 	directories int
 }
 
-func (f *countedMetadata) ReadDir(name string) ([]os.FileInfo, error) {
+func (f *countedMetadata) ReadDir(name string) ([]fs.DirEntry, error) {
 	f.directories++
 	return f.Filesystem.ReadDir(name)
 }

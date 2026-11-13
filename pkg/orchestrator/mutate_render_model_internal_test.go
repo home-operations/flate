@@ -18,8 +18,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/internal/testutil"

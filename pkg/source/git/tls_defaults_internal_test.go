@@ -13,12 +13,13 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -110,7 +111,7 @@ func testFetcherRecursiveTLSDefaultsCase(t *testing.T, testCaseInput testFetcher
 
 		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	repo := gitRepoWithSecret("recursive", srv.URL, "tls")
 	repo.RecurseSubmodules = true
 	if *testCaseInput.exact {

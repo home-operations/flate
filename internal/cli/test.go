@@ -8,33 +8,33 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func newTestCmd() *cobra.Command {
+func newTestCmd(cfg RunConfig) *cobra.Command {
 	var kinds []string
 	for info := range manifest.Kinds() {
 		if info.Test {
 			kinds = append(kinds, info.Kind)
 		}
 	}
-	cmd := testCmd(&cobra.Command{
+	cmd := testCmd(cfg, &cobra.Command{
 		Use:   "test",
 		Short: "Report reconcile status (defaults to all)",
 		Args:  cobra.NoArgs,
 	}, kinds...)
 	cmd.AddCommand(
-		testCmd(&cobra.Command{
-			Use:     "ks [name]",
+		testCmd(cfg, &cobra.Command{
+			Use:     useKustomization,
 			Aliases: []string{kustomizationAlias, kustomizationAliases},
 			Short:   "Validate Kustomizations",
 			Args:    cobra.MaximumNArgs(1),
 		}, manifest.KindKustomization),
-		testCmd(&cobra.Command{
-			Use:     "hr [name]",
+		testCmd(cfg, &cobra.Command{
+			Use:     useHelmRelease,
 			Aliases: []string{helmReleaseAlias, helmReleaseAliases},
 			Short:   "Validate HelmReleases",
 			Args:    cobra.MaximumNArgs(1),
 		}, manifest.KindHelmRelease),
-		testCmd(&cobra.Command{
-			Use:   "all",
+		testCmd(cfg, &cobra.Command{
+			Use:   useAll,
 			Short: "Validate Flux resources",
 			Args:  cobra.NoArgs,
 		}, kinds...),
@@ -42,8 +42,8 @@ func newTestCmd() *cobra.Command {
 	return cmd
 }
 
-func testCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
-	c := &commonFlags{}
+func testCmd(cfg RunConfig, cmd *cobra.Command, kinds ...string) *cobra.Command {
+	c := &commonFlags{gitTransports: cfg.GitTransports}
 	cmd.RunE = func(cmd *cobra.Command, argv []string) error {
 		return runSelected(cmd.Context(), selectedRequest{
 			flags: *c, roots: c.roots(firstArg(argv), kinds...),

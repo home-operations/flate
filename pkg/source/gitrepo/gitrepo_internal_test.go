@@ -1,9 +1,13 @@
 package gitrepo
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/go-git/go-git/v6"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -12,14 +16,15 @@ import (
 func TestLocate_RepositorySelection(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                              string
-		ancestor, linked, remotes, broken bool
+		name                                          string
+		ancestor, linked, remotes, broken, descendant bool
 	}{
 		{name: "empty marker below repository", ancestor: true},
 		{name: "empty marker without repository"},
 		{name: "linked gitfile", linked: true},
 		{name: "sorted linked remotes", linked: true, remotes: true},
 		{name: "selected open retains root", linked: true, broken: true},
+		{name: "selected ancestor open retains root", linked: true, broken: true, descendant: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -43,11 +48,12 @@ func TestLocate_RepositorySelection(t *testing.T) {
 }
 
 func testLocateRepositorySelectionCase(t *testing.T, tc *struct {
-	name     string
-	ancestor bool
-	linked   bool
-	remotes  bool
-	broken   bool
+	name       string
+	ancestor   bool
+	linked     bool
+	remotes    bool
+	broken     bool
+	descendant bool
 },
 ) {
 	t.Helper()
@@ -80,7 +86,12 @@ func testLocateRepositorySelectionCase(t *testing.T, tc *struct {
 			"[remote \"z\"]\nurl = ssh://host/z\nurl = https://host/a\n[remote \"a\"]\nurl = https://host/a\n",
 		)
 	}
-	location, err := Locate(t.Context(), root, "")
+	scan := root
+	if tc.descendant {
+		scan = filepath.Join(root, "exported")
+		assert.Equal(t, os.Mkdir(scan, 0o750), nil)
+	}
+	location, err := Locate(t.Context(), scan, "")
 	assert.Equal(t, err, nil)
 	got, repo, err := location.RepositoryRoot, location.Repository, location.LookupErr
 	assert.FatalIf(
@@ -93,6 +104,16 @@ func testLocateRepositorySelectionCase(t *testing.T, tc *struct {
 		err,
 		wantRoot,
 	)
+	assert.Equal(t, location.ScanPath, scan)
+	wantContent := wantRoot
+	if wantContent == "" {
+		wantContent = scan
+	}
+	assert.Equal(t, location.ContentRoot, wantContent)
+	if tc.broken {
+		assert.Equal(t, errors.Is(err, git.ErrRepositoryNotExists), true)
+		assert.Equal(t, strings.Contains(err.Error(), wantRoot), true)
+	}
 	if tc.remotes {
 		urls, err := location.URLs, location.ConfigErr
 		want := []string{"https://host/a", "https://host/a", "ssh://host/z"}

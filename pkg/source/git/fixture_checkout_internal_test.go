@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	gogit "github.com/go-git/go-git/v5"
+	gogit "github.com/go-git/go-git/v6"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"

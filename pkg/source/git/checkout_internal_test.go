@@ -1,9 +1,11 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path/filepath"
 	"slices"
@@ -12,19 +14,21 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/assert"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/protocol"
+	"github.com/go-git/go-git/v6/plumbing/protocol/capability"
+	"github.com/go-git/go-git/v6/plumbing/protocol/packp"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	filetransport "github.com/go-git/go-git/v6/plumbing/transport/file"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -34,66 +38,82 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-//nolint:paralleltest // The test replaces go-git protocol registration and restores it afterward.
-//nolint:paralleltest // The test replaces process-wide go-git protocol registration.
 func TestFetcher_SubmoduleSchemes(t *testing.T) {
+	t.Parallel()
 	identity, _ := testSSHIdentity(t)
-	previous := client.Protocols["ssh"]
-	client.InstallProtocol(
-		"ssh",
-		commandTransport{Transport: server.DefaultServer, before: func(context.Context) error { return nil }},
-	)
-	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
-	file := &pinTransport{Transport: client.Protocols["file"]}
-	client.InstallProtocol("file", file)
-	t.Cleanup(func() { client.InstallProtocol("file", file.Transport) })
 	for _, shape := range []string{"direct file", "nested file", "relative"} {
 		t.Run(shape, func(t *testing.T) {
-			testFetcherSubmoduleSchemesCase(
-				t,
-				&identity, &file, &shape,
-			)
+			t.Parallel()
+			testFetcherSubmoduleSchemesCase(t, &identity, &shape)
 		},
 		)
 	}
 }
 
 type pinTransport struct {
-	transport.Transport
-
-	requests []*packp.UploadPackRequest
+	requests []*packp.UploadRequest
 	refusal  error
 }
 
-type pinSession struct {
-	transport.UploadPackSession
-
-	owner *pinTransport
-}
-
-//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
-func (p *pinTransport) NewUploadPackSession(
-	endpoint *transport.Endpoint,
-	auth transport.AuthMethod,
-) (transport.UploadPackSession, error) {
-	session, err := p.Transport.NewUploadPackSession(endpoint, auth)
-	return &pinSession{session, p}, err
-}
-
-func (p *pinSession) UploadPack(
-	ctx context.Context,
-	request *packp.UploadPackRequest,
-) (*packp.UploadPackResponse, error) {
-	p.owner.requests = append(p.owner.requests, request)
-	if len(p.owner.requests) == 1 && p.owner.refusal != nil {
-		return nil, p.owner.refusal
+func (p *pinTransport) connect(ctx context.Context, request TransportRequest) (Connection, error) {
+	conn, err := filetransport.NewTransport(filetransport.Options{}).
+		Connect(ctx, &transport.Request{URL: request.URL, Command: request.Command, Protocol: protocol.V0})
+	if err != nil {
+		return nil, err
 	}
-	return p.UploadPackSession.UploadPack(ctx, request)
+	refs := &packp.AdvRefs{}
+	if err := refs.Decode(conn.Reader()); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	refs.Capabilities.Set(capability.AllowReachableSHA1InWant)
+	var advertisement bytes.Buffer
+	if err := refs.Encode(&advertisement); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return &pinConnection{
+		Connection: conn,
+		reader:     io.MultiReader(&advertisement, conn.Reader()),
+		writer:     &pinWriter{WriteCloser: conn.Writer(), owner: p},
+	}, nil
 }
 
-//nolint:paralleltest // The test replaces go-git protocol registration and restores it afterward.
-//nolint:paralleltest // The test replaces process-wide go-git protocol registration.
+type pinConnection struct {
+	Connection
+
+	reader io.Reader
+	writer *pinWriter
+}
+
+func (c *pinConnection) Reader() io.Reader      { return c.reader }
+func (c *pinConnection) Writer() io.WriteCloser { return c.writer }
+
+type pinWriter struct {
+	io.WriteCloser
+
+	owner    *pinTransport
+	data     bytes.Buffer
+	recorded bool
+}
+
+func (w *pinWriter) Write(data []byte) (int, error) {
+	if !w.recorded {
+		_, _ = w.data.Write(data)
+		request := &packp.UploadRequest{}
+		if err := request.Decode(bytes.NewReader(w.data.Bytes())); err == nil {
+			w.recorded = true
+			w.owner.requests = append(w.owner.requests, request)
+			if len(w.owner.requests) == 1 && w.owner.refusal != nil {
+				return 0, w.owner.refusal
+			}
+		}
+	}
+	return w.WriteCloser.Write(data)
+}
+
 func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
+	t.Parallel()
 	module := t.TempDir()
 	mustInitRepo(t, module)
 	oldModule := mustSetRefToHEAD(t, module, "refs/tags/old")
@@ -173,6 +193,7 @@ func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
 		{"deadline", context.DeadlineExceeded, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			testFetcherExactPinBeforeRecursionCase(
 
 				t, &parent, &pin, &tc)
@@ -181,11 +202,14 @@ func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
 	}
 }
 
-func testFetcherSubmoduleSchemesCase(t *testing.T, identity *string,
-	file **pinTransport,
-	shape *string,
-) {
+func testFetcherSubmoduleSchemesCase(t *testing.T, identity, shape *string) {
 	t.Helper()
+	file := &pinTransport{}
+	routes := Transports{
+		"ssh":  commandTransport{before: func(context.Context) error { return nil }}.connect,
+		"file": file.connect,
+	}
+
 	root := t.TempDir()
 	leaf := filepath.Join(root, "leaf")
 	mustInitRepo(t, leaf)
@@ -233,6 +257,7 @@ func testFetcherSubmoduleSchemesCase(t *testing.T, identity *string,
 
 					t, testFetcherSubmoduleSchemesCaseCaseInputs{
 						identity: &identity,
+						routes:   routes,
 						file:     &file,
 						shape:    &shape,
 						hash:     &hash,
@@ -255,10 +280,12 @@ func testFetcherExactPinBeforeRecursionCase(t *testing.T, parent *string,
 	},
 ) {
 	t.Helper()
-	counter := &pinTransport{Transport: client.Protocols["file"], refusal: tc.refusal}
-	client.InstallProtocol("pin", counter)
-	t.Cleanup(func() { client.InstallProtocol("pin", nil) })
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	counter := &pinTransport{refusal: tc.refusal}
+	f := &Fetcher{
+		Network:       networktest.New(t),
+		Cache:         cachetest.New(t, "", sourcecache.New),
+		GitTransports: Transports{"pin": counter.connect},
+	}
 	spec := &manifest.GitRepository{
 		Name:              "pin",
 		URL:               "pin://" + (*parent),
@@ -269,7 +296,7 @@ func testFetcherExactPinBeforeRecursionCase(t *testing.T, parent *string,
 	if err == nil {
 		other := *spec
 		other.Name = "other"
-		shared := &Fetcher{Cache: f.Cache}
+		shared := &Fetcher{Network: networktest.New(t), Cache: f.Cache, GitTransports: f.GitTransports}
 		reused, reuseErr := fetchtest.Fetch(
 			t.Context(),
 			shared.Fetch,
@@ -290,7 +317,7 @@ func testFetcherExactPinBeforeRecursionCase(t *testing.T, parent *string,
 		t.Fatalf("parent requests=%d, want %d; %v", len(counter.requests), tc.calls, err)
 	}
 	first := counter.requests[0]
-	if first.Depth != packp.DepthCommits(1) || !slices.Equal(first.Wants, []plumbing.Hash{(*pin)}) {
+	if first.Depth.Deepen != 1 || !slices.Equal(first.Wants, []plumbing.Hash{(*pin)}) {
 		t.Fatalf("first request depth=%v wants=%v", first.Depth, first.Wants)
 	}
 	if tc.refusal != nil && tc.calls == 1 {
@@ -342,7 +369,8 @@ func testFetcherExactPinBeforeRecursionCase(t *testing.T, parent *string,
 
 type testFetcherSubmoduleSchemesCaseCaseInputs struct {
 	identity **string
-	file     ***pinTransport
+	routes   Transports
+	file     **pinTransport
 	shape    **string
 	hash     *plumbing.Hash
 	url      *string
@@ -352,8 +380,13 @@ type testFetcherSubmoduleSchemesCaseCaseInputs struct {
 
 func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcherSubmoduleSchemesCaseCaseInputs) {
 	t.Helper()
-	before := len((*(*testCaseInput.file)).requests)
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), RestrictSchemes: (*testCaseInput.restrict)}
+	before := len((*testCaseInput.file).requests)
+	f := &Fetcher{
+		Network:         networktest.New(t),
+		Cache:           cachetest.New(t, "", sourcecache.New),
+		RestrictSchemes: (*testCaseInput.restrict),
+		GitTransports:   testCaseInput.routes,
+	}
 	var artifact *store.SourceArtifact
 	var err error
 	if *testCaseInput.remote {
@@ -398,7 +431,7 @@ func testFetcherSubmoduleSchemesCaseCase(t *testing.T, testCaseInput testFetcher
 		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) ||
 			!strings.Contains(err.Error(), "scheme not allowed") ||
 			artifact != nil ||
-			len((*(*testCaseInput.file)).
+			len((*testCaseInput.file).
 				requests,
 			) != before, "restricted submodule: artifact=%v error=%v", artifact, err)
 		return

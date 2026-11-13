@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -102,9 +103,12 @@ spec:
 		testutil.GitCommitAll(t, repo, "after", options)
 		inputs, err = baseline.AutoResolve(
 			t.Context(),
-			root,
-			base.String(),
-			cachetest.New(t, "", sourcecache.New),
+			baseline.Config{
+				Network: networktest.New(t),
+				Path:    root,
+				Base:    base.String(),
+				Cache:   cachetest.New(t, "", sourcecache.New),
+			},
 		)
 	}
 	assert.NoError(t, err)

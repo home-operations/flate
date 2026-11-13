@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/utils/merkletrie"
-	merklefs "github.com/go-git/go-git/v5/utils/merkletrie/filesystem"
-	merkleindex "github.com/go-git/go-git/v5/utils/merkletrie/index"
-	"github.com/go-git/go-git/v5/utils/merkletrie/noder"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/utils/merkletrie"
+	merklefs "github.com/go-git/go-git/v6/utils/merkletrie/filesystem"
+	merkleindex "github.com/go-git/go-git/v6/utils/merkletrie/index"
+	"github.com/go-git/go-git/v6/utils/merkletrie/noder"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -64,7 +64,7 @@ func TestDirectory_IndexedSiblingLookups(t *testing.T) {
 	assert.NoError(t, err)
 	checks := backing.directoryChecks["sibling-000"]
 	fileChecks := backing.directoryChecks[filepath.Join("sibling-000", ".gitignore")]
-	_, err = worktree.Filesystem.ReadDir("sibling-000")
+	_, err = worktree.Filesystem().ReadDir("sibling-000")
 	assert.NoError(t, err)
 	assert.Equal(t, backing.directoryChecks["sibling-000"], checks)
 	assert.Equal(t, backing.directoryChecks[filepath.Join("sibling-000", ".gitignore")], fileChecks)
@@ -102,7 +102,7 @@ func TestDirectory_SharedCaptureAndBaseline(t *testing.T) {
 	worktree, err := directory.Worktree(directory.Artifact().FS.(*FS))
 	assert.NoError(t, err)
 	changes, err := merkletrie.DiffTreeContext(t.Context(), merkleindex.NewRootNode(index),
-		merklefs.NewRootNodeWithOptions(worktree.Filesystem, nil, merklefs.Options{Index: index}),
+		merklefs.NewRootNodeWithOptions(worktree.Filesystem(), nil, merklefs.Options{Index: index}),
 		func(a, b noder.Hasher) bool {
 			var unknown [24]byte
 			left, right := a.Hash(), b.Hash()
@@ -129,13 +129,15 @@ func TestDirectory_SharedCaptureAndBaseline(t *testing.T) {
 	assert.Equal(t, backing.payloadOpens > 0, true)
 	assert.Equal(t, backing.lstats, 1)
 	checks := backing.directoryChecks["nested"]
-	_, err = worktree.Filesystem.Lstat("nested/tracked")
+	uncached, err := directory.Worktree(directory.Artifact().FS.(*FS))
 	assert.NoError(t, err)
-	// go-git's leading-component guard MUST still admit the parent once.
+	_, err = uncached.Filesystem().Lstat("nested/tracked")
+	assert.NoError(t, err)
+	// Uncached access MUST admit its leading directory before the file.
 	assert.Equal(t, backing.directoryChecks["nested"], checks+1)
 	rawNested, err := directory.observed.ReadDir("nested")
 	assert.NoError(t, err)
-	selectedNested, err := worktree.Filesystem.ReadDir("nested")
+	selectedNested, err := worktree.Filesystem().ReadDir("nested")
 	assert.NoError(t, err)
 	assert.Equal(t, &selectedNested[0], &rawNested[0])
 	raw, err := directory.observed.ReadDir(".")
@@ -169,14 +171,14 @@ func TestDirectory_NestedContentRoot(t *testing.T) {
 	worktree, err := directory.Worktree(input)
 	assert.NoError(t, err)
 	for _, name := range []string{"content/deep/noise.ignored", "content/cache", "content/cache/data"} {
-		_, statErr := worktree.Filesystem.Lstat(name)
+		_, statErr := worktree.Filesystem().Lstat(name)
 		assert.Equal(t, errors.Is(statErr, fs.ErrNotExist), true)
 	}
 	for _, name := range []string{"outside", "outside.ignored", "content/deep/tracked.ignored", "content/deep/kept"} {
-		_, statErr := worktree.Filesystem.Lstat(name)
+		_, statErr := worktree.Filesystem().Lstat(name)
 		assert.NoError(t, statErr)
 	}
-	scoped, err := worktree.Filesystem.Chroot("content")
+	scoped, err := worktree.Filesystem().Chroot("content")
 	assert.NoError(t, err)
 	for _, name := range []string{"deep/noise.ignored", "cache/data"} {
 		_, statErr := scoped.Lstat(name)
@@ -237,7 +239,7 @@ func TestDirectory_IndependentWorktrees(t *testing.T) {
 					name string
 					want []string
 				}{{".", view.root}, {"nested", view.nested}} {
-					entries, readErr := worktree.Filesystem.ReadDir(listing.name)
+					entries, readErr := worktree.Filesystem().ReadDir(listing.name)
 					assert.NoError(t, readErr)
 					names := make([]string, len(entries))
 					for i, entry := range entries {
@@ -246,10 +248,10 @@ func TestDirectory_IndependentWorktrees(t *testing.T) {
 					assert.Diff(t, names, listing.want)
 				}
 				for _, name := range []string{"noise.ignored", "nested/noise.ignored", "pruned"} {
-					_, statErr := worktree.Filesystem.Lstat(name)
+					_, statErr := worktree.Filesystem().Lstat(name)
 					assert.Equal(t, errors.Is(statErr, view.err), true)
 				}
-				_, err = worktree.Filesystem.ReadDir("pruned")
+				_, err = worktree.Filesystem().ReadDir("pruned")
 				assert.Equal(t, errors.Is(err, view.err), true)
 			}
 		})
@@ -271,19 +273,19 @@ func TestDirectory_ClosedObservation(t *testing.T) {
 	observed, err := directory.Worktree(artifact.FS.(*FS))
 	assert.NoError(t, err)
 	for _, name := range []string{"", "/"} {
-		_, readErr := observed.Filesystem.ReadDir(name)
+		_, readErr := observed.Filesystem().ReadDir(name)
 		assert.NoError(t, readErr)
 	}
-	scoped, err := observed.Filesystem.Chroot("nested")
+	scoped, err := observed.Filesystem().Chroot("nested")
 	assert.NoError(t, err)
 	_, err = scoped.Lstat("../alias/deep/file")
 	assert.Equal(t, errors.Is(err, fs.ErrInvalid), true)
 	info, err := scoped.Lstat("deep/link")
 	assert.NoError(t, err)
 	assert.Equal(t, info.Mode()&fs.ModeSymlink != 0, true)
-	_, err = observed.Filesystem.ReadDir("alias")
+	_, err = observed.Filesystem().ReadDir("alias")
 	assert.NoError(t, err)
-	_, err = observed.Filesystem.Lstat("alias/deep/file")
+	_, err = observed.Filesystem().Lstat("alias/deep/file")
 	assert.FatalIf(t, err == nil, "%s", "go-git accepted a leading symlink")
 	_, err = scoped.ReadDir("deep")
 	assert.NoError(t, err)
@@ -307,7 +309,7 @@ func TestDirectory_ClosedObservation(t *testing.T) {
 		_, err = scoped.Stat(name)
 		assert.Equal(t, errors.Is(err, os.ErrClosed), true)
 	}
-	_, err = observed.Filesystem.Chroot("nested")
+	_, err = observed.Filesystem().Chroot("nested")
 	assert.Equal(t, errors.Is(err, os.ErrClosed), true)
 	assert.Equal(t, directory.observed.directories == nil, true)
 	assert.Equal(t, directory.observed.ctx == nil, true)

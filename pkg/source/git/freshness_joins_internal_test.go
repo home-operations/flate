@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,7 +58,7 @@ func testFetcherFreshnessCase(t *testing.T, tc *struct {
 	srv.Start()
 	t.Cleanup(srv.Close)
 	cacheDir := t.TempDir()
-	f := &Fetcher{Cache: cachetest.New(t, cacheDir, sourcecache.New), Depth: tc.depth}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, cacheDir, sourcecache.New), Depth: tc.depth}
 	repo := &manifest.GitRepository{
 		Name:      "test",
 		Namespace: "flux-system",
@@ -174,8 +175,9 @@ func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFresh
 	}
 	assert.NoError(t, (*captures.f).Cache.Close())
 	(*captures.f) = &Fetcher{
-		Cache: cachetest.New(t, (*captures.cacheDir), sourcecache.New),
-		Depth: (*captures.tc).depth,
+		Network: networktest.New(t),
+		Cache:   cachetest.New(t, (*captures.cacheDir), sourcecache.New),
+		Depth:   (*captures.tc).depth,
 	}
 	var reopened *store.SourceArtifact
 

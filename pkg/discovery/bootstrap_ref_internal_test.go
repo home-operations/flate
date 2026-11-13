@@ -12,13 +12,14 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -484,7 +485,10 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 		ignore := "apps/excluded.txt\n"
 		repository.Ignore = &ignore
 		owner := cachetest.New(t, "", sourcecache.New)
-		result, err := baseline.AutoResolve(t.Context(), root, testCaseInput.base, owner)
+		result, err := baseline.AutoResolve(
+			t.Context(),
+			baseline.Config{Network: networktest.New(t), Path: root, Base: testCaseInput.base, Cache: owner},
+		)
 		assert.FatalIf(t, err != nil, "%v", err)
 		st.SetArtifact(manifest.BootstrapSourceID, result.BaseInput)
 	}

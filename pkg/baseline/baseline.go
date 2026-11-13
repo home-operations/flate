@@ -1,24 +1,26 @@
 package baseline
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -42,10 +44,20 @@ type resolution struct {
 	remote  *baseRemote
 }
 
-// AutoResolve resolves the base once and admits lazy readers owned by owner.
-// The checkout MUST remain stable until all readers have joined.
+// Config requires Cache and Network to outlive all returned lazy readers.
+type Config struct {
+	Path          string
+	Base          string
+	Cache         *sourcecache.Cache
+	Network       *source.Network
+	GitTransports sourcegit.Transports
+}
+
+// AutoResolve requires that the checkout remain stable until all readers have joined.
 // An error may return diagnostic-only inputs with no usable content.
-func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cache) (*Result, error) {
+func AutoResolve(ctx context.Context, cfg Config) (*Result, error) {
+	cfg.GitTransports = maps.Clone(cfg.GitTransports)
+	path, base, owner := cfg.Path, cfg.Base, cfg.Cache
 	if owner == nil {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "baseline cache owner is required")
 	}
@@ -71,7 +83,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 			),
 		)
 	}
-	root := location.ContentRoot
+	root, urls := location.ContentRoot, location.URLs
 	directory, err := admitLocation(ctx, location, manifest.WorkScope{})
 	if err != nil {
 		return nil, err
@@ -79,12 +91,18 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	defer func() { _ = directory.Close() }()
 	input := gittree.ExcludeDirectory(directory.Artifact(), owner.Directory())
 	current, _ := input.FS.(*gittree.FS)
-	s := selection{repo: repo, current: current.OperationView(), input: input, owner: owner}
+	s := selection{
+		repo:       repo,
+		current:    current.OperationView(),
+		input:      input,
+		owner:      owner,
+		network:    cfg.Network,
+		transports: cfg.GitTransports,
+	}
 	r, err := s.resolve(ctx, location, base)
 	if err != nil {
 		return nil, err
 	}
-	urls := location.URLs
 	content := struct {
 		Root    string
 		Remotes []string
@@ -94,7 +112,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	if err != nil {
 		return nil, fmt.Errorf("worktree: %w", err)
 	}
-	before, selected, _, warnings, err := selectChanges(ctx, s)
+	before, selected, _, warnings, err := selectChanges(ctx, &s)
 	input.Warnings = append(slices.Clone(input.Warnings), warnings...)
 	var baseWarnings []manifest.Warning
 	if before != nil {
@@ -212,7 +230,7 @@ func ResolvePaths(ctx context.Context, current, original string) (*Result, error
 	}, nil
 }
 
-func (s selection) resolve(ctx context.Context, location *gitrepo.Location, base string) (*resolution, error) {
+func (s *selection) resolve(ctx context.Context, location *gitrepo.Location, base string) (*resolution, error) {
 	repo := s.repo
 	if base != "" {
 		return s.resolveExplicit(ctx, location, base)
@@ -269,7 +287,7 @@ func (s selection) resolve(ctx context.Context, location *gitrepo.Location, base
 			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>")
 }
 
-func (s selection) resolveExplicit(ctx context.Context, location *gitrepo.Location, base string) (*resolution, error) {
+func (s *selection) resolveExplicit(ctx context.Context, location *gitrepo.Location, base string) (*resolution, error) {
 	repo := s.repo
 	h, err := repo.ResolveRevision(plumbing.Revision(base))
 	if err == nil {
@@ -292,7 +310,7 @@ func (s selection) resolveExplicit(ctx context.Context, location *gitrepo.Locati
 			"",
 		)
 	}
-	r, err := fetchBase(ctx, url, base, s.owner)
+	r, err := fetchBase(ctx, url, base, Config{Cache: s.owner, Network: s.network, GitTransports: s.transports})
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
@@ -386,7 +404,7 @@ func mergeBase(repo *git.Repository, headCommit *object.Commit, other plumbing.H
 	// hash so two `flate diff` runs against the same repo pick the
 	// same baseline — reproducibility is a stated guarantee.
 	best := slices.MinFunc(bases, func(a, b *object.Commit) int {
-		return bytes.Compare(a.Hash[:], b.Hash[:])
+		return a.Hash.Compare(b.Hash.Bytes())
 	})
 	return best.Hash, nil
 }

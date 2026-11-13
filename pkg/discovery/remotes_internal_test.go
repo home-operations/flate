@@ -34,7 +34,9 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "scan.yaml", "admitted\n")
-			d := &Session{cfg: Config{Path: root, Store: store.New()}}
+			input, _, err := baseline.AdmitDirectory(t.Context(), root, "", manifest.WorkScope{})
+			assert.NoError(t, err)
+			d := &Session{cfg: Config{Path: root, Input: input, Store: store.New()}}
 			switch kind {
 			case "gitfile":
 				testutil.WriteFile(t, root, ".git", "gitdir: missing\n")
@@ -44,7 +46,7 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			case "lookup":
 				assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)
 			}
-			_, err := d.resolveTestSources(t.Context(), false)
+			_, err = d.resolveTestSources(t.Context(), false)
 			assert.Equal(t, len(d.remotes), 0)
 			assert.Equal(t, err, nil)
 			assert.Equal(

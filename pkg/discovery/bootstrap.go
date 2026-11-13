@@ -15,8 +15,8 @@ import (
 
 	"github.com/home-operations/flate/pkg/selection"
 
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -819,11 +819,11 @@ func (a *Admission) Warnings() []manifest.Warning {
 
 func normalizeGitURL(raw string) string {
 	raw = strings.TrimSpace(raw)
-	endpoint, err := transport.NewEndpoint(raw)
+	endpoint, err := transport.ParseURL(raw)
 	if err != nil {
 		return ""
 	}
-	switch strings.ToLower(endpoint.Protocol) {
+	switch strings.ToLower(endpoint.Scheme) {
 	case "http", "https", "ssh", "git":
 	default:
 		return ""

@@ -10,13 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/pkg/schedule"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -224,7 +225,10 @@ func TestRenderTrees_LocalAliasSelfProducer(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: after}\n",
 	)
 	cache := cachetest.New(t, "", sourcecache.New)
-	selected, err := baseline.AutoResolve(t.Context(), root, "HEAD", cache)
+	selected, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: root, Base: "HEAD", Cache: cache},
+	)
 	assert.NoError(t, err)
 	trees := make([]Tree, 0, 2)
 	for side, input := range []*store.SourceArtifact{selected.BaseInput, selected.Source} {
@@ -399,7 +403,10 @@ func newSelectedSelfFixture(t *testing.T) selectedSelfFixture {
 		repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("selected"), headHash)),
 	)
 	cache := cachetest.New(t, "", sourcecache.New)
-	selected, err := baseline.AutoResolve(t.Context(), root, baseHash.String(), cache)
+	selected, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: root, Base: baseHash.String(), Cache: cache},
+	)
 	assert.NoError(t, err)
 
 	cfg := treeConfig{

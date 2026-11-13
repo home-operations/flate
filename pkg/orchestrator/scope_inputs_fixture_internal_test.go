@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -59,9 +60,12 @@ func TestRenderTrees_ScopeInputCorpus(t *testing.T) {
 			if strings.Contains(name, "committed") {
 				resolved, err = baseline.AutoResolve(
 					t.Context(),
-					paths[1],
-					fixture.Resolve(t, "@@commit:"+name+"-base@@", ""),
-					cache,
+					baseline.Config{
+						Network: networktest.New(t),
+						Path:    paths[1],
+						Base:    fixture.Resolve(t, "@@commit:"+name+"-base@@", ""),
+						Cache:   cache,
+					},
 				)
 			} else {
 				resolved, err = baseline.ResolvePaths(t.Context(), paths[1], paths[0])
@@ -307,8 +311,15 @@ func testScopeInputCacheLifecycle(t *testing.T, name, layout string) {
 	var prior []byte
 	for run := range 2 {
 		cache := cachetest.New(t, cachePath, sourcecache.New)
-		resolved, err := baseline.AutoResolve(t.Context(), filepath.Join(fixture.Repo, "flux"),
-			fixture.Resolve(t, "@@commit:"+name+"-base@@", ""), cache)
+		resolved, err := baseline.AutoResolve(
+			t.Context(),
+			baseline.Config{
+				Network: networktest.New(t),
+				Path:    filepath.Join(fixture.Repo, "flux"),
+				Base:    fixture.Resolve(t, "@@commit:"+name+"-base@@", ""),
+				Cache:   cache,
+			},
+		)
 		assert.NoError(t, err)
 		trees := scopeInputTrees(resolved, resolved.SelfURLs)
 		rendered, renderErr := renderTreesForTest(t.Context(), t, trees, Config{Cache: cache, Concurrency: 2})

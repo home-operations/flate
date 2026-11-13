@@ -8,9 +8,8 @@ import (
 	"strings"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -36,6 +35,10 @@ func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, op
 	if err != nil {
 		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 	}
+	client, err := newClient(&ClientConfig{Transports: f.GitTransports, Network: f.Network}, options.auth)
+	if err != nil {
+		return err
+	}
 	slices.SortFunc(subs, func(a, b *git.Submodule) int {
 		return strings.Compare(a.Config().Name, b.Config().Name)
 	})
@@ -59,24 +62,25 @@ func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, op
 		if err != nil {
 			return fmt.Errorf("validate submodule %q: %w", sub.Config().Name, err)
 		}
-		err = sub.UpdateContext(ctx, &git.SubmoduleUpdateOptions{Auth: options.auth})
-		recordTransfer(options.work, endpoint.Protocol, err)
+		err = sub.UpdateContext(ctx, &git.SubmoduleUpdateOptions{ClientOptions: client.options})
+		recordTransfer(options.work, endpoint.Scheme, err)
 		if err != nil {
 			return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 		}
-		if options.depth > 0 {
-			if err := f.updateSubmodules(ctx, child, submoduleOptions{
-				auth: options.auth, depth: options.depth - 1, work: options.work,
-			}); err != nil {
-				return err
-			}
+		if options.depth <= 0 {
+			continue
+		}
+		if err := f.updateSubmodules(ctx, child, submoduleOptions{
+			auth: options.auth, depth: options.depth - 1, work: options.work,
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
 type submoduleOptions struct {
-	auth  transport.AuthMethod
-	depth git.SubmoduleRescursivity
+	auth  any
+	depth git.SubmoduleRecursivity
 	work  *manifest.AcquisitionWork
 }

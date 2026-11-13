@@ -10,9 +10,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/helper/chroot"
-	"github.com/go-git/go-billy/v5/osfs"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/helper/chroot"
+	"github.com/go-git/go-billy/v6/osfs"
 
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/store"
@@ -200,10 +200,13 @@ func (g *FS) memberFilesystem(files billy.Filesystem, root string) *memberFilesy
 	}
 	native := false
 	switch backend := backend.(type) {
-	case *osfs.BoundOS:
+	case *osfs.BoundOS, *osfs.RootOS:
 		native = true
 	case *chroot.ChrootHelper:
-		_, native = backend.Underlying().(*osfs.ChrootOS) //nolint:staticcheck // go-git still supplies this default native backend.
+		switch backend.Underlying().(type) {
+		case *osfs.BoundOS, *osfs.RootOS:
+			native = true
+		}
 	}
 	if native {
 		bridge.names = os.DirFS(files.Root())
@@ -211,11 +214,11 @@ func (g *FS) memberFilesystem(files billy.Filesystem, root string) *memberFilesy
 	return bridge
 }
 
-// ReadDir MUST filter names before metadata. go-billy's ReadDir stats every entry.
+// ReadDir MUST filter excluded names before metadata access.
 // Repository coordinates MUST stay intact for the index and .git/info/exclude.
 //
 //nolint:wrapcheck // The bridge preserves filesystem errors and their concrete identities.
-func (f *memberFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
+func (f *memberFilesystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	if f.names == nil {
 		return f.Filesystem.ReadDir(name)
 	}
@@ -231,7 +234,7 @@ func (f *memberFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	selected := make([]fs.FileInfo, 0, len(entries))
+	selected := make([]fs.DirEntry, 0, len(entries))
 	for _, entry := range entries {
 		if f.input.excludes(path.Join(relative, entry.Name())) {
 			continue
@@ -240,7 +243,7 @@ func (f *memberFilesystem) ReadDir(name string) ([]fs.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
-		selected = append(selected, info)
+		selected = append(selected, fs.FileInfoToDirEntry(info))
 	}
 	return selected, nil
 }

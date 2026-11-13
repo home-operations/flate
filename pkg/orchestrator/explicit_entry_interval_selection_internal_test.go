@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -58,7 +59,10 @@ func testExplicitEntrySelection(t *testing.T, kind, mode string) {
 			}
 		}
 		editExplicitEntry(t, head, mode)
-		inputs, err := baseline.AutoResolve(t.Context(), tree.Path, "HEAD", cache)
+		inputs, err := baseline.AutoResolve(
+			t.Context(),
+			baseline.Config{Network: networktest.New(t), Path: tree.Path, Base: "HEAD", Cache: cache},
+		)
 		assert.NoError(t, err)
 		selected.Selection = selection.Request{Changed: mode != "invalidated"}
 		var admissions [2]atomic.Int64

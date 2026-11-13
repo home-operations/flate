@@ -21,6 +21,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -439,9 +440,12 @@ func testRenderMemorySparseGitCase(t *testing.T, testCaseInput *struct {
 	render := func(wantPaths []string) [2][32]byte {
 		inputs, err := baseline.AutoResolve(
 			t.Context(),
-			filepath.Join(fixture.Root, "flux"),
-			fixture.Base.String(),
-			owner,
+			baseline.Config{
+				Network: networktest.New(t),
+				Path:    filepath.Join(fixture.Root, "flux"),
+				Base:    fixture.Base.String(),
+				Cache:   owner,
+			},
 		)
 		assert.NoError(t, err)
 		assert.Diff(t, inputs.Changes.Paths(), wantPaths)

@@ -11,17 +11,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/utils/merkletrie"
-	merklefs "github.com/go-git/go-git/v5/utils/merkletrie/filesystem"
-	merkleindex "github.com/go-git/go-git/v5/utils/merkletrie/index"
-	"github.com/go-git/go-git/v5/utils/merkletrie/noder"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/format/gitignore"
+	"github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/utils/merkletrie"
+	merklefs "github.com/go-git/go-git/v6/utils/merkletrie/filesystem"
+	merkleindex "github.com/go-git/go-git/v6/utils/merkletrie/index"
+	"github.com/go-git/go-git/v6/utils/merkletrie/noder"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -261,7 +261,7 @@ type excludedMetadataBilly struct {
 	observations int
 }
 
-func (f *excludedMetadataBilly) ReadDir(name string) ([]fs.FileInfo, error) {
+func (f *excludedMetadataBilly) ReadDir(name string) ([]fs.DirEntry, error) {
 	entries, err := f.Filesystem.ReadDir(name)
 	for _, entry := range entries {
 		if entry.Name() == ".absolute-cache" || name == ".absolute-cache" {
@@ -338,7 +338,11 @@ func TestContentFingerprint_ExcludedGitReaders(t *testing.T) {
 			}
 			return fs.ErrNotExist
 		case "rules":
-			_, err := gitignore.ReadPatterns(files, nil)
+			//nolint:staticcheck // Admission MUST capture ignore errors and observations before index access.
+			_, err := gitignore.ReadPatterns(
+				files,
+				nil,
+			)
 			return err
 		default:
 			_, err := merkletrie.DiffTreeContext(

@@ -85,7 +85,7 @@ func TestOutputFlags_CommandFormats(t *testing.T) {
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			t.Parallel()
-			cmd, _, err := New("test").Find(strings.Fields(tc.command))
+			cmd, _, err := New("test", RunConfig{}).Find(strings.Fields(tc.command))
 			assert.NoError(t, err)
 			flag := cmd.Flags().Lookup("output")
 			if tc.formats == "" {

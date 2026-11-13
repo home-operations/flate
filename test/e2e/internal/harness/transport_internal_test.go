@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-
 	"github.com/home-operations/flate/internal/cli"
 	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/internal/testutil"
@@ -23,7 +21,7 @@ import (
 
 //nolint:paralleltest // The fixture replaces process-wide HTTP and Git transports.
 func TestTransport_DeclaredHTTPS(t *testing.T) {
-	previousHTTP, previousGit := http.DefaultTransport, client.Protocols["https"]
+	previousHTTP := http.DefaultTransport
 	previousResolver := net.DefaultResolver
 	t.Run("fixture", func(t *testing.T) {
 		f := testfixture.Materialize(t, "entry-root", "literal-app")
@@ -52,9 +50,9 @@ func TestTransport_DeclaredHTTPS(t *testing.T) {
 			assertFixtureRequest(t, transport, f, url)
 		}
 	})
-	if http.DefaultTransport != previousHTTP || client.Protocols["https"] != previousGit ||
+	if http.DefaultTransport != previousHTTP ||
 		net.DefaultResolver != previousResolver {
-		t.Fatal("fixture leaked HTTP, DNS or Git protocol registration")
+		t.Fatal("fixture leaked HTTP or DNS state")
 	}
 }
 
@@ -80,7 +78,7 @@ func TestTransport_CLIRejectsPlainHTTP(t *testing.T) {
 			code := cli.Run([]string{
 				"build", "ks", "app", "-p", filepath.Join(f.Repo, "kubernetes", "apps"), "-n", "default",
 				"--no-progress", "--concurrency", "2",
-			}, &stdout, &stderr)
+			}, &stdout, &stderr, cli.RunConfig{GitTransports: fixture.transport.git})
 			if code != 1 || !strings.Contains(stderr.String(), tc.wantError) {
 				t.Fatalf(
 					"unexpected plain HTTP result: code=%d stdout=%q stderr=%q",

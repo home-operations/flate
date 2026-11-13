@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -123,7 +124,7 @@ func testFetcherTLSOperationsCaseCase(t *testing.T, testCaseInput testFetcherTLS
 
 		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	repo := gitRepoWithSecret("tls", srv.URL, "tls")
 	repo.Reference, repo.RecurseSubmodules = testCaseInput.tc.ref, testCaseInput.tc.recurse
 	if (*(*testCaseInput.route)) != "direct" {

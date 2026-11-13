@@ -328,7 +328,7 @@ func runDiffOneSidedSkipSuppressedNameLoop(t *testing.T, loopInputs struct {
 			(*loopInputs.imageStderr),
 		)
 		writeErr := errors.New("image disclosure write failed")
-		cmd := New("test")
+		cmd := New("test", RunConfig{})
 		cmd.SetContext(t.Context())
 		cmd.SetArgs([]string{
 			"diff", "images", "--path", (*loopInputs.current), "--path-orig", (*loopInputs.orig),

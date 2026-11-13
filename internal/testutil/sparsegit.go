@@ -9,13 +9,14 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	"github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 )
 
 // SparseGit retains the two committed snapshots of the E8 sparse workload.
@@ -204,7 +205,7 @@ func writeSparseBlob(tb testing.TB, root string, repo *git.Repository, blobBytes
 	if errInner := header(plumbing.BlobObject, blobBytes); errInner != nil {
 		tb.Fatal(errInner)
 	}
-	hasher := plumbing.NewHasher(plumbing.BlobObject, blobBytes)
+	hasher := plumbing.NewHasher(formatcfg.SHA1, plumbing.BlobObject, blobBytes)
 	n, err := io.Copy(io.MultiWriter(writer, hasher), file)
 	if closeErr := errors.Join(writer.Close(), file.Close()); err != nil || closeErr != nil || n != blobBytes {
 		tb.Fatalf("stream blob: bytes=%d want=%d error=%v", n, blobBytes, errors.Join(err, closeErr))

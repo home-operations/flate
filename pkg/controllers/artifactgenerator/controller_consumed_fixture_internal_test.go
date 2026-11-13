@@ -265,7 +265,7 @@ func (f *consumedFixture) startControllers(t *testing.T) *kustomize.TreeCache {
 	trees := kustomize.NewTreeCache(owner, nil, bodies)
 	ks := kustomization.New(st, bodies, trees)
 	ks.StartLifecycle()
-	src := sourcecontroller.New(st, bodies)
+	src := sourcecontroller.New(st, bodies, owner)
 	src.Fetchers[manifest.KindExternalArtifact] = sources.Wrap(manifest.KindExternalArtifact, &external.Fetcher{})
 	src.StartLifecycle()
 	f.consumer, f.driver = consumer, driver

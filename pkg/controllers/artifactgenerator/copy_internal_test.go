@@ -4,15 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"testing"
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -101,20 +99,24 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 	assert.FatalIf(t, err != nil, "%v", err)
 	_, _, _, err = owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever, Work: &req.work})
 	assert.FatalIf(t, err != nil, "%v", err)
-	key := cache.ArchiveKey{Policy: "extract", Content: struct {
+	want := struct {
 		Namespace string
 		Inputs    []inputIdentity
 		Selection archiveSelection
-	}{"artifactgenerator/extract/v1", identities, selection}}
+	}{"artifactgenerator/extract/v1", identities, selection}
+	//nolint:musttag // The fixture MUST match the production identity's untagged JSON names.
+	wantBytes, err := json.Marshal(want)
+	assert.NoError(t, err)
+	gotBytes, err := json.Marshal(composition.Copies[0].ExtractContent(selection.Path, selection.Destination))
+	assert.NoError(t, err)
+	assert.Equal(t, string(gotBytes), string(wantBytes))
 	called := false
-	input, _, id, err := owner.Acquire(
+	composition.Content = "another outer composition with the same extraction"
+	composition.Inputs[0].FS = extractionProbeFS{FS: composition.Inputs[0].FS, opened: &called}
+	input, _, id, err := owner.Compose(
 		t.Context(),
-		key,
+		composition,
 		&cache.Policy{MaxAge: cache.Forever},
-		func(context.Context, cache.ProducerInput) (cache.ProducerResult, error) {
-			called = true
-			return cache.ProducerResult{Descriptor: ocispec.Descriptor{}}, errors.New("unexpected extraction")
-		},
 	)
 	assert.FatalIf(
 		t,
@@ -125,4 +127,19 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 		err,
 		called,
 	)
+}
+
+type extractionProbeFS struct {
+	fs.FS
+
+	opened *bool
+}
+
+func (f extractionProbeFS) Open(string) (fs.File, error) {
+	*f.opened = true
+	return nil, errors.New("unexpected extraction")
+}
+
+func (f extractionProbeFS) Stat(name string) (fs.FileInfo, error) {
+	return fs.Stat(f.FS, name)
 }

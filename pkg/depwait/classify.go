@@ -77,22 +77,26 @@ func (w *Waiter) classify(
 ) (Classification, bool) {
 	id := dep.NamedResource
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
-	if dep.ArtifactOnly && w.sourceAvailable(id) {
+	if dep.ArtifactOnly && !dep.RequiresDeclaration && w.sourceAvailable(id) {
 		return Classification{Kind: schedule.Terminal}, false
 	}
 	obj, info := w.Store.Snapshot(id, hasExpr || w.Materializer)
 	present := obj != nil || info.Status != ""
+	if dep.RequiresDeclaration {
+		present = obj != nil
+	}
+	if dep.RequiresDeclaration && present && dep.ArtifactOnly && w.sourceAvailable(id) {
+		return Classification{Kind: schedule.Terminal}, false
+	}
 	if !w.Materializer && present && !info.Statusful {
 		return w.artifactReady(dep, level), false
 	}
-	ready := false
+	var readiness expressionReadiness
 	if hasExpr {
-		var failMsg string
-		readiness := w.tryReadyExpr(dep, obj, info.Conditions)
-		ready, failMsg = readiness.ready, readiness.failure
-		if failMsg != "" {
-			return failedClassification(id, obj, failMsg, nil), false
-		}
+		readiness = w.tryReadyExpr(dep, obj, info.Conditions)
+	}
+	if readiness.failure != "" {
+		return failedClassification(id, obj, readiness.failure, nil), false
 	}
 	if !present && existence != nil {
 		promoted, err := existence.Promote(ctx, w.Admission, id)
@@ -103,11 +107,11 @@ func (w *Waiter) classify(
 			return Classification{}, true
 		}
 	}
-	if present && ready {
-		return w.artifactReady(dep, level), false
-	}
 	if !present {
 		return w.classifyAbsent(dep, level), false
+	}
+	if readiness.ready {
+		return w.artifactReady(dep, level), false
 	}
 	return w.classifyPresent(dep, obj, &info, level), false
 }
@@ -119,7 +123,7 @@ func (w *Waiter) sourceAvailable(id manifest.NamedResource) bool {
 
 func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.DrainLevel) Classification {
 	id := dep.NamedResource
-	if dep.Artifact {
+	if dep.Artifact && !dep.RequiresDeclaration {
 		if _, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
 			return w.artifactReady(dep, level)
 		}

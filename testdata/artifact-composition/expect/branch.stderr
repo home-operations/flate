@@ -1,0 +1,6 @@
+
+  ⚠ warnings (4)
+    [PathConfig] orig snapshot: no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots
+    [ExternalSource] orig snapshot: Kustomization apps/consumer: external source GitRepository.source.toolkit.fluxcd.io/apps/cluster is outside the local tree; not rendered
+    [PathConfig] current snapshot: no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots
+    [ExternalSource] current snapshot: Kustomization apps/consumer: external source GitRepository.source.toolkit.fluxcd.io/apps/cluster is outside the local tree; not rendered

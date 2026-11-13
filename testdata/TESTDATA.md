@@ -1724,3 +1724,45 @@ Both cases compare complete test and build output twice with fresh caches and tw
 | --- | --- |
 | `declaration-readiness-frontier/frontier-emitted` | A blocked emitted Kustomization does not admit its predicted children. |
 | `declaration-readiness-frontier/frontier-native` | A failed native entry retains its passing peer and direct blockers. |
+
+
+## GitRepository artifact composition
+
+| Case | Behavior |
+| --- | --- |
+| `artifact-composition/independent-diff` | Each diff side uses its own input ref. |
+| `artifact-composition/sops` | Only includes supply the encrypted file and its warning. |
+| `artifact-composition/include-added` | Adding an include changes completed content. |
+| `artifact-composition/include-removed` | Removing an include removes copied content. |
+| `artifact-composition/include-destination` | Destination edits change completed content. |
+| `artifact-composition/include-reordered` | Authored order determines the winning file. |
+| `artifact-composition/shallow-authored-pin` | Shallow history retains the selected input pin. |
+| `artifact-composition/nested-includes` | Input changes propagate through nested includes. |
+| `artifact-composition/filtered-input-change` | Final filtering removes copied content. |
+| `artifact-composition/remote-branch-history` | Remote branch history follows existing resolution. |
+| `artifact-composition/missing-historical-input` | A missing historical declaration fails each diff route. |
+| `artifact-composition/sops-required-secret` | Missing Secret allowance and required failure keep their existing behavior. |
+| `artifact-composition/composed-entry` | Entry preparation reads completed source content. |
+| `artifact-composition/directory-conflict` | Placement into an existing directory fails. |
+| `artifact-composition/outside-copied-path` | Unselected input edits keep rendered consumer bytes equal. |
+
+`artifact-composition` supplies the shared `kubernetes/components/cnpg-common` layout.
+The base contains `db-default-values.yaml` and the component declaration.
+Only explicit file placement supplies `backup-values.yaml` from the included repository.
+All repository URLs use the fixture transport without a network service.
+Commands use concurrency 2 and memory caches.
+Each CLI test compares complete stdout, stderr, and exit status on two runs.
+The expectations follow authored documents, Flux labels, origin annotations, and report formatting.
+No script accepts actual output as an expectation.
+
+The SOPS fixture contains inert encrypted text without a key or usable secret.
+It requires one `SOPSUnreadable` warning with the Secret identity and `VALUE` detail path.
+Its variants retain missing Secret failure, Secret allowance, input-only changes, and a control without includes.
+The separate directory case rejects placement into the existing nonempty component directory.
+
+The diff cases cover both `--base` and `--path-orig`.
+They retain independent input refs, include addition, removal, destination changes, order changes, shallow authored pins, and nested inputs.
+Other cases cover filtered input, an edit outside the copied path, remote branch history, missing historical declarations, and a subdirectory entry.
+A separate consumer exposes accidental execution or output selection.
+SDK tests assert admission, execution membership, completed coordinates, and unchanged original files and modes.
+Persistent history is unnecessary for these cold CLI cases.

@@ -120,15 +120,19 @@ func (r *documentReader) buildClaims(
 		for i := range aliases {
 			aliases[i].Prefix = filepath.ToSlash(filepath.Join(base, aliases[i].Prefix)) + "/"
 		}
+		if view.replace {
+			out[view.index].claims = nil
+		}
 		out[view.index].aliases = aliases
 	}
 	return out
 }
 
 type qualifiedClaim struct {
-	ks    *manifest.Kustomization
-	root  string
-	index int
+	ks      *manifest.Kustomization
+	root    string
+	index   int
+	replace bool
 }
 
 type claimQualification struct {
@@ -160,8 +164,9 @@ func (r *documentReader) qualifyClaims(
 			kss[i] = ks
 		}
 		if root != "" && root != repoRoot {
-			qualified = append(qualified, qualifiedClaim{ks, root, i})
-			if origin := view.origin; origin != "." {
+			replace := filepath.Join(repoRoot, view.origin) == filepath.Clean(root)
+			qualified = append(qualified, qualifiedClaim{ks: ks, root: root, index: i, replace: replace})
+			if origin := view.origin; origin != "." && !replace {
 				c := *ks
 				c.Path = filepath.ToSlash(filepath.Join(origin, base))
 				kss[i] = &c
@@ -261,8 +266,9 @@ func sourceView(
 		if art.LocalPath == repoRoot {
 			return SourceLocation{Path: repoRoot, Pinned: false, External: false}
 		}
-		if art.LocalRoot != "" &&
-			(art.LocalRoot == repoRoot || art.InputAlias && safepath.Contains(repoRoot, art.LocalRoot)) {
+		admitted := art.LocalRoot == repoRoot || art.LocalRoot == art.LocalPath
+		alias := art.InputAlias && safepath.Contains(repoRoot, art.LocalRoot)
+		if art.LocalRoot != "" && (admitted || alias) {
 			// Derived input keys pin selected bootstrap bytes, never authored refs.
 			return SourceLocation{Path: art.LocalPath, Pinned: art.Content != "" && !art.InputAlias, External: false}
 		}
@@ -273,11 +279,16 @@ func sourceView(
 	return SourceLocation{Path: repoRoot, Pinned: false, External: ref.KindInfo().SourceArtifact}
 }
 
-// Input aliases map source-relative readers and claims to their physical origin.
+// Completed source coordinates MUST NOT project copied content onto physical input files.
 func (r *documentReader) localBase(root, repoRoot string) string {
 	dr := *r
 	if origin := dr.artifacts[root].OriginPath(root); origin != root {
 		base, _ := filepath.Rel(repoRoot, origin)
+		return filepath.ToSlash(base)
+	}
+	artifact := dr.artifacts[root]
+	if artifact != nil && artifact.LocalRoot == root && artifact.Content != "" && !artifact.InputAlias {
+		base, _ := filepath.Rel(repoRoot, root)
 		return filepath.ToSlash(base)
 	}
 	return "."

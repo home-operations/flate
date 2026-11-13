@@ -39,6 +39,11 @@ func (d *Session) sourceMaterial(id manifest.NamedResource, selected *store.Sour
 	if selected == nil {
 		return artifact
 	}
+	if facts, ok := d.cfg.Store.GetObject(id).(interface {
+		Composition() manifest.ArtifactComposition
+	}); ok && len(facts.Composition().Includes) != 0 {
+		return artifact
+	}
 	status, _ := d.cfg.Store.GetStatus(id)
 	if status.Status == store.StatusReady &&
 		(artifact.SameMaterial(selected) || artifact.Reads == nil && id != manifest.BootstrapSourceID) {

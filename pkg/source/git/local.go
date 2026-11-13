@@ -169,6 +169,10 @@ func (r *localResolver) committed(
 	if repository.Ignore != nil {
 		ignore = *repository.Ignore
 	}
+	mode := gittree.Source
+	if len(repository.Composition().Includes) != 0 {
+		mode, ignore = gittree.Checkout, ""
+	}
 	work := r.work.Source(repository.Named()).Record(manifest.WorkAcquisition, "")
 	work.Add(&manifest.WorkCounts{Attempts: 1, LocalAcquisitions: 1})
 	input, key, err := gittree.New(
@@ -176,6 +180,7 @@ func (r *localResolver) committed(
 		r.repo.Storer.(*filesystem.Storage).Filesystem(), //nolint:errcheck // The admitted repository uses the filesystem storage selected by discovery.
 		hash,
 		gittree.ViewOptions{
+			Mode:     mode,
 			Location: r.location,
 			Content:  struct{ Root string }{r.root},
 			Sparse:   repository.SparseCheckout,

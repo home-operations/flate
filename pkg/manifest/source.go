@@ -77,7 +77,7 @@ func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepositor
 func (g *GitRepository) Content(ref sourcev1.GitRepositoryRef) any {
 	var auth []NamedResource
 	g.references(func(ref Reference) bool {
-		if ref.Content && ref.Name != "" {
+		if ref.Acquisition && ref.Name != "" {
 			auth = append(auth, ref.NamedResource)
 		}
 		return true

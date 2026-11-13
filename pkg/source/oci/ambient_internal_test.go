@@ -271,7 +271,7 @@ func testFetcherLateProducerInvalidatesAmbientCase(
 	s := store.New()
 	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{})
 	tasks := task.NewBounded(2)
-	c := sourcecontroller.New(s, tasks)
+	c := sourcecontroller.New(s, tasks, f.Cache)
 	c.Fetchers[manifest.KindOCIRepository] = source.Wrap(manifest.KindOCIRepository, f)
 	c.Configure(sourcecontroller.FetchOptions{}, sourcecache.RetryConfig{})
 	c.StartLifecycle()

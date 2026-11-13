@@ -38,6 +38,7 @@ type tarNode struct {
 	offset   int64
 	header   int64
 	sparse   bool
+	explicit bool
 	children []fs.DirEntry
 }
 
@@ -229,6 +230,7 @@ func (a *archiveReader) readEntry(h *tar.Header, header int64) error {
 		offset:   a.position.offset,
 		header:   header,
 		sparse:   sparse,
+		explicit: h.Typeflag == tar.TypeDir,
 	}
 	if h.Typeflag == tar.TypeDir {
 		return a.mountDirectory(name)
@@ -295,7 +297,7 @@ func (a *archiveReader) copyHeader(name string, h *tar.Header, old *tarNode) tar
 			copyHeader.Mode = int64(old.Mode().Perm())
 		}
 	}
-	if a.key.Policy == fixedPolicy && h.Typeflag != tar.TypeDir && h.Mode&0o111 != 0 {
+	if a.key.Policy != extractPolicy && h.Typeflag != tar.TypeDir && h.Mode&0o111 != 0 {
 		copyHeader.Mode = 0o700
 	}
 	copyHeader.ModTime = time.Time{}
@@ -307,7 +309,7 @@ func (a *archiveReader) copyHeader(name string, h *tar.Header, old *tarNode) tar
 }
 
 func (a *archiveReader) mountDirectory(name string) error {
-	if a.builder == nil || a.key.Policy != fixedPolicy && a.key.Policy != extractPolicy {
+	if a.builder == nil {
 		return nil
 	}
 	_, err := fs.Stat(a.builder, name)
@@ -340,11 +342,7 @@ func (a *archiveReader) finish() (*tarFS, error) {
 		return nil, err
 	}
 	a.index.memory = memory
-	if a.key.Policy != fixedPolicy {
-		a.index.nodes = nil
-	} else {
-		a.index.list()
-	}
+	a.index.list()
 	return a.index, nil
 }
 
@@ -362,8 +360,11 @@ func pruneArchive(raw fs.FS, nodes map[string]*tarNode, key ArchiveKey) error {
 	}
 	kept := map[string]bool{".": true}
 	for name, node := range nodes {
-		if name == "." || !node.Mode().IsRegular() && (key.Policy != fixedPolicy || !node.IsDir()) ||
-			matcher.Match(filepath.FromSlash(name), node.IsDir()) {
+		retainDirectory := node.IsDir() && (key.Policy == fixedPolicy || node.explicit)
+		if name == "." || !node.Mode().IsRegular() && !retainDirectory {
+			continue
+		}
+		if matcher.Match(filepath.FromSlash(name), node.IsDir()) {
 			continue
 		}
 		kept[name] = true

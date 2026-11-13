@@ -94,6 +94,7 @@ type objectCell struct {
 	reference            *Declaration
 	policy               manifest.DeclarationPolicy
 	classified, ordinary bool
+	composed             bool
 	static               manifest.BaseManifest
 	document             map[string]any
 	warnings             []manifest.Warning
@@ -286,6 +287,7 @@ type objectUpdate struct {
 	policy                      manifest.DeclarationPolicy
 	document                    map[string]any
 	warnings                    []manifest.Warning
+	composed                    bool
 	explicit                    bool
 	binding                     *Input
 	support                     *Input
@@ -463,6 +465,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 	if !u.staticEqual {
 		u.retainSupport()
 		cell.static, cell.binding, cell.support = u.obj, u.binding, u.support
+		cell.composed = u.composed
 		cell.reconcile, cell.report = u.policy.Reconcile, u.policy.Report
 	}
 	cell.document, cell.warnings = u.document, u.warnings

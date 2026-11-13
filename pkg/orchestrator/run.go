@@ -21,7 +21,8 @@ import (
 type orchestratorExistence struct {
 	*manifest.DiscoveryIndex
 
-	o *Orchestrator
+	o            *Orchestrator
+	construction bool
 }
 
 func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
@@ -47,12 +48,16 @@ func (e *orchestratorExistence) Promote(
 		return e.promoteSelected(ctx, &request, id)
 	}
 	if object := e.o.store.GetObject(id); object != nil {
-		for range selection.Declarations([]store.Child{{Obj: object}}) {
-			return true, nil
-		}
-		return false, nil
+		return promotableDeclaration(object), nil
 	}
 	return e.promoteFull(ctx, &request, id)
+}
+
+func promotableDeclaration(object manifest.BaseManifest) bool {
+	for range selection.Declarations([]store.Child{{Obj: object}}) {
+		return true
+	}
+	return false
 }
 
 func (e *orchestratorExistence) promoteSelected(
@@ -90,7 +95,16 @@ func (e *orchestratorExistence) promoteFull(
 		defer reads.Retire()
 	}
 	request.Reads = reads
+	record, _ := e.o.index.Lookup(id)
+	if record.Declaration != nil && !promotableDeclaration(record.Declaration) {
+		return false, nil
+	}
 	productions := reads.Promotions(id, e.o.index)
+	if e.construction && len(productions) == 0 && record.Path != "" && record.Builder == "" {
+		productions = []manifest.Production{
+			{Path: record.Path, File: record.File, Authored: record.Authored, Source: manifest.BootstrapSourceID},
+		}
+	}
 	for i := range productions {
 		production := &productions[i]
 		children, err := loader.Promote(ctx, e.o.store, id, loader.PromoteOptions{Record: *production, Reads: reads})
@@ -150,6 +164,10 @@ func (e *orchestratorExistence) promoteAdmission(
 		if !reads.Valid() {
 			return false, nil
 		}
+		if e.construction {
+			reads.Admit(child, manifest.BootstrapSourceID, manifest.NamedResource{})
+			return e.o.store.GetDeclaration(id) != nil, nil
+		}
 		request.Generation = slices.Collect(selection.Declarations([]store.Child{child}))
 		if len(request.Generation) == 0 {
 			return false, nil
@@ -177,12 +195,7 @@ func (o *Orchestrator) run(ctx context.Context) error {
 
 // Configure MUST precede dispatch; controllers freeze shaping config on start.
 func (o *Orchestrator) configureControllers() {
-	o.src.Configure(sourcectrl.FetchOptions{
-		Session:             o.selection,
-		Loader:              o.loader,
-		AllowMissingSecrets: o.cfg.allowMissingSecrets,
-		Admission:           o.admission,
-	}, o.cfg.SourceRetry)
+	o.configureSources(false)
 	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
 	common := base.Options{
 		SkipKinds: o.cfg.HelmOptions.SkipKinds,
@@ -412,4 +425,33 @@ func (o *Orchestrator) stop() {
 		o.unsubStatus = nil
 	}
 	o.cfg.StatusListener = nil
+}
+
+func (o *Orchestrator) configureSources(construction bool) {
+	owner := o
+	session := o.selection
+	configuredLoader, index := o.loader, o.loader.Index
+	if construction {
+		owner = &Orchestrator{store: o.store, loader: o.loader, index: o.loader.Index, admission: o.admission}
+		session = nil
+		configuredLoader, index = nil, nil
+	}
+	o.src.Configure(
+		sourcectrl.FetchOptions{
+			Session:             session,
+			Loader:              configuredLoader,
+			AllowMissingSecrets: o.cfg.allowMissingSecrets,
+			Admission:           o.admission,
+		},
+		o.cfg.SourceRetry,
+	)
+	o.src.Controller.Configure(
+		base.Options{
+			Session:   session,
+			Loader:    o.loader,
+			Index:     index,
+			Missing:   o.cfg.missing,
+			Existence: &orchestratorExistence{DiscoveryIndex: o.loader.Index, o: owner, construction: construction},
+		},
+	)
 }

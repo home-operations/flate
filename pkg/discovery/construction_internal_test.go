@@ -15,7 +15,7 @@ import (
 
 func constructTestSources(ctx context.Context, session *Session) error {
 	tasks := task.NewBounded(2)
-	controller := sourcectrl.New(session.cfg.Store, tasks)
+	controller := sourcectrl.New(session.cfg.Store, tasks, session.cfg.Cache)
 	controller.Configure(
 		sourcectrl.FetchOptions{Admission: session.Admission()},
 		cache.RetryConfig{},
@@ -141,7 +141,7 @@ func (d *Session) partitionRootsTest(ctx context.Context) ([]entryRoot, error) {
 func constructAdmissionTest(ctx context.Context, a *Admission, ids ...manifest.NamedResource) error {
 	ids = slices.Compact(slices.SortedFunc(slices.Values(ids), manifest.NamedResource.Compare))
 	tasks := task.NewBounded(2)
-	controller := sourcectrl.New(a.store, tasks)
+	controller := sourcectrl.New(a.store, tasks, nil)
 	controller.Configure(sourcectrl.FetchOptions{Admission: a}, cache.RetryConfig{})
 	failures := make([]error, len(ids))
 	for i, id := range ids {

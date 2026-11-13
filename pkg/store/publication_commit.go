@@ -438,6 +438,11 @@ func (s *Store) commitObjectUpdate(
 	index *manifest.DiscoveryIndex,
 ) publicationResult {
 	u := *update
+	if facts, ok := u.obj.(interface {
+		Composition() manifest.ArtifactComposition
+	}); ok {
+		u.composed = len(facts.Composition().Includes) != 0
+	}
 	sh.mu.Lock()
 	if !u.reads.Valid() || u.binding != nil && !u.binding.sourceCurrent() ||
 		u.support != nil && !u.support.productionCurrent() {

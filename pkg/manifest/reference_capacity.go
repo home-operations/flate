@@ -53,8 +53,8 @@ func (r *ResourceSet) ReferenceCapacity() ReferenceLimits {
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*GitRepository) ReferenceCapacity() ReferenceLimits {
-	return ReferenceLimits{References: gitCredentialCapacity}
+func (g *GitRepository) ReferenceCapacity() ReferenceLimits {
+	return ReferenceLimits{References: gitCredentialCapacity + len(g.Include)}
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.

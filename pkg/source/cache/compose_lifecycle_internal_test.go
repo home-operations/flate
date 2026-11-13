@@ -34,7 +34,8 @@ func TestCompose_PublishedOutputOwnsBacking(t *testing.T) {
 			input := os.DirFS(backing)
 			before := compositionFiles(t, input)
 			output, _, _, err := owner.Compose(t.Context(), Composition{
-				Content: "owned output", Inputs: []CompositionInput{{FS: input, Content: "generation"}},
+				Content: "owned output", Base: CompositionInput{FS: input, Content: "base"},
+				Inputs: []CompositionInput{{FS: input, Content: "generation"}},
 				Copies: []Copy{{From: "nested", To: "."}}, Policy: "fixed",
 			}, &Policy{MaxAge: Forever})
 			assert.NoError(t, err)
@@ -97,7 +98,7 @@ func TestCompose_CancellationDoesNotPublish(t *testing.T) {
 				assert.Equal(t, observed.opens.Load(), int64(0))
 			}
 			assert.Diff(t, compositionFiles(t, files), before)
-			_, _, _, err = owner.Acquire(t.Context(), ArchiveKey{Content: stage, Policy: "fixed"},
+			_, _, _, err = owner.Acquire(t.Context(), request.key(),
 				&Policy{MaxAge: Forever}, unexpectedComposition)
 			assert.Equal(t, err != nil, true)
 		})
@@ -122,6 +123,7 @@ func TestCompose_FailurePreservesOtherGeneration(t *testing.T) {
 			}
 			previous, descriptor, previousKey, err := owner.Compose(t.Context(), request, &Policy{MaxAge: Forever})
 			assert.NoError(t, err)
+			previousArchiveKey := request.key()
 			request.Content = "failed generation"
 			request.Copies = append(request.Copies, Copy{From: "missing", To: "partial"})
 			output, failedDescriptor, key, err := owner.Compose(t.Context(), request, &Policy{MaxAge: Forever})
@@ -144,7 +146,7 @@ func TestCompose_FailurePreservesOtherGeneration(t *testing.T) {
 				map[string]compositionFile{"out": {Data: "complete", Mode: 0o600}},
 			)
 			reused, reusedDescriptor, reusedKey, err := owner.Acquire(t.Context(),
-				ArchiveKey{Content: "stable family", Policy: "fixed"}, &Policy{MaxAge: Forever}, unexpectedComposition)
+				previousArchiveKey, &Policy{MaxAge: Forever}, unexpectedComposition)
 			assert.NoError(t, err)
 			assert.Equal(t, reusedKey, previousKey)
 			assert.Diff(t, reusedDescriptor, descriptor)

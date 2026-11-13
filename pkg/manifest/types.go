@@ -125,6 +125,8 @@ type DependencyRef struct {
 	Artifact bool
 	// ArtifactOnly accepts readable content before readiness and rejects ready sources without it.
 	ArtifactOnly bool
+	// RequiresDeclaration prevents readable stale content from replacing an absent declaration.
+	RequiresDeclaration bool
 	// ChartSource retains chart-source context on acquisition failures and skips.
 	ChartSource bool
 }
@@ -158,7 +160,7 @@ type Reference struct {
 	DependencyRef
 
 	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
-	// certSecretRef, proxySecretRef, inputsFrom, artifact or materializer; empty selects an implicit gate only.
+	// certSecretRef, proxySecretRef, inputsFrom, artifact, include or materializer; empty selects an implicit gate only.
 	Use string
 	// Position indexes the authored field; credentials use secret=0, cert=1, proxy=2.
 	Position int
@@ -246,29 +248,49 @@ func (r Reference) AffectedInput() bool {
 // Concrete dispatch keeps yield out of interface calls so iteration closures stay on the stack.
 func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 	return func(yield func(Reference) bool) {
+		var includes []ArtifactInclude
+		if source, ok := obj.(artifactComposer); ok {
+			includes = source.Composition().Includes
+		}
+		active := true
+		ordinary := yield
+		if len(includes) != 0 {
+			ordinary = func(ref Reference) bool {
+				active = yield(ref)
+				return active
+			}
+		}
 		switch obj := obj.(type) {
 		case *Kustomization:
-			obj.references(yield, view)
+			obj.references(ordinary, view)
 		case *HelmRelease:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *ResourceSet:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *ResourceSetInputProvider:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *HelmChartSource:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *GitRepository:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *OCIRepository:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *HelmRepository:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *Bucket:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *ExternalArtifact:
-			obj.references(yield)
+			obj.references(ordinary)
 		case *RawObject:
-			obj.references(yield)
+			obj.references(ordinary)
+		}
+		if !active {
+			return
+		}
+		for i := range includes {
+			if !yield(includes[i].Reference) {
+				return
+			}
 		}
 	}
 }

@@ -1,0 +1,7 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: input, namespace: apps}
+spec:
+  interval: 1m
+  url: git://input.fixture.invalid/repo
+  ref: {tag: v2}

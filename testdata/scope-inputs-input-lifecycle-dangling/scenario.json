@@ -86,7 +86,7 @@
       "directory": "overlays/input-lifecycle-dangling-after",
       "operations": [
         {
-          "delete": "repo/inputs/patch"
+          "delete": "repo/inputs"
         }
       ]
     }

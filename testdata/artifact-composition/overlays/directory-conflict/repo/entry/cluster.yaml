@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster, namespace: apps}
+spec:
+  interval: 1m
+  url: git://cluster.fixture.invalid/repo
+  include:
+  - repository: {name: input}
+    fromPath: kubernetes/components/cnpg-common
+    toPath: kubernetes/components/cnpg-common

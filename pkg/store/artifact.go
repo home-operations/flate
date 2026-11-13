@@ -243,10 +243,15 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 	artifact := sh.artifacts[id].effective
 	e, emitted := artifact.(*Emission)
 	var view capture
-	if emitted {
+	if emitted || sh.cells[id].composed || len(sh.members[id]) != 0 {
 		sh.captureLocked(id, new(sh.cells[id]), &view)
 	}
 	sh.mu.RUnlock()
+	if view.composed {
+		if source, ok := artifact.(*SourceArtifact); ok && !source.Reads.Valid() {
+			return nil
+		}
+	}
 	if emitted && !emissionCurrent(e, new(view)) {
 		return nil
 	}
@@ -259,7 +264,7 @@ func (sh *shard) projectArtifactLocked(id manifest.NamedResource, view *capture,
 	if sh.cells[id].hidden {
 		return nil
 	}
-	if view.payload != nil {
+	if view.payload != nil && !view.composed {
 		return view.payload
 	}
 	if record.value != nil {
@@ -404,7 +409,10 @@ func (a *SourceArtifact) HistoryIdentity(source manifest.NamedResource) manifest
 		return manifest.SourceIdentity{Root: a.OriginPath(a.LocalPath)}
 	}
 	identity := manifest.SourceIdentity{Kind: a.Kind, URL: a.URL, Key: a.Key}
-	if a.Content == "" {
+	if a.LocalRoot != "" && a.LocalRoot == a.LocalPath {
+		identity.Key = ""
+	}
+	if a.LocalRoot != "" || a.Content == "" {
 		identity.Root = a.OriginPath(a.LocalPath)
 	}
 	return identity

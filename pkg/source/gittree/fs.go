@@ -19,6 +19,7 @@ import (
 	"weak"
 
 	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/osfs"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/cache"
 	"github.com/go-git/go-git/v6/plumbing/filemode"
@@ -42,6 +43,8 @@ const (
 	RemoteBase
 	// Direct admits local files without source-ignore shaping and omits links.
 	Direct
+	// Checkout defers source filtering and retains lexical links within admitted membership.
+	Checkout
 )
 
 // ViewOptions shapes a commit view without changing its object backing.
@@ -250,6 +253,12 @@ func currentTree(input fs.FS) *gitView {
 
 func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, optsValue *ViewOptions) (*FS, error) {
 	opts := *optsValue
+	if current, ok := opts.Current.(*FS); ok && opts.Mode == Checkout {
+		if local, ok := current.view.(*localView); ok {
+			opts.Worktree = osfs.New(local.root, osfs.WithBoundOS())
+			opts.Current = nil
+		}
+	}
 	current := currentTree(opts.Current)
 	native := current != nil
 	combined := &struct {
@@ -402,7 +411,11 @@ func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 		if !fs.ValidPath(name) || strings.ContainsAny(entry.Name(), "/\x00") {
 			return fs.ErrInvalid
 		}
-		mode := entry.Type()
+		info, err := entry.Info()
+		if err != nil {
+			return err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		}
+		mode := info.Mode()
 		if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
 			continue
 		}

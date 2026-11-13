@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+data:
+  value: after
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: backup-values
+  namespace: apps
+---
+apiVersion: v1
+data:
+  value: default
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: consumer
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: db-default-values
+  namespace: apps

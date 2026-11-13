@@ -23,7 +23,7 @@ func runDiscovery(ctx context.Context, cfg discovery.Config) (*discovery.Result,
 		return nil, err
 	}
 	tasks := task.NewBounded(2)
-	controller := sourcectrl.New(cfg.Store, tasks)
+	controller := sourcectrl.New(cfg.Store, tasks, nil)
 	controller.Configure(sourcectrl.FetchOptions{Admission: session.Admission()}, cache.RetryConfig{})
 	for {
 		if err := reconcileConstruction(ctx, session.PendingSources(), controller, tasks); err != nil {
@@ -43,7 +43,7 @@ func constructDiscoveredSource(
 	id manifest.NamedResource,
 ) error {
 	tasks := task.NewBounded(2)
-	controller := sourcectrl.New(st, tasks)
+	controller := sourcectrl.New(st, tasks, nil)
 	controller.Configure(sourcectrl.FetchOptions{Admission: admission}, cache.RetryConfig{})
 	var err error
 	tasks.Go(ctx, "construct source", func(ctx context.Context) { err = controller.Construct(ctx, id) })
@@ -65,7 +65,7 @@ func (panickingConstructionSources) Resolve(
 func TestReconcileConstruction_PanicCannotSucceed(t *testing.T) {
 	t.Parallel()
 	tasks := task.NewBounded(2)
-	controller := sourcectrl.New(store.New(), tasks)
+	controller := sourcectrl.New(store.New(), tasks, nil)
 	controller.Configure(sourcectrl.FetchOptions{Admission: panickingConstructionSources{}}, cache.RetryConfig{})
 	err := reconcileConstruction(t.Context(), []manifest.NamedResource{manifest.BootstrapSourceID}, controller, tasks)
 	assert.ErrorIf(t, err == nil && tasks.Failures() == 0, "%v",
@@ -93,7 +93,7 @@ func TestConstructDiscovery_UnrestrictedPendingSources(t *testing.T) {
 	assert.Diff(t, session.PendingSources(), []manifest.NamedResource{manifest.BootstrapSourceID})
 	assert.Equal(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent), nil)
 	tasks := task.NewBounded(2)
-	controller := sourcectrl.New(st, tasks)
+	controller := sourcectrl.New(st, tasks, nil)
 	controller.Configure(sourcectrl.FetchOptions{Admission: session.Admission()}, cache.RetryConfig{})
 	o := &Orchestrator{store: st, loader: l, selection: full, session: session, src: controller, tasks: tasks}
 	result, err := o.constructDiscovery(t.Context())

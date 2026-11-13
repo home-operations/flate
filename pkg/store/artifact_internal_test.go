@@ -117,7 +117,7 @@ func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
 func TestSourceArtifact_HistoryIdentity(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "content"}
-	for _, mode := range []string{"generation", "alias", "foreign", "unavailable", "stale"} {
+	for _, mode := range []string{"generation", "alias", "foreign", "unavailable", "stale", "composed", "distinct composition", "local pin"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			testSourceArtifactHistoryIdentityCase(t, &testSourceArtifactHistoryIdentityCaseInputs{id: &id, mode: &mode})
@@ -174,6 +174,17 @@ func testSourceArtifactHistoryIdentityCase(t *testing.T, testCaseInput *testSour
 	}
 	next := *input
 	next.Content, next.LocalPath = "after", "/other-snapshot"
+	if *testCaseInput.mode == "composed" || *testCaseInput.mode == "distinct composition" {
+		input.LocalRoot, input.LocalPath = "/sources/content", "/sources/content"
+		next.LocalRoot, next.LocalPath, next.Key = input.LocalRoot, input.LocalPath, "new-input-generation"
+		if *testCaseInput.mode == "distinct composition" {
+			next.LocalRoot, next.LocalPath = "/sources/other", "/sources/other"
+		}
+	}
+	if *testCaseInput.mode == "local pin" {
+		input.LocalRoot, next.LocalRoot = "/origin", "/origin"
+		next.Key = "other-pin"
+	}
 	if (*testCaseInput.mode) == "alias" {
 		input.InputAlias, next.InputAlias = true, true
 		input.LocalRoot, next.LocalRoot = "/origin", "/origin"
@@ -199,7 +210,7 @@ func testSourceArtifactHistoryIdentityCase(t *testing.T, testCaseInput *testSour
 	assert.Equal(
 		t,
 		identity == input.HistoryIdentity((*testCaseInput.id)),
-		(*testCaseInput.mode) == "generation" || (*testCaseInput.mode) == "alias",
+		(*testCaseInput.mode) == "generation" || (*testCaseInput.mode) == "alias" || *testCaseInput.mode == "composed",
 	)
 	assert.Equal(
 		t,

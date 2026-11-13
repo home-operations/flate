@@ -194,7 +194,33 @@ func (s *scenario) assertCasePackages(t *testing.T, dir string, c *Case, observa
 		if i == 0 || c.Steps[i-1].Edit != nil {
 			codes = stateExitCodes(c.Steps[i:])
 		}
+		f.observeCommittedPackages(t, dir, step.Invoke, observation)
 		f.assertMaterializedPackages(t, files, observation, codes)
+	}
+}
+
+func (f *Fixture) observeCommittedPackages(
+	t *testing.T,
+	dir string,
+	invocation *Invocation,
+	observation *packageObservation,
+) {
+	t.Helper()
+	// Committed inputs MUST contribute coverage even when the working tree selects another revision.
+	for name, origins := range f.commitOrigins {
+		token := "@@commit:" + name + "@@"
+		if !slices.ContainsFunc(invocation.Argv, func(arg string) bool { return strings.Contains(arg, token) }) {
+			continue
+		}
+		for _, source := range origins {
+			rel, err := filepath.Rel(dir, source)
+			must(t, err)
+			name := filepath.ToSlash(rel)
+			observation.files[name] = true
+			if slices.Contains(konfig.RecognizedKustomizationFileNames(), filepath.Base(name)) {
+				observation.packages[name] = true
+			}
+		}
 	}
 }
 

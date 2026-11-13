@@ -287,7 +287,7 @@ func newConfiguredController(
 		st = opts.Loader.Store
 	}
 	ts := task.NewBounded(2)
-	c := New(st, ts)
+	c := New(st, ts, nil)
 	maps.Copy(c.Fetchers, fetchers)
 	c.Configure(opts, sourcecache.RetryConfig{Attempts: 3})
 	c.StartLifecycle()
@@ -810,7 +810,7 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 
 	st := store.New()
 	tasks := task.NewBounded(2)
-	c := New(st, tasks)
+	c := New(st, tasks, nil)
 	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 	c.Fetchers[manifest.KindGitRepository] = f
 	filterLoader, _ := admissiontest.New(

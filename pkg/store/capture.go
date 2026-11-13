@@ -94,10 +94,9 @@ type productionCapture struct {
 }
 
 type readinessGate struct {
-	expr                                *string
-	artifact, artifactOnly, chartSource bool
-	materializer                        bool
-	next                                *readinessGate
+	ref          manifest.DependencyRef
+	materializer bool
+	next         *readinessGate
 }
 
 // Gate retains a readiness expression and its dependency purpose.
@@ -251,21 +250,24 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 		registration.link()
 	}
 	sh.mu.RUnlock()
+	if id == r.id && view.composed && view.payload != nil {
+		r.sample(id, view.payloadOwner, view.payloadRecord, true)
+		r.activateProducers()
+	}
 	if registration.head == nil {
 		r.activate(input, objectFacet, view.generation)
 	}
 	input.view, input.derived = view, input.derived|capturedObject
-	if id == r.id && r.originHead == nil && registration.absent == nil {
+	if id == r.id && r.originHead == nil && registration.absent == nil && registration.head != nil {
 		r.originHead = registration.head
-		if r.originHead != nil {
-			for i := range r.expected {
-				r.expected[i] = r.originHead.assessments[i].Load()
-			}
+		for i := range r.expected {
+			r.expected[i] = r.originHead.assessments[i].Load()
 		}
 	}
 	r.captureSourceAuthorities(&view)
 	input.view.record = nil
 	input.view.payloadInput = nil
+	input.view.payloadRecord = nil
 	return input.view.child.Obj
 }
 
@@ -341,30 +343,12 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 	details := r.details(input)
 	var acquisition uint64
 	captured := input.derived&capturedArtifact != 0
-	if input.derived&capturedArtifact == 0 {
+	if !captured {
 		r.Capture(input)
 		if input.object.head == nil {
 			return r.store.GetArtifact(id, read)
 		}
-		sh := r.store.shardFor(id)
-		sh.mu.RLock()
-		record := sh.artifacts[id]
-		if !sh.cells[id].hidden {
-			details.artifact = record.effective
-		}
-		acquisition = record.acquisitionHead.generation
-		details.artifactGenerations = [3]uint64{
-			record.generation,
-			record.revisionHead.generation,
-			record.originHead.generation,
-		}
-		sh.mu.RUnlock()
-		if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, new(input.view)) {
-			details.artifact = nil
-		}
-		if source, ok := details.artifact.(*SourceArtifact); ok {
-			details.sourceGuard = source.Reads
-		}
+		acquisition = r.captureArtifact(input, details)
 	}
 	if source, ok := details.artifact.(*SourceArtifact); ok && id != r.id && !source.Reads.Valid() {
 		if captured {
@@ -373,8 +357,13 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 			r.observe(input, acquisitionFacet, acquisition)
 		}
 		details.artifact = nil
+		details.sourceGuard = nil
 	}
 	input.derived |= capturedArtifact
+	if id == r.id && input.view.composed {
+		details.artifactRead |= read
+		return details.artifact
+	}
 	added := read &^ details.artifactRead
 	details.artifactRead |= read
 	for i := range 3 {
@@ -387,6 +376,37 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 		r.bindAuthority(input, contentFacet, originFacet)
 	}
 	return details.artifact
+}
+
+func (r *ReadSet) captureArtifact(input *Input, details *inputDetails) uint64 {
+	id := input.Ref.NamedResource
+	if id == r.id && input.view.composed {
+		if input.view.payload != nil {
+			details.artifact = input.view.payload
+			details.sourceGuard = input.view.payload.Reads
+		}
+		return 0
+	}
+	sh := r.store.shardFor(id)
+	sh.mu.RLock()
+	record := sh.artifacts[id]
+	if !sh.cells[id].hidden {
+		details.artifact = record.effective
+	}
+	acquisition := record.acquisitionHead.generation
+	details.artifactGenerations = [3]uint64{
+		record.generation,
+		record.revisionHead.generation,
+		record.originHead.generation,
+	}
+	sh.mu.RUnlock()
+	if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, new(input.view)) {
+		details.artifact = nil
+	}
+	if source, ok := details.artifact.(*SourceArtifact); ok {
+		details.sourceGuard = source.Reads
+	}
+	return acquisition
 }
 
 // Productions captures all contributors and discovery evidence for a named input.
@@ -640,23 +660,25 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 		classified: child.SourceSupport != (manifest.NamedResource{}), warnings: child.Warnings,
 	}
 	id := child.Obj.Named()
+	refresh := false
 	for input := r.inputs; input != nil; input = input.next {
-		if input.Ref.NamedResource == id && input.object.head != nil && input.view.declaration() == nil {
+		switch {
+		case input.Ref.NamedResource == id && input.object.head != nil && input.view.declaration() == nil:
 			update.target = &input.object
-		}
-		if input.Ref.NamedResource == (manifest.NamedResource{Group: id.Group, Kind: id.Kind}) {
+			refresh = input.gate
+		case input.Ref.NamedResource == (manifest.NamedResource{Group: id.Group, Kind: id.Kind}):
 			update.collection = input.cell(bucketFacet)
+		case input.Ref.NamedResource == (manifest.NamedResource{}):
+			details := input.details.Load()
+			if details != nil && details.inventory != nil {
+				update.inventory = &details.inventory[kindShardIndex(id.Kind)]
+			}
 		}
-		if input.Ref.NamedResource != (manifest.NamedResource{}) {
-			continue
-		}
-		details := input.details.Load()
-		if details == nil || details.inventory == nil {
-			continue
-		}
-		update.inventory = &details.inventory[kindShardIndex(id.Kind)]
 	}
 	r.store.addObject(&update)
+	if refresh && update.target.consumed.Load() {
+		r.invalid.Store(true)
+	}
 }
 
 // Raw admission MUST retain authority without retaining the proposal's other inputs.

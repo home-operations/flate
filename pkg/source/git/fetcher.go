@@ -253,11 +253,13 @@ func (f *Fetcher) fetch(
 	if ref.Pinned() {
 		policy.MaxAge = sourcecache.Forever
 	}
-	ignore := ""
+	viewOptions := gittree.ViewOptions{Content: content, Sparse: repo.SparseCheckout}
 	if repo.Ignore != nil {
-		ignore = *repo.Ignore
+		viewOptions.Ignore = *repo.Ignore
 	}
-	viewOptions := gittree.ViewOptions{Content: content, Sparse: repo.SparseCheckout, Ignore: ignore}
+	if len(repo.Composition().Includes) != 0 {
+		viewOptions.Mode, viewOptions.Ignore = gittree.Checkout, ""
+	}
 	policy.Timeout = new(repo.OperationTimeout())
 	var input *gittree.FS
 	var identity string
@@ -330,7 +332,6 @@ func (f *Fetcher) fetch(
 			)
 	}
 
-	warnings := gitWarnings(input, repo.Named(), repo.URL, refLabel)
 	return &store.SourceArtifact{
 		Kind:     manifest.KindGitRepository,
 		URL:      repo.URL,
@@ -338,7 +339,7 @@ func (f *Fetcher) fetch(
 		FS:       input,
 		Key:      id,
 		Content:  identity,
-		Warnings: warnings,
+		Warnings: gitWarnings(input, repo.Named(), repo.URL, refLabel),
 	}, nil
 }
 

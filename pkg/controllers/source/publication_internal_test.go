@@ -42,7 +42,7 @@ func TestAdmission_PublicationPreservesLateAuthority(t *testing.T) {
 					}
 					reads := aliasRequestReads(t, st, id)
 					tasks := task.NewBounded(2)
-					controller := New(st, tasks)
+					controller := New(st, tasks, nil)
 					controller.Configure(FetchOptions{Admission: result.Admission}, cache.RetryConfig{})
 					entered, release := make(chan struct{}), make(chan struct{})
 					var blocked atomic.Bool

@@ -40,7 +40,7 @@ func TestAdmission_SelfSourceConstructionAndRuntime(t *testing.T) {
 	assert.NoError(t, err)
 	t.Cleanup(result.Close)
 	tasks := task.NewBounded(2)
-	controller := New(st, tasks)
+	controller := New(st, tasks, nil)
 	controller.Configure(FetchOptions{Admission: result.Admission}, cache.RetryConfig{})
 	fetcher := &fakeFetcher{err: errors.New("self source attempted remote acquisition")}
 	controller.Fetchers = map[string]src.Fetcher{manifest.KindGitRepository: fetcher}
@@ -116,7 +116,7 @@ func TestAdmission_PublishCompletesAcceptedRecord(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, material != nil, true)
 	tasks := task.NewBounded(2)
-	controller := New(st, tasks)
+	controller := New(st, tasks, nil)
 	controller.Configure(FetchOptions{Admission: result.Admission}, cache.RetryConfig{})
 	var constructionErr error
 	tasks.Go(

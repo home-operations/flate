@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: required-output, namespace: apps}
+data: {value: plain}

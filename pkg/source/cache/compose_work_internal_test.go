@@ -31,6 +31,7 @@ func TestCompose_ImmutableInputsCoalesce(t *testing.T) {
 		}}
 		request := Composition{
 			Content: "shared composition", Inputs: []CompositionInput{{FS: input, Content: "immutable"}},
+			Base:   CompositionInput{FS: fstest.MapFS{}, Content: "immutable base"},
 			Copies: []Copy{{From: "file", To: "out"}}, Policy: "fixed",
 		}
 		var work [2]manifest.WorkRecorder
@@ -191,9 +192,12 @@ func TestCompose_ExtractionWorkAndPolicy(t *testing.T) {
 	assert.Diff(t, compositionFiles(t, output), map[string]compositionFile{
 		"out": {Mode: fs.ModeDir | 0o750}, "out/member": {Data: "archive", Mode: 0o700},
 	})
+	e := composition{request: request}
+	plan, err := e.prepareCopy(&request.Copies[0])
+	assert.NoError(t, err)
 	_, _, nestedKey, err := owner.Acquire(
 		t.Context(),
-		ArchiveKey{Content: nestedFacts, Policy: "extract"},
+		plan.extractionKey("archive.tgz"),
 		&Policy{MaxAge: Forever},
 		unexpectedComposition,
 	)

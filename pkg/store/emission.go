@@ -250,6 +250,7 @@ func (b *sourceBinding) equal(other *sourceBinding) bool {
 }
 
 type admission struct {
+	composed         bool
 	independent      bool
 	changed          bool
 	objectChanged    bool

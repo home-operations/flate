@@ -1,0 +1,2 @@
+resources: [owner.yaml]
+components: [../../components/cnpg-common]

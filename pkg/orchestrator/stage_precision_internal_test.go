@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -309,7 +310,7 @@ func stagePrecisionRun(t *testing.T, trees []Tree, cacheDir string, run int) sta
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(previous)
-	runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2, CacheDir: cacheDir})
+	runs, err := renderTreesForTest(t.Context(), t, trees, Config{Concurrency: 2, CacheDir: cacheDir})
 	assert.NoError(t, err)
 	assert.Equal(t, len(runs), 2)
 	for _, result := range runs {
@@ -365,7 +366,7 @@ func stagePrecisionFull(t *testing.T, trees []Tree) []byte {
 	t.Helper()
 	full := make([]Rendered, len(trees))
 	for side, tree := range trees {
-		runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{Concurrency: 2, CacheDir: t.TempDir()})
 		assert.NoError(t, err)
 		full[side] = runs[0]
 	}
@@ -374,27 +375,31 @@ func stagePrecisionFull(t *testing.T, trees []Tree) []byte {
 
 func stagePrecisionDiff(t *testing.T, runs []Rendered) []byte {
 	t.Helper()
-	selected, selectedErr, err := Select(
+	projectedResults0, projectionErrors0 := Select(
 		runs,
 		nil,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 		nil,
 	)
+	selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.NoError(t, err)
-	body, warnings, suppressed, err := diff.Compare(
-		diff.Snapshot{
-			Subjects:     selected[0].Subjects,
-			Manifests:    selected[0].Manifests,
-			ProducerKeys: selected[0].ProducerKeys,
-			Unavailable:  selected[0].Unavailable,
-		},
-		diff.Snapshot{
-			Subjects:     selected[1].Subjects,
-			Manifests:    selected[1].Manifests,
-			ProducerKeys: selected[1].ProducerKeys,
-			Unavailable:  selected[1].Unavailable,
-		},
-		selectedErr, diff.Options{Format: diff.FormatJSON})
+	comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+		Subjects:     selected[0].Subjects,
+		Manifests:    selected[0].Manifests,
+		ProducerKeys: selected[0].ProducerKeys,
+		Unavailable:  selected[0].Unavailable,
+	}, Current: diff.Snapshot{
+		Subjects:     selected[1].Subjects,
+		Manifests:    selected[1].Manifests,
+		ProducerKeys: selected[1].ProducerKeys,
+		Unavailable:  selected[1].Unavailable,
+	}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+	var comparisonOutput1 bytes.Buffer
+	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+	body, warnings, suppressed, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+		preparationErr1,
+		writeErr1,
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(warnings), 0)
 	assert.Equal(t, len(suppressed), 0)

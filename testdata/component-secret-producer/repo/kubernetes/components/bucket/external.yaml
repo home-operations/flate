@@ -1,0 +1,8 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: "${BUCKET}"}
+spec:
+  target: {name: "${BUCKET}"}
+  data:
+    - secretKey: VALUE
+      remoteRef: {key: bucket}

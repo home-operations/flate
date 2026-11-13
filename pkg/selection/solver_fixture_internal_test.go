@@ -1,0 +1,322 @@
+package selection
+
+import (
+	"context"
+	"path"
+	"path/filepath"
+	"testing"
+
+	_ "github.com/home-operations/flate/internal/kustomize"
+	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
+)
+
+type solverMissingPolicy struct {
+	allowed bool
+}
+
+func (p *solverMissingPolicy) Admission(ref *manifest.Reference, input *store.ReferenceFacts) InputAdmission {
+	if !ref.NamedResource.KindInfo().Data {
+		if p.AllowsKind(ref.Kind) || ref.Optional {
+			return OptionalInput
+		}
+		return RequiredInput
+	}
+	result, err := values.Classify(ref, input)
+	if err == nil {
+		switch result.State() {
+		case values.Readable, values.Encrypted, values.MissingKey:
+			return AvailableInput
+		case values.Absent, values.Produced:
+			if result.AdmitMissing(p) || result.State() == values.Produced {
+				return OptionalInput
+			}
+		}
+	}
+	return RequiredInput
+}
+
+func (p *solverMissingPolicy) AllowsKind(string) bool { return p != nil && p.allowed }
+
+//nolint:gocritic // Test requests keep independent snapshots.
+func (s *Session) prepareTest(ctx context.Context, request PrepareRequest) (*Admission, error) {
+	if request.Missing == nil {
+		request.Missing = (*solverMissingPolicy)(nil)
+	}
+	return s.Prepare(ctx, request)
+}
+
+//nolint:gocritic // Test requests keep independent snapshots.
+func (s *Session) refreshHistoryTest(
+	ctx context.Context,
+	previous *AdmissionResult,
+	request PrepareRequest,
+) (*Admission, error) {
+	if request.Missing == nil {
+		request.Missing = (*solverMissingPolicy)(nil)
+	}
+	return s.refreshHistory(ctx, previous, request)
+}
+
+//nolint:gocritic // Test requests keep independent snapshots.
+func (s *Session) admitTest(ctx context.Context, options AdmissionOptions) (AdmissionResult, bool, error) {
+	if options.Request.Missing == nil {
+		options.Request.Missing = (*solverMissingPolicy)(nil)
+	}
+	return s.Admit(ctx, options)
+}
+
+type solverFacts struct {
+	store        *store.Store
+	reader       admissionReader
+	context      SourceContext
+	changes      *change.Set
+	index        manifest.DiscoveryIndex
+	candidates   map[manifest.NamedResource]store.Child
+	occurrences  map[manifest.NamedResource]OccurrenceFacts
+	roots        map[manifest.NamedResource]RootEvidence
+	producers    map[manifest.BaseManifest]ProducerFacts
+	sources      map[manifest.NamedResource]SourceFacts
+	inputs       map[manifest.NamedResource]*store.SourceArtifact
+	declarations map[manifest.NamedResource]manifest.BaseManifest
+}
+
+func (f *solverFacts) SelectionIndex() *manifest.DiscoveryIndex { return &f.index }
+func (f *solverFacts) Occurrence(id manifest.NamedResource) (OccurrenceFacts, bool) {
+	occurrence, ok := f.occurrences[id]
+	return occurrence, ok
+}
+
+func (f *solverFacts) AdmissionCandidate(id manifest.NamedResource) store.Child {
+	return f.candidates[id]
+}
+
+//nolint:gocritic // The fixture MUST retain the census result signature.
+func (f *solverFacts) ResolveRoot(
+	_ context.Context,
+	_ *store.ReadSet,
+	_ manifest.NamedResource,
+	root string,
+) (string, bool, error) {
+	return path.Clean(root), true, nil
+}
+
+func (f *solverFacts) OccurrenceObject(
+	_ context.Context,
+	occurrence *OccurrenceFacts,
+	_ *store.SourceArtifact,
+) (store.Child, error) {
+	child := f.candidates[occurrence.Identity]
+	if child.Obj == nil && f.store != nil {
+		child.Obj = f.store.GetDeclaration(occurrence.Identity)
+	}
+	return child, nil
+}
+
+//nolint:gocritic // The fixture implements the census method exactly.
+func (f *solverFacts) OccurrenceRoots(id manifest.NamedResource) (manifest.NamedResource, []string) {
+	occurrence, known := f.occurrences[id]
+	if !known || !occurrence.CatalogKnown || len(occurrence.Roots) == 0 {
+		return manifest.NamedResource{}, nil
+	}
+	source, _, _ := occurrence.SourcePath()
+	return source, occurrence.Roots
+}
+
+func (f *solverFacts) PreparedObject(id manifest.NamedResource, _ *store.ReadSet) (store.Child, bool) {
+	return f.roots[id].BuiltChild, f.roots[id].BuiltCurrent
+}
+
+func (f *solverFacts) RootEvidence(id manifest.NamedResource, _ *store.ReadSet, _ bool) RootEvidence {
+	return f.roots[id]
+}
+
+func (f *solverFacts) ProducerFacts(obj manifest.BaseManifest) ProducerFacts {
+	if facts, known := f.producers[obj]; known {
+		return facts
+	}
+	source, objectPath, hasPath := obj.SourcePath()
+	return ProducerFacts{
+		Declaration: obj,
+		Occurrence: OccurrenceFacts{
+			Identity: obj.Named(),
+			Authored: obj.Named(),
+			Object:   obj,
+			Catalog:  obj,
+			Source:   source,
+			Path:     objectPath,
+			HasPath:  hasPath,
+		},
+	}
+}
+
+func (f *solverFacts) SourceFacts(id manifest.NamedResource, reads *store.ReadSet) SourceFacts {
+	facts := f.sources[id]
+	facts.Comparison = f.changes
+	if f.store == nil {
+		return facts
+	}
+	facts.Context, facts.Source = f.context, id
+	facts.Changes, facts.Snapshots, facts.Declarations = f.changes.ForSource(id)
+	facts.Delta, facts.Files = facts.Changes, sourceFilesForTest(facts.Changes.Paths())
+	facts.Origin, facts.ToIndex = f.context.Root, "."
+	var objects interface {
+		GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
+		GetObject(manifest.NamedResource) manifest.BaseManifest
+	} = f.store
+	if reads != nil {
+		objects = reads
+	}
+	if f.reader != nil {
+		objects = f.reader
+	}
+	facts.Input, _ = objects.GetArtifact(id, store.ArtifactContent|store.ArtifactRevision).(*store.SourceArtifact)
+	facts.Declaration = objects.GetObject(id)
+	if facts.Path == "" {
+		if facts.Input != nil {
+			facts.Path = facts.Input.LocalPath
+		} else {
+			facts.Path = f.context.Root
+		}
+	}
+	if facts.Input != nil {
+		facts.Origin = facts.Input.OriginPath(facts.Input.LocalPath)
+		facts.ToIndex, _ = filepath.Rel(f.context.Root, facts.Origin)
+	}
+	if reads != nil {
+		previous, known := f.inputs[id]
+		facts.Derived = !known || previous != facts.Input || f.declarations[id] != facts.Declaration
+		if f.inputs == nil {
+			f.inputs = make(map[manifest.NamedResource]*store.SourceArtifact)
+			f.declarations = make(map[manifest.NamedResource]manifest.BaseManifest)
+		}
+		f.inputs[id], f.declarations[id] = facts.Input, facts.Declaration
+	}
+
+	return facts
+}
+
+func newSolverSession(t *testing.T, st *store.Store, changes *change.Set, request Request) *Session {
+	t.Helper()
+	facts := &solverFacts{store: st, changes: changes}
+	if input, ok := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok {
+		facts.context.Root = input.LocalPath
+	}
+	session, err := New(st, facts, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
+func solverClosure(t *testing.T, st *store.Store, facts *solverFacts) admissionClosure {
+	t.Helper()
+	session, err := New(st, facts, Request{Changed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return admissionClosure{
+		session: session, decision: session.Snapshot(), facts: facts, objects: st, missing: (*solverMissingPolicy)(nil),
+		states: map[manifest.NamedResource]admissionState{}, proposal: new(Admission),
+	}
+}
+
+//nolint:gocritic // Each proposal MUST retain an independent immutable request snapshot.
+func prepareSolver(ctx context.Context, t *testing.T, session *Session, request PrepareRequest) (*Admission, error) {
+	t.Helper()
+	if request.Preparation == nil {
+		var preparation *Preparation
+		request.Preparation = &preparation
+		t.Cleanup(func() { preparation.Retire() })
+	}
+	proposal, err := session.prepareTest(ctx, request)
+	for err == nil && len(proposal.demands) != 0 {
+		acquired := make([]Acquisition, 0, len(proposal.demands))
+		for i := range proposal.demands {
+			demand := proposal.demands[i]
+			child := solverChild(session, demand.Identity)
+			acquired = append(
+				acquired,
+				Acquisition{Demand: demand, Child: child, Available: child.Obj != nil, Reads: demand.Reads},
+			)
+		}
+		request = proposal.Request
+		request.Acquired = acquired
+		next, nextErr := session.prepareTest(ctx, request)
+		proposal.Retire()
+		proposal, err = next, nextErr
+	}
+	return proposal, err
+}
+
+func (s *Session) commitSolver(
+	ctx context.Context,
+	t *testing.T,
+	proposal *Admission,
+	stage CommitStage,
+) (AdmissionResult, bool, error) {
+	t.Helper()
+	request := proposal.Request
+	proposal.Retire()
+	return s.admitTest(ctx, AdmissionOptions{Request: request, Stage: stage})
+}
+
+func evaluateSolver(t *testing.T, c *admissionClosure, request *PrepareRequest) (*Admission, error) {
+	t.Helper()
+	facts := c.facts.(*solverFacts)
+	c.context, c.changes = facts.context, facts.changes
+	request.Changes = facts.changes
+	if request.Missing == nil {
+		request.Missing = c.missing
+	}
+	c.missing = request.Missing
+	if len(request.Generation) == 0 {
+		request.Generation = c.generation
+	}
+	c.generation, c.owner, c.history = request.Generation, request.Owner, request.History
+	preparation := &Preparation{closure: *c}
+	var reads store.ReadSet
+	reads.Init(c.session.store, manifest.NamedResource{}, nil)
+	t.Cleanup(reads.Retire)
+	for {
+		c.decision = c.session.Snapshot()
+		c.proposal = &Admission{Request: *request, reads: &reads, preparation: preparation}
+		c.proposal.Revision = c.session.Snapshot().version()
+		c.resetDemand()
+		proposal, err := c.evaluate(t.Context(), request)
+		if err != nil || len(proposal.demands) == 0 {
+			return proposal, err
+		}
+		acquired := make([]Acquisition, 0, len(proposal.demands))
+		for i := range proposal.demands {
+			demand := proposal.demands[i]
+			child := facts.candidates[demand.Identity]
+			if child.Obj == nil {
+				child.Obj = c.session.store.GetDeclaration(demand.Identity)
+			}
+			acquired = append(
+				acquired,
+				Acquisition{Demand: demand, Child: child, Available: child.Obj != nil, Reads: &reads},
+			)
+		}
+		preparation.acceptAcquired(acquired)
+	}
+}
+
+func solverChild(session *Session, id manifest.NamedResource) store.Child {
+	child := store.Child{Obj: session.store.GetDeclaration(id)}
+	if child.Obj == nil {
+		child = session.facts.(*solverFacts).candidates[id]
+	}
+	return child
+}
+
+func sourceFilesForTest(paths []string) []SourceFile {
+	files := make([]SourceFile, len(paths))
+	for i, file := range paths {
+		files[i] = SourceFile{Path: file, Indexed: file}
+	}
+	return files
+}

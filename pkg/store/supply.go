@@ -26,7 +26,7 @@ func (s *Store) AddDeclaration(child Declaration) {
 		s.AddWarning(warning)
 	}
 	if child.Origin == manifest.RepositoryDeclaration {
-		s.AddObject(child.Obj, child.Doc)
+		s.addObject(&objectUpdate{obj: child.Obj, document: child.Doc, explicit: true, warnings: child.Warnings})
 		return
 	}
 	id := child.Obj.Named()
@@ -38,8 +38,10 @@ func (s *Store) AddDeclaration(child Declaration) {
 		cell.reference.Obj == child.Obj &&
 		cell.reference.InputPath == child.InputPath &&
 		cell.reference.Ordinal == child.Ordinal {
-		sh.mu.Unlock()
-		return
+		if warningsEqual(cell.reference.Warnings, child.Warnings) {
+			sh.mu.Unlock()
+			return
+		}
 	}
 	bucket := sh.byName[kindID{id.Group, id.Kind}]
 	sh.requireCapacityLocked(cell.authority, bucket.authority)
@@ -123,7 +125,7 @@ func (r *ReadSet) Lookup(id manifest.NamedResource) (manifest.BaseManifest, mani
 	input := r.input(id)
 	obj := r.Capture(input)
 	if obj == nil {
-		return nil, input.view.child.Policy(id)
+		return nil, input.view.child.input().Policy(id)
 	}
 	return obj, input.view.child.policy
 }

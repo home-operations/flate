@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -69,8 +71,10 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	configJSON := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, credentials)
 	cache := cachetest.New(t, "", sourcecache.New)
 	var network source.Network
-	ociFetcherInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": configJSON}}
+	ociFetcherInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{StringData: map[string]any{".dockerconfigjson": configJSON}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	ociFetcher := &Fetcher{
 		Cache: cache, Network: &network,
@@ -141,7 +145,9 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	initialKey := got.Key
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, configPath, configJSON)
-	fallbackFetcherInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
+	fallbackFetcherInputs := testInputs{
+		secrets: func(_, _ string) store.ReferenceFacts { return store.ReferenceFacts{} },
+	}
 	fallbackFetcher := &Fetcher{Cache: cache, Network: &network, RegistryConfig: configPath}
 	fallbackChartsInputs := testInputs{
 		secrets: fallbackFetcherInputs.secrets,

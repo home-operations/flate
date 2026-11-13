@@ -5,8 +5,8 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -29,16 +29,21 @@ func TestAdmission_OwnUnreadableInput(t *testing.T) {
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection = manifest.Selection{
+
+	configureSelection(t, l, selection.Request{
 		Roots: []manifest.NamedResource{
 			{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "app"},
 		},
-	}
+	})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	found := false
 	for _, child := range proposal.Objects {

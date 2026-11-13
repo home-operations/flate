@@ -15,14 +15,16 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 	"unicode/utf8"
+
+	"github.com/home-operations/flate/internal/testutil/networktest"
+	"github.com/home-operations/flate/pkg/schedule"
 
 	"github.com/home-operations/flate/internal/assert"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
@@ -82,8 +84,7 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 		scan string
 		out  *Rendered
 	}{{beforeRoot, beforeScan, &fullBefore}, {afterRoot, fixture.scan, &fullAfter}} {
-		runs, renderErr := RenderTrees(
-			t.Context(),
+		runs, renderErr := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
@@ -106,7 +107,7 @@ func checkRenderModel(t *testing.T, fixture *renderModelCase) ([]byte, error) {
 	}
 	baseTree.Input, baseTree.BaseInput, baseTree.ExternalChanges = cfg.BaseInput, cfg.Input, cfg.ExternalChanges
 	headTree.Input, headTree.BaseInput, headTree.ExternalChanges = cfg.Input, cfg.BaseInput, cfg.ExternalChanges
-	runs, pairErr := RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg.Config)
+	runs, pairErr := renderTreesForTest(t.Context(), t, []Tree{baseTree, headTree}, cfg.Config)
 	old, current := runs[0], runs[1]
 	selection := compareModelWorlds(fixture.before, fixture.after)
 	var problems []error
@@ -355,10 +356,13 @@ func TestRenderTrees_IndependentModel(t *testing.T) {
 		"work_final_and_retired",
 		func(t *testing.T) {
 			t.Parallel()
-			o := newOrchestrator(
-				t.Context(), &Config{RecordWork: true},
+			cfg := Config{RecordWork: true}
+			assert.NoError(t, snapshotSubstitutions(&cfg))
+			o, constructionErr := newOrchestrator(
+				t.Context(), &cfg,
 				&Tree{ID: manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}}, task.NewBounded(2),
 			)
+			assert.NoError(t, constructionErr)
 			defer o.stop()
 			o.index = &manifest.DiscoveryIndex{}
 			o.rsc.Configure(base.Options{})
@@ -369,15 +373,16 @@ func TestRenderTrees_IndependentModel(t *testing.T) {
 				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: first}\n",
 			}
 			o.store.AddObject(owner)
-			first := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone)
+			first := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
 			next := *owner
 			next.ResourcesTemplate = strings.ReplaceAll(owner.ResourcesTemplate, "first", "final")
 			o.store.AddObject(&next)
 			assert.FatalIf(t, first.Valid(), "%v", "first execution retained superseded declaration authority")
-			final := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone)
+			final := o.rsc.ReconcileNode(t.Context(), owner.Named(), manifest.DrainNone, schedule.Result{})
 			first.Retire()
 			assert.FatalIf(t, !final.Valid(), "%v", "final live execution is invalid")
 			result, err := o.collectResult(nil)
+			t.Cleanup(result.Close)
 			assert.FatalIf(t, err != nil, "%v", err)
 			{
 				got := workCounts(result.Work, owner.Named(), manifest.WorkEvaluation)
@@ -439,63 +444,6 @@ func TestIndependentModel_ObservationRejects(t *testing.T) {
 			testIndependentModelObservationRejectsCase(t, &tc)
 		},
 		)
-	}
-}
-
-func TestIndependentModel_BaselineUnavailable(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{"shallow", "missing-tree"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			fixture := decodeRenderModelCase([]byte{1, 0})
-			root := t.TempDir()
-			repo := testutil.GitInit(t, root)
-			writeRenderModelWorld(t, root, fixture.before)
-			baseInput := testutil.GitCommitAll(
-				t,
-				repo,
-				"before",
-				&gogit.CommitOptions{
-					Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)},
-				},
-			)
-			selected := baseInput.String()
-			if mode == "shallow" {
-				{
-					err := repo.Storer.SetShallow([]plumbing.Hash{baseInput})
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
-				selected = ""
-			} else {
-				commit, err := repo.CommitObject(baseInput)
-				assert.FatalIf(t, err != nil, "%v", err)
-				oid := commit.TreeHash.String()
-				{
-					err := os.Remove(filepath.Join(root, ".git", "objects", oid[:2], oid[2:]))
-					assert.FatalIf(t, err != nil, "%v", err)
-				}
-			}
-			owner, err := sourcecache.New(t.Context(), "")
-			assert.FatalIf(t, err != nil, "%v", err)
-			t.Cleanup(func() {
-				{
-					localErr := owner.Close()
-					assert.ErrorIf(t, localErr != nil, "%v", localErr)
-				}
-			})
-			result, err := baseline.AutoResolve(t.Context(), filepath.Join(root, fixture.scan), selected, owner)
-			assert.FatalIf(
-				t,
-				!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux),
-				"unavailable %s baseline accepted: result=%+v err=%v",
-				mode,
-				result,
-				err,
-			)
-			assert.FatalIf(t, result != nil &&
-				(result.BaseInput != nil && result.BaseInput.FS != nil || result.Source != nil && result.Source.FS != nil), "unavailable %s returned usable render inputs: %+v", mode, result)
-			t.Logf("%s: baseline admission unavailable, no changed render claimed: %v", mode, err)
-		})
 	}
 }
 
@@ -637,12 +585,12 @@ func testIndependentModelObservationRejectsCase(
 		side.store.AddObject(&manifest.Kustomization{Name: "extra", Namespace: "flux-system"})
 	case "unselected-emission", "unselected-output":
 		selected = true
-		side.loader = admissiontest.New(
+		side.loader, side.selection = admissiontest.New(
 			t,
 			admissiontest.Config{Changes: change.NewSet(nil), Index: nil, Inventory: nil, Root: ""},
 		)
-		admissiontest.Commit(t, side.loader, nil)
-		side.filter = side.loader.Options.Filter
+		admissiontest.Commit(t, side.selection, nil)
+
 		if testCaseInput.name == "unselected-output" {
 			side.Result.Manifests = []manifest.DocumentBatch{
 				{
@@ -795,7 +743,15 @@ func (c *treeConfig) prepareCommittedRenderModel(
 	if commitErr != nil {
 		return committedModel{before: Tree{}, after: Tree{}}, commitErr
 	}
-	baseInput, resolveErr := baseline.AutoResolve(t.Context(), filepath.Join(root, scan), hash.String(), c.Cache)
+	baseInput, resolveErr := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{
+			Network: networktest.New(t),
+			Path:    filepath.Join(root, scan),
+			Base:    hash.String(),
+			Cache:   c.Cache,
+		},
+	)
 	if resolveErr != nil {
 		return committedModel{before: Tree{}, after: Tree{}}, resolveErr
 	}

@@ -1,9 +1,11 @@
 package loader
 
 import (
+	"iter"
 	"path/filepath"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -21,19 +23,22 @@ type scopeConstruction struct {
 	inputs        []scopeInput
 	complete      bool
 	inactive      bool
-	visits        map[string][]graphVisit
+	visits        map[string][]scopeVisit
 	contributions []scopeContribution
 	claims        []manifest.KSClaim
 	roots         []string
+	rootFacts     []selection.NativeRootFacts
+	traversalWork map[string]*manifest.WorkRecord
 }
 
 type scopeInput struct {
-	owner       *manifest.Kustomization
-	source      int
-	published   bool
-	active      bool
-	ownerClaims ownerClaims
-	derived     bool
+	owner        *manifest.Kustomization
+	source       int
+	scanRequired bool
+	published    bool
+	active       bool
+	ownerClaims  ownerClaims
+	derived      bool
 }
 
 type sourceState struct {
@@ -41,6 +46,11 @@ type sourceState struct {
 	object   manifest.BaseManifest
 	artifact *store.SourceArtifact
 	repoRoot string
+}
+
+func (s *sourceState) matches(other *sourceState) bool {
+	return s.id == other.id && s.object == other.object && s.repoRoot == other.repoRoot &&
+		s.artifact.SameMaterial(other.artifact)
 }
 
 type sourceScope struct {
@@ -60,7 +70,7 @@ func (l *Loader) scopeSource(stateArg *sourceState) int {
 	state := *stateArg
 
 	for i := range l.scopes.sources {
-		if l.scopes.sources[i].sourceState == state {
+		if l.scopes.sources[i].sourceState.matches(&state) {
 			return i
 		}
 	}
@@ -83,7 +93,7 @@ func (l *Loader) ensureScopes() {
 		l.scopes = &scopeConstruction{
 			walks:   map[graphContext]scopeTraversal{},
 			scanned: map[string]manifest.DocumentRole{},
-			visits:  map[string][]graphVisit{},
+			visits:  map[string][]scopeVisit{},
 		}
 		l.scopes.sources = l.scopes.sourceBuf[:0]
 	}
@@ -116,9 +126,9 @@ func (l *Loader) prepareClaimInputs(repoRoot string, kss []store.Child) {
 		child := &kss[i]
 		//nolint:errcheck // Kustomization-only inputs must panic on an invalid object type.
 		ks := child.Obj.(*manifest.Kustomization)
-		view := l.scopeSource(new(l.sourceState(ks.SourceID(), repoRoot)))
+		view := l.scopeSource(new(l.sourceState(ks.EffectiveSourceID(), repoRoot)))
 		published := l.Store.GetObject(ks.Named()) != nil
-		input := scopeInput{owner: ks, source: view, published: published}
+		input := scopeInput{owner: ks, source: view, scanRequired: ks.SourceRef.Name != "", published: published}
 		for len(previous) != 0 && previous[0].owner.Named().Compare(ks.Named()) < 0 {
 			previous = previous[1:]
 		}
@@ -185,7 +195,7 @@ func (l *Loader) scopesMatch(kss []store.Child, repoRoot string) bool {
 		view := l.scopes.sources[input.source]
 		ref := view.id
 		if i == 0 || ref != previous {
-			if l.sourceState(ref, repoRoot) != view.sourceState {
+			if !view.sourceState.matches(new(l.sourceState(ref, repoRoot))) {
 				return false
 			}
 			previous = ref
@@ -203,10 +213,33 @@ func (l *Loader) publishScopeClaims(repoRoot string) {
 	}
 	l.scopes.claims, _ = l.claimView(repoRoot, func(input scopeInput) bool {
 		view := l.scopes.sources[input.source]
-		return repoRoot == "" || view.id.Name == "" || view.ready
+		return repoRoot == "" || !input.scanRequired || view.ready
 	})
 	l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
 	for _, claim := range l.scopes.claims {
 		l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
+	}
+}
+
+// Scope references MUST borrow physical visits without retaining owner-specific copies.
+type scopeVisit struct{ contribution, visit int }
+
+func (s *scopeConstruction) fileVisits(file string) iter.Seq[graphVisit] {
+	return func(yield func(graphVisit) bool) {
+		for _, ref := range s.visits[file] {
+			c := &s.contributions[ref.contribution]
+			v := c.visits[ref.visit]
+			if v.file != file && v.localFile != file {
+				continue
+			}
+			v.owner, v.source, v.input = c.owner, c.source, c.input
+			v.membershipOnly = c.membershipOnly
+			if c.membershipOnly {
+				v.owner, v.deferMaterialization = manifest.NamedResource{}, false
+			}
+			if !yield(v) {
+				return
+			}
+		}
 	}
 }

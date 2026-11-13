@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,13 +11,13 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -82,43 +84,6 @@ func TestSelect_EntryDocuments(t *testing.T) {
 	)
 }
 
-func TestSelect_EntryBatchSubjects(t *testing.T) {
-	t.Parallel()
-	run := selectedRun(nil)
-	entry := manifest.NewEntryKustomization(
-		manifest.BootstrapSourceID,
-		"clusters/test",
-		testutil.KustomizationID("apps", "captured"),
-	)
-	replacement := manifest.NewEntryKustomization(
-		manifest.BootstrapSourceID,
-		"clusters/test",
-		testutil.KustomizationID("apps", "replacement"),
-	)
-	ordinary := &manifest.Kustomization{Name: "ordinary", Namespace: "apps"}
-	run.store.AddObject(replacement)
-	run.store.AddObject(ordinary)
-	side := selectionSide{run: run, result: &selection.Selection{
-		Objects: []manifest.BaseManifest{ordinary},
-		Manifests: []manifest.DocumentBatch{
-			{Parent: entry},
-			{Parent: ordinary},
-			{},
-		},
-	}}
-	side.prepareSubjects()
-	assert.Diff(t, side.result.Subjects, map[manifest.NamedResource]manifest.DiagnosticIdentity{
-		entry.Named(): {
-			ID:       entry.Named(),
-			Resource: testutil.KustomizationID("apps", "captured"),
-			Path:     "clusters/test",
-		},
-	})
-	assert.Equal(t, side.result.Manifests[0].Parent, manifest.BaseManifest(entry))
-	assert.Equal(t, side.result.Manifests[1].Parent, manifest.BaseManifest(ordinary))
-	assert.Equal(t, side.result.Manifests[2].Parent, nil)
-}
-
 func publishEntryForTest(run Rendered, docs []map[string]any) {
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 	run.store.AddObject(entry)
@@ -155,7 +120,7 @@ func TestSelect_SyntheticFailureContext(t *testing.T) {
 	for _, owner := range []manifest.NamedResource{{}, testutil.KustomizationID("flux-system", "sync"), {Group: "fluxcd.controlplane.io", Kind: "FluxInstance", Namespace: "flux-system", Name: "flux"}} {
 		t.Run(owner.String(), func(t *testing.T) {
 			t.Parallel()
-			run := selectedRun(&Result{})
+			run := selectedRun(t, &Result{})
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner)
 			authored := &manifest.Kustomization{Name: "entry", Namespace: "apps"}
 			run.store.AddObject(entry)
@@ -164,12 +129,13 @@ func TestSelect_SyntheticFailureContext(t *testing.T) {
 			run.store.UpdateFailure(authored.Named(), manifest.NewError(manifest.ErrInput, nil, "authored failure"))
 			run.Result.Failed = run.store.FailedResources()
 			run.Err = run.aggregateFailures(run.Result.Failed)
-			selected, err, _ := Select(
+			projectedResults0, projectionErrors0 := Select(
 				[]Rendered{run},
 				run.Err,
 				[]manifest.NamedResource{testutil.KustomizationID("", "")},
 				nil,
 			)
+			selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.FatalIf(t, err == nil || strings.Contains(err.Error(), entry.Named().String()) ||
 				!strings.Contains(err.Error(), `entry path "clusters/test"`) ||
 				!strings.Contains(err.Error(), authored.Named().String()), "selected diagnostic=%v", err)
@@ -194,7 +160,7 @@ func testSelectEntryDocumentsCase(t *testing.T, testCaseInput *struct {
 ) {
 	t.Helper()
 
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", testCaseInput.owner)
 	run.store.AddObject(entry)
 	run.store.UpdateStatus(entry.Named(), store.StatusInfo{Status: store.StatusReady})
@@ -203,12 +169,13 @@ func testSelectEntryDocumentsCase(t *testing.T, testCaseInput *struct {
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}},
 	}
 	run.Result.Manifests = []manifest.DocumentBatch{{Parent: entry, Documents: docs}}
-	selected, err, remainder := Select(
+	projectedResults1, projectionErrors1 := Select(
 		[]Rendered{run},
 		nil,
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	selected, err, remainder := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 	assert.NoError(t, err)
 	assert.NoError(t, remainder)
 	res := selected[0]
@@ -240,7 +207,7 @@ func testSelectEntryDocumentsCase2(t *testing.T, testCaseInput *struct {
 ) {
 	t.Helper()
 
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	ks := &manifest.Kustomization{
 		Name:      "driver-ks",
 		Namespace: "apps",
@@ -284,8 +251,9 @@ func testSelectEntryDocumentsCase2(t *testing.T, testCaseInput *struct {
 		)
 		run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 	}
-	run.Result.Manifests = run.collectManifests()
-	selected, err, _ := Select([]Rendered{run}, nil, testCaseInput.roots, testCaseInput.labels)
+	run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
+	projectedResults2, projectionErrors2 := Select([]Rendered{run}, nil, testCaseInput.roots, testCaseInput.labels)
+	selected, err, _ := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 	assert.NoError(t, err)
 	res := selected[0]
 	assert.Equal(t, len(res.Objects), testCaseInput.objects)
@@ -306,7 +274,7 @@ func testSelectEntryDocumentsCase3(t *testing.T, testCaseInput *bool,
 
 	runs := make([]Rendered, 0, 2)
 	for side := range 2 {
-		run := selectedRun(&Result{})
+		run := selectedRun(t, &Result{})
 		run.ID.Side = manifest.TreeSide(side)
 		parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
 		if side == 1 && !(*testCaseInput) {
@@ -335,30 +303,27 @@ func testSelectEntryDocumentsCase3(t *testing.T, testCaseInput *bool,
 			},
 			nil,
 		)
-		run.filter = change.NewFilter()
 		selected := []manifest.NamedResource{anchor.Named()}
 		if side == 1 {
 			selected = []manifest.NamedResource{release.Named()}
 		}
-		_, retry := run.filter.AddEmitted(
-			change.MembershipUpdate{
-				Needed:   []manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()},
-				Selected: selected,
-				Dirty:    nil,
-				Ordinary: []manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()},
-			},
-			0,
+		retry := prepareSelectionForTest(
+			t,
+			&run,
+			[]manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()},
+			selected,
 		)
 		assert.Equal(t, retry, false)
-		run.Result.Manifests = run.collectManifests()
+		run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
 		runs = append(runs, run)
 	}
-	selected, err, _ := Select(
+	projectedResults3, projectionErrors3 := Select(
 		runs,
 		nil,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 		nil,
 	)
+	selected, err, _ := projectedResults3, projectionErrors3.Selected, projectionErrors3.Remaining
 	assert.NoError(t, err)
 	snapshots := [2]diff.Snapshot{}
 	for i, side := range selected {
@@ -368,7 +333,16 @@ func testSelectEntryDocumentsCase3(t *testing.T, testCaseInput *bool,
 			ProducerKeys: side.ProducerKeys,
 		}
 	}
-	body, _, _, err := diff.Compare(snapshots[0], snapshots[1], nil, diff.Options{Format: diff.FormatJSON})
+	comparison1, preparationErr1 := diff.Compare(
+		[]diff.Group{{Orig: snapshots[0], Current: snapshots[1], SelectedErr: nil}},
+		diff.Options{Format: diff.FormatJSON},
+	)
+	var comparisonOutput1 bytes.Buffer
+	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+	body, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+		preparationErr1,
+		writeErr1,
+	)
 	assert.NoError(t, err)
 	var output struct {
 		Changes []json.RawMessage `json:"changes"`
@@ -391,7 +365,7 @@ func testSelectEntryDocumentsFailedAndSkippedDeclarations(t *testing.T) {
 	} {
 		t.Run(outcome.Message, func(t *testing.T) {
 			t.Parallel()
-			run := selectedRun(&Result{})
+			run := selectedRun(t, &Result{})
 			ks := &manifest.Kustomization{Name: "actual", Namespace: "apps"}
 			run.store.AddObject(ks)
 			run.store.UpdateStatus(ks.Named(), outcome)
@@ -405,17 +379,18 @@ func testSelectEntryDocumentsFailedAndSkippedDeclarations(t *testing.T) {
 					},
 				},
 			)
-			run.Result.Manifests = run.collectManifests()
+			run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
 			run.Result.Failed = run.store.FailedResources()
 			if outcome.Status == store.StatusFailed {
-				run.Err = &FailuresError{Message: outcome.Message}
+				run.Err = &selection.FailuresError{Message: outcome.Message}
 			}
-			selected, err, _ := Select(
+			projectedResults4, projectionErrors4 := Select(
 				[]Rendered{run},
 				run.Err,
 				[]manifest.NamedResource{testutil.KustomizationID("", "")},
 				nil,
 			)
+			selected, err, _ := projectedResults4, projectionErrors4.Selected, projectionErrors4.Remaining
 			assert.FatalIf(
 				t,
 				(err != nil) != (outcome.Status == store.StatusFailed),
@@ -432,7 +407,7 @@ func testSelectEntryDocumentsFailedAndSkippedDeclarations(t *testing.T) {
 func testSelectEntryDocumentsWinningEmissionsRetainDriverDescendants(t *testing.T) {
 	t.Helper()
 
-	run := selectedRun(&Result{})
+	run := selectedRun(t, &Result{})
 	ks := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 	hr := &manifest.HelmRelease{Name: "actual", Namespace: "apps"}
 	run.store.AddObject(ks)
@@ -474,13 +449,14 @@ func testSelectEntryDocumentsWinningEmissionsRetainDriverDescendants(t *testing.
 	for _, obj := range []manifest.BaseManifest{ks, hr} {
 		run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
 	}
-	run.Result.Manifests = run.collectManifests()
-	selected, err, _ := Select(
+	run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
+	projectedResults5, projectionErrors5 := Select(
 		[]Rendered{run},
 		nil,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 		nil,
 	)
+	selected, err, _ := projectedResults5, projectionErrors5.Selected, projectionErrors5.Remaining
 	assert.NoError(t, err)
 	counts := map[string]int{}
 	for _, batch := range selected[0].Manifests {
@@ -493,7 +469,8 @@ func testSelectEntryDocumentsWinningEmissionsRetainDriverDescendants(t *testing.
 		}
 	}
 	assert.Diff(t, counts, map[string]int{"actual": 1, "shared": 1, "descendant": 1})
-	selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{hr.Named()}, nil)
+	projectedResults6, projectionErrors6 := Select([]Rendered{run}, nil, []manifest.NamedResource{hr.Named()}, nil)
+	selected, err, _ = projectedResults6, projectionErrors6.Selected, projectionErrors6.Remaining
 	assert.NoError(t, err)
 	assert.FatalIf(t, len(selected[0].Manifests) != 1 ||
 		manifest.DocIdentity(
@@ -507,18 +484,9 @@ func testSelectEntryDocumentsProofOnlyBatch(t *testing.T) {
 	for _, namespace := range []string{"", "apps"} {
 		t.Run("namespace="+namespace, func(t *testing.T) {
 			t.Parallel()
-			run := selectedRun(&Result{})
-			run.filter = change.NewFilter()
+			run := selectedRun(t, &Result{})
 			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
-			_, retry := run.filter.AddEmitted(
-				change.MembershipUpdate{
-					Needed:   []manifest.NamedResource{entry.Named()},
-					Selected: nil,
-					Dirty:    nil,
-					Ordinary: []manifest.NamedResource{entry.Named()},
-				},
-				0,
-			)
+			retry := prepareSelectionForTest(t, &run, []manifest.NamedResource{entry.Named()}, nil)
 			assert.Equal(t, retry, false)
 			doc := map[string]any{
 				"apiVersion": "v1",
@@ -526,14 +494,15 @@ func testSelectEntryDocumentsProofOnlyBatch(t *testing.T) {
 				"metadata":   map[string]any{"name": "unselected", "namespace": namespace},
 			}
 			publishEntryForTest(run, []map[string]any{doc})
-			run.Result.Manifests = run.collectManifests()
+			run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
 			assert.Equal(t, len(run.Result.Manifests), 1)
-			selected, err, _ := Select(
+			projectedResults7, projectionErrors7 := Select(
 				[]Rendered{run},
 				nil,
 				[]manifest.NamedResource{testutil.KustomizationID("", "")},
 				nil,
 			)
+			selected, err, _ := projectedResults7, projectionErrors7.Selected, projectionErrors7.Remaining
 			assert.NoError(t, err)
 			assert.Equal(t, len(selected[0].Manifests), 0)
 		})
@@ -545,7 +514,7 @@ func testSelectEntryDocumentsChangedOnlyBothSides(t *testing.T) {
 
 	runs := make([]Rendered, 0, 2)
 	for _, name := range []string{"removed", "added"} {
-		run := selectedRun(&Result{})
+		run := selectedRun(t, &Result{})
 		doc := map[string]any{
 			"apiVersion": "v1",
 			"kind":       manifest.KindConfigMap,
@@ -571,7 +540,7 @@ func testSelectEntryDocumentsChangedOnlyBothSides(t *testing.T) {
 				"kustomization.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}},
 			},
 		}
-		run.loader = admissiontest.New(
+		run.loader, run.selection = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet([]string{"kustomization.yaml"}),
@@ -580,17 +549,18 @@ func testSelectEntryDocumentsChangedOnlyBothSides(t *testing.T) {
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, run.loader, nil)
-		run.filter = run.loader.Options.Filter
-		run.Result.Manifests = run.collectManifests()
+		admissiontest.Commit(t, run.selection, nil)
+
+		run.Result.Manifests, run.Result.emissions = run.collectCompletedManifests()
 		runs = append(runs, run)
 	}
-	selected, err, _ := Select(
+	projectedResults8, projectionErrors8 := Select(
 		runs,
 		nil,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 		nil,
 	)
+	selected, err, _ := projectedResults8, projectionErrors8.Selected, projectionErrors8.Remaining
 	assert.NoError(t, err)
 	for i, name := range []string{"removed", "added"} {
 		assert.FatalIf(t, len(selected[i].Manifests) != 1 || len(selected[i].Manifests[0].Documents) != 2 ||
@@ -618,7 +588,7 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 	t.Helper()
 
 	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
-	runs := []Rendered{selectedRun(&Result{}), selectedRun(&Result{})}
+	runs := []Rendered{selectedRun(t, &Result{}), selectedRun(t, &Result{})}
 	for i, name := range *testCaseInput.names {
 		obj := entry.Clone()
 		if name != "" {
@@ -669,7 +639,13 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 	if *testCaseInput.reverse {
 		slices.Reverse(runs)
 	}
-	selected, _, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+	projectedResults9, projectionErrors9 := Select(
+		runs,
+		nil,
+		[]manifest.NamedResource{testutil.KustomizationID("", "")},
+		nil,
+	)
+	selected, _, _ := projectedResults9, projectionErrors9.Selected, projectionErrors9.Remaining
 	failed := 1
 	if *testCaseInput.reverse {
 		failed = 0
@@ -689,7 +665,16 @@ func testEntryCorrespondenceCase(t *testing.T, testCaseInput testEntryCorrespond
 		Unavailable:  selected[1].Unavailable,
 		ProducerKeys: selected[1].ProducerKeys,
 	}
-	output, _, notes, err := diff.Compare(left, right, nil, diff.Options{Format: diff.FormatJSON})
+	comparison2, preparationErr2 := diff.Compare(
+		[]diff.Group{{Orig: left, Current: right, SelectedErr: nil}},
+		diff.Options{Format: diff.FormatJSON},
+	)
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	output, _, notes, err := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
+	)
 	assert.NoError(t, err)
 	assert.FatalIf(
 		t,

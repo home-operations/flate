@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/safepath"
 )
 
@@ -45,37 +45,49 @@ func walkBucket(
 	client *minio.Client,
 	b *manifest.Bucket,
 	w bucketOutput,
-) (ocispec.Descriptor, error) {
+) (cache.ProducerResult, error) {
 	var entries []minio.ObjectInfo
 	for obj := range client.ListObjects(ctx, b.BucketName, minio.ListObjectsOptions{Prefix: b.Prefix, Recursive: true}) {
 		if obj.Err != nil {
-			return ocispec.Descriptor{}, bucketResponseError(obj.Err)
+			return cache.ProducerResult{}, bucketResponseError(obj.Err)
 		}
 		entries = append(entries, obj)
 	}
 	slices.SortFunc(entries, func(a, b minio.ObjectInfo) int { return cmp.Compare(a.Key, b.Key) })
 	names := make([]string, 0, len(entries))
-	h := sha256.New()
+	pairs := make([][2]string, 0, len(entries))
+	allETags := true
 	for i := range entries {
 		e := &entries[i]
 		name, err := bucketEntryName(e, b.Prefix)
-		if err != nil {
-			return ocispec.Descriptor{}, err
-		}
-		if name == "" {
+		switch {
+		case err != nil:
+			return cache.ProducerResult{}, err
+		case name == "":
 			continue
 		}
 		entries[len(names)] = *e
 		names = append(names, name)
-		_, _ = fmt.Fprintf(h, "%s %s\n", e.Key, e.ETag)
+		allETags = allETags && e.ETag != ""
+		pairs = append(pairs, [2]string{e.Key, e.ETag})
 	}
 	entries = entries[:len(names)]
+	result := cache.ProducerResult{Annotations: map[string]string{
+		"flate.revision":     "sha256:" + manifest.Fingerprint(pairs),
+		"flate.object-count": strconv.Itoa(len(entries)),
+	}}
+	result.Unchanged = allETags && w.previous != nil &&
+		w.previous.Annotations["flate.revision"] == result.Annotations["flate.revision"] &&
+		w.previous.Annotations["flate.object-count"] == result.Annotations["flate.object-count"]
+	if result.Unchanged {
+		return result, nil
+	}
 	ranges := true
-	if i := slices.IndexFunc(entries, func(e minio.ObjectInfo) bool { return e.Size > chunkBytes }); i >= 0 {
+	if i := slices.IndexFunc(entries, func(e minio.ObjectInfo) bool { return bucketRangeEligible(&e) }); i >= 0 {
 		probe := &bucketChunk{work: w.work, object: &entries[i], size: 1}
 		body, header, err := probe.get(ctx, client, b.BucketName)
 		if err != nil {
-			return ocispec.Descriptor{}, err
+			return cache.ProducerResult{}, err
 		}
 		_ = body.Close()
 		ranges = header.Get("Content-Range") != ""
@@ -102,12 +114,9 @@ func walkBucket(
 		return nil
 	})
 	if err := g.Wait(); err != nil {
-		return ocispec.Descriptor{}, err //nolint:wrapcheck // Bucket diagnostics must retain the producer error message and HTTP failure classification.
+		return cache.ProducerResult{}, err //nolint:wrapcheck // Bucket diagnostics must retain the producer error message and HTTP failure classification.
 	}
-	return ocispec.Descriptor{Annotations: map[string]string{
-		"flate.revision":     fmt.Sprintf("sha256:%x", h.Sum(nil)),
-		"flate.object-count": strconv.Itoa(len(entries)),
-	}}, nil
+	return result, nil
 }
 
 func (c *bucketChunk) weight() int64 { return min(c.size, chunkBytes) }
@@ -118,8 +127,10 @@ func (c *bucketChunk) get(
 	bucket string,
 ) (io.ReadCloser, http.Header, error) {
 	opts := minio.GetObjectOptions{}
-	if err := opts.SetMatchETag(c.object.ETag); err != nil {
-		return nil, nil, fmt.Errorf("set bucket object etag condition: %w", err)
+	if c.object.ETag != "" {
+		if err := opts.SetMatchETag(c.object.ETag); err != nil {
+			return nil, nil, fmt.Errorf("set bucket object etag condition: %w", err)
+		}
 	}
 	if c.size < c.object.Size {
 		_ = opts.SetRange(c.start, c.start+c.size-1)
@@ -242,11 +253,13 @@ func bucketEntryName(e *minio.ObjectInfo, prefix string) (string, error) {
 	return name, nil
 }
 
+func bucketRangeEligible(e *minio.ObjectInfo) bool { return e.Size > chunkBytes && e.ETag != "" }
+
 func bucketChunks(entries []minio.ObjectInfo, names []string, work *manifest.WorkRecord, ranges bool) []*bucketChunk {
 	var chunks []*bucketChunk
 	for i := range entries {
 		step := chunkBytes
-		if !ranges {
+		if !ranges || !bucketRangeEligible(&entries[i]) {
 			step = max(int64(1), entries[i].Size)
 		}
 		for start := int64(0); start == 0 || start < entries[i].Size; start += step {
@@ -287,5 +300,6 @@ func writeBucketChunks(ctx context.Context, tw *tar.Writer, chunks []*bucketChun
 type bucketOutput struct {
 	io.Writer
 
-	work *manifest.WorkRecord
+	work     *manifest.WorkRecord
+	previous *ocispec.Descriptor
 }

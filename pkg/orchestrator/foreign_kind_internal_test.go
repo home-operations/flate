@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -46,8 +48,7 @@ spec:
     namespace: seaweedfs
 `)
 
-	renderedSingleton1, err := RenderTrees(
-		context.Background(),
+	renderedSingleton1, err := renderTreesForTest(context.Background(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{},
 	)
@@ -134,7 +135,7 @@ spec:
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		_, err := o.render(context.Background())
+		_, err := o.render(context.Background(), t)
 		assert.FatalIf(t, err == nil, "%v", "expected the unreachable Flux Bucket's fetch to fail")
 	}
 	id := manifest.NamedResource{
@@ -171,7 +172,12 @@ func testOrchestratorForeignBucketKindNotFetchedCase(
 		Namespace:  "flux-system",
 	}
 	(*testCaseInput.o).store.AddObject(foreign)
-	result := (dagDispatcher{(*testCaseInput.o)}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
+	result := (dagDispatcher{(*testCaseInput.o)}).Dispatch(
+		t.Context(),
+		foreign.Named(),
+		manifest.DrainNone,
+		schedule.Result{},
+	)
 	{
 		_, hasStatus := (*testCaseInput.o).store.GetStatus(foreign.Named())
 		assert.FatalIf(
@@ -184,7 +190,7 @@ func testOrchestratorForeignBucketKindNotFetchedCase(
 		foreign.Named(),
 		store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "foreign status"},
 	)
-	(dagDispatcher{(*testCaseInput.o)}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone)
+	(dagDispatcher{(*testCaseInput.o)}).Dispatch(t.Context(), foreign.Named(), manifest.DrainNone, schedule.Result{})
 	{
 		info, _ := (*testCaseInput.o).store.GetStatus(
 			foreign.Named(),

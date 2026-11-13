@@ -73,7 +73,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 				Namespace: "apps",
 				Name:      "app-api",
 			}
-			assert.FatalIf(t, !o.filter.ShouldReconcile(producer), "%v", "prediction owner not selected")
+			assert.FatalIf(t, !o.selection.Snapshot().Reconcile(producer), "%v", "prediction owner not selected")
 			info := controllertest.DispatchToFixpoint(
 				t.Context(),
 				t,
@@ -99,7 +99,12 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 					store.ArtifactContent,
 				) != nil, "source-qualified prediction supplied content or disappeared: %+v", facts)
 
-			reader := d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.DrainNone).Assessment
+			reader := d.Dispatch(
+				t.Context(),
+				testutil.KustomizationID("apps", "reader"),
+				manifest.DrainNone,
+				schedule.Result{},
+			).Assessment
 			defer reader.Close()
 			assert.FatalIf(
 				t,
@@ -108,7 +113,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 				reader.Outcome(),
 				reader.(*base.Execution).Blocked,
 				o.store.FailedResources(),
-				o.filter.ShouldReconcile(testutil.KustomizationID("apps", "reader")),
+				o.selection.Snapshot().Reconcile(testutil.KustomizationID("apps", "reader")),
 			)
 		})
 	}
@@ -144,7 +149,7 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 				}
 				f.o.index.Claims = map[string][]manifest.NamedResource{"reader/": {reader}}
 				f.o.store.SetDiscoveryIndex(f.o.index)
-				f.o.loader = admissiontest.New(
+				f.o.loader, f.o.selection = admissiontest.New(
 					t,
 					admissiontest.Config{
 						Changes:   change.NewSet([]string{"reader/output.yaml"}),
@@ -153,11 +158,11 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 						Root:      "",
 					},
 				)
-				admissiontest.Commit(t, f.o.loader, nil)
-				f.o.filter = f.o.loader.Options.Filter
+				admissiontest.Commit(t, f.o.selection, nil)
+
 				assert.FatalIf(
 					t,
-					!f.o.filter.ShouldReconcile(reader) || !f.o.filter.ShouldReconcile(f.supplier),
+					!f.o.selection.Snapshot().Reconcile(reader) || !f.o.selection.Snapshot().Reconcile(f.supplier),
 					"%v",
 					"changed-only selection lost optional materializer",
 				)
@@ -175,7 +180,8 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 					},
 				)
 			}
-			selected, err, _ := Select(runs, nil, []manifest.NamedResource{reader}, nil)
+			projectedResults0, projectionErrors0 := Select(runs, nil, []manifest.NamedResource{reader}, nil)
+			selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.NoError(t, err)
 			assert.Equal(t, len(selected), 2)
 			for side, want := range []string{"fallback", "exact"} {
@@ -213,7 +219,7 @@ func testResolveOptionalForceCutInvalidationCase(
 
 	f := newR4Fixture(t, (*testCaseInput.kind), "data", false)
 	f.o.configureControllers()
-	prior := (dagDispatcher{f.o}).Dispatch(t.Context(), f.reader, manifest.DrainNone).Assessment.(*base.Execution)
+	prior := (dagDispatcher{f.o}).Dispatch(t.Context(), f.reader, manifest.DrainNone, schedule.Result{}).Assessment.(*base.Execution)
 	defer prior.Close()
 	assert.FatalIf(
 		t,
@@ -309,7 +315,7 @@ func testResolveOptionalQueuedSuccessorCase(t *testing.T, testCaseInput *string,
 	var sched *schedule.Scheduler
 	d := fixtureDispatcher{
 		store: f.o.store,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id == keeper {
 				close(keeping)
 				<-releaseKeeper
@@ -321,7 +327,7 @@ func testResolveOptionalQueuedSuccessorCase(t *testing.T, testCaseInput *string,
 			if id == f.reader {
 				<-keeping
 			}
-			result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+			result := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 			if id == f.reader && queued.CompareAndSwap(false, true) {
 				assert.ErrorIf(
 					t,

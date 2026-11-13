@@ -3,16 +3,14 @@ package helm
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"io"
 	"io/fs"
 	"maps"
+	"slices"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -21,7 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestTemplate_AcceptedHistory(t *testing.T) {
@@ -39,7 +36,11 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	client := NewClient(owner)
 	hr := newHR()
 	hr.TargetNamespace = "runtime"
-	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
+	input := RenderOptions{
+		SkipCRDs:  true,
+		SkipKinds: []string{manifest.KindCustomResourceDefinition, manifest.KindSecret},
+		Sources:   localChartResolver(t, "chart-repo", "flux-system", chartDir),
+	}
 	t.Run("disabled preparation", func(t *testing.T) {
 		t.Parallel()
 		testTemplateAcceptedHistoryDisabledPreparation(
@@ -56,9 +57,8 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
 	frame.header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
-	frame.encoded, err = encodeFrame(frame.header, frame.output)
+	frame.stored, err = cache.NewFrame(frameDomain, frame.header, frame.output)
 	assert.NoError(t, err)
-	frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
 	original := bytes.Clone(frame.output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
 	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).output, original), true)
@@ -172,6 +172,18 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, records)
+	equal := *testCaseInput.input
+	equal.SkipKinds = slices.Clone(equal.SkipKinds)
+	equalPrevious, equalComplete := fresh.PreviousRender(t.Context(), *testCaseInput.hr, nil, equal)
+	assert.Equal(t, equalComplete, true)
+	assert.Diff(t, maps.Collect(equalPrevious), records)
+	changed := equal
+	changed.SkipKinds = []string{manifest.KindCustomResourceDefinition}
+	_, changedComplete := fresh.PreviousRender(t.Context(), *testCaseInput.hr, nil, changed)
+	assert.Equal(t, changedComplete, false)
+	prepared, prepareErr := fresh.prepareTemplate(t.Context(), *testCaseInput.hr, nil, &changed)
+	assert.NoError(t, prepareErr)
+	assert.Equal(t, prepared.key, testCaseInput.frame.header.Key)
 	observed := *testCaseInput.input
 	calls := 0
 	observed.Admit = func(admission RenderAdmission) (bool, error) {
@@ -229,7 +241,11 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		t.Parallel()
 		testTemplateAcceptedHistoryDurablePublication(t, &testCaseInput, records)
 	})
-	described, err := fresh.describeChart(t.Context(), (*testCaseInput.hr), testCaseInput.input.Sources)
+	described, err := fresh.describeChart(
+		t.Context(),
+		(*testCaseInput.hr),
+		testCaseInput.input.Sources.chartInput((*testCaseInput.hr)),
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, described.chart == nil, true)
 	assert.Equal(t, described.analysis != nil && described.record != nil, true)
@@ -237,9 +253,7 @@ func testTemplateAcceptedHistoryDurable(t *testing.T, testCaseInput *testTemplat
 		name   string
 		mutate func(*RenderOptions)
 	}{
-		{"dependency substitutions", func(r *RenderOptions) {
-			r.DependencySubstitutions = values.NewDependencySubstitutions([]*manifest.Kustomization{{PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "effective-child"}}}})
-		}},
+		{"effective Kubernetes version", func(r *RenderOptions) { r.KubeVersion = "1.99.0" }},
 		{"skip kinds", func(o *RenderOptions) { o.SkipKinds = []string{manifest.KindKustomization} }},
 		{"source binding", func(o *RenderOptions) {
 			changed := *o.Sources.LocalSourceArtifact((*testCaseInput.hr).ChartSource(), store.ArtifactContent)
@@ -484,30 +498,33 @@ func testTemplateAcceptedHistoryDurableName(
 	isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	invalid := (*testCaseInput).frame.header
 	tc.mutate(&invalid)
-	invalidReceipt, encodeFrameErr := encodeFrame(invalid, (*testCaseInput).frame.output)
-	assert.NoError(t, encodeFrameErr)
-	invalidFrame, encodeFrameErr := decodeFrame(invalidReceipt)
-	assert.NoError(t, encodeFrameErr)
-	accepted, encodeFrameErr := encodeAccepted((*(*testCaseInput).hr).Named(), &invalidFrame, maps.All(records))
-	assert.NoError(t, encodeFrameErr)
-	_, _, _, encodeFrameErr = isolated.cache.Blob(
+	invalidFrame, frameErr := cache.NewFrame(frameDomain, invalid, (*testCaseInput).frame.output)
+	assert.NoError(t, frameErr)
+	accepted, frameErr := invalidFrame.PreparePublication(t.Context(), cache.FramePublicationInput{
+		Owner:    (*(*testCaseInput).hr).Named(),
+		Content:  (*testCaseInput).frame.content,
+		Records:  maps.All(records),
+		Complete: true,
+	})
+	assert.NoError(t, frameErr)
+	_, _, _, frameErr = isolated.cache.Blob(
 		t.Context(),
 		(*(*testCaseInput).key),
 		&cache.Policy{MaxAge: 0},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(invalidReceipt), bytes.NewReader(accepted)))
+			_, copyErr := accepted.WriteTo(w)
 			return cache.ProducerResult{}, copyErr
 		},
 	)
-	assert.NoError(t, encodeFrameErr)
+	assert.NoError(t, frameErr)
 
-	prepared, encodeFrameErr := isolated.prepareTemplate(
+	prepared, frameErr := isolated.prepareTemplate(
 		t.Context(),
 		(*(*testCaseInput).hr),
 		nil,
 		(*testCaseInput).input,
 	)
-	assert.NoError(t, encodeFrameErr)
+	assert.NoError(t, frameErr)
 	defer func() {
 		{
 			problem := recover()
@@ -519,8 +536,8 @@ func testTemplateAcceptedHistoryDurableName(
 			)
 		}
 	}()
-	found, encodeFrameErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key, &RenderOptions{})
-	assert.NoError(t, encodeFrameErr)
+	found, frameErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key, &RenderOptions{})
+	assert.NoError(t, frameErr)
 
 	assert.FatalIf(t, found != nil, "%s", "invalid raw request metadata reused cached output")
 

@@ -119,9 +119,9 @@ func testReadSetRemoteValidationCase(t *testing.T, testCaseInput *string,
 		child:       &child,
 		independent: &independent,
 	})
-	frame, err := encodeFrame(&renderHeader{Reads: rec.snapshot()}, nil)
+	frame, err := testEncodeFrame(t, &renderHeader{Reads: rec.snapshot()}, nil)
 	assert.NoError(t, err)
-	snapFrame, err := decodeFrame(frame)
+	snapFrame, err := testDecodeFrame(t, frame)
 	snap := snapFrame.header.Reads
 	assert.NoError(t, err)
 	if (*testCaseInput) == "duplicate-entry" {

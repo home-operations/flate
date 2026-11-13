@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -107,8 +107,10 @@ func testLoaderIndependentRootsRetainedNativeViews(t *testing.T) {
 	}
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	artifact, err := gittree.AdmitDirectory(t.Context(), location)
+	artifactDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	artifact := artifactDirectory.Artifact()
+	assert.NoError(t, artifactDirectory.Close())
 	s := store.New()
 	s.SetArtifact(manifest.BootstrapSourceID, artifact)
 	l := New(s)
@@ -188,8 +190,10 @@ func testLoaderIndependentRootsAdmittedMembership(t *testing.T) {
 	testutil.WriteFile(t, root, "first.yaml", testutil.KustomizationYAML("first", "apps", "  {path: ./apps}\n"))
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	admittedDirectory2, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	admitted := admittedDirectory2.Artifact()
+	assert.NoError(t, admittedDirectory2.Close())
 	input, _, err := gittree.New(
 		t.Context(),
 		nil,

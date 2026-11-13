@@ -26,9 +26,13 @@ import (
 // whole postBuild rather than silently substituting nothing.
 var varsubRegex = regexp.MustCompile(`^[_a-zA-Z][_a-zA-Z0-9]*$`)
 
-// Provider exposes lazy ConfigMap/Secret data by canonical identity.
+// Provider MUST preserve selected evidence and pre-supply data with each lookup.
 type Provider interface {
-	Data(manifest.NamedResource) manifest.Data
+	Lookup(manifest.NamedResource) store.ReferenceFacts
+}
+
+type missingPolicy interface {
+	AllowsKind(string) bool
 }
 
 type dataReader interface {
@@ -56,11 +60,6 @@ type capturedInput struct {
 	id    manifest.NamedResource
 	input store.ReferenceFacts
 }
-
-// Data returns the captured data for id.
-//
-//nolint:ireturn // The values contract supports multiple data implementations.
-func (p *StoreProvider) Data(id manifest.NamedResource) manifest.Data { return p.Lookup(id).Data }
 
 // Lookup captures a values object and its materializers once for expansion and diagnostics.
 func (p *StoreProvider) Lookup(id manifest.NamedResource) store.ReferenceFacts {
@@ -163,63 +162,6 @@ func ExpandValueReferences(
 	return nil
 }
 
-// lookupValueRef reads only the requested key, preserving unrelated malformed siblings.
-func lookupValueRef(ref manifest.ValuesReference, namespace string, p Provider) (string, error) {
-	data, err := resourceData(ref.Kind, namespace, ref.Name, p)
-	if err != nil {
-		return "", err
-	}
-	if data == nil {
-		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name}
-	}
-	key := ref.GetValuesKey()
-	valueResult, err := data.Value(key)
-	value, ok := valueResult.Value, valueResult.Found
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		// Empty bags retain the same missing-resource disposition as absent objects.
-		if !data.HasKeys() {
-			return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name}
-		}
-		return "", &missingValueRefError{kind: ref.Kind, namespace: namespace, name: ref.Name, key: key}
-	}
-	return value, nil
-}
-
-//nolint:ireturn // The values contract supports multiple data implementations.
-func resourceData(kind, namespace, name string, p Provider) (manifest.Data, error) {
-	switch kind {
-	case manifest.KindSecret, manifest.KindConfigMap:
-	default:
-		return nil, manifest.NewError(manifest.ErrInvalidValuesReference, nil, fmt.Sprintf("unsupported kind %s", kind))
-	}
-	return p.Data(manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name}), nil
-}
-
-type missingValueRefError struct {
-	kind      string
-	namespace string
-	name      string
-	key       string
-}
-
-func (e *missingValueRefError) Error() string {
-	if e.key != "" {
-		return fmt.Sprintf("valuesFrom %s %s/%s key %q not found",
-			e.kind, e.namespace, e.name, e.key)
-	}
-	return fmt.Sprintf("valuesFrom %s %s/%s not found", e.kind, e.namespace, e.name)
-}
-
-func (e *missingValueRefError) Unwrap() error {
-	if e.key != "" {
-		return manifest.ErrInvalidValuesReference
-	}
-	return manifest.ErrObjectNotFound
-}
-
 func (c *Cache) updateHelmReleaseValues(
 	ref manifest.ValuesReference,
 	found string,
@@ -288,7 +230,7 @@ func stripMatchingQuotes(value string) (string, bool) {
 }
 
 // ExpandPostBuildSubstituteReference resolves referenced and authored inline substitutions.
-func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) error {
+func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider, missing missingPolicy) error {
 	if ks == nil || ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 {
 		return nil
 	}
@@ -302,7 +244,7 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 
 	// Flux gives inline substitutions precedence over references.
 	values := map[string]string{}
-	if err := readSubstitutions(ks, p, values); err != nil {
+	if err := readSubstitutions(ks, p, missing, values); err != nil {
 		return err
 	}
 	maps.Copy(values, ks.PostBuild.Substitute)
@@ -376,13 +318,17 @@ func (ex *valueExpansion) expand(
 	provider Provider,
 	cache *Cache,
 ) error {
-	found, err := lookupValueRef(*ref, edge.Namespace, provider)
+	result, err := Classify(edge, new(provider.Lookup(edge.NamedResource)))
 	if err != nil {
-		if _, ok := errors.AsType[*missingValueRefError](err); ok && ref.Optional {
-			return nil
-		}
 		return err
 	}
+	if result.State() != Readable {
+		if ref.Optional {
+			return nil
+		}
+		return result.Failure()
+	}
+	found := result.Value()
 	if ref.TargetPath != "" {
 		if !ex.owned {
 			// Cached nested ex.values may be borrowed; strvals mutates them in place.
@@ -400,9 +346,22 @@ func (ex *valueExpansion) expand(
 	return nil
 }
 
-func readSubstitutions(ks *manifest.Kustomization, p Provider, values map[string]string) error {
-	for _, ref := range ks.PostBuild.SubstituteFrom {
-		data, err := resourceData(ref.Kind, ks.Namespace, ref.Name, p)
+func readSubstitutions(
+	ks *manifest.Kustomization,
+	p Provider,
+	missing missingPolicy,
+	substitutions map[string]string,
+) error {
+	for position, authored := range ks.PostBuild.SubstituteFrom {
+		ref := manifest.Reference{
+			Kind:      authored.Kind,
+			Namespace: ks.Namespace,
+			Name:      authored.Name,
+			Use:       substitutionUse,
+			Position:  position,
+			Optional:  authored.Optional,
+		}
+		result, err := Classify(new(ref), new(p.Lookup(ref.NamedResource)))
 		if err != nil {
 			if errors.Is(err, manifest.ErrInvalidValuesReference) {
 				slog.Debug("values: unsupported SubstituteReference kind",
@@ -411,18 +370,24 @@ func readSubstitutions(ks *manifest.Kustomization, p Provider, values map[string
 			}
 			return err
 		}
-		if data == nil || !data.HasKeys() {
-			if !ref.Optional && ref.Kind != manifest.KindSecret {
-				slog.Debug("values: SubstituteReference not found",
-					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "ref", ref.Name)
-			}
+		if result.State() == Absent && !ref.Optional && result.Disposition(missing) == Reject {
+			slog.Debug(
+				"values: SubstituteReference not found",
+				"id",
+				manifest.DiagnosticFor(ks.Named(), ks).String(),
+				"ref",
+				ref.Name,
+			)
+		}
+		if result.Disposition(missing) == Reject {
 			continue
 		}
-		if err := mergeSubstitutions(values, data); err != nil {
-			return err
+		if result.Data() != nil {
+			if err := mergeSubstitutions(substitutions, result.Data()); err != nil {
+				return err
+			}
 		}
 	}
-
 	return nil
 }
 

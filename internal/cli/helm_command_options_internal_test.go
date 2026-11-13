@@ -12,24 +12,8 @@ import (
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
 func TestRun_HelmOptions(t *testing.T) {
-	root := t.TempDir()
-	testutil.GitInit(t, root)
-	testutil.WriteFile(t, root, "cluster/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: app, namespace: apps}
-spec:
-  interval: 10m
-  chart:
-    spec:
-      chart: ./charts/app
-      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
-  values: {tag: after}
-`)
-	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-	testutil.WriteFile(
+	root := writeHelmOptionsFixture(
 		t,
-		root,
-		"charts/app/templates/main.yaml",
 		`{{- if or (ne .Capabilities.KubeVersion.Version "v1.31.2") (not (.Capabilities.APIVersions.Has "fixture.example/v1")) (or .Release.IsUpgrade (not .Release.IsInstall)) }}
 {{ fail "CLI Helm options did not reach rendering" }}
 {{- end }}
@@ -147,4 +131,24 @@ func runHelmOptionsName(t *testing.T, flags *[]string, root *string, tc *struct 
 		out,
 		diagnostic,
 	)
+}
+
+func writeHelmOptionsFixture(t *testing.T, template string) string {
+	t.Helper()
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "cluster/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: app, namespace: apps}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ./charts/app
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  values: {tag: after}
+`)
+	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+	testutil.WriteFile(t, root, "charts/app/templates/main.yaml", template)
+	return root
 }

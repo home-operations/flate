@@ -155,12 +155,15 @@ func (f *operation) fetch(
 		key,
 		&policy,
 		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			previous, err := w.Previous(ctx)
+			if err != nil {
+				return cache.ProducerResult{}, err
+			}
 			client, err := minio.New(request.endpoint, &request.options)
 			if err != nil {
 				return cache.ProducerResult{}, fmt.Errorf("minio client: %w", err)
 			}
-			desc, err := walkBucket(ctx, client, b, bucketOutput{Writer: w, work: w.Work().Physical()})
-			return cache.ProducerResult{Descriptor: desc}, err
+			return walkBucket(ctx, client, b, bucketOutput{Writer: w, work: w.Work().Physical(), previous: previous})
 		},
 	)
 	if err != nil {

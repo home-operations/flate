@@ -2,6 +2,7 @@
 package gittree
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -10,20 +11,21 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
+	"weak"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/cache"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/storer"
-	"github.com/go-git/go-git/v5/storage/filesystem"
-	"github.com/go-git/go-git/v5/storage/transactional"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/cache"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/storer"
+	"github.com/go-git/go-git/v6/storage/filesystem"
+	"github.com/go-git/go-git/v6/storage/transactional"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -44,7 +46,8 @@ const (
 
 // ViewOptions shapes a commit view without changing its object backing.
 type ViewOptions struct {
-	policy *localPolicy
+	policy     *localPolicy
+	membership membership
 	// Content carries source coordinates without filesystem or routing state.
 	Content  any
 	Location *gitrepo.Location
@@ -81,11 +84,12 @@ type FS struct {
 	view
 
 	// Warnings is immutable admission evidence, nil when no advisory was observed.
-	Warnings []manifest.Warning
-	location *gitrepo.Location
-	policy   *sourceignore.Matcher
-	snapshot *localPolicy
-	content  atomic.Pointer[contentFingerprint]
+	Warnings   []manifest.Warning
+	location   *gitrepo.Location
+	policy     *sourceignore.Matcher
+	snapshot   *localPolicy
+	membership membership
+	content    atomic.Pointer[contentFingerprint]
 }
 
 // Location returns the resolved disk identity retained by admission.
@@ -96,6 +100,7 @@ func (g *FS) OperationView() *FS {
 	if local, ok := g.view.(*localView); ok {
 		input := newLocal(local.root, true, g.snapshot)
 		input.location = g.location
+		input.membership = g.membership
 		input.Warnings = g.Warnings
 		return input
 	}
@@ -111,20 +116,21 @@ type view interface {
 	OpenRegular(string) (fs.File, error)
 }
 
-// Backing MUST remain immutable while readers exist; pooled storers are exclusive
+// Backing MUST remain immutable while readers exist. Borrowed storers are exclusive
 // to an operation and retain no expanded objects.
 type gitView struct {
-	storers  sync.Pool
-	worktree billy.Filesystem
-	nodes    map[string]*gitNode
-	denied   map[string]bool
-	backing  billy.Filesystem
-	current  fs.FS
-	changes  map[string]bool
-	refresh  *ViewOptions
-	commit   plumbing.Hash
-	identity string
-	mode     ViewMode
+	storer    atomic.Pointer[weak.Pointer[borrowedStorer]]
+	newStorer func() storer.EncodedObjectStorer
+	worktree  billy.Filesystem
+	nodes     map[string]*gitNode
+	denied    map[string]bool
+	backing   billy.Filesystem
+	current   fs.FS
+	changes   map[string]bool
+	refresh   *ViewOptions
+	commit    plumbing.Hash
+	identity  string
+	mode      ViewMode
 }
 
 type gitNode struct {
@@ -162,13 +168,39 @@ func (i gitInfo) Sys() any           { return nil }
 // Mutable views refresh before reuse or construction; committed identities stay pinned.
 // An error may return warning evidence without a usable filesystem.
 //
-//nolint:gocritic // The SDK accepts a value snapshot; a pointer parameter would change its call and aliasing contracts.
+//nolint:gocognit,gocritic // Construction keeps live filesystem diagnostics separate from pinned identities without another admission layer; the SDK accepts a value snapshot.
 func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, opts ViewOptions) (*FS, string, error) {
 	if err := ctx.Err(); err != nil {
 		current, _ := opts.Current.(*FS)
 		return warningOnly(current), "", err
 	}
-	direct, source := opts.Mode == Direct, opts.Mode == Source
+	liveWorktree := opts.Current == nil && opts.Worktree != nil && (commit == plumbing.ZeroHash || opts.Content == nil)
+	if liveWorktree && opts.Location == nil {
+		var err error
+		opts.Location, err = gitrepo.Locate(ctx, opts.Worktree.Root(), opts.Worktree.Root())
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	if liveWorktree && !opts.membership.captured {
+		directory, err := openDirectoryAt(ctx, opts.Location, opts.membership.directory)
+		if err != nil {
+			return nil, "", err
+		}
+		captured := directory.membership
+		_ = directory.Close()
+		opts.membership = captured
+	}
+	if liveWorktree && opts.Mode == Direct {
+		root := opts.Worktree.Root()
+		if _, err := os.Stat(root); err != nil {
+			return nil, "", err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		}
+		input := newLocal(root, false, &localPolicy{})
+		input.location, input.membership = opts.Location, opts.membership
+		return input, "", nil
+	}
+	source := opts.Mode == Source
 	current, matcher, reuse, err := opts.refreshCurrent(ctx, commit)
 	if err != nil {
 		return warningOnly(current), "", err
@@ -186,17 +218,9 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}{directView: directView{FS: opts.Current}}
 		input.view = &input.directView
 		input.location = opts.Location
+		input.membership = opts.membership
 		input.snapshot = &input.policyState
 		return &input.FS, "", nil
-	}
-	if direct && opts.Current == nil && opts.Worktree != nil {
-		root := opts.Worktree.Root()
-		if _, statErr := os.Stat(root); statErr != nil {
-			return nil, "", statErr //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
-		}
-		input := newLocal(root, false, &localPolicy{})
-		input.location = opts.Location
-		return input, "", nil
 	}
 	input, err := newTree(ctx, backing, commit, new(opts))
 	if err != nil {
@@ -241,7 +265,11 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	}
 	combined.view = input
 	combined.location = opts.Location
-	input.storers.New = func() any {
+	combined.membership = opts.membership
+	if opts.Worktree != nil {
+		input.worktree = combined.FS.memberFilesystem(opts.Worktree, opts.Worktree.Root())
+	}
+	input.newStorer = func() storer.EncodedObjectStorer {
 		upper := filesystem.NewStorageWithOptions(backing, cache.NewObjectLRU(0), filesystem.Options{})
 		if native && current.backing != nil {
 			lower := filesystem.NewStorageWithOptions(current.backing, cache.NewObjectLRU(0), filesystem.Options{})
@@ -272,12 +300,35 @@ func newTree(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash
 	return &combined.FS, nil
 }
 
+type borrowedStorer struct {
+	storage storer.EncodedObjectStorer
+	idle    *weak.Pointer[borrowedStorer]
+}
+
+// Concurrent borrowers MUST own separate mutable indexes. Idle indexes are reclaimable.
+func (g *gitView) borrowStorer() *borrowedStorer {
+	if cached := g.storer.Swap(nil); cached != nil {
+		if borrowed := cached.Value(); borrowed != nil {
+			return borrowed
+		}
+	}
+	borrowed := &borrowedStorer{storage: g.newStorer()}
+	borrowed.idle = new(weak.Make(borrowed))
+	return borrowed
+}
+
+func (g *gitView) releaseStorer(borrowed *borrowedStorer) {
+	g.storer.CompareAndSwap(nil, borrowed.idle)
+	runtime.KeepAlive(borrowed)
+}
+
 func (g *gitView) walk(ctx context.Context, commit plumbing.Hash) ([]manifest.Warning, error) {
 	if g.worktree != nil && g.current == nil {
 		return nil, g.walkWorktree(ctx, ".")
 	}
-	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(objectStore)
+	borrowed := g.borrowStorer()
+	defer g.releaseStorer(borrowed)
+	objectStore := borrowed.storage
 	c, err := object.GetCommit(objectStore, commit)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
@@ -336,7 +387,7 @@ func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 	if err := ctx.Err(); err != nil {
 		return err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
-	if g.worktree == nil {
+	if g.current != nil {
 		return g.walkCurrent(ctx, prefix)
 	}
 	entries, err := g.worktree.ReadDir(filepath.FromSlash(prefix))
@@ -351,7 +402,7 @@ func (g *gitView) walkWorktree(ctx context.Context, prefix string) error {
 		if !fs.ValidPath(name) || strings.ContainsAny(entry.Name(), "/\x00") {
 			return fs.ErrInvalid
 		}
-		mode := entry.Mode()
+		mode := entry.Type()
 		if !mode.IsRegular() && !mode.IsDir() && mode&fs.ModeSymlink == 0 {
 			continue
 		}
@@ -385,7 +436,7 @@ func (g *gitView) list() {
 // Lstat exposes only visible entries without following the final link.
 func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 	if !fs.ValidPath(name) {
-		return nil, &fs.PathError{Op: "lstat", Path: name, Err: fs.ErrInvalid}
+		return nil, &fs.PathError{Op: lstatOperation, Path: name, Err: fs.ErrInvalid}
 	}
 	node := g.nodes[name]
 	if node == nil {
@@ -410,8 +461,9 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 	if info := node.info.Load(); info != nil {
 		return info, nil
 	}
-	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(objectStore)
+	borrowed := g.borrowStorer()
+	defer g.releaseStorer(borrowed)
+	objectStore := borrowed.storage
 	var size int64
 	var err error
 	if g.current != nil && !g.changes[name] && node.mode.IsRegular() {
@@ -483,8 +535,9 @@ func (g *gitView) Open(name string) (fs.File, error) {
 
 func (g *gitView) openBlob(hash plumbing.Hash) (io.ReadCloser, error) {
 	// Upstream's streaming delta reader does not reset its position on backward copies.
-	objectStore := g.storers.Get().(storer.EncodedObjectStorer) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-	defer g.storers.Put(objectStore)
+	borrowed := g.borrowStorer()
+	defer g.releaseStorer(borrowed)
+	objectStore := borrowed.storage
 	blob, err := object.GetBlob(objectStore, hash)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
@@ -639,16 +692,23 @@ func (o *ViewOptions) refreshCurrent(
 		return nil, matcher, reuse, nil
 	}
 
-	if o.Location == nil {
-		o.Location = current.location
+	directory := cmp.Or(o.membership.directory, current.membership.directory)
+	o.membership = current.membership
+	o.membership.directory = directory
+	if commit != plumbing.ZeroHash {
+		o.membership.ignored = nil
 	}
+	o.Location = cmp.Or(o.Location, current.location)
 	switch v := current.view.(type) {
 	case *localView:
 		current = current.OperationView()
+		current.membership = o.membership
 		current.location = o.Location
 	case *gitView:
 		if v.refresh != nil {
-			refreshed, _, err := New(ctx, v.backing, v.commit, *v.refresh)
+			refresh := *v.refresh
+			refresh.membership = o.membership
+			refreshed, _, err := New(ctx, v.backing, v.commit, refresh)
 			if err != nil {
 				return refreshed, nil, false, err
 			}
@@ -694,7 +754,8 @@ func (g *FS) finishGitView(
 			Mode            ViewMode
 			Sparse          []string `json:",omitempty"`
 			Ignore          string
-		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
+			Excluded        string `json:",omitempty"`
+		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore, opts.membership.directory})
 		if v.identity == "" {
 			return warningOnly(
 					g,
@@ -713,7 +774,7 @@ func (g *FS) finishGitView(
 
 func (g *gitView) populateCurrent(ctx context.Context, current *gitView, native bool) error {
 	if native {
-		g.storers.New = current.storers.New
+		g.newStorer = current.newStorer
 		g.backing = current.backing
 		g.worktree = current.worktree
 	}

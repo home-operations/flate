@@ -78,8 +78,10 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 	t.Cleanup(func() { o.stop() })
 	location, err := gitrepo.Locate(t.Context(), root, "")
 	assert.NoError(t, err)
-	input, err := gittree.AdmitDirectory(t.Context(), location)
+	inputDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	input := inputDirectory.Artifact()
+	assert.NoError(t, inputDirectory.Close())
 	o.store.SetArtifact(manifest.BootstrapSourceID, input)
 	o.src.Fetchers[manifest.KindGitRepository] = emptySourceFetcher{}
 	o.store.AddObject(
@@ -209,7 +211,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 	var first sync.Once
 	d := fixtureDispatcher{
 		store: f.o.store,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			if id == f.supplier {
 				close(started)
 				f.waitForRelease(before, release)
@@ -220,7 +222,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 					waitForR4Supplier(before, supplierDone, started)
 				})
 			}
-			assessment := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+			assessment := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 			if id == f.reader && !before {
 				first.Do(func() {
 					assert.ErrorIf(
@@ -277,8 +279,8 @@ func TestResolve_OptionalBindingArrival(t *testing.T) {
 			var admitted atomic.Bool
 			d := fixtureDispatcher{
 				store: f.o.store,
-				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
+					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 					if id == f.reader && admitted.CompareAndSwap(false, true) {
 						assert.ErrorIf(
 							t,
@@ -314,11 +316,11 @@ func TestResolve_OptionalSuccessorBeforePark(t *testing.T) {
 			var first sync.Once
 			d := fixtureDispatcher{
 				store: f.o.store,
-				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 					if id == f.supplier {
 						f.o.tasks.YieldSlot(func() { <-release })
 					}
-					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 					if id == f.reader {
 						first.Do(func() {
 							assert.ErrorIf(
@@ -372,8 +374,8 @@ func TestResolve_OptionalBindingSetChange(t *testing.T) {
 			var changed atomic.Bool
 			d := fixtureDispatcher{
 				store: f.o.store,
-				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
+				dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
+					result := (dagDispatcher{f.o}).Dispatch(ctx, id, level, schedule.Result{})
 					if id == f.reader && changed.CompareAndSwap(false, true) {
 						switch reader := f.o.store.GetObject(id).(type) {
 						case *manifest.Kustomization:
@@ -578,7 +580,7 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 			reader: {File: "reader.yaml", Refs: []manifest.NamedResource{target}},
 		}, Claims: map[string][]manifest.NamedResource{"reader/": {reader}}}
 		o.store.SetDiscoveryIndex(o.index)
-		o.loader = admissiontest.New(
+		o.loader, o.selection = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   cfg.ExternalChanges,
@@ -587,12 +589,14 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, o.loader, nil)
-		o.filter = o.loader.Options.Filter
+		admissiontest.Commit(t, o.selection, nil)
+
 		location, locateErr := gitrepo.Locate(t.Context(), root, "")
 		assert.NoError(t, locateErr)
-		input, admitErr := gittree.AdmitDirectory(t.Context(), location)
+		inputDirectory2, admitErr := gittree.OpenDirectory(t.Context(), location)
 		assert.NoError(t, admitErr)
+		input := inputDirectory2.Artifact()
+		assert.NoError(t, inputDirectory2.Close())
 		o.store.SetArtifact(manifest.BootstrapSourceID, input)
 		o.src.Fetchers[manifest.KindGitRepository] = emptySourceFetcher{}
 		o.store.AddObject(
@@ -611,11 +615,11 @@ func testResolveResourceSetInputCase(t *testing.T, testCaseInput testResolveReso
 			facts.Productions,
 			func(p manifest.Production) bool { return p.Owner == supplier },
 		) ||
-			!o.filter.ShouldReconcile(supplier), "ResourceSet supplier unreachable: %+v", facts)
+			!o.selection.Snapshot().Reconcile(supplier), "ResourceSet supplier unreachable: %+v", facts)
 
 		o.configureControllers()
 		d := dagDispatcher{o}
-		assessment := d.Dispatch(t.Context(), reader, manifest.DrainNone).Assessment
+		assessment := d.Dispatch(t.Context(), reader, manifest.DrainNone, schedule.Result{}).Assessment
 		closeAssessments = append(closeAssessments, assessment.Close)
 		assert.FatalIf(
 			t,
@@ -672,7 +676,15 @@ func (f *r4Fixture) assertOutcome(t *testing.T, required bool, result string) {
 	if required {
 		missing := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-vars"}
 		assert.Equal(t, info.Status, store.StatusFailed)
-		assert.Diff(t, info.BlockedBy(), []manifest.NamedResource{missing})
+		blocked := []manifest.NamedResource{missing}
+		if f.reader.Kind == manifest.KindHelmRelease {
+			blocked = nil
+			assert.Equal(
+				t, info.Message,
+				"valuesFrom ConfigMap flux-system/cluster-vars not found; supply it with --supply",
+			)
+		}
+		assert.Diff(t, info.BlockedBy(), blocked)
 	} else {
 		assert.Equal(t, info.Status, store.StatusReady)
 		output, _ := f.o.store.Get[*manifest.ConfigMap](

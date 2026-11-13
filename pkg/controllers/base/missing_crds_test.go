@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/depwait"
+
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -28,7 +30,7 @@ func TestConfigure_MissingCRDs(t *testing.T) {
 	}
 	err := controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
-	c.Configure(base.Options{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}})
+	c.Configure(base.Options{Missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})})
 	assert.Equal(t, controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade) == nil, true)
 	c.StartLifecycle()
 	defer func() {

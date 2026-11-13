@@ -9,9 +9,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -37,13 +38,13 @@ func TestBindEntry_AuthoritativeReplacement(t *testing.T) {
 			if authority == "runtime" {
 				st.AddObject(current)
 			} else {
+				files["kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [owner.yaml]\n")}
 				files["owner.yaml"] = &fstest.MapFile{
 					Data: []byte(testutil.KustomizationYAML("root", "apps", "  path: ./elsewhere\n")),
 				}
 				l := loader.New(st)
 				l.SourceRoot = root
-				l.Options.Selection = manifest.Selection{Changed: true}
-				l.Options.Filter = change.NewFilter()
+				configureSelection(t, l, selection.Request{Changed: true})
 				_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 				assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -79,8 +80,7 @@ func TestBindEntry_IndexOnlyProducer(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -144,7 +144,7 @@ func TestResolve_UnrelatedApplicationAdmission(t *testing.T) {
 	st.AddObject(source)
 	st.AddObject(application)
 	a := &Admission{store: st, input: input, path: root, remotes: map[string]struct{}{"example.test/self": {}}}
-	_, artifact, err := a.Resolve(t.Context(), source.Named(), source, manifest.WorkScope{})
+	_, artifact, err := a.Resolve(t.Context(), source.Named(), source, nil)
 	assert.NoError(t, err)
 	assert.FatalIf(t, artifact == nil, "bootstrap source did not resolve")
 	assert.Equal(t, artifact.InputAlias, true)
@@ -375,8 +375,7 @@ func testCurrentDeclarationPrecedesEvidence(t *testing.T, kind string, historyFi
 	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, InputAlias: true, FS: input.FS})
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))

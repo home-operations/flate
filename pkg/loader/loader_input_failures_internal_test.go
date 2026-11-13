@@ -11,8 +11,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -106,11 +106,11 @@ func TestLoader_ComponentParseFailure(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name      string
-		selection manifest.Selection
+		selection selection.Request
 	}{
 		{name: "full"},
-		{name: "named", selection: manifest.Selection{Roots: []manifest.NamedResource{{Kind: manifest.KindKustomization, Name: "selected"}}}},
-		{name: "changed", selection: manifest.Selection{Changed: true}},
+		{name: "named", selection: selection.Request{Roots: []manifest.NamedResource{{Kind: manifest.KindKustomization, Name: "selected"}}}},
+		{name: "changed", selection: selection.Request{Changed: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -131,8 +131,8 @@ func TestLoader_ComponentParseFailure(t *testing.T) {
 			admitForTest(st, root)
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection = tc.selection
-			l.Options.Filter = change.NewFilter()
+			configureSelection(t, l, tc.selection)
+
 			count, err := l.Load(t.Context(), filepath.Join(root, "component"), manifest.NamedResource{}, nil)
 			assert.FatalIf(t, err != nil || count != 0, "Load = (%d, %v), want retained parse failure", count, err)
 

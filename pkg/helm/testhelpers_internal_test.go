@@ -172,29 +172,35 @@ func chartFixtureFS(hr *manifest.HelmRelease, input fs.FS) fs.FS {
 
 func emptyRenderInventory(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}
 
-func writeTestRecord(w io.Writer, key cache.BlobKey, record *renderRecord) error {
+func writeTestRecord(ctx context.Context, w io.Writer, key cache.BlobKey, record *renderRecord) error {
 	identity := key.Content.(string)
-	data, err := encodeFrame(renderHeader{Key: identity, Analysis: record.Analysis}, record.Output)
+	frame, err := cache.NewFrame(frameDomain, renderHeader{Key: identity, Analysis: record.Analysis}, record.Output)
 	if err != nil {
 		return err
 	}
-	_, err = w.Write(data)
+	publication, err := frame.PreparePublication(ctx, cache.FramePublicationInput{})
+	if err != nil {
+		return err
+	}
+	_, err = publication.WriteTo(w)
 	return err
 }
 
-func readTestRecord(r fs.FS, record *renderRecord) error {
-	data, err := fs.ReadFile(r, "content")
+func readTestRecord(ctx context.Context, r fs.FS, record *renderRecord) error {
+	var frame renderFrame
+	stored, err := cache.OpenFrame(ctx, frameDomain, r, &frame.header)
 	if err != nil {
 		return err
 	}
-	return decodeTestRecord(data, record)
-}
-
-func decodeTestRecord(data []byte, record *renderRecord) error {
-	frame, err := decodeFrame(data)
+	frame.output, err = stored.Payload(ctx)
 	if err != nil {
 		return err
 	}
+	frame.stored = stored
 	record.Output, record.Analysis, record.frame = frame.output, frame.header.Analysis, frame
 	return nil
+}
+
+func decodeTestRecord(ctx context.Context, data []byte, record *renderRecord) error {
+	return readTestRecord(ctx, fstest.MapFS{"content": &fstest.MapFile{Data: data}}, record)
 }

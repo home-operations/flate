@@ -34,6 +34,9 @@ func (o *reachOracle) base(t *testing.T) {
 			tc := &o.worlds[i].spec
 			trees := []orchestrator.Tree{reachTree(controls[tc.name].root, tc, manifest.TreeBase)}
 			runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+			for _, run := range runs {
+				t.Cleanup(run.Result.Close)
+			}
 			if err != nil && !errors.Is(err, manifest.ErrFlux) {
 				t.Fatal(err)
 			}
@@ -86,6 +89,9 @@ func (o *reachOracle) head(t *testing.T) {
 			tc := &world.spec
 			trees := []orchestrator.Tree{reachTree(world.roots[1], tc, manifest.TreeHead)}
 			runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+			for _, run := range runs {
+				t.Cleanup(run.Result.Close)
+			}
 			if err != nil && !errors.Is(err, manifest.ErrFlux) {
 				t.Fatal(err)
 			}
@@ -162,7 +168,7 @@ func reachConfig() orchestrator.Config {
 			KubeVersion:                helm.BundledKubeVersion(),
 			SkipTests:                  true,
 			SkipCRDs:                   true,
-			SkipKinds:                  []string{manifest.KindSecret},
+			SkipKinds:                  []string{manifest.KindCustomResourceDefinition, manifest.KindSecret},
 		},
 	}
 }
@@ -223,12 +229,16 @@ func runReachWorld(t *testing.T, world *reachWorld, cfg *orchestrator.Config) (s
 		reachTree(world.roots[1], tc, manifest.TreeHead),
 	}
 	runs, err := orchestrator.RenderTrees(t.Context(), trees, *cfg)
+	for _, run := range runs {
+		t.Cleanup(run.Result.Close)
+	}
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), tc.fixture == "global")
 	joint := map[string]uint64{}
 	output := [2]map[string][]map[string]any{}
 	refs := make([]reachWeak, 0, len(runs))
 	for side := range runs {
 		run := &runs[side]
+		assertReachEffectiveWork(t, run.Result)
 		assertReachFailures(t, run.Result, tc.fixture)
 		assertReachAdmissions(t, run.Result, tc)
 
@@ -345,9 +355,39 @@ func prepareReachWorlds(t *testing.T, cases []reachCase) (map[string]*reachContr
 
 func assertReachControl(t *testing.T, result *orchestrator.Result, tc *reachCase) {
 	t.Helper()
+	assertReachEffectiveWork(t, result)
 	for id, failure := range result.Failed {
 		if slices.Contains(tc.builders, id.String()) || tc.templates[id.String()] != 0 {
 			t.Fatalf("full control failed selected producer %s: %v", id, failure)
+		}
+	}
+}
+
+func assertReachEffectiveWork(t *testing.T, result *orchestrator.Result) {
+	t.Helper()
+	transformed := map[manifest.NamedResource]manifest.NamedResource{}
+	for _, batch := range result.Manifests {
+		if batch.Parent == nil {
+			continue
+		}
+		for _, document := range batch.Documents {
+			id := manifest.DocIdentity(document)
+			if id.Namespace == "" {
+				continue
+			}
+			id.Namespace = ""
+			transformed[id] = batch.Parent.Named()
+		}
+	}
+	for i := range result.Work {
+		row := &result.Work[i]
+		id := row.Key.Owner
+		if row.Counts.Attempts == 0 || id.Namespace != "" ||
+			row.Key.Phase != manifest.WorkKustomize && row.Key.Phase != manifest.WorkHelm {
+			continue
+		}
+		if parent, found := transformed[id]; found {
+			t.Errorf("engine rendered %s before %s assigned its namespace", id, parent)
 		}
 	}
 }

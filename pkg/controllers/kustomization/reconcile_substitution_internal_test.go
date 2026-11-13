@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -347,7 +349,11 @@ func TestReconcile_ImmutableRootChangedRemoteLiteral(t *testing.T) {
 	reads := &store.ReadSet{}
 	reads.Init(st, ks.Named(), nil)
 	count := requests.Load()
-	_, complete := second.PreviousRender(t.Context(), ks, reads)
+	preparedHistory352 := second.PreviousRender(t.Context(), ks, schedule.Result{})
+	if preparedHistory352.Assessment != nil {
+		defer preparedHistory352.Assessment.Close()
+	}
+	_, complete := preparedHistory352.Records, preparedHistory352.Complete
 	reads.Close()
 	assert.Equal(t, complete, false)
 	assert.Equal(t, requests.Load(), count)
@@ -358,8 +364,9 @@ func TestReconcile_ImmutableRootChangedRemoteLiteral(t *testing.T) {
 			ctx context.Context,
 			id manifest.NamedResource,
 			level manifest.DrainLevel,
+			previous schedule.Result,
 		) *base.Execution {
-			ex := second.ReconcileNode(ctx, id, level)
+			ex := second.ReconcileNode(ctx, id, level, previous)
 			reused = ex.Disposition == store.AssessmentReused
 			return ex
 		},
@@ -410,8 +417,10 @@ func testReconcileEffectiveSubstitutionsCase(
 		root,
 		"apps/cm.yaml",
 		fmt.Sprintf(
-			"apiVersion: v1\nkind: ConfigMap\nmetadata: %s\ndata: {greeting: %q}\n",
-			metadata, testCaseInput.expression,
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: %s\ndata: {greeting: %q}\n---\n"+
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: %s\n"+
+				"spec:\n  path: ./child\n  dependsOn: [{name: %q, namespace: %q}]\n",
+			metadata, testCaseInput.expression, metadata, testCaseInput.expression, testCaseInput.expression,
 		),
 	)
 	ks := &manifest.Kustomization{
@@ -441,14 +450,19 @@ func testReconcileEffectiveSubstitutionsCase(
 				ctx context.Context,
 				id manifest.NamedResource,
 				level manifest.DrainLevel,
+				previous schedule.Result,
 			) *base.Execution {
-				ex := c.ReconcileNode(ctx, id, level)
+				ex := c.ReconcileNode(ctx, id, level, previous)
 				replayed = ex.Disposition == store.AssessmentReused
 				return ex
 			},
 		})
 		assert.FatalIf(t, info.Status != store.StatusReady, "run %d: %+v", i, info)
 		current := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
+		child := s.GetObject(testutil.KustomizationID("default", "hello")).(*manifest.Kustomization)
+		greeting := current.Manifests[0].Document["data"].(map[string]any)["greeting"].(string)
+		assert.Equal(t, child.DependsOn[0].Name, greeting)
+		assert.Equal(t, child.DependsOn[0].Namespace, greeting)
 		if i == 0 {
 			first = current
 			continue
@@ -571,8 +585,9 @@ func testReconcileEffectiveSubstitutionDiagnosticsCase(
 			ctx context.Context,
 			id manifest.NamedResource,
 			level manifest.DrainLevel,
+			previous schedule.Result,
 		) *base.Execution {
-			ex := c.ReconcileNode(ctx, id, level)
+			ex := c.ReconcileNode(ctx, id, level, previous)
 			reused = ex.Disposition == store.AssessmentReused
 			return ex
 		},

@@ -38,7 +38,7 @@ func TestFilter_SharedFileReaderNamespace(t *testing.T) {
 		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"},
 	)
 	for _, id := range []manifest.NamedResource{consumer.Named(), target, owner.Named(), reader.Named(), unknown.Named()} {
-		assert.Equal(t, f.ShouldReconcile(id), true)
+		assert.Equal(t, f.Reconcile(id), true)
 	}
-	assert.Equal(t, f.ShouldReconcile(unrelated.Named()), false)
+	assert.Equal(t, f.Reconcile(unrelated.Named()), false)
 }

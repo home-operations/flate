@@ -13,6 +13,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -276,7 +277,9 @@ func TestWarnMissingCRDs_NoAcceptedInputs(t *testing.T) {
 			st.RecordEmitted(rs.Named(), &store.Emission{Complete: true}, nil)
 			o := &Orchestrator{
 				store: st,
-				cfg:   treeConfig{Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}},
+				cfg: treeConfig{
+					Config: Config{missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})},
+				},
 			}
 			allocations[shape] = testing.AllocsPerRun(10, o.warnMissingCRDs)
 			assert.Equal(t, len(st.Warnings()), 0)
@@ -292,7 +295,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	o := &Orchestrator{
 		store: s,
 		cfg: treeConfig{
-			Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}},
+			Config: Config{missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})},
 			Tree:   Tree{},
 		},
 	}
@@ -496,8 +499,7 @@ func testMissingCRDsChildrenAndProducersCase(
 	if testCaseInput.enabled {
 		allowed = []string{manifest.KindCustomResourceDefinition}
 	}
-	renderedSingleton1, err := RenderTrees(
-		t.Context(),
+	renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingKinds: allowed},
 	)
@@ -638,7 +640,7 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase(
 		),
 		testCaseInput.required,
 	)
-	(&Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}}}).warnMissingCRDs()
+	(&Orchestrator{store: st, cfg: treeConfig{Config: Config{missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})}}}).warnMissingCRDs()
 	var want []manifest.Warning
 	if len(testCaseInput.warned) > 0 {
 		want = make([]manifest.Warning, 0, len(testCaseInput.warned))
@@ -722,6 +724,7 @@ func testWarnMissingCRDsFinalEligibilityAndOrderingCase2(
 		st.UpdateStatus((*testCaseInput.crdA), store.StatusInfo{Status: status, Reason: "", Message: ""})
 	}
 	acceptCRDGatesForTest(t, st, rs)
+	assert.NoError(t, snapshotSubstitutions(&cfg.Config))
 	(&Orchestrator{store: st, cfg: cfg}).warnMissingCRDs()
 	want := 0
 	if strings.HasPrefix((*testCaseInput.state), "foreign") {

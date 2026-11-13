@@ -102,8 +102,7 @@ spec:
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  v: |\n    {{- toYaml .Values | nindent 4 }}\n",
 	)
 
-	renderedSingleton1, err := RenderTrees(
-		context.Background(),
+	renderedSingleton1, err := renderTreesForTest(context.Background(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{},
 	)
@@ -171,8 +170,7 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  k: v\n")
 
-	renderedSingleton2, err := RenderTrees(
-		t.Context(),
+	renderedSingleton2, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 2},
 	)
@@ -203,8 +201,7 @@ spec:
 		"kubernetes/apps/kustomization.yaml",
 		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n  - ./external-secret.yaml\n",
 	)
-	renderedSingleton2, err = RenderTrees(
-		t.Context(),
+	renderedSingleton2, err = renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 2},
 	)
@@ -223,7 +220,8 @@ spec:
 		Category: manifest.WarnUnresolvedSubstitution,
 		Message: `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
 			"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
-			"or resolve to defaults or empty values",
+			"or resolve to defaults or empty values: " +
+			"is produced in the cluster with unknown data; supply it with --supply",
 		Count: 2,
 	}
 	assert.Diff(t, warnings, []manifest.Warning{want})
@@ -245,7 +243,7 @@ func testRenderScanAndPathWarningsCase(t *testing.T, testCaseInput *struct {
 		cfg.BaseInput = cfg.Input
 	}
 	cfg.ID = manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
-	runs, err := RenderTrees(t.Context(), []Tree{cfg.Tree}, cfg.Config)
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{cfg.Tree}, cfg.Config)
 
 	assert.FatalIf(t, len(runs) != 1, "missing run: %v", err)
 

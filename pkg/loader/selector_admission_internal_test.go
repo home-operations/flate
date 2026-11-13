@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -43,18 +44,23 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
+
 	app := manifest.NamedResource{
 		Group:     manifest.FluxOperatorDomain,
 		Kind:      manifest.KindResourceSet,
 		Namespace: "apps",
 		Name:      "app",
 	}
-	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{app}}
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{app}})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	names := make([]string, 0, len(proposal.Objects))
 	for _, child := range proposal.Objects {
@@ -73,6 +79,12 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 	root := t.TempDir()
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"parent.yaml": {
+			Data: []byte(
+				"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: parent, namespace: apps}\nspec: {path: ./workload}\n",
+			),
+		},
+		"workload/kustomization.yaml": {Data: []byte("resources: []\n")},
 		"set.yaml": {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\n" + "kind: ResourceSet\n" +
 			"metadata: {name: app, namespace: apps}\n" +
 			"spec:\n" +
@@ -81,9 +93,9 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Changes = change.NewSet(nil)
-	l.Options.Selection = manifest.Selection{Changed: true}
+
+	l.Options.Changes = change.NewSet([]string{"parent.yaml"})
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -93,16 +105,11 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 		Namespace: "apps",
 		Name:      "parent",
 	}
-	_, retry := l.Options.Filter.AddEmitted(
-		change.MembershipUpdate{
-			Needed:   []manifest.NamedResource{parent},
-			Selected: []manifest.NamedResource{parent},
-			Dirty:    []manifest.NamedResource{parent},
-			Ordinary: []manifest.NamedResource{parent},
-		},
-		0,
-	)
-	assert.Equal(t, retry, false)
+	selectionProposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
+	assert.NoError(t, err)
+	_, committed, err := l.commitSelection(t.Context(), t, selectionProposal, selection.Execution)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
 	reads := &store.ReadSet{}
 	reads.Init(st, parent, nil)
 	t.Cleanup(reads.Retire)
@@ -111,13 +118,11 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 		Namespace: "apps",
 		Labels:    map[string]string{"app": "selected"},
 	}
-	proposal, err := l.Prepare(
-		t.Context(),
-		PrepareRequest{
-			Incoming: store.Child{Obj: provider, Productions: []manifest.Production{{Owner: parent}}},
-			Reads:    reads,
-		},
-	)
+	proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+		Changes:    l.Options.Changes,
+		Generation: []store.Child{{Obj: provider, Productions: []manifest.Production{{Owner: parent}}}},
+		Reads:      reads,
+	})
 	assert.NoError(t, err)
 	app := manifest.NamedResource{
 		Group:     manifest.FluxOperatorDomain,
@@ -140,9 +145,9 @@ func TestAdmission_ExcludedSelectorKeepsQueryObservation(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
+
 	l.Options.Changes = change.NewSet(nil)
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -152,16 +157,9 @@ func TestAdmission_ExcludedSelectorKeepsQueryObservation(t *testing.T) {
 		Namespace: "apps",
 		Name:      "support",
 	}
-	_, retry := l.Options.Filter.AddEmitted(
-		change.MembershipUpdate{
-			Needed:   []manifest.NamedResource{parent},
-			Selected: nil,
-			Dirty:    nil,
-			Ordinary: []manifest.NamedResource{parent},
-		},
-		0,
-	)
-	assert.Equal(t, retry, false)
+	_, committed, err := requireSelection(t, l, []manifest.NamedResource{parent}, false)
+	assert.NoError(t, err)
+	assert.Equal(t, committed, true)
 	reads := &store.ReadSet{}
 	reads.Init(st, parent, nil)
 	defer reads.Retire()
@@ -172,13 +170,11 @@ func TestAdmission_ExcludedSelectorKeepsQueryObservation(t *testing.T) {
 			{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}},
 		},
 	}
-	proposal, err := l.Prepare(
-		t.Context(),
-		PrepareRequest{
-			Incoming: store.Child{Obj: consumer, Productions: []manifest.Production{{Owner: parent}}},
-			Reads:    reads,
-		},
-	)
+	proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+		Changes:    l.Options.Changes,
+		Generation: []store.Child{{Obj: consumer, Productions: []manifest.Production{{Owner: parent}}}},
+		Reads:      reads,
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, consumer.Named()), false)
 	assert.Equal(t, reads.Valid(), true)
@@ -220,12 +216,26 @@ func selectorAdmissionPair(t *testing.T, selectedSide manifest.TreeSide) (
 	consumers := [2]*manifest.ResourceSet{}
 	for side, st := range stores {
 		root := t.TempDir()
-		artifact := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}}
-		st.SetArtifact(manifest.BootstrapSourceID, artifact)
 		label := "other"
 		if manifest.TreeSide(side) == selectedSide {
 			label = "selected"
 		}
+		artifact := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			"chosen.yaml": {
+				Data: []byte(
+					fmt.Sprintf(
+						"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: chosen, namespace: apps, labels: {app: %s}}\nspec: {}\n",
+						label,
+					),
+				),
+			},
+			"set.yaml": {
+				Data: []byte(
+					"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: app, namespace: apps}\nspec:\n  inputsFrom: [{selector: {matchLabels: {app: selected}}}]\n",
+				),
+			},
+		}}
+		st.SetArtifact(manifest.BootstrapSourceID, artifact)
 		provider := &manifest.ResourceSetInputProvider{
 			Name:      "chosen",
 			Namespace: "apps",
@@ -245,13 +255,13 @@ func selectorAdmissionPair(t *testing.T, selectedSide manifest.TreeSide) (
 		}
 		l := New(st)
 		l.SourceRoot = root
-		l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer.Named()}, Changed: true}
-		l.Options.Filter = change.NewFilter()
+		configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer.Named()}, Changed: true})
+
 		l.candidates = prepared[side]
-		l.Index.Records[provider.Named()] = manifest.DiscoveryRecord{File: "chosen.yaml"}
-		l.Index.Records[consumer.Named()] = manifest.DiscoveryRecord{File: "set.yaml", Declaration: consumer}
+		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+		assert.NoError(t, err)
 		l.sideKnown, l.side = true, manifest.TreeSide(side)
-		l.freezeConstruction()
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		loaders[side] = l
 	}
 	changes, err := change.Qualify(
@@ -293,13 +303,20 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 				stores := [2]*store.Store{loaders[0].Store, loaders[1].Store}
 				for side, l := range loaders {
 					l.Options.Changes = changes
-					l.bindings.Store(&map[manifest.NamedResource]admissionSource{
-						manifest.BootstrapSourceID: {
-							initial: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
-						},
+					binding := l.sourceBucket(manifest.BootstrapSourceID).Load()
+					for binding.source != manifest.BootstrapSourceID {
+						binding = binding.next
+					}
+					binding.current.Store(&admissionSource{
+						initial: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
 					})
 					assert.Equal(t, len(stores[side].Objects()), 0)
-					proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+					proposal, err := prepareSelection(
+						t.Context(),
+						t,
+						l,
+						selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+					)
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Selected, app), true)
 					assert.Equal(t, slices.Contains(proposal.Dirty, app), true)
@@ -309,22 +326,26 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 						manifest.TreeSide(side) == tc.side,
 					)
 
-					proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: consumers[side]}})
+					proposal, err = prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+						Changes:    l.Options.Changes,
+						Generation: []store.Child{{Obj: consumers[side]}},
+					})
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Selected, app), true)
 					assert.Equal(t, slices.Contains(proposal.Dirty, app), true)
 
-					_, retry := l.Options.Filter.AddEmitted(
-						change.MembershipUpdate{
-							Needed:   []manifest.NamedResource{providers[side].Named()},
-							Selected: nil,
-							Dirty:    []manifest.NamedResource{providers[side].Named()},
-							Ordinary: []manifest.NamedResource{providers[side].Named()},
-						},
-						0,
+					_, committed, err := requireSelection(
+						t,
+						l,
+						[]manifest.NamedResource{providers[side].Named()},
+						false,
 					)
-					assert.Equal(t, retry, false)
-					proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: providers[side]}})
+					assert.NoError(t, err)
+					assert.Equal(t, committed, true)
+					proposal, err = prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+						Changes:    l.Options.Changes,
+						Generation: []store.Child{{Obj: providers[side]}},
+					})
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Selected, app), true)
 					assert.Equal(t, slices.Contains(proposal.Dirty, app), true)
@@ -337,7 +358,7 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 						nil,
 					)
 					stores[side].UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
-					l.Options.HistoryOwners = map[manifest.NamedResource][]manifest.SourceEvidence{
+					historyOwners := map[manifest.NamedResource][]manifest.SourceEvidence{
 						producer.Named(): {
 							{
 								Source: stores[side].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).HistoryIdentity(
@@ -347,20 +368,23 @@ func TestAdmission_PairedSelectorInputs(t *testing.T) {
 							},
 						},
 					}
-					proposal, err = l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+					proposal, err = prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+						HistoryOwners: historyOwners,
+						Changes:       l.Options.Changes,
+						Invocation:    true,
+					})
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), true)
 
 					if manifest.TreeSide(side) != tc.side {
-						l.Options.Filter = change.NewFilter()
 						stores[side].SetArtifact(
 							manifest.BootstrapSourceID,
 							&store.SourceArtifact{LocalPath: l.SourceRoot, FS: fstest.MapFS{}},
 						)
-						proposal, err = l.Prepare(
-							t.Context(),
-							PrepareRequest{Incoming: store.Child{Obj: consumers[side]}},
-						)
+						proposal, err = prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+							Changes:    l.Options.Changes,
+							Generation: []store.Child{{Obj: consumers[side]}},
+						})
 						assert.NoError(t, err)
 						assert.Equal(t, slices.Contains(proposal.Selected, app), false)
 					}
@@ -410,28 +434,36 @@ func selectorVisibilityPair(t *testing.T, incoming bool, visibleSide manifest.Tr
 	}
 	for side, st := range stores {
 		root := t.TempDir()
-		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+		input := fstest.MapFS{}
+		if !incoming {
+			for _, consumer := range []*manifest.ResourceSet{app, &other} {
+				label := consumer.InputsFrom[0].Selector.MatchLabels["app"]
+				input[consumer.Name+".yaml"] = &fstest.MapFile{Data: []byte(fmt.Sprintf(
+					"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: %s, namespace: apps}\nspec:\n  inputsFrom: [{selector: {matchLabels: {app: %s}}}]\n",
+					consumer.Name,
+					label,
+				))}
+			}
+		}
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 		l := New(st)
 		l.SourceRoot = root
-		l.Options.Selection = manifest.Selection{
+		configureSelection(t, l, selection.Request{
 			Roots:   []manifest.NamedResource{app.Named(), other.Named()},
 			Changed: true,
-		}
-		l.Options.Filter = change.NewFilter()
+		})
+
 		l.sideKnown, l.side = true, manifest.TreeSide(side)
-		l.locations = map[manifest.NamedResource]Occurrence{}
+		l.locations = map[manifest.NamedResource]authoredOccurrence{}
 		l.candidates = map[manifest.NamedResource]store.Child{}
 		prepared[side] = map[manifest.NamedResource]store.Child{}
 		for _, consumer := range []*manifest.ResourceSet{app, &other} {
 			object := consumer.WithNamespace(consumer.Namespace)
 			prepared[side][object.Named()] = store.Child{Obj: object}
-			if !incoming {
-				l.candidates[object.Named()] = store.Child{Obj: object}
-				l.Index.Records[object.Named()] = manifest.DiscoveryRecord{
-					File:        object.Named().Name + ".yaml",
-					Declaration: object,
-				}
-			}
+		}
+		if !incoming {
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
 		}
 		observation := manifest.InputVisibility{
 			Source:   manifest.BootstrapSourceID,
@@ -450,7 +482,7 @@ func selectorVisibilityPair(t *testing.T, incoming bool, visibleSide manifest.Tr
 					st.AddObject(object)
 				case "compact":
 					occurrence := compactOccurrence(object, projectedProducerForTest(object))
-					occurrence.Declaration = OccurrenceID{Source: root, File: id.Name + ".yaml"}
+					occurrence.Declaration = occurrenceID{Source: root, File: id.Name + ".yaml"}
 					l.locations[id] = occurrence
 				case "candidate":
 					l.candidates[id] = store.Child{Obj: object}
@@ -485,7 +517,7 @@ func TestAdmission_CompactSelectorInputs(t *testing.T) {
 		}})
 		l := New(st)
 		l.SourceRoot = root
-		l.Options.Selection.Changed = true
+		configureSelection(t, l, selection.Request{Changed: true})
 		_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -494,9 +526,17 @@ func TestAdmission_CompactSelectorInputs(t *testing.T) {
 			Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps",
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}},
 		}
-		closure := admissionClosure{loader: l, objects: st}
-		got, err := closure.matchingInputs(&query, false)
+		configureSelection(
+			t,
+			l,
+			selection.Request{
+				Roots:  []manifest.NamedResource{query.NamedResource},
+				Labels: map[string]string{"app": "selected"},
+			},
+		)
+		proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
 		assert.NoError(t, err)
+		got := proposal.Selected
 		want := []manifest.NamedResource{
 			{Group: query.Group, Kind: query.Kind, Namespace: query.Namespace, Name: "built-a"},
 			{Group: query.Group, Kind: query.Kind, Namespace: query.Namespace, Name: "built-z"},
@@ -508,42 +548,6 @@ func TestAdmission_CompactSelectorInputs(t *testing.T) {
 			assert.Equal(t, l.CatalogObject(id).Named(), id)
 			assert.Equal(t, l.Index.Records[id].Path, filepath.Join(root, id.Name[len("built-"):]+".yaml"))
 		}
-	})
-	t.Run("compact records", func(t *testing.T) {
-		t.Parallel()
-		st := store.New()
-		l := New(st)
-		l.locations = map[manifest.NamedResource]Occurrence{}
-		for _, name := range []string{"z", "a"} {
-			provider := &manifest.ResourceSetInputProvider{Name: name, Labels: map[string]string{"app": "selected"}}
-			occurrence := compactOccurrence(provider, projectedProducerForTest(provider))
-			occurrence.Identity.Namespace = "apps"
-			l.locations[occurrence.Identity] = occurrence
-		}
-		query := manifest.Reference{
-			Group:     manifest.FluxOperatorDomain,
-			Kind:      manifest.KindResourceSetInputProvider,
-			Namespace: "apps",
-			Selector:  &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}},
-		}
-		closure := admissionClosure{loader: l, objects: st}
-		got, err := closure.matchingInputs(&query, false)
-		assert.NoError(t, err)
-		assert.Diff(t, got, []manifest.NamedResource{
-			{
-				Group:     manifest.FluxOperatorDomain,
-				Kind:      manifest.KindResourceSetInputProvider,
-				Namespace: "apps",
-				Name:      "a",
-			},
-			{
-				Group:     manifest.FluxOperatorDomain,
-				Kind:      manifest.KindResourceSetInputProvider,
-				Namespace: "apps",
-				Name:      "z",
-			},
-		})
-		assert.Equal(t, len(st.Objects()), 0)
 	})
 }
 
@@ -579,6 +583,7 @@ func testSelectorVisibilityCase(t *testing.T, incoming bool, visibleSide manifes
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.Options.Changes = changes
+		l.ensureScopes()
 		l.freezeConstruction()
 		if manifest.TreeSide(side) != visibleSide {
 			assert.Equal(t, stores[side].GetObject(provider.Named()), nil)
@@ -590,7 +595,11 @@ func testSelectorVisibilityCase(t *testing.T, incoming bool, visibleSide manifes
 		if incoming {
 			child = prepared[side][app.Named()]
 		}
-		proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: child, Invocation: child.Obj == nil})
+		proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+			Changes:    l.Options.Changes,
+			Generation: []store.Child{child},
+			Invocation: child.Obj == nil,
+		})
 		assert.NoError(t, err)
 		assert.Equal(t, slices.Contains(proposal.Selected, app.Named()), true)
 		assert.Equal(t, slices.Contains(proposal.Dirty, app.Named()), true)

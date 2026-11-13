@@ -77,7 +77,7 @@ func startProfileEnvironmentCleanupOnErrorEmbeddedGet(t *testing.T) {
 		if tc.fail {
 			input = filepath.Join(dir, "missing")
 		}
-		cmd := New("test")
+		cmd := New("test", RunConfig{})
 		cmd.SetArgs([]string{"get", tc.resource, "--path", input, "--concurrency", "2"})
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&bytes.Buffer{})

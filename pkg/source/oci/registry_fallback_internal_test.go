@@ -53,12 +53,14 @@ func testFetcherResolveConfigRegistryFallbackSnapshotCase(
 	)
 	c := cachetest.New(t, t.TempDir(), sourcecache.New)
 	var lookups atomic.Int32
-	fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, name string) store.ReferenceFacts {
 		lookups.Add(1)
 		if name == "tls" {
-			return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
+			secretInput := &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
-		return nil
+		return store.ReferenceFacts{}
 	}}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: c, RegistryConfig: config}
 	repo := ociRepo("fallback", func(s *sourcev1.OCIRepositorySpec) {

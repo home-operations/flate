@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -92,7 +94,7 @@ func TestRender_EmittedNamespaceChildren(t *testing.T) {
 	for _, mode := range []string{"full", "namespace", "namespace_again"} {
 		cfg := Config{Concurrency: 2}
 		if mode != "full" {
-			cfg.Selection = manifest.Selection{Roots: roots}
+			cfg.Selection = selection.Request{Roots: roots}
 		}
 		o, err := newTestOrchestrator(t, tree, cfg)
 		assert.NoError(t, err)
@@ -104,12 +106,18 @@ func TestRender_EmittedNamespaceChildren(t *testing.T) {
 				renders.Add(1)
 			}
 		}, false)
-		result, err := o.render(t.Context())
+		result, err := o.render(t.Context(), t)
 		unsub()
 		assert.NoError(t, err)
 		output := outputByParent(result.Manifests)[selected]
-		membershipResult1 := o.filter.Membership(selected)
-		needed, selectedRoot, dirty, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
+		membershipResult1 := o.selection.Snapshot()
+		needed, selectedRoot, dirty := membershipResult1.Reconcile(
+			selected,
+		), membershipResult1.Output(
+			selected,
+		), membershipResult1.Changed(
+			selected,
+		)
 		t.Logf("%s: selected membership needed=%t selected=%t dirty=%t", mode, needed, selectedRoot, dirty)
 		t.Logf(
 			"%s: fetches=%d excluded renders=%d selected documents=%d",
@@ -127,8 +135,14 @@ func TestRender_EmittedNamespaceChildren(t *testing.T) {
 		assert.Equal(t, fetcher.calls.Load(), int64(1))
 		assert.Equal(t, renders.Load(), int64(0))
 		for _, id := range []manifest.NamedResource{excluded, testutil.KustomizationID("monitoring", "peer-0"), testutil.KustomizationID("monitoring", "peer-1")} {
-			membershipResult2 := o.filter.Membership(id)
-			needed, selected, dirty, _ := membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
+			membershipResult2 := o.selection.Snapshot()
+			needed, selected, dirty := membershipResult2.Reconcile(
+				id,
+			), membershipResult2.Output(
+				id,
+			), membershipResult2.Changed(
+				id,
+			)
 			assert.Equal(t, needed || selected || dirty, false)
 			_, dispatched := o.store.GetStatus(id)
 			assert.Equal(t, dispatched, false)
@@ -209,7 +223,7 @@ spec:
 	for _, restricted := range []bool{false, true} {
 		cfg := Config{Concurrency: 2}
 		if restricted {
-			cfg.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer}}
+			cfg.Selection = selection.Request{Roots: []manifest.NamedResource{consumer}}
 		}
 		o, err := newTestOrchestrator(
 			t,
@@ -224,13 +238,19 @@ spec:
 			_, indexed := o.index.Lookup(source)
 			assert.Equal(t, indexed, false)
 			assert.Equal(t, o.Store().GetObject(source) == nil, true)
-			membershipResult3 := o.filter.Membership(producer)
-			needed, selected, dirty, _ := membershipResult3.Needed, membershipResult3.Selected, membershipResult3.Dirty, membershipResult3.Revision
+			membershipResult3 := o.selection.Snapshot()
+			needed, selected, dirty := membershipResult3.Reconcile(
+				producer,
+			), membershipResult3.Output(
+				producer,
+			), membershipResult3.Changed(
+				producer,
+			)
 			assert.Equal(t, needed, true)
 			assert.Equal(t, selected, false)
 			assert.Equal(t, dirty, false)
 		}
-		result, err := o.render(t.Context())
+		result, err := o.render(t.Context(), t)
 		assert.NoError(t, err)
 		assert.Equal(t, fetcher.fetched.Load(), true)
 		info, _ := o.Store().GetStatus(consumer)
@@ -284,7 +304,7 @@ spec:
 			if name == "all_releases" {
 				selected.Name = ""
 			}
-			cfg.Selection = manifest.Selection{Roots: []manifest.NamedResource{selected}}
+			cfg.Selection = selection.Request{Roots: []manifest.NamedResource{selected}}
 		}
 		o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, cfg)
 		assert.NoError(t, err)
@@ -294,12 +314,18 @@ spec:
 				dispatches.Add(1)
 			}
 		}, false)
-		result, err := o.render(t.Context())
+		result, err := o.render(t.Context(), t)
 		unsub()
 		assert.NoError(t, err)
 		documents := outputByParent(result.Manifests)[child]
-		membershipResult4 := o.filter.Membership(child)
-		needed, selected, dirty, _ := membershipResult4.Needed, membershipResult4.Selected, membershipResult4.Dirty, membershipResult4.Revision
+		membershipResult4 := o.selection.Snapshot()
+		needed, selected, dirty := membershipResult4.Reconcile(
+			child,
+		), membershipResult4.Output(
+			child,
+		), membershipResult4.Changed(
+			child,
+		)
 		t.Logf("%s: child membership needed=%t selected=%t dirty=%t", name, needed, selected, dirty)
 		t.Logf("%s: child dispatches=%d documents=%d", name, dispatches.Load(), len(documents))
 		assert.Equal(t, dispatches.Load() > 0, true)

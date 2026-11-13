@@ -96,7 +96,7 @@ func TestReconcile_MutableChartAndSourceValuesReplay(t *testing.T) {
 		before := input.captures.Load()
 		var next *base.Execution
 		c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) {
-			next = c.ReconcileNode(ctx, hr.Named(), manifest.DrainNone)
+			next = c.ReconcileNode(ctx, hr.Named(), manifest.DrainNone, schedule.Result{})
 		})
 		c.Tasks.BlockTillDone()
 		assert.FatalIf(
@@ -595,8 +595,8 @@ func (p *testReconcileSuppliedAdvisoriesOnReplaySegmentInputs) dispatchReplay(t 
 	d := controllertest.Dispatch{
 		Tasks: (*p.c).Tasks,
 		Store: (*p.st),
-		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
-			run := (*p.c).reconcileNodeForTest(ctx, id, level)
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, previous schedule.Result) *base.Execution {
+			run := (*p.c).reconcileNodeForTest(ctx, id, level, previous)
 			if id == (*p.hr).Named() {
 				next = run
 			}

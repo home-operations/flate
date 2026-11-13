@@ -16,6 +16,65 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+`unavailable-values/` covers absent, encrypted, and cluster-produced Helm values with a local chart.
+Two runs compare complete output and exit codes with fresh caches and two workers.
+Readable siblings, missing keys, kind permission, and supplied precedence retain explicit assertions.
+
+| Case | Behavior |
+| --- | --- |
+| `unavailable-values/combined-secret` | combined secret. |
+| `unavailable-values/combined-configmap` | combined configmap. |
+| `unavailable-values/strict-encryption` | strict encryption. |
+| `unavailable-values/wrong-kind-permission` | wrong kind permission. |
+| `unavailable-values/supply` | supply. |
+| `unavailable-values/configmap-supply` | configmap supply. |
+| `unavailable-values/produced-allowed` | produced allowed. |
+| `unavailable-values/produced-strict` | Cluster-produced Helm values render with an omission warning without permission. |
+| `unavailable-values/missing-key-allowed` | missing key allowed. |
+| `unavailable-values/missing-key-strict` | missing key strict. |
+| `unavailable-values/missing-key-supply` | Supplied data fills a required missing key in a readable Secret without an omission warning. |
+
+`component-secret-producer/shared-file-ordered` and `component-secret-producer/shared-file-unordered` model a shared-file parent with and without `dependsOn`.
+A native Component holds an ExternalSecret whose metadata and target names resolve through `${BUCKET}` substitution.
+Two Kustomizations share that component with different values.
+The package witness requires zero execution attempts and no output membership for the other owner.
+`component-secret-producer/parent-context-ordered` and `component-secret-producer/parent-context-unordered` add parent namespace projection and inherited substitution of the target.
+`component-secret-producer/producer-absent` retains the required-Secret error without a producer.
+`component-secret-producer/producer-absent-allowed` renders with matching permission and emits one unresolved warning.
+The latter case includes `--allow-missing-kinds Secret`.
+
+A local HelmRelease changes only its image tag between Git revisions.
+Full, narrow, both changed-only snapshots, and the Git diff run twice with fresh memory caches and two workers.
+The expected HelmRelease bytes follow the consumer declaration and Flux ownership labels.
+The expected diff follows the local chart and its image values.
+`component-secret-producer/removed-producer` and `component-secret-producer/removed-producer-reverse` retain side-specific missing-Secret errors after removal.
+`component-secret-producer/renamed-producer` and `component-secret-producer/renamed-producer-reverse` retain those errors after a target rename.
+These cases include reversed diff sides and shallow history.
+
+`bootstrap-role/gitrepository`, `bootstrap-role/ocirepository`, and `bootstrap-role/bucket` cover issue #1529 in build, diff, and test.
+`bootstrap-role/chart-only` covers a packaged-chart reference.
+The chart-only case keeps an undeclared packaged chart unavailable.
+`bootstrap-role/sync-oci` reduces the reported xunholy FluxInstance topology to one projected OCI source and four consumers.
+The source is `flux-system/flux-system`, and the entry is `kubernetes/clusters/cluster-00`.
+The artifact paths, including `./apps/overlays/cluster-00`, do not exist at the repository root.
+An unavailable ResourceSet projects the FluxInstance.
+The producer requires the absent FluxInstance CRD, a Kubernetes resource type definition.
+Discovery retains the projected source without publishing its declaration.
+No independent OCI declaration replaces the projection.
+The source stays unavailable offline, and its consumers stay blocked.
+The case covers full test, full build, changed-only build, and forward diff.
+`bootstrap-role/sync-oci-reverse` reverses the same explicit Git revisions.
+`bootstrap-role/sync-oci-added` and `bootstrap-role/sync-oci-removed` retain the producer and its consumers on only one side.
+`bootstrap-role/sync-oci-direct` declares the FluxInstance directly and retains the same four unavailable-source consumers.
+It covers full test, full build, changed-only build, and forward diff without an independent OCI declaration.
+`bootstrap-role/sync-oci-direct-reverse` compares the same explicit revisions in reverse.
+Each invocation starts with an empty isolated cache and two workers.
+Two runs use fresh caches and two workers.
+
+
+`gitignored-working-tree/ignored-working-tree` keeps ignored untracked desktop files and Flux declarations out of local Git inputs.
+Two replays compare complete full-selection, changed-only, and diff output with fresh caches and two workers.
+
 - `bootstrap-credentials/build-and-diff` compares complete build and diff output before and after a bootstrap source gains unavailable authentication and verification references.
   Both replays use two workers and fresh caches.
 
@@ -50,6 +109,24 @@ and forward/reverse diff with shallow and absent history on opposite sides,
 without selecting an unrelated consumer. Each case runs with
 two workers and compares two equal CLI runs. Consumed-input successor scheduling
 remains deferred to X2 and is not asserted by these fixtures.
+
+## Structural cluster partitioning
+
+`cluster-partition/` retains three plain cluster packages from `joryirving/home-ops` at `7548eb35aed27a000d9c8bfc4a6f8a73b14661cd`.
+Each package declares the same `flux-system/cluster-apps` Kustomization with its own application path and substitution.
+Each FluxInstance declares a local sync application for its cluster directory.
+The matching GitRepository and origin use `https://example.invalid/cluster.git` without a network request.
+The workload ConfigMaps live outside the entry directories and retain distinct substituted markers.
+An unrelated `.taskfiles/bootstrap/Taskfile.yaml` remains at the repository root without a root Kustomization.
+
+`cluster-partition/root` compares the complete table, three cluster coordinates, application paths, workload output, and stderr.
+`cluster-partition/explicit` selects each cluster with `-p` and requires only its own workload marker.
+`cluster-partition/singleton` removes both sibling clusters and retains the existing singleton presentation.
+`cluster-partition/renamed` moves the entries to `platform/{red,green,blue}` and changes their sync paths together.
+The renamed output follows sorted structural coordinates and retains the original application paths.
+Every case runs through `cli.Run` with two workers and compares two complete replays with fresh caches.
+The expected JSON comes from the declared ConfigMaps and Flux ownership labels.
+The expected tables come from the declared cluster coordinates and application paths.
 
 ## Independent render model
 
@@ -246,7 +323,7 @@ Its `source` records the repository, full revision, original paths, and reductio
 `inputs` names supplied material outside the rendered repository.
 `tokens` declares exact file sentinels that need runtime references before commit creation.
 `files` assigns every file to named cases and states its purpose.
-The schema guard rejects missing expectations, undeclared files, and empty successful Kustomize packages.
+The schema guard rejects missing expectations, undeclared files, empty successful Kustomize packages, and file paths that a Go module zip rejects.
 
 Each case declares initial `setup`, an optional working directory, environment values, a cache policy, and ordered `steps`.
 Each step has a unique `id` and exactly one `edit` or `invoke`.
@@ -609,6 +686,8 @@ The U5 cases preserve substitution, supplied inputs, and dependencies. Expected 
 | `supplied-inputs/data-reader--string-data-precedence` | `TestE2E_DataReader_StringDataPrecedence` |
 | `supplied-inputs/data-reader--supplied-source-produces-credential` | `TestE2E_DataReader_SuppliedSourceProducesCredential` |
 | `supplied-inputs/data-reader--cluster-advisories-on-both-base-sides` | `TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides` |
+| `substitute-values/required-missing-secret` | `TestE2E_SubstitutionRequiredMissing/required-missing-secret` |
+| `substitute-values/required-missing-configmap` | `TestE2E_SubstitutionRequiredMissing/required-missing-configmap` |
 | `substitute-values/parent-patches-propagate-to-children` | `TestE2E_ParentPatchesPropagateToChildren` |
 | `substitute-values/substitute-disabled-annotation` | `TestE2E_SubstituteDisabledAnnotation` |
 | `substitute-values/substitution-precedence-build` | `TestE2E_SubstitutionPrecedence/build` |
@@ -657,6 +736,25 @@ The U5 cases preserve substitution, supplied inputs, and dependencies. Expected 
 The supplied SSH corpus case compares both full builds and the supplied paired diff. The absent-agent branch stays in `internal/cli/TestRun_SuppliedSSHSnapshotOnBothDiffSides` with every original assertion. `pkg/source/git/TestFetcher_SSHAcquisitionsOnBothSides` also requires zero authenticated acquisitions for an absent agent. The native-agent proof uses real package-test sockets. The corpus uses only declared Git URLs and generated test keys.
 
 The ancestor-patch cases follow `bjw-s-labs/home-ops` at `656b3515052fcdb0450ca56151809852e383200d`, `kubernetes/flux/cluster/ks.yaml`. They retain the parent patch and child ownership structure. Local ConfigMaps replace unrelated workloads. The dependency cases follow `truxnell/home-cluster` at `0f7b47a9fec9419a4c5d6b5c4a4ae219ad342c1c`, `kubernetes/hegira/apps/cert-manager/cert-manager/ks.yaml`. The readiness expressions, emitted sources, and negative variants are authored reductions.
+
+The `required-missing-secret` and `required-missing-configmap` cases model `network/cloudflare-tunnel` with required absent `cloudflare-tunnel-id-secret` data.
+Matching kind permission renders the Pod and emits one unresolved warning per snapshot.
+No permission and wrong-kind permission retain the missing-input failure.
+Both cases compare complete build and image-diff bytes, forward and reverse comparisons, changed-only output, and one-sided references.
+The fixtures use two workers and retain caches across the two deterministic replays.
+
+The authored Pod selects `offline` through its default and changes its image from `v1` to `v2`.
+The source shape comes from the owner-reported onedr0p/home-ops commit `9f5aa16f3a` without fetching that repository.
+
+The producer rendering and transformed-namespace cases retain their original invocations and add matching-permission invocations with the same output assertions.
+The encrypted substitution cases retain inactive substitution, readable siblings, inline activation, and strict-mode failures under matching permission.
+`component-secret-producer/producer-absent-allowed` now expects its declared HelmRelease and one unresolved warning.
+The unpermitted absent-producer case still fails.
+Removed and renamed producer comparisons render with permission in both directions.
+Their additional invocations without permission retain the original missing-input and suppressed-diff assertions.
+The removed-producer pair keeps the same HelmRelease bytes and expects an empty diff.
+This pair also guards against treating an unresolved input as proof that execution can omit output.
+All new expectations derive from declared manifests, substitution defaults, image tags, and diagnostic formatting.
 
 Expected manifests use Flux `Generator.WriteFile` and `SecureBuild` from `github.com/fluxcd/pkg/kustomize`. Flux removes newlines from substitution values before expansion. Expected labels identify the applying Kustomization. Source admission, output selection, ciphertext removal, and diagnostic routing use flate policy. All expectations are source changes, never accepted CLI output.
 
@@ -1475,3 +1573,11 @@ Restore reuses that URL while it restores both repositories.
 CLI cases do not declare this operation and retain the socket-free harness boundary.
 The catalog also builds states for SDK cases that contain only declared edits.
 Components use consumers within the same materialized repository when repositories share one source directory.
+
+`dependency-namespaces/corrected` resolves both dependency fields through parent document substitution.
+`dependency-namespaces/missing` reports the absent substituted target and blocks child output.
+`dependency-namespaces/escaped` keeps the escaped namespace literal and reports that missing target.
+`TestE2E_DependencyNamespaces` compares two complete harness replays with concurrency 2.
+The fixture uses no network service and disables persistent caching.
+Expected output follows the declared ConfigMap and its Flux ownership labels.
+Expected diagnostics follow the missing target identity and the report formatter.

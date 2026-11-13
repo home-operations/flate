@@ -8,11 +8,12 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/home-operations/flate/pkg/selection"
+
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -85,7 +86,7 @@ spec:
 				Config{
 					Input:       input,
 					Path:        root,
-					Selection:   manifest.Selection{Changed: true},
+					Selection:   selection.Request{Changed: true},
 					Projections: projections,
 				},
 			)
@@ -104,14 +105,14 @@ spec:
 		assert.NoError(t, failures[i])
 		assert.Equal(t, len(entries[i]), 1)
 		entry := entries[i][0]
-		session, err := Begin(
+		session, err := beginTest(
 			t.Context(),
 			Config{
 				Entry:     &entry,
 				Input:     entry.Input,
 				Path:      entry.Path,
 				Store:     store.New(),
-				Selection: manifest.Selection{Changed: true},
+				Selection: selection.Request{Changed: true},
 			},
 		)
 		assert.NoError(t, err)
@@ -172,7 +173,12 @@ func testPlanOccurrenceBoundariesCase(t *testing.T, testCaseInput *struct {
 		for _, entry := range entries {
 			paths = append(paths, entry.Path)
 		}
-		assert.Diff(t, paths, []string{root})
+		// The owner ruling restores #1379's multi-entry planning expectations.
+		want := []string{root}
+		if testCaseInput.name == "equal bytes" {
+			want = []string{filepath.Join(root, "alpha"), filepath.Join(root, "omega")}
+		}
+		assert.Diff(t, paths, want)
 	}
 	entries, err := Plan(
 		t.Context(),
@@ -225,9 +231,18 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 		Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root},
 	)
 	assert.NoError(t, err)
+	// The owner ruling restores #1379's multi-entry planning expectations.
 	want := 1
+	if testCaseInput.name == "ordinary" || testCaseInput.name == "group versions" {
+		want = 2
+	}
 	assert.Equal(t, len(entries), want)
-	assert.Equal(t, entries[0].Path, root)
+	if want == 1 {
+		assert.Equal(t, entries[0].Path, root)
+	} else {
+		assert.Equal(t, entries[0].Path, filepath.Join(root, "left"))
+		assert.Equal(t, entries[1].Path, filepath.Join(root, "right"))
+	}
 	assert.Equal(t, entries[0].prepared != nil, true)
 	if testCaseInput.name == "ordinary" {
 		renamed := fstest.MapFS{}
@@ -241,14 +256,12 @@ func testPlanAdmittedSourceViewsCase(t *testing.T, testCaseInput *struct {
 			Config{Input: &store.SourceArtifact{LocalPath: root, FS: renamed}, Path: root},
 		)
 		assert.NoError(t, localErr)
-		var paths []string
-		if len(changed) != 0 {
-			paths = make([]string, 0, len(changed))
-		}
+		paths := make([]string, 0, len(changed))
 		for _, entry := range changed {
 			paths = append(paths, entry.Path)
 		}
-		assert.Diff(t, paths, []string{root})
+		// The owner ruling restores #1379's renamed multi-entry expectation.
+		assert.Diff(t, paths, []string{filepath.Join(root, "new-second"), filepath.Join(root, "unrelated")})
 	}
 	other := fstest.MapFS{
 		"left/kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
@@ -318,8 +331,8 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
-	selection := manifest.Selection{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")}}
-	cfg := Config{Input: input, Path: filepath.Join(root, "flux"), Selection: selection}
+	request := selection.Request{Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")}}
+	cfg := Config{Input: input, Path: filepath.Join(root, "flux"), Selection: request}
 	entries, err := Plan(t.Context(), cfg)
 	assert.NoError(t, err)
 	before := reads.Load()
@@ -327,9 +340,9 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 	assert.Equal(t, requiredReads.Load(), int64(1))
 	cfg.Store = store.New()
 	cfg.Loader = loader.New(cfg.Store)
-	cfg.Loader.Options.Filter = change.NewFilter()
+	configureSelection(t, cfg.Loader, cfg.Selection)
 	cfg.Entry = &entries[0]
-	session, err := Begin(t.Context(), cfg)
+	session, err := beginTest(t.Context(), cfg)
 	assert.NoError(t, err)
 	assert.Equal(t, reads.Load(), before)
 	assert.NoError(t, session.refreshDeclarations(t.Context(), root))
@@ -339,6 +352,6 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 	record, ok := cfg.Loader.Index.Lookup(data)
 	assert.Equal(t, ok, true)
 	assert.Equal(t, record.File, "supplier/cm.yaml")
-	assert.Equal(t, len(cfg.Loader.Options.Filter.KeepNames()), 0)
+	assert.Equal(t, len(selectedNames(cfg.Loader)), 0)
 	assert.Equal(t, cfg.Store.GetObject(data), nil)
 }

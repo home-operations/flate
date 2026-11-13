@@ -4,11 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"iter"
 	"slices"
@@ -19,7 +16,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 type chartFileContent struct {
@@ -117,31 +113,26 @@ func computeTemplateKey(
 	})
 }
 
-const frameDomain = "flatehr2"
+const frameDomain = "helm-output"
 
 type renderHeader struct {
 	Key      string         `json:"Key"`
 	Binding  string         `json:"Binding"`
-	Output   string         `json:"Output"`
-	Size     int            `json:"Size"`
 	Analysis *chartAnalysis `json:"Analysis"`
 }
 
-const frameHeaderLimit = 16 << 20
-
 type templateBinding struct {
-	Policy       manifest.HelmReleaseHistoryPolicy `json:"Policy"`
-	Source       manifest.NamedResource            `json:"Source"`
-	Kind         string                            `json:"Kind"`
-	URL          string                            `json:"URL"`
-	Path         string                            `json:"Path"`
-	Root         string                            `json:"Root"`
-	Key          string                            `json:"Key"`
-	Revision     string                            `json:"Revision"`
-	Digest       string                            `json:"Digest"`
-	Alias        bool                              `json:"Alias"`
-	Options      Options                           `json:"Options"`
-	Dependencies values.DependencySubstitutions    `json:"Dependencies"`
+	Policy   manifest.HelmReleaseHistoryPolicy `json:"Policy"`
+	Source   manifest.NamedResource            `json:"Source"`
+	Kind     string                            `json:"Kind"`
+	URL      string                            `json:"URL"`
+	Path     string                            `json:"Path"`
+	Root     string                            `json:"Root"`
+	Key      string                            `json:"Key"`
+	Revision string                            `json:"Revision"`
+	Digest   string                            `json:"Digest"`
+	Alias    bool                              `json:"Alias"`
+	Options  Options                           `json:"Options"`
 }
 
 func (a *templateBinding) same(b *templateBinding) bool {
@@ -150,8 +141,7 @@ func (a *templateBinding) same(b *templateBinding) bool {
 		a.Key != b.Key ||
 		a.Revision != b.Revision ||
 		a.Digest != b.Digest ||
-		a.Alias != b.Alias ||
-		!a.Dependencies.Equal(b.Dependencies) {
+		a.Alias != b.Alias {
 		return false
 	}
 	x, y := a.Options, b.Options
@@ -164,13 +154,13 @@ func (a *templateBinding) same(b *templateBinding) bool {
 }
 
 type renderFrame struct {
-	header          renderHeader
-	binding         templateBinding
-	chart           *chart.Chart
-	lookup, raw     string
-	output, encoded []byte
-	accepted        *acceptedRender
-	acceptedKey     string
+	header  renderHeader
+	binding templateBinding
+	chart   *chart.Chart
+	lookup  string
+	output  []byte
+	content any
+	stored  *cache.Frame
 }
 
 func equalRenderFrame(a, b any) bool {
@@ -179,229 +169,7 @@ func equalRenderFrame(a, b any) bool {
 	if !ok || !other || left.header.Key != right.header.Key || !bytes.Equal(left.output, right.output) {
 		return false
 	}
-	return left.binding.same(&right.binding)
-}
-
-type acceptedRoot struct {
-	Source manifest.NamedResource `json:"Source"`
-	Paths  []string               `json:"Paths"`
-}
-
-type acceptedRecord struct {
-	ID     manifest.NamedResource   `json:"ID"`
-	Record manifest.DiscoveryRecord `json:"Record"`
-	Roots  []acceptedRoot           `json:"Roots"`
-}
-
-type acceptedRender struct {
-	Version  int                    `json:"Version"`
-	Complete bool                   `json:"Complete"`
-	Owner    manifest.NamedResource `json:"Owner"`
-	Raw      string                 `json:"Raw"`
-	Records  []acceptedRecord       `json:"Records"`
-}
-
-func (a *acceptedRender) equal(b *acceptedRender) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	if a.Version != b.Version || a.Complete != b.Complete || a.Owner != b.Owner || a.Raw != b.Raw {
-		return false
-	}
-	if (a.Records == nil) != (b.Records == nil) || len(a.Records) != len(b.Records) {
-		return false
-	}
-	{
-		xValues := a.Records
-		for i := range xValues {
-			x := xValues[i]
-			y := b.Records[i]
-			if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) ||
-				len(x.Roots) != len(y.Roots) {
-				return false
-			}
-			for j, root := range x.Roots {
-				other := y.Roots[j]
-				if root.Source != other.Source || (root.Paths == nil) != (other.Paths == nil) ||
-					!slices.Equal(root.Paths, other.Paths) {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
-
-func encodeFrame(header renderHeader, output []byte) ([]byte, error) {
-	if output == nil {
-		output = []byte{}
-	}
-	header.Size, header.Output = len(output), manifest.Fingerprint(output)
-	data, err := json.Marshal(header)
-	if err != nil {
-		return nil, fmt.Errorf("encode render frame: %w", err)
-	}
-	if len(data) > frameHeaderLimit {
-		return nil, errors.New("render header exceeds frame limit")
-	}
-	frame := make([]byte, framePrefixSize+len(data)+len(output))
-	copy(frame, frameDomain)
-	binary.BigEndian.PutUint32(
-		frame[8:framePrefixSize],
-		uint32(len(data)), //nolint:gosec // frameHeaderLimit bounds the header length below uint32 capacity.
-	)
-	copy(frame[framePrefixSize:], data)
-	copy(frame[framePrefixSize+len(data):], output)
-	return frame, nil
-}
-
-func decodeFrame(data []byte) (renderFrame, error) {
-	if len(data) < framePrefixSize || string(data[:8]) != frameDomain {
-		return renderFrame{}, errors.New("invalid render frame domain or version")
-	}
-	size := int(binary.BigEndian.Uint32(data[8:framePrefixSize]))
-	if size > frameHeaderLimit || size > len(data)-framePrefixSize {
-		return renderFrame{}, errors.New("invalid render header length")
-	}
-	var header renderHeader
-	if err := json.Unmarshal(data[framePrefixSize:framePrefixSize+size], &header); err != nil {
-		return renderFrame{}, fmt.Errorf("decode render frame: %w", err)
-	}
-	begin := framePrefixSize + size
-	if header.Size < 0 || header.Size > len(data)-begin {
-		return renderFrame{}, errors.New("invalid render payload length")
-	}
-	end := begin + header.Size
-	output := data[begin:end]
-	if header.Output == "" || manifest.Fingerprint(output) != header.Output {
-		return renderFrame{}, errors.New("invalid render payload identity")
-	}
-	frame := renderFrame{
-		header: header,
-		output: bytes.Clone(output),
-		raw:    manifest.Fingerprint(data[framePrefixSize:begin]),
-	}
-	tail := data[end:]
-	if len(tail) == 0 || len(tail) > frameHeaderLimit {
-		return frame, nil
-	}
-	var accepted acceptedRender
-	if err := json.Unmarshal(
-		tail,
-		&accepted,
-	); err != nil || accepted.Version != 1 || !accepted.Complete ||
-		accepted.Raw != frame.raw {
-		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
-		return frame, nil
-	}
-	if !accepted.ordered() {
-		return frame, nil
-	}
-	frame.accepted, frame.acceptedKey = &accepted, manifest.Fingerprint(accepted)
-	return frame, nil
-}
-
-func prepareAccepted(
-	owner manifest.NamedResource,
-	frame *renderFrame,
-	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
-) (acceptedRender, error) {
-	accepted := acceptedRender{Version: 1, Complete: true, Owner: owner, Raw: frame.raw}
-	//nolint:gocritic // The iterator supplies immutable value snapshots.
-	for id, record := range records {
-		item := acceptedRecord{ID: id, Record: record}
-		item.Record.ContentRoots = nil
-		item.Record.Inputs = slices.Clone(record.Inputs)
-		item.Record.Refs = slices.Clone(record.Refs)
-		slices.SortFunc(item.Record.Refs, manifest.NamedResource.Compare)
-		item.Record.Refs = slices.Compact(item.Record.Refs)
-		item.Record.Productions = slices.Clone(record.Productions)
-		slices.SortFunc(item.Record.Productions, func(a, b manifest.Production) int {
-			return cmp.Or(
-				a.Owner.Compare(b.Owner),
-				a.Declaration.Compare(b.Declaration),
-				a.Authored.Compare(b.Authored),
-				a.Source.Compare(b.Source),
-				cmp.Compare(a.Path, b.Path),
-				cmp.Compare(a.File, b.File),
-			)
-		})
-		item.Record.Productions = slices.Compact(item.Record.Productions)
-		for source, paths := range record.ContentRoots {
-			paths = slices.Clone(paths)
-			slices.Sort(paths)
-			item.Roots = append(item.Roots, acceptedRoot{Source: source, Paths: slices.Compact(paths)})
-		}
-		slices.SortFunc(item.Roots, func(a, b acceptedRoot) int { return a.Source.Compare(b.Source) })
-		accepted.Records = append(accepted.Records, item)
-	}
-	slices.SortFunc(accepted.Records, func(a, b acceptedRecord) int { return a.ID.Compare(b.ID) })
-	for i := 1; i < len(accepted.Records); i++ {
-		if accepted.Records[i-1].ID == accepted.Records[i].ID {
-			return acceptedRender{}, errors.New("duplicate accepted render identity")
-		}
-	}
-	return accepted, nil
-}
-
-//nolint:gocritic // Keep immutable value-receiver semantics.
-func (f renderFrame) history(
-	owner manifest.NamedResource,
-) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
-	if f.accepted == nil || f.accepted.Owner != owner {
-		return nil, false
-	}
-	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
-		{
-			itemValues2 := f.accepted.Records
-			for itemIndex := range itemValues2 {
-				item := itemValues2[itemIndex]
-				record := item.Record
-				record.Inputs = slices.Clone(record.Inputs)
-				record.Refs = slices.Clone(record.Refs)
-				record.Productions = slices.Clone(record.Productions)
-				if len(item.Roots) > 0 {
-					record.ContentRoots = make(map[manifest.NamedResource][]string, len(item.Roots))
-				}
-				for _, root := range item.Roots {
-					record.ContentRoots[root.Source] = slices.Clone(root.Paths)
-				}
-				if !yield(item.ID, record) {
-					return
-				}
-			}
-		}
-	}, true
-}
-
-type renderPublication struct {
-	frame    renderFrame
-	accepted acceptedRender
-}
-
-// WriteTo writes the render frame and accepted inventory.
-//
-//nolint:gocritic // A publication is a value snapshot so encoding never mutates its accepted frame.
-func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
-	if p.frame.encoded == nil {
-		encoded, err := encodeFrame(p.frame.header, p.frame.output)
-		if err != nil {
-			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
-		}
-		p.frame.encoded = encoded
-	}
-	data, err := json.Marshal(p.accepted)
-	if err != nil {
-		return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
-	}
-	if len(data) > frameHeaderLimit {
-		return 0, manifest.NewError(manifest.ErrFlux, nil, "accepted helm render exceeds frame limit")
-	}
-	n, err := io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
-	if err != nil {
-		return n, fmt.Errorf("write accepted helm render: %w", err)
-	}
-	return n, nil
+	return left.binding.same(&right.binding) && manifest.ValueEqual(left.content, right.content)
 }
 
 // RenderAcceptance binds an accepted inventory to its source paths.
@@ -429,42 +197,35 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
-	var err error
 	if frame.header.Binding == "" {
 		frame.header.Binding = manifest.Fingerprint(frame.binding)
 	}
 	if frame.header.Analysis == nil {
 		frame.header.Analysis = (&chartDescription{chart: frame.chart}).analyze()
 	}
-	if frame.encoded == nil && frame.raw == "" {
-		frame.encoded, err = encodeFrame(frame.header, frame.output)
-		if err != nil {
-			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
+	if frame.stored == nil {
+		var err error
+		frame.stored, err = cache.NewFrame(frameDomain, frame.header, frame.output)
+		if err != nil || frame.stored == nil {
+			return err
 		}
 	}
-	if frame.raw == "" {
-		frame.raw = manifest.Fingerprint(
-			frame.encoded[12 : framePrefixSize+int(binary.BigEndian.Uint32(frame.encoded[8:framePrefixSize]))],
-		)
-	}
-	accepted, err := prepareAccepted(owner, &frame, records)
-	if err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
-	}
-	content := frame.acceptedKey
-	if frame.accepted == nil || content == "" || !frame.accepted.equal(&accepted) {
-		content = manifest.Fingerprint(accepted)
+	publication, err := frame.stored.PreparePublication(ctx, cache.FramePublicationInput{
+		Owner: owner, Content: frame.content, Records: records, Complete: true,
+	})
+	if err != nil || publication == nil {
+		return err
 	}
 	return cache.RecordInventory(
 		ctx,
 		c.cache,
-		cache.AcceptedInventory[renderPublication]{
+		cache.AcceptedInventory[*cache.FramePublication]{
 			Key:        frame.header.Key,
 			Lookup:     frame.lookup,
-			Acceptance: content,
+			Acceptance: publication.Identity(),
 			Work:       acceptance.Work.History(),
 			History:    cache.RenderHistory{Owner: owner, Sources: acceptance.Sources},
-			Content:    renderPublication{frame: frame, accepted: accepted},
+			Content:    publication,
 		},
 	)
 }
@@ -527,12 +288,14 @@ func (c *Client) PreviousRender(
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
 	}
-	prepared.release = hr
 	_, record := prepared.contentRender(ctx, c)
 	if record == nil {
 		return nil, false
 	}
-	records, complete := record.frame.history(hr.Named())
+	if record.frame.stored == nil {
+		return nil, false
+	}
+	records, complete := record.frame.stored.History(hr.Named(), prepared.content)
 	if complete && record != prepared.loaded.record {
 		c.rememberDescription(&prepared.loaded, record)
 	}
@@ -553,28 +316,12 @@ func (r *templateRequest) contentRender(ctx context.Context, c *Client) (RenderA
 		return admission, nil
 	}
 	admission.Receipt = record.receipt
-	if _, complete := record.frame.history(r.release.Named()); complete {
-		admission.Documents, admission.Accepted = normalizeLists(documents), true
+	if record.frame.stored != nil {
+		if _, complete := record.frame.stored.History(r.release.Named(), r.content); complete {
+			admission.Documents, admission.Accepted = normalizeLists(documents), true
+		}
 	}
 	return admission, record
-}
-
-const framePrefixSize = 12
-
-func (a *acceptedRender) ordered() bool {
-	itemValues := a.Records
-	for i := range itemValues {
-		item := itemValues[i]
-		if i > 0 && a.Records[i-1].ID.Compare(item.ID) >= 0 {
-			return false
-		}
-		for j, root := range item.Roots {
-			if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func (c *Client) readRender(ctx context.Context, key string, input *RenderOptions) (*renderRecord, error) {
@@ -595,15 +342,22 @@ func (c *Client) readRender(ctx context.Context, key string, input *RenderOption
 		return nil, fmt.Errorf("lookup helm render cache: %w", err)
 	}
 	identity := cache.AcquisitionIdentity(reader)
-	data, err := fs.ReadFile(reader, "content")
-	if err != nil {
-		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read helm render cache: %w", err), "")
+	var frame renderFrame
+	stored, err := cache.OpenFrame(ctx, frameDomain, reader, &frame.header)
+	if _, storage := errors.AsType[*cache.CacheError](err); storage {
+		return nil, err
 	}
-	frame, err := decodeFrame(data)
 	if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
-		//nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
-		return nil, nil
+		return nil, nil //nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
 	}
+	frame.output, err = stored.Payload(ctx)
+	if _, storage := errors.AsType[*cache.CacheError](err); storage {
+		return nil, err
+	}
+	if err != nil {
+		return nil, nil //nolint:nilerr,nilnil // Invalid reusable payload is an ordinary cache miss.
+	}
+	frame.stored = stored
 	frame.lookup = ""
 	record := &renderRecord{
 		key:      key,
@@ -628,8 +382,8 @@ type templateResult struct {
 func (r *templateResult) admit(ctx context.Context, c *Client, request *templateRequest) (bool, error) {
 	r.observed = true
 	admission := RenderAdmission{Key: request.key, Receipt: r.receipt}
-	if r.record != nil {
-		if _, complete := r.record.frame.history(request.release.Named()); complete {
+	if r.record != nil && r.record.frame.stored != nil {
+		if _, complete := r.record.frame.stored.History(request.release.Named(), request.content); complete {
 			admission.Documents, admission.Accepted = normalizeLists(r.docs), true
 		}
 	}

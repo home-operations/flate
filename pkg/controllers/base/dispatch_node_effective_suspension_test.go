@@ -40,16 +40,11 @@ func TestDispatchNode_EffectiveSuspension(t *testing.T) {
 	}
 	publish(input)
 	entered, replaced := make(chan struct{}), make(chan struct{})
-	c.Configure(base.Options{PreflightFailure: func(id manifest.NamedResource) (string, bool) {
-		if id == input.Named() {
-			close(entered)
-			tasks.YieldSlot(func() { <-replaced })
-		}
-		return "", false
-	}})
 	c.StartLifecycle()
 	var bodies atomic.Int64
 	tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
+		close(entered)
+		tasks.YieldSlot(func() { <-replaced })
 		run := controllertest.NewExecution(c, input.Named())
 		run.Dispatch(
 			ctx,
@@ -101,7 +96,7 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				index := &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
 				}
-				filterLoader := admissiontest.New(
+				filterLoader, _ := admissiontest.New(
 					t,
 					admissiontest.Config{
 						Changes:   change.NewSet([]string{"parent.yaml"}),
@@ -110,9 +105,9 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 						Root:      "",
 					},
 				)
-				admissiontest.Commit(t, filterLoader, nil)
-				filter := filterLoader.Options.Filter
-				c.Configure(base.Options{Filter: filter, Index: index, Loader: filterLoader})
+				admissiontest.Commit(t, filterLoader.Options.Session, nil)
+				filter := filterLoader.Options.Session
+				c.Configure(base.Options{Session: filter, Index: index, Loader: filterLoader})
 				fingerprint := manifest.Fingerprint("same")
 				_, _, next := s.GetEmission(parent.Named())
 				defer next.Finish()
@@ -138,7 +133,7 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				}
 				assert.FatalIf(
 					t,
-					filter.ShouldReconcile(child.Named()),
+					filter.Snapshot().Reconcile(child.Named()),
 					"%v",
 					"fixture child already selected before replay",
 				)
@@ -157,7 +152,7 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				)
 				assert.FatalIf(
 					t,
-					filter.ShouldReconcile(child.Named()) != complete,
+					filter.Snapshot().Reconcile(child.Named()) != complete,
 					"%v",
 					"complete replay did not extend changed-only selection through Emit",
 				)

@@ -27,6 +27,9 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 	if w.policy != traversalAdmission {
 		abs = filepath.Join(v.root, v.dir)
 	}
+	if w.scopeInputs != nil {
+		*w.scopeInputs = append(*w.scopeInputs, walkInput{path: abs})
+	}
 	if decision := w.prepareVisit(&v, abs, yield); decision.done {
 		return decision.more
 	}
@@ -72,9 +75,11 @@ func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisi
 
 func (w *traversal) seenScopeVisit(visit *graphVisit) bool {
 	if slices.Contains(w.visitBuf[:w.visitCount], visit.graphContext) {
+		w.scopeSkipped++
 		return true
 	}
 	if _, seen := w.visited[visit.graphContext]; seen {
+		w.scopeSkipped++
 		return true
 	}
 	if w.visitCount < len(w.visitBuf) {
@@ -210,6 +215,9 @@ func (w *traversal) walkDirectory(
 		return false
 	}
 	inputFile := new(w.documents).input(abs)
+	if w.scopeInputs != nil {
+		*w.scopeInputs = append(*w.scopeInputs, walkInput{path: abs, listed: true})
+	}
 	entries, err := fs.ReadDir(inputFile.fs, inputFile.name)
 	if err != nil && w.policy == traversalAdmission {
 		w.err = err
@@ -314,7 +322,7 @@ func (w *traversal) publishScope(
 	visit.nameSuffix = d.NameSuffix + visit.nameSuffix
 	visit.requiresBuild = visit.requiresBuild || !kustomizeinput.PreservesOperands(d) || len(d.Transformers) != 0
 	if visit.namespace == "" {
-		visit.namespace = new(w.documents).transformerInjectedNamespace(visit.root, visit.dir).ns
+		visit.namespace = new(w.documents).transformerInjectedNamespace(visit.root, visit.dir, w.scopeInputs).ns
 	}
 	visit.file, visit.document, visit.readable = input.file, *body, true
 	visit.coordinate = path.Join(visit.prefix, visit.dir, filepath.Base(input.file))

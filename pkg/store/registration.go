@@ -181,10 +181,7 @@ func (e *Emission) publication() uint64 {
 }
 
 func (r *ReadSet) activate(input *Input, kind facet, generation uint64) {
-	if kind != objectFacet {
-		r.details(input)
-	}
-	cell := input.cell(kind)
+	cell := r.registration(input, kind)
 	cell.generation.Store(generation)
 	cell.owner = r
 	key := headKey{input.Ref.NamedResource, kind}
@@ -268,7 +265,7 @@ func (in *Input) objectCurrent() bool {
 }
 
 func (in *Input) current() bool {
-	if !in.objectCurrent() {
+	if !in.objectCurrent() || !in.production.Load().current() {
 		return false
 	}
 	if details := in.details.Load(); details != nil {
@@ -280,7 +277,7 @@ func (in *Input) current() bool {
 			}
 		}
 		for i := range details.cells {
-			if !details.cells[i].current() {
+			if !details.cells[i].Load().current() {
 				return false
 			}
 		}
@@ -336,6 +333,7 @@ func (r *ReadSet) Retire() {
 	}
 	for input := r.inputs; input != nil; input = input.next {
 		if details := input.details.Load(); details != nil {
+			details.binding.Retire()
 			details.gates = nil
 			if details.inventory != nil {
 				for i := range details.inventory {

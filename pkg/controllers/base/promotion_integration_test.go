@@ -2,7 +2,10 @@ package base_test
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 
@@ -93,12 +96,12 @@ spec: {url: https://example.test/excluded.git}
 	for id, file := range files {
 		policy.Records[id] = manifest.DiscoveryRecord{File: file}
 	}
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{Changes: change.NewSet([]string{"consumer.yaml"}), Index: policy, Inventory: st, Root: ""},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	for id := range files {
 		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
@@ -112,16 +115,26 @@ spec: {url: https://example.test/excluded.git}
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	controller := base.New(st, nil)
-	controller.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
+	controller.Configure(base.Options{Session: filter, Loader: filterLoader, Index: index})
 	promote := func(id manifest.NamedResource) (bool, error) {
-		return loader.Promote(t.Context(), st, id, loader.PromoteOptions{
-			Record: index.Records[id].Productions[0], Admit: func(object manifest.BaseManifest) (bool, error) {
-				return controller.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: object}, nil)
-			},
-		})
+		children, err := loader.Promote(
+			t.Context(),
+			st,
+			id,
+			loader.PromoteOptions{Record: index.Records[id].Productions[0]},
+		)
+		if err != nil {
+			return false, err
+		}
+		_, err = controller.KeepEmitted(
+			t.Context(),
+			manifest.NamedResource{},
+			selection.PrepareRequest{Generation: slices.Collect(selection.Declarations(children))},
+		)
+		return filter.Snapshot().Reconcile(id) && st.GetObject(id) != nil, err
 	}
 
-	size := len(filter.KeepNames())
+	decision := filter.Snapshot()
 	{
 		promoted, err := promote(
 			selected,
@@ -139,10 +152,10 @@ spec: {url: https://example.test/excluded.git}
 				id,
 			)
 			assert.ErrorIf(t, err != nil || promoted || st.GetObject(id) != nil ||
-				filter.ShouldReconcile(id), "excluded sibling %s must remain absent", id)
+				filter.Snapshot().Reconcile(id), "excluded sibling %s must remain absent", id)
 		}
 	}
-	assert.ErrorIf(t, len(filter.KeepNames()) != size, "%v", "ordering promotion must not expand keep")
+	assert.ErrorIf(t, filter.Snapshot() != decision, "%v", "ordering promotion must not expand keep")
 	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
 	{
 		promoted, err := promote(excluded)

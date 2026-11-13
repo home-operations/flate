@@ -1,5 +1,4 @@
 
-  ✗  Secret  other/external  not found
-         required by other/unrelated
+  ✗  HelmRelease  other/unrelated  valuesFrom Secret other/external not found; supply it with --supply
 
-  ✗ 1 failed · 1 blocked
+  ✗ 1 failed

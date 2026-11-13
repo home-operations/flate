@@ -1,9 +1,7 @@
 package helm
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -64,8 +62,19 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				),
 			)
 			{
-				_, complete := renderer.PreviousRender(t.Context(), hr, nil, input)
+				var work manifest.WorkRecorder
+				work.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
+				observed := input
+				observed.Work = work.Scope().RenderWork()
+				_, complete := renderer.PreviousRender(t.Context(), hr, nil, observed)
 				assert.FatalIf(t, !complete, "%s", "matching source binding missed")
+				var lookup manifest.WorkCounts
+				for _, row := range work.Scope().Snapshot(0) {
+					if row.Key.Phase == manifest.WorkCache {
+						lookup.Add(&row.Counts)
+					}
+				}
+				assert.Equal(t, lookup, manifest.WorkCounts{Attempts: 1, Completed: 1})
 			}
 			changed := hr.Clone()
 			source := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
@@ -82,18 +91,18 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			header := frame.header
 			header.Key, header.Binding = prepared.key, manifest.Fingerprint(binding)
 			header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
-			wire, err := encodeFrame(header, frame.output)
+			stored, err := cache.NewFrame(frameDomain, header, frame.output)
 			assert.NoError(t, err)
-			stored, err := decodeFrame(wire)
-			assert.NoError(t, err)
-			accepted, err := encodeAccepted(changed.Named(), &stored, emptyRenderInventory)
+			accepted, err := stored.PreparePublication(t.Context(), cache.FramePublicationInput{
+				Owner: changed.Named(), Content: prepared.content, Records: emptyRenderInventory, Complete: true,
+			})
 			assert.NoError(t, err)
 			_, _, _, err = renderer.cache.Blob(
 				t.Context(),
 				cache.BlobKey{Content: prepared.key, Render: cache.RenderAccepted},
 				&cache.Policy{MaxAge: 0},
 				func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-					_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(wire), bytes.NewReader(accepted)))
+					_, copyErr := accepted.WriteTo(w)
 					return cache.ProducerResult{}, copyErr
 				},
 			)

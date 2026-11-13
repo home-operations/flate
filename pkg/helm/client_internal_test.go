@@ -116,7 +116,7 @@ func loadDecodedChart(
 	hr *manifest.HelmRelease,
 	sources Sources,
 ) (chartDescription, error) {
-	d, err := c.describeChart(ctx, hr, sources)
+	d, err := c.describeChart(ctx, hr, sources.chartInput(hr))
 	if err != nil {
 		return chartDescription{}, err
 	}

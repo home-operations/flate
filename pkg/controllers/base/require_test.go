@@ -21,7 +21,79 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
+
+func TestExecution_CycleSettlementOrder(t *testing.T) {
+	t.Parallel()
+	const message = "dependency cycle detected: a → b → a"
+	ids := []manifest.NamedResource{testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b")}
+	want := fmt.Sprintf("%s: %s\n%s: %s\n", ids[0], message, ids[1], message)
+	for first := range ids {
+		t.Run(ids[first].Name+"_first", func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			tasks := task.NewBounded(2)
+			for _, id := range ids {
+				st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+				st.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending})
+			}
+			c := base.New(st, tasks)
+			early := controllertest.NewExecution(c, ids[1-first])
+			defer early.Close()
+			assert.Equal(t, early.Reads.Preflight(), "")
+			st.SetPreflight(ids[first], message)
+			peer := controllertest.NewExecution(c, ids[first])
+			peer.Reads.Require(manifest.DependencyRef{NamedResource: ids[1-first]})
+			peer.Settle(t.Context(), manifest.DrainForce)
+			peer.Close()
+			early.Reads.Require(manifest.DependencyRef{NamedResource: ids[first]})
+			early.Settle(t.Context(), manifest.DrainForce)
+			before, _ := st.GetStatus(ids[1-first])
+			assert.Equal(t, before.Outcome(), store.OutcomeBlocked)
+			st.SetPreflight(ids[1-first], message)
+			assert.Equal(t, early.Valid(), false)
+			for i, id := range ids {
+				e := controllertest.NewExecution(c, id)
+				w := depwait.Waiter{Store: &e.Reads, Parent: id, Missing: depwait.NewMissingPolicy(nil)}
+				cl := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: ids[1-i]}, manifest.DrainNone)
+				assert.Equal(t, errors.Is(cl.Err, manifest.ErrInput), true)
+				e.Close()
+			}
+			release := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+			done := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+			for i, id := range ids {
+				tasks.Go(t.Context(), id.String(), func(ctx context.Context) {
+					defer close(done[i])
+					<-release[i]
+					e := controllertest.NewExecution(c, id)
+					defer e.Close()
+					e.Reads.Require(manifest.DependencyRef{NamedResource: ids[1-i]})
+					e.Settle(ctx, manifest.DrainForce)
+				})
+			}
+			close(release[first])
+			<-done[first]
+			close(release[1-first])
+			<-done[1-first]
+			tasks.BlockTillDone()
+			var output strings.Builder
+			var statuses [2]store.StatusInfo
+			for i, id := range ids {
+				info, _ := st.GetStatus(id)
+				statuses[i] = info
+				assert.Equal(t, info.Outcome(), store.OutcomeFailed)
+				fmt.Fprintf(&output, "%s: %s\n", id, info.String())
+			}
+			assert.Equal(t, output.String(), want)
+			assert.Equal(t, statuses, [2]store.StatusInfo{
+				{Status: store.StatusFailed, Reason: store.ReasonFailed, Message: message},
+				{Status: store.StatusFailed, Reason: store.ReasonFailed, Message: message},
+			})
+			t.Logf("ordered statuses:\n%s", output.String())
+		})
+	}
+}
 
 func TestRequire_Classifications(t *testing.T) {
 	t.Parallel()
@@ -671,7 +743,7 @@ func testRequireRetainsArtifactFactsThroughSettlementCase(
 			return execution.AwaitData(
 				ctx,
 				base.DataWait{
-					Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+					Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
 						rendered = true
 						return nil
 					},

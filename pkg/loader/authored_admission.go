@@ -5,17 +5,18 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 func (l *Loader) applyAdmittedObjects(
 	next map[manifest.NamedResource]manifest.DiscoveryRecord,
 	objects map[manifest.NamedResource]store.Child,
-	allowed map[manifest.NamedResource]rootEvidence,
+	allowed *rootInventory,
 ) bool {
 	changed := false
 	for _, id := range slices.SortedFunc(maps.Keys(l.admitted), manifest.NamedResource.Compare) {
-		if _, survives := next[id]; !survives || !allowed[id].admitted {
+		if _, survives := next[id]; !survives || !selection.Root(allowed.get(id).view()).Admitted {
 			if l.Store.GetObject(id) == l.admitted[id] && l.Store.GetArtifact(id, store.ArtifactContent) == nil {
 				l.Store.DeleteObject(id)
 				changed = true
@@ -29,10 +30,8 @@ func (l *Loader) applyAdmittedObjects(
 	for _, id := range slices.SortedFunc(maps.Keys(objects), manifest.NamedResource.Compare) {
 		child := objects[id]
 		obj := child.Obj
-		if !allowed[id].admitted || !manifest.KindOf(obj).Discovery || l.documents.compact && next[id].Path != "" {
-			continue
-		}
-		if next[id].Builder != "" && !allowed[id].independent {
+		if !selection.Root(allowed.get(id).view()).Admitted || !manifest.KindOf(obj).Discovery ||
+			l.documents.compact && next[id].Path != "" {
 			continue
 		}
 		changed = l.publishAdmittedObject(&child) || changed
@@ -52,7 +51,7 @@ func (l *Loader) publishAdmittedObject(child *store.Child) bool {
 		(policy.Origin == manifest.SuppliedDeclaration || policy.Root && obj.ProjectionCompatible(existing)) {
 		return false
 	}
-	l.Store.AddObject(obj, child.Doc)
+	l.Store.AddDeclaration(store.Declaration{Obj: obj, Doc: child.Doc, Warnings: child.Warnings})
 	l.admitted[id] = obj
 	return true
 }
@@ -60,30 +59,24 @@ func (l *Loader) publishAdmittedObject(child *store.Child) bool {
 func (l *Loader) allowAuthoredObjects(
 	next map[manifest.NamedResource]manifest.DiscoveryRecord,
 	objects map[manifest.NamedResource]store.Child,
-	allowed map[manifest.NamedResource]rootEvidence,
+	allowed *rootInventory,
 	scopes map[string]rootAdmission,
 ) {
 	for id := range objects {
 		child := objects[id]
-		if !manifest.AdmitsRoot(child.Obj) {
-			allowed[id] = rootEvidence{}
-			continue
-		}
 		r := next[id]
-		if r.Path == "" && r.Authored == (manifest.NamedResource{}) {
-			evidence := allowed[id]
-			evidence.admitted = r.Parent == (manifest.NamedResource{})
-			allowed[id] = evidence
-			continue
-		}
-		allowed[id] = scopes[r.Path].evidence(l, id, &r)
+		view := l.physicalView()
+		evidence := view.rootScope(l, &rootScopeInput{
+			identity: id, record: r, admission: scopes[r.Path], declaration: child.Obj, candidate: true, records: next,
+		})
+		allowed.set(id, &evidence)
 	}
 }
 
 func (l *Loader) allowAuthoredRecords(
 	next map[manifest.NamedResource]manifest.DiscoveryRecord,
 	objects map[manifest.NamedResource]store.Child,
-	allowed map[manifest.NamedResource]rootEvidence,
+	allowed *rootInventory,
 	scopes map[string]rootAdmission,
 ) {
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
@@ -91,15 +84,15 @@ func (l *Loader) allowAuthoredRecords(
 		if _, known := objects[id]; known {
 			continue
 		}
-		if obj := l.catalogObject(id, &record); obj == nil || !manifest.AdmitsRoot(obj) {
-			allowed[id] = rootEvidence{}
-			continue
-		}
 		scope, known := scopes[record.Path]
 		if !known {
 			scope = l.rootAdmission(record.Path, record.File, id.KindInfo().Structural)
 		}
-		allowed[id] = scope.evidence(l, id, &record)
+		view := l.physicalView()
+		evidence := view.rootScope(l, &rootScopeInput{
+			identity: id, record: record, admission: scope, records: next,
+		})
+		allowed.set(id, &evidence)
 	}
 }
 
@@ -112,6 +105,7 @@ func (l *Loader) prepareAuthoredFile(
 	if l.terminalInput(file) {
 		doc := l.documents.cache[file]
 		doc.objects, doc.lookup, doc.pathInputs, doc.loaded = nil, nil, nil, false
+		doc.parsed = nil
 		l.documents.cache[file] = doc
 		return false
 	}

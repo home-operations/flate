@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,24 +119,26 @@ func fluxInstanceSyncTrees(t *testing.T) []Tree {
 
 func clusterDiffForTest(t *testing.T, pair []Rendered) []byte {
 	t.Helper()
-	selected, err, _ := Select(
+	projectedResults0, projectionErrors0 := Select(
 		pair,
 		errors.Join(pair[0].Err, pair[1].Err),
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.NoError(t, err)
-	body, warnings, suppressed, err := diff.Compare(
-		diff.Snapshot{
-			Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
-			Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys,
-		},
-		diff.Snapshot{
-			Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
-			Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys,
-		},
-		nil,
-		diff.Options{Format: diff.FormatJSON},
+	comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+		Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
+		Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys,
+	}, Current: diff.Snapshot{
+		Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
+		Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys,
+	}, SelectedErr: nil}}, diff.Options{Format: diff.FormatJSON})
+	var comparisonOutput1 bytes.Buffer
+	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+	body, warnings, suppressed, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+		preparationErr1,
+		writeErr1,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(warnings), 0)
@@ -147,7 +150,7 @@ func TestRenderTrees_ClusterSourceQualifiedChanges(t *testing.T) {
 	t.Parallel()
 	trees := clusterSourceQualifiedTrees(t)
 	slices.Reverse(trees)
-	runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+	runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 	assert.NoError(t, err)
 	assert.Equal(t, len(runs), 4)
 	owner := testutil.KustomizationID("apps", "owner")
@@ -207,7 +210,7 @@ func TestRenderTrees_ClusterSourceQualifiedChanges(t *testing.T) {
 		full := make([]Rendered, 2)
 		for side := range full {
 			tree := trees[slices.IndexFunc(trees, func(tree Tree) bool { return tree.ID == pair[side].ID })]
-			isolated, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+			isolated, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 			assert.NoError(t, err)
 			assert.Equal(t, len(isolated), 1)
 			full[side] = isolated[0]
@@ -262,7 +265,7 @@ func TestRenderTrees_ClusterUnavailableAndEmpty(t *testing.T) {
 		t.Run(fmt.Sprintf("failed_side_%d", failedSide), func(t *testing.T) {
 			t.Parallel()
 			trees := clusterUnavailableTrees(t, failedSide)
-			runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+			runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 			if !errors.Is(err, manifest.ErrFlux) || len(runs) != 6 {
 				t.Fatalf("lost failed cluster: runs=%+v error=%v", runs, err)
 			}
@@ -285,14 +288,14 @@ func TestRenderTrees_FluxInstanceSyncOnlyChange(t *testing.T) {
 	}
 	full := make([]Rendered, 2)
 	for side, tree := range trees {
-		isolated, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+		isolated, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(isolated), 1)
 		full[side] = isolated[0]
 	}
 	var first []byte
 	for repeat := range 2 {
-		runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 2)
 		var templates manifest.WorkCounts
@@ -397,12 +400,13 @@ func sharedClusterTrees(t *testing.T) []Tree {
 func assertClusterUnavailablePair(t *testing.T, pair []Rendered, failedSide manifest.TreeSide) {
 	t.Helper()
 	owner := testutil.KustomizationID("apps", "owner")
-	selected, selectErr, _ := Select(
+	projectedResults1, projectionErrors1 := Select(
 		pair,
 		errors.Join(pair[0].Err, pair[1].Err),
 		[]manifest.NamedResource{owner},
 		nil,
 	)
+	selected, selectErr, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 	for side, run := range pair {
 		assert.Equal(t, run.Absent, false)
 		if run.Orchestrator == nil || run.Result == nil {
@@ -425,17 +429,18 @@ func assertClusterUnavailablePair(t *testing.T, pair []Rendered, failedSide mani
 		}
 	}
 	assert.Equal(t, selectErr != nil, pair[0].ID.Cluster == "broken")
-	body, warnings, suppressed, compareErr := diff.Compare(
-		diff.Snapshot{
-			Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
-			Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys,
-		},
-		diff.Snapshot{
-			Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
-			Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys,
-		},
-		nil,
-		diff.Options{Format: diff.FormatJSON},
+	comparison2, preparationErr2 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+		Subjects: selected[0].Subjects, Manifests: selected[0].Manifests,
+		Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys,
+	}, Current: diff.Snapshot{
+		Subjects: selected[1].Subjects, Manifests: selected[1].Manifests,
+		Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys,
+	}, SelectedErr: nil}}, diff.Options{Format: diff.FormatJSON})
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	body, warnings, suppressed, compareErr := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
 	)
 	assert.NoError(t, compareErr)
 	assert.Equal(t, len(warnings), 0)
@@ -524,19 +529,21 @@ func TestRenderTrees_ThreeClusterSharedInput(t *testing.T) {
 	trees := sharedClusterTrees(t)
 	full := make(map[manifest.TreeID]*Result)
 	for _, tree := range trees {
-		isolated, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+		isolated, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(isolated), 1)
 		full[tree.ID] = isolated[0].Result
 	}
 	var first []byte
 	for repeat := range 2 {
-		runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 6)
 		raw := map[string]manifest.WorkCounts{}
 		outputs := make([]map[string][]map[string]any, 0, len(runs))
 		for _, run := range runs {
+			assert.Equal(t, run.cfg.missing == runs[0].cfg.missing, true)
+			assert.Equal(t, run.loader.Options.Missing == run.cfg.missing, true)
 			owners := []manifest.NamedResource{app}
 			if run.ID.Cluster == "third" {
 				owners = nil

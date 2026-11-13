@@ -10,12 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -31,7 +32,15 @@ func TestAutoResolve_ExplicitBase(t *testing.T) {
 	commitA := initRepoWithFile(t, dir, "a.yaml", "original")
 	writeAndCommit(t, dir, "a.yaml", "updated")
 
-	res, err := AutoResolve(t.Context(), dir, commitA.String(), cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    dir,
+			Base:    commitA.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	if !strings.HasPrefix(res.Source.Metadata["baseline-selection"], "explicit --base=") {
@@ -69,7 +78,15 @@ func TestAutoResolve_SelfURLsCarryRemotes(t *testing.T) {
 		assert.FatalIf(t, localErr != nil, "%v", localErr)
 	}
 
-	res, err := AutoResolve(t.Context(), dir, commit.String(), cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    dir,
+			Base:    commit.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	if !slices.Contains(res.SelfURLs, url) {
@@ -132,7 +149,10 @@ func TestAutoResolve_UpstreamMergeBase(t *testing.T) {
 	// Move forward on the local branch.
 	writeAndCommit(t, dir, "a.yaml", "diverged")
 
-	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	if res.Source.Metadata["baseline-selection"] != "merge-base with @{u}" {
@@ -164,7 +184,10 @@ func TestAutoResolve_OriginHEAD(t *testing.T) {
 
 	writeAndCommit(t, dir, "a.yaml", "new")
 
-	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	if res.Source.Metadata["baseline-selection"] != "merge-base with origin/HEAD" {
@@ -187,7 +210,10 @@ func TestAutoResolve_ExplicitBaseFallsBackToOrigin(t *testing.T) {
 	setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "main"), mainCommit)
 	writeAndCommit(t, dir, "a.yaml", "pr-tip")
 
-	res, err := AutoResolve(t.Context(), dir, "main", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "main", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve(--base=main) should fall back to origin/main: %v", err)
 
 	if got := res.BaseInput.Revision; got != mainCommit.String() {
@@ -208,7 +234,15 @@ func TestAutoResolve_ExplicitBaseRemoteTrackingBranch(t *testing.T) {
 			repo := openHelper(t, dir)
 			setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "release/v1"), commit)
 
-			res, err := AutoResolve(t.Context(), dir, base, cachetest.New(t, "", sourcecache.New))
+			res, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    dir,
+					Base:    base,
+					Cache:   cachetest.New(t, "", sourcecache.New),
+				},
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, res.BaseInput.Revision, commit.String())
 			assert.Equal(t, res.BaseInput.Revision, commit.String())
@@ -228,7 +262,15 @@ func TestAutoResolve_ExplicitBaseLocalBranchPrecedesOrigin(t *testing.T) {
 	setRef(t, repo, plumbing.NewBranchReferenceName("release/v1"), older)
 	setRef(t, repo, plumbing.NewRemoteReferenceName("origin", "release/v1"), newer)
 
-	res, err := AutoResolve(t.Context(), dir, "release/v1", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    dir,
+			Base:    "release/v1",
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, res.BaseInput.Revision, older.String())
 	got, err := fs.ReadFile(res.BaseInput.FS, "a.yaml")
@@ -245,7 +287,15 @@ func TestAutoResolve_ExplicitBaseNeitherLocalNorRemote(t *testing.T) {
 	initRepoWithFile(t, dir, "a.yaml", "base")
 	writeAndCommit(t, dir, "a.yaml", "pr-tip")
 
-	_, err := AutoResolve(t.Context(), dir, "nonexistent", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    dir,
+			Base:    "nonexistent",
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.FatalIf(t, err == nil, "%v", "expected error for unresolvable --base")
@@ -269,7 +319,10 @@ func TestAutoResolve_OriginMainFallback(t *testing.T) {
 
 	writeAndCommit(t, dir, "a.yaml", "new")
 
-	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	if res.Source.Metadata["baseline-selection"] != "merge-base with origin/main" {
@@ -315,7 +368,10 @@ func TestAutoResolve_DetachedHEAD(t *testing.T) {
 		assert.FatalIf(t, localErr != nil, "detach HEAD: %v", localErr)
 	}
 
-	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	if res.Source.Metadata["baseline-selection"] != "merge-base with origin/HEAD" {
@@ -330,7 +386,10 @@ func TestAutoResolve_NoGit(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFileAt(t, filepath.Join(dir, "f.yaml"), "x")
-	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.ErrorIf(
 		t,
 		!errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "not inside a git working tree"),
@@ -338,7 +397,10 @@ func TestAutoResolve_NoGit(t *testing.T) {
 		err,
 	)
 	assert.Equal(t, os.Symlink(".git", filepath.Join(dir, ".git")), nil)
-	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput) && errors.Is(err, manifest.ErrFlux), true)
 	assert.Equal(t, res == nil, true)
 }
@@ -351,7 +413,10 @@ func TestAutoResolve_Shallow(t *testing.T) {
 		err := os.WriteFile(filepath.Join(dir, ".git", "shallow"), []byte("deadbeef\n"), 0o600)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.FatalIf(t, err == nil, "%v", "expected shallow error")
@@ -369,7 +434,10 @@ func TestAutoResolve_NoUpstream(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
-	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.FatalIf(t, err == nil, "%v", "expected no-upstream error")
@@ -400,7 +468,10 @@ func TestAutoResolve_PathOutsideRepo(t *testing.T) {
 		err := os.Mkdir(sibling, 0o750)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
-	_, err := AutoResolve(t.Context(), sibling, "", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: sibling, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err == nil, "%v", "expected error for path outside repo")
 }
 
@@ -411,7 +482,15 @@ func TestAutoResolve_PathOrigMappedToSubdir(t *testing.T) {
 	cluster := filepath.Join(dir, "kubernetes", "flux", "cluster")
 	link := filepath.Join(t.TempDir(), "cluster")
 	assert.NoError(t, os.Symlink(cluster, link))
-	result, err := AutoResolve(t.Context(), link, commit.String(), cachetest.New(t, "", sourcecache.New))
+	result, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    link,
+			Base:    commit.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	if result.Source.LocalPath != dir || result.BaseInput.LocalRoot != dir {
 		t.Fatalf("coordinates: %#v %#v", result.Source, result.BaseInput)
@@ -438,7 +517,15 @@ func TestAutoResolve_NoGitMarker(t *testing.T) {
 	dir := t.TempDir()
 	initRepoWithFile(t, dir, "a.yaml", "x")
 	commit := writeAndCommit(t, dir, "a.yaml", "y")
-	res, err := AutoResolve(t.Context(), dir, commit.String(), cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    dir,
+			Base:    commit.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	// The materialized file is present...
@@ -470,7 +557,15 @@ func TestAutoResolve_PreservesExecutableBit(t *testing.T) {
 	commit := testutil.GitCommitAll(t, r, "init", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
 	})
-	res, err := AutoResolve(t.Context(), dir, commit.String(), cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    dir,
+			Base:    commit.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	info, err := fs.Stat(res.BaseInput.FS, "run.sh")
@@ -495,7 +590,10 @@ func TestAutoResolve_LinkedWorktree(t *testing.T) {
 
 	wtDir := linkedWorktree(t, mainDir, "wt", plumbing.NewBranchReferenceName("feature"))
 
-	res, err := AutoResolve(t.Context(), wtDir, "", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: wtDir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve in linked worktree: %v", err)
 
 	assert.Diff(t, res.SelfURLs, []string{remoteURL})
@@ -522,7 +620,10 @@ func TestAutoResolve_ShallowLinkedWorktree(t *testing.T) {
 	}
 	wtDir := linkedWorktree(t, mainDir, "wt", plumbing.NewBranchReferenceName("feature"))
 
-	_, err := AutoResolve(t.Context(), wtDir, "", cachetest.New(t, "", sourcecache.New))
+	_, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: wtDir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	assert.FatalIf(t, err == nil, "%v", "expected shallow error")
@@ -660,7 +761,10 @@ func testAutoResolveLadderCase(t *testing.T, testCaseInput *struct {
 		})
 	}
 
-	res, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
+	res, err := AutoResolve(
+		t.Context(),
+		Config{Network: networktest.New(t), Path: dir, Base: "", Cache: cachetest.New(t, "", sourcecache.New)},
+	)
 	assert.FatalIf(t, err != nil, "AutoResolve: %v", err)
 
 	if want := "merge-base with origin/" + testCaseInput.want; res.Source.Metadata["baseline-selection"] != want {

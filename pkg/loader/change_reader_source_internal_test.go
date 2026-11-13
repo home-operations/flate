@@ -200,7 +200,7 @@ func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
 					t,
 					admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]},
 				)
-				assert.Equal(t, filter.ShouldReconcile(consumer.Named()), !foreign)
+				assert.Equal(t, filter.Reconcile(consumer.Named()), !foreign)
 			}
 		})
 	}
@@ -235,11 +235,11 @@ func TestFilter_DeferredSourceValuesPairedSides(t *testing.T) {
 					admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]},
 				)
 				for _, id := range []manifest.NamedResource{release, parent} {
-					if got := filter.ShouldReconcile(id); got != want {
+					if got := filter.Reconcile(id); got != want {
 						t.Errorf("SELECTION side %d: %s selected=%t, want %t", side, id, got, want)
 					}
 				}
-				assert.Equal(t, filter.ShouldReconcile(sibling), false)
+				assert.Equal(t, filter.Reconcile(sibling), false)
 			}
 		})
 	}
@@ -267,7 +267,7 @@ func TestFilter_ReadSourceAlternatives(t *testing.T) {
 					t,
 					admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]},
 				)
-				assert.Equal(t, filter.ShouldReconcile(reader.Named()), mode != "read_only_collision")
+				assert.Equal(t, filter.Reconcile(reader.Named()), mode != "read_only_collision")
 			}
 		})
 	}
@@ -315,9 +315,9 @@ func TestSet_WithReadersSelectedSource(t *testing.T) {
 			t,
 			admissionConfig{changes: resolved, index: indexes[side], inventory: st, root: roots[side]},
 		)
-		assert.Equal(t, filter.ShouldReconcile(reader), true)
-		assert.Equal(t, filter.ShouldReconcile(foreign), false)
-		assert.Equal(t, filter.ShouldReconcile(opposite), side == 1)
+		assert.Equal(t, filter.Reconcile(reader), true)
+		assert.Equal(t, filter.Reconcile(foreign), false)
+		assert.Equal(t, filter.Reconcile(opposite), side == 1)
 	}
 }
 
@@ -631,9 +631,9 @@ func testCrossSourceOptionalInputPair(t *testing.T, mode string) {
 		)
 		removed := mode == "exact_removed" || mode == "deferred_consumer"
 		want := removed || mode == "stale_bootstrap_alternative" || mode == "foreign_duplicate"
-		if got := filter.ShouldReconcile(consumer.Named()); got != want {
+		if got := filter.Reconcile(consumer.Named()); got != want {
 			t.Errorf("side %d consumer selected=%t, want %t: %v", side, got, want, filter.KeepNames())
 		}
-		assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+		assert.Equal(t, filter.Reconcile(sibling.Named()), false)
 	}
 }

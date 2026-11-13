@@ -36,7 +36,7 @@ func TestSetLogLevel_ExplicitLevelStreamsLive(t *testing.T) {
 			var sink bytes.Buffer
 			value := level
 			if level == "default" {
-				defaultLevel, err := New("test").PersistentFlags().GetString("log-level")
+				defaultLevel, err := New("test", RunConfig{}).PersistentFlags().GetString("log-level")
 				assert.NoError(t, err)
 				value = defaultLevel
 				assert.FatalIf(t, value != "error", "advertised log default = %q, want error", value)

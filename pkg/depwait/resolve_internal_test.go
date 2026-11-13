@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -45,11 +47,11 @@ func TestResolvedProvider_AbsenceIsFrozen(t *testing.T) {
 	defer reads.Retire()
 	provider := values.NewStoreProvider(&reads)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-	assert.Equal(t, provider.Data(id), manifest.Data(nil))
+	assert.Equal(t, provider.Lookup(id).Data, manifest.Data(nil))
 	st.AddObject(&manifest.ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"VALUE": "late"}})
-	assert.Equal(t, provider.Data(id), manifest.Data(nil))
+	assert.Equal(t, provider.Lookup(id).Data, manifest.Data(nil))
 	assert.Equal(t, reads.Valid(), false)
-	assert.FatalIf(t, values.NewStoreProvider(st).Data(id) == nil, "%v", "new invocation missed arrival")
+	assert.FatalIf(t, values.NewStoreProvider(st).Lookup(id).Data == nil, "%v", "new invocation missed arrival")
 }
 
 func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
@@ -60,7 +62,7 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 		store.Declaration{Obj: data, Doc: testutil.ObjectDocument(data), Origin: manifest.SuppliedDeclaration},
 	)
 	provider := values.NewStoreProvider(st)
-	captured := provider.Data(data.Named())
+	captured := provider.Lookup(data.Named()).Data
 	result1, err := captured.Value("VALUE")
 	value := result1.Value
 	assert.NoError(t, err)
@@ -69,7 +71,7 @@ func TestClassify_RepeatedInputFrozenPolicy(t *testing.T) {
 	st.AddObject(
 		&manifest.ConfigMap{Name: data.Name, Namespace: data.Namespace, Data: map[string]any{"VALUE": "second"}},
 	)
-	assert.Equal(t, provider.Data(data.Named()), captured)
+	assert.Equal(t, provider.Lookup(data.Named()).Data, captured)
 }
 
 //nolint:paralleltest // This test changes process-global state.
@@ -115,10 +117,13 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	parent := testutil.KustomizationID("apps", "reader")
 	before.Init(st, parent, nil)
 	input := values.NewStoreProvider(&before).Lookup(id)
-	w := Waiter{Store: &before, Parent: parent}
+	w := Waiter{
+		Store: &before, Parent: parent, Missing: NewMissingPolicy(
+			nil),
+	}
 	result := w.Available(
 		t.Context(),
-		DataDependency{NamedResource: id, Input: input, Optional: true},
+		DataDependency{NamedResource: id, Optional: true, Input: input},
 		manifest.DrainNone,
 	)
 	assert.Equal(t, result.Kind, schedule.Blocked)
@@ -128,7 +133,7 @@ func TestResolve_CoveredPrediction(t *testing.T) {
 	var after store.ReadSet
 	after.Init(st, parent, nil)
 	defer after.Retire()
-	data := values.NewStoreProvider(&after).Data(id)
+	data := values.NewStoreProvider(&after).Lookup(id).Data
 	assert.FatalIf(t, data != nil, "%s", "settled declaration fabricated data")
 }
 
@@ -138,16 +143,27 @@ type inputPromotion struct {
 	calls       int
 	materialize bool
 	before      func()
+	request     selection.PrepareRequest
 }
 
 func (p *inputPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *inputPromotion) Promote(_ context.Context, _ *store.ReadSet, _ manifest.NamedResource) (bool, error) {
+
+//nolint:gocritic // The admission contract requires an independent request snapshot.
+func (p *inputPromotion) Promote(
+	_ context.Context,
+	request selection.PrepareRequest,
+	_ manifest.NamedResource,
+) (bool, error) {
 	p.calls++
+	p.request = request
 	if p.before != nil {
 		p.before()
 	}
 	if p.materialize {
 		p.store.AddObject(p.data)
+		id := request.Reads.ID()
+		request.Reads.Retire()
+		request.Reads.Init(p.store, id, nil)
 	}
 	return p.materialize, nil
 }
@@ -221,10 +237,13 @@ func testResolveSelectedDataCase(t *testing.T, testCaseInput *struct {
 	defer reads.Retire()
 	provider := values.NewStoreProvider(&reads)
 	input := provider.Lookup(data.Named())
-	w := Waiter{Store: &reads, Parent: ks.Named()}
+	w := Waiter{
+		Store: &reads, Parent: ks.Named(), Missing: NewMissingPolicy(
+			nil),
+	}
 	result := w.Available(
 		t.Context(),
-		DataDependency{NamedResource: data.Named(), Input: input, Optional: true},
+		DataDependency{NamedResource: data.Named(), Optional: true, Input: input},
 		manifest.DrainNone,
 	)
 	if testCaseInput.want == "" {
@@ -232,7 +251,7 @@ func testResolveSelectedDataCase(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, input.Data, manifest.Data(nil))
 	} else {
 		assert.Equal(t, result.Kind, schedule.Terminal)
-		selected := provider.Data(data.Named())
+		selected := provider.Lookup(data.Named()).Data
 		assert.FatalIf(t, selected == nil, "%v", "usable accepted input was discarded")
 		result2, err := selected.Value("VALUE")
 		got, ok := result2.Value, result2.Found

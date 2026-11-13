@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -21,16 +23,21 @@ func testEntrySelfApplier(t *testing.T) {
 	for run := range 2 {
 		for side := range 2 {
 			trees := entrySelfApplierTrees(t)
-			selected, err := RenderTrees(t.Context(), []Tree{trees[side]}, Config{
+			selected, err := renderTreesForTest(t.Context(), t, []Tree{trees[side]}, Config{
 				CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true,
-				Selection: manifest.Selection{Changed: true},
+				Selection: selection.Request{Changed: true},
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, len(selected), 1)
 			oracleTrees := entrySelfApplierTrees(t)
 			oracle := oracleTrees[side]
 			oracle.BaseInput, oracle.ExternalChanges = nil, nil
-			full, err := RenderTrees(t.Context(), []Tree{oracle}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+			full, err := renderTreesForTest(
+				t.Context(),
+				t,
+				[]Tree{oracle},
+				Config{CacheDir: t.TempDir(), Concurrency: 2},
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, len(full), 1)
 			result := selected[0].Result

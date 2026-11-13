@@ -96,8 +96,8 @@ func testFilterInlineOCICredentialChangeSelectsReleaseCase(
 	if (*testCaseInput.form) == "emitted" {
 		f.AddEmitted(parent, new(store.Child{Obj: release}), st)
 	}
-	assert.Equal(t, f.ShouldReconcile(release.Named()), true)
-	assert.Equal(t, f.ShouldReconcile(sibling.Named()), false)
+	assert.Equal(t, f.Reconcile(release.Named()), true)
+	assert.Equal(t, f.Reconcile(sibling.Named()), false)
 	assert.FatalIf(t, st.GetObject(release.ChartSource()) != nil ||
 		len(
 			st.ListObjects(manifest.SourceDomain, manifest.KindOCIRepository),

@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/diffprep"
-	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -302,8 +300,8 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 			assert.Diff(t, jsonChanges(t, left, right, new(opts)), got)
 			assert.Diff(t, calls, wantCalls)
 			calls = map[string]int{}
-			prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(new(opts)))
-			lines, err := output.PrepareLines(prepared)
+			result := prepare(left, right, &opts)
+			lines, err := prepareLines(result)
 			assert.NoError(t, err)
 			assert.Equal(t, len(lines), tt.want)
 			assert.Diff(t, calls, wantCalls)

@@ -51,7 +51,7 @@ func TestRun_FailureDetailsEvaluation(t *testing.T) {
 					level,
 				},
 				failingWriter{err: failure},
-				&stderr,
+				&stderr, RunConfig{},
 			)
 			assert.Equal(t, code, 1)
 			assert.Equal(t, detail.calls > 0, level == "debug")
@@ -249,7 +249,7 @@ func TestRun_RenderPersistenceNoticeErrors(t *testing.T) {
 		renderPersistenceDisabledReason = persistenceReason
 		var stdout bytes.Buffer
 		var stderr persistenceNoticeFailWriter
-		assert.Equal(t, Run(args, &stdout, &stderr), 1)
+		assert.Equal(t, Run(args, &stdout, &stderr, RunConfig{}), 1)
 		assert.Equal(t, stdout.String(), want)
 		assert.FatalIf(
 			t,
@@ -303,12 +303,12 @@ func TestRun_ProgressSinkResetsPerCommand(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			args := []string{"cache", "gc", "--dry-run", "--cache-dir", t.TempDir()}
 			{
-				code := Run(append(args, "--no-progress=false"), io.Discard, terminal)
+				code := Run(append(args, "--no-progress=false"), io.Discard, terminal, RunConfig{})
 				assert.FatalIf(t, code != 0, "first command exited %d", code)
 			}
 			assert.FatalIf(t, barSink == nil, "%v", "first command did not enable progress")
 			{
-				code := Run(append(args, tc.args...), io.Discard, tc.stderr)
+				code := Run(append(args, tc.args...), io.Discard, tc.stderr, RunConfig{})
 				assert.FatalIf(t, code != 0, "second command exited %d", code)
 			}
 			assert.ErrorIf(t, barSink != nil, "%v", "second command retained the first command's progress sink")

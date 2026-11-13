@@ -13,9 +13,10 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -111,6 +112,72 @@ func TestBindEntry_EvidenceAuthority(t *testing.T) {
 		},
 		)
 	}
+}
+
+func TestBindEntry_HistoryAuthority(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		accepted bool
+	}{
+		{name: "unsupported_history"},
+		{name: "accepted_history", accepted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const repo = "/virtual/entry-evidence-benchmark"
+			input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{}}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			owner := &manifest.Kustomization{Name: "applier", Namespace: "apps", Path: "./entry"}
+			record := entryHistoryFixture(t, st, tc.accepted)
+			a := &Admission{input: input, path: filepath.Join(repo, "entry")}
+			a.AddHistory(st, owner.Named(), record)
+			root, binding, err := a.BindEntry(t.Context(), st)
+			assert.NoError(t, err)
+			if !tc.accepted {
+				assert.Equal(t, root, (*manifest.Kustomization)(nil))
+				assert.Equal(t, binding, Binding{})
+				return
+			}
+			defer st.Retire(binding.Reads)
+			assert.FatalIf(t, root == nil, "accepted history lost its entry")
+			parent := testutil.KustomizationID("apps", "history-owner")
+			literal := manifest.NewEntryKustomization(
+				manifest.BootstrapSourceID,
+				"entry",
+				manifest.NamedResource{},
+			).Named()
+			assert.Equal(t, root.Named(), owner.Named())
+			assert.Equal(t, binding.Producer, owner.Named())
+			assert.Equal(t, binding.Path, "entry")
+			assert.Equal(t, st.EmissionOwner(root.Named()), parent)
+			assert.Equal(t, root.Named() == parent, false)
+			assert.Equal(t, root.Named() == literal, false)
+		})
+	}
+}
+
+func entryHistoryFixture(tb testing.TB, st *store.Store, accepted bool) manifest.DiscoveryRecord {
+	tb.Helper()
+	record := manifest.DiscoveryRecord{
+		Application: `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"applier","namespace":"apps"},"spec":{"path":"./entry"}}`,
+	}
+	if !accepted {
+		return record
+	}
+	var document map[string]any
+	assert.NoError(tb, json.Unmarshal([]byte(record.Application), &document))
+	parsed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+	assert.NoError(tb, err)
+	parent := &manifest.Kustomization{Name: "history-owner", Namespace: "apps", Path: "./generator"}
+	st.AddObject(parent)
+	st.RecordEmitted(
+		parent.Named(),
+		&store.Emission{Children: []store.Child{{Obj: parsed.Object, Doc: document}}, Complete: true},
+		nil,
+	)
+	return record
 }
 
 func TestBindEntry_ReemittedPublication(t *testing.T) {
@@ -288,43 +355,43 @@ func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
 	}
 	st := store.New()
 	l := loader.New(st)
-	l.Options.Filter = change.NewFilter()
-	session, err := Begin(
+	configureSelection(t, l, selection.Request{Changed: true})
+	session, err := beginTest(
 		t.Context(),
 		Config{
 			Input:     &store.SourceArtifact{LocalPath: root, FS: input},
 			Path:      filepath.Join(root, "flux"),
 			Store:     st,
 			Loader:    l,
-			Selection: manifest.Selection{Changed: true},
+			Selection: selection.Request{Changed: true},
 		},
 	)
 	assert.NoError(t, err)
 	input.statErr = fs.ErrPermission
 	leaf := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
-	proposal, err := l.Prepare(
-		t.Context(),
-		loader.PrepareRequest{Incoming: store.Child{Obj: leaf, Entry: &manifest.EntryApplication{}}},
+	proposal, err := admitSelection(t.Context(), t, l,
+		selection.PrepareRequest{Generation: []store.Child{{Obj: leaf, Entry: &manifest.EntryApplication{}}}},
 	)
 	assert.NoError(t, err)
 	advanced, err := session.Advance(t.Context(), proposal)
 	assert.NoError(t, err)
 	assert.Equal(t, advanced, true)
 	assert.Equal(t, st.GetObject(leaf.Named()), manifest.BaseManifest(leaf))
-	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
+	assert.Equal(t, len(selectedNames(l)), 0)
 	var reads store.ReadSet
 	reads.Init(st, manifest.NamedResource{}, nil)
 	defer reads.Retire()
 	reads.RequireData(leaf.Named())
-	proposal, err = l.Prepare(t.Context(), loader.PrepareRequest{Incoming: store.Child{Obj: leaf}, Reads: &reads})
-	assert.NoError(t, err)
-	committed, err := l.Commit(t.Context(), proposal, loader.Execution)
+	_, committed, err := l.Options.Session.Admit(t.Context(), selection.AdmissionOptions{
+		Request: selection.PrepareRequest{Generation: []store.Child{{Obj: leaf}}, Reads: &reads},
+		Stage:   selection.Execution,
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
-	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Needed, true)
-	assert.Equal(t, l.Options.Filter.OrdinaryDemand(leaf.Named()), true)
-	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Selected, false)
-	assert.Equal(t, l.Options.Filter.Membership(leaf.Named()).Dirty, false)
+	assert.Equal(t, l.Options.Session.Snapshot().Reconcile(leaf.Named()), true)
+	assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(leaf.Named()), true)
+	assert.Equal(t, l.Options.Session.Snapshot().Output(leaf.Named()), false)
+	assert.Equal(t, l.Options.Session.Snapshot().Changed(leaf.Named()), false)
 }
 
 func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCase) {
@@ -372,15 +439,15 @@ func testRunEntryApplicationCase(t *testing.T, testCaseInput *entryApplicationCa
 			SelfURLs:     []string{"https://fixture.invalid/self"},
 		},
 	)
-	_, err := d.resolveEntrySources(t.Context(), false)
+	_, err := d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)
 	if testCaseInput.supplied {
-		assert.NoError(t, d.loadManifests(t.Context(), root, false))
+		assert.NoError(t, d.loadManifestsTest(t.Context(), root, false))
 		_, err := d.bindEntry(t.Context(), root)
 		assert.NoError(t, err)
 		assert.Equal(t, observed.calls.Load(), int64(0))
 	}
-	assert.NoError(t, d.loadManifests(t.Context(), root, true))
+	assert.NoError(t, d.loadManifestsTest(t.Context(), root, true))
 	assert.Equal(t, d.binding != (Binding{}), testCaseInput.qualified)
 	if testCaseInput.qualified {
 		assert.Equal(t, d.entryApplier.Name, testCaseInput.owner)

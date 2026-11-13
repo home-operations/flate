@@ -83,8 +83,10 @@ func testDocumentReaderSourceViewsAndReuseLateNestedSource(t *testing.T) {
 	admitForTest(st, root)
 	location, err := gitrepo.Locate(t.Context(), unrelated, unrelated)
 	assert.NoError(t, err)
-	artifact, err := gittree.AdmitDirectory(t.Context(), location)
+	artifactDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	artifact := artifactDirectory.Artifact()
+	assert.NoError(t, artifactDirectory.Close())
 	repo := &manifest.GitRepository{Name: "unrelated"}
 	st.AddObject(repo)
 	st.SetArtifact(repo.Named(), artifact)
@@ -103,8 +105,10 @@ func testDocumentReaderSourceViewsAndReuseLateNestedSource(t *testing.T) {
 	testutil.WriteFile(t, backing, "ks.yaml", testutil.KustomizationYAML("nested", "apps", "  {path: ./apps}\n"))
 	location, err = gitrepo.Locate(t.Context(), backing, backing)
 	assert.NoError(t, err)
-	artifact, err = gittree.AdmitDirectory(t.Context(), location)
+	artifactDirectory2, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	artifact = artifactDirectory2.Artifact()
+	assert.NoError(t, artifactDirectory2.Close())
 	artifact.LocalPath = filepath.Join(root, "child")
 	nested := &manifest.GitRepository{Name: "nested"}
 	st.AddObject(nested)
@@ -178,8 +182,10 @@ func replaceSourceView(
 		}
 		location, err := gitrepo.Locate(t.Context(), backing, backing)
 		assert.NoError(t, err)
-		artifact, err = gittree.AdmitDirectory(t.Context(), location)
+		artifactDirectory3, err := gittree.OpenDirectory(t.Context(), location)
 		assert.NoError(t, err)
+		artifact = artifactDirectory3.Artifact()
+		assert.NoError(t, artifactDirectory3.Close())
 		artifact.LocalPath = (*fixture.root)
 	}
 	fixture.store.SetArtifact(manifest.BootstrapSourceID, artifact)
@@ -236,5 +242,27 @@ func replaceSourceView(
 				"replacement retained the previous source's object or index",
 			)
 		}
+	}
+}
+
+func TestDocumentReader_MountedRoot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	reader := documentReader{views: map[string]fs.FS{root: nil, nested: nil}}
+	for _, tc := range []struct {
+		name, file, want string
+	}{
+		{name: "root", file: root, want: root},
+		{name: "child", file: filepath.Join(root, "file"), want: root},
+		{name: "nested", file: filepath.Join(nested, "dir", "file"), want: nested},
+		{name: "sibling prefix", file: filepath.Join(root, "nested-other", "file"), want: root},
+		{name: "outside", file: root + "-other/file"},
+		{name: "cleaned", file: nested + string(filepath.Separator) + string(filepath.Separator) + "file", want: nested},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, new(reader).mountedRoot(tc.file), tc.want)
+		})
 	}
 }

@@ -30,6 +30,9 @@ import (
 func testWalkBucketRangesCase(t *testing.T, behavior *string,
 ) {
 	t.Helper()
+	mode := strings.TrimPrefix(*behavior, "untagged_")
+	untagged := mode != *behavior || mode == "mixed_etags"
+	behavior = &mode
 	const part = 8 << 20
 	copyCtx, cancelCopy := context.WithCancel(t.Context())
 
@@ -38,11 +41,12 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 	var cancel context.CancelCauseFunc
 	wantRange := ""
 	wantStatus := http.StatusOK
-	if (*behavior) == "cancel" || (*behavior) == "ignore_cancel" {
-		if (*behavior) == "cancel" {
-			wantRange = fmt.Sprintf("bytes=%d-%d", part, 2*part-1)
-			wantStatus = http.StatusPartialContent
-		}
+	switch *behavior {
+	case "cancel":
+		wantRange = fmt.Sprintf("bytes=%d-%d", part, 2*part-1)
+		wantStatus = http.StatusPartialContent
+		fallthrough
+	case "ignore_cancel":
 		ctx, cancel = context.WithCancelCause(ctx)
 		defer cancel(nil)
 		gate := make(chan struct{})
@@ -50,25 +54,24 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 		ctx = gatedCancelContext{Context: ctx, gate: gate}
 	}
 	var gets atomic.Int32
+	var untaggedGets atomic.Int32
 	later := make(chan struct{})
 	streamed := make(chan struct{})
 	clientRead := make(chan struct{})
 	notifyRead := sync.OnceFunc(func() { close(clientRead) })
 	completeLater := sync.OnceFunc(func() { close(later) })
 	sizes := []int64{0, 2*part + 17, 2*part + 17}
-	fault := 0
+	fault := map[string]int{
+		"ignore_changed": http.StatusPreconditionFailed,
+		"ignore_missing": http.StatusNotFound,
+		"ignore_server":  http.StatusInternalServerError,
+	}[*behavior]
 	probeStatus := map[string]int{
 		"probe_forbidden": http.StatusForbidden,
 		"probe_limited":   http.StatusTooManyRequests,
 		"probe_server":    http.StatusServiceUnavailable,
 	}[(*behavior)]
 	switch *behavior {
-	case "ignore_changed":
-		fault = http.StatusPreconditionFailed
-	case "ignore_missing":
-		fault = http.StatusNotFound
-	case "ignore_server":
-		fault = http.StatusInternalServerError
 	case "ignore_cancel_ordered":
 		sizes = []int64{9 << 20}
 	case "ignore_big":
@@ -76,6 +79,14 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 	}
 	if fault != 0 {
 		sizes = []int64{9 << 20, 1}
+	}
+	etags := []string{"v1", "v1", "v1"}
+	var wantUntaggedGets int32
+	switch {
+	case untagged && fault != 0:
+		etags[0], wantUntaggedGets = "", 1
+	case untagged:
+		etags[1], wantUntaggedGets = "", 1
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		testWalkBucketRangesCaseCallback(
@@ -87,11 +98,13 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 				cancel:        &cancel,
 				wantRange:     &wantRange,
 				gets:          &gets,
+				untaggedGets:  &untaggedGets,
 				later:         &later,
 				streamed:      &streamed,
 				clientRead:    &clientRead,
 				completeLater: &completeLater,
 				sizes:         &sizes,
+				etags:         &etags,
 				fault:         &fault,
 				probeStatus:   &probeStatus,
 			},
@@ -129,6 +142,7 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 		&manifest.Bucket{BucketName: "data", Prefix: "prefix/"},
 		bucketOutput{Writer: archive},
 	)
+	assert.Equal(t, untaggedGets.Load(), wantUntaggedGets)
 	if probeStatus != 0 {
 		response, ok := errors.AsType[*fetcherr.ResponseError](err)
 		if !ok || response.StatusCode != probeStatus || response.Op != http.MethodGet ||
@@ -154,7 +168,7 @@ func testWalkBucketRangesCase(t *testing.T, behavior *string,
 			gets:       &gets,
 			sizes:      &sizes,
 			data:       &data,
-			desc:       &desc,
+			desc:       &desc.Descriptor,
 		},
 	)
 	if shouldReturn {
@@ -183,7 +197,7 @@ func testWalkBucketRangesCaseCompletion(t *testing.T, captures *testWalkBucketRa
 		return true
 	}
 	if (*(*captures.behavior)) != "ordered" && (*(*captures.behavior)) != "ignore" &&
-		(*(*captures.behavior)) != "ignore_big" {
+		(*(*captures.behavior)) != "ignore_big" && (*(*captures.behavior)) != "mixed_etags" {
 		assert.FatalIf(t, (*captures.err) == nil, "%s", "invalid range accepted")
 
 		assert.FatalIf(
@@ -260,11 +274,13 @@ type testWalkBucketRangesCaseCallbackInputs struct {
 	cancel        *context.CancelCauseFunc
 	wantRange     *string
 	gets          *atomic.Int32
+	untaggedGets  *atomic.Int32
 	later         *chan struct{}
 	streamed      *chan struct{}
 	clientRead    *chan struct{}
 	completeLater *func()
 	sizes         *[]int64
+	etags         *[]string
 	fault         *int
 	probeStatus   *int
 }
@@ -277,11 +293,16 @@ func testWalkBucketRangesCaseCallback(
 	if r.URL.Query().Get("list-type") != "" {
 		_, _ = fmt.Fprint(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
 		for i, size := range slices.Backward((*testCaseInput.sizes)) {
+			etag := (*testCaseInput.etags)[i]
+			if etag != "" {
+				etag = strconv.Quote(etag)
+			}
 			_, _ = fmt.Fprintf(
 				w,
-				`<Contents><Key>prefix/file%02d</Key><Size>%d</Size><ETag>"v1"</ETag></Contents>`,
+				`<Contents><Key>prefix/file%02d</Key><Size>%d</Size><ETag>%s</ETag></Contents>`,
 				i,
 				size,
+				etag,
 			)
 		}
 		_, _ = fmt.Fprint(w, "</ListBucketResult>")
@@ -290,9 +311,17 @@ func testWalkBucketRangesCaseCallback(
 	const part = 8388608
 	testCaseInput.gets.
 		Add(1)
+	i, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/data/prefix/file"))
+	etag := (*testCaseInput.etags)[i]
+	if etag == "" {
+		testCaseInput.untaggedGets.Add(1)
+		assert.ErrorIf((*testCaseInput.t), r.Header.Get("Range") != "", "untagged Range=%q", r.Header.Get("Range"))
+	} else {
+		etag = strconv.Quote(etag)
+	}
 	{
 		got := r.Header.Get("If-Match")
-		assert.ErrorIf((*testCaseInput.t), got != `"v1"`, "If-Match=%q, want listed ETag", got)
+		assert.ErrorIf((*testCaseInput.t), got != etag, "If-Match=%q, want listed ETag %q", got, etag)
 	}
 	if (*testCaseInput.probeStatus) != 0 {
 		{
@@ -304,7 +333,6 @@ func testWalkBucketRangesCaseCallback(
 		_, _ = io.WriteString(w, `<Error><Code>Fault</Code><Message>range probe failure</Message></Error>`)
 		return
 	}
-	i, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/data/prefix/file"))
 	if (*testCaseInput.fault) != 0 && i == 1 {
 		select {
 		case <-(*testCaseInput.streamed):
@@ -316,7 +344,7 @@ func testWalkBucketRangesCaseCallback(
 	}
 	start, end := int64(0), (*testCaseInput.sizes)[i]-1
 	status := http.StatusOK
-	if (*testCaseInput.sizes)[i] > 0 && !strings.HasPrefix((*(*testCaseInput.behavior)), "ignore") {
+	if (*testCaseInput.sizes)[i] > 0 && etag != "" && !strings.HasPrefix((*(*testCaseInput.behavior)), "ignore") {
 		if n, err := fmt.Sscanf(
 			r.Header.Get("Range"),
 			"bytes=%d-%d",
@@ -500,8 +528,11 @@ func testWalkBucketRangesCaseCompletionTail(t *testing.T, captures **testWalkBuc
 	assert.NoError(t, (*(*captures).err))
 
 	wantGets := int32(8)
-	if (*(*(*captures).behavior)) == "ignore" || (*(*(*captures).behavior)) == "ignore_big" {
+	switch **(*captures).behavior {
+	case "ignore", "ignore_big":
 		wantGets = 4
+	case "mixed_etags":
+		wantGets = 6
 	}
 	if (*captures).gets.Load() != wantGets {
 		t.Fatalf("GETs=%d, want %d", (*captures).gets.Load(), wantGets)
@@ -534,10 +565,15 @@ func testWalkBucketRangesCaseCompletionTail(t *testing.T, captures **testWalkBuc
 		)
 		assert.FatalIf(t, got != want, "tar digest=%s, want %s", got, want)
 	}
-	revision := fmt.Sprintf(
-		"sha256:%x",
-		sha256.Sum256([]byte("prefix/file00 v1\nprefix/file01 v1\nprefix/file02 v1\n")),
-	)
+	pairs := [][2]string{
+		{"prefix/file00", "v1"},
+		{"prefix/file01", "v1"},
+		{"prefix/file02", "v1"},
+	}
+	if (*(*(*captures).behavior)) == "mixed_etags" {
+		pairs[1][1] = ""
+	}
+	revision := "sha256:" + manifest.Fingerprint(pairs)
 	if (*captures).desc.Annotations["flate.revision"] != revision ||
 		(*captures).desc.Annotations["flate.object-count"] != "3" {
 		t.Fatalf("metadata=%v, want revision=%s count=3", (*captures).desc.Annotations, revision)

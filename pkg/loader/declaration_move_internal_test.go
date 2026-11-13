@@ -17,6 +17,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -68,7 +69,7 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 					st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 					l := New(st)
 					l.SourceRoot = root
-					l.Options.Selection.Changed = true
+					configureSelection(t, l, selection.Request{Changed: true})
 					_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 					assert.NoError(t, err)
 					l.Admit(root)
@@ -124,7 +125,7 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
 		l := New(st)
 		l.SourceRoot = root
-		l.Options.Selection.Changed = true
+		configureSelection(t, l, selection.Request{Changed: true})
 		_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		for _, directory := range []string{"old", "new", "reader"} {
@@ -155,7 +156,7 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 	if scenario == "partial" {
 		loaders[1].Index.CompleteSources = nil
 	}
-	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], change.DetectConfig{})
 	assert.NoError(t, err)
 	changes, err = changes.WithReaders(t.Context(),
 		[2]*manifest.DiscoveryIndex{loaders[0].Index, loaders[1].Index},
@@ -165,7 +166,7 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.side, l.sideKnown = manifest.TreeSide(side), true
-		l.Options.Changes, l.Options.Filter = changes, change.NewFilter()
+		l.Options.Changes = changes
 		assert.NoError(t, l.FinalizeIndex(t.Context(), l.SourceRoot, true))
 	}
 	return loaders, changes
@@ -188,7 +189,12 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 			t.Parallel()
 			loaders, _ := declarationMovePair(t, scenario, true)
 			for _, l := range loaders {
-				proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+				proposal, err := prepareSelection(
+					t.Context(),
+					t,
+					l,
+					selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+				)
 				assert.NoError(t, err)
 				assert.Equal(
 					t,
@@ -205,10 +211,15 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 					occurrence, ok := l.occurrence(id)
 					assert.Equal(t, ok, true)
 					input := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-					child, err := l.exactObject(t.Context(), &occurrence, input)
+					child, err := l.OccurrenceObject(t.Context(), new(occurrenceView(&occurrence)), input)
 					assert.NoError(t, err)
 					child.Doc["spec"].(map[string]any)["interval"] = "2h"
-					proposal, err = l.Prepare(t.Context(), PrepareRequest{Incoming: child})
+					proposal, err = prepareSelection(
+						t.Context(),
+						t,
+						l,
+						selection.PrepareRequest{Changes: l.Options.Changes, Generation: []store.Child{child}},
+					)
 					assert.NoError(t, err)
 					assert.Equal(t, slices.Contains(proposal.Dirty, testutil.HelmReleaseID("apps", "reader")), true)
 				}
@@ -287,7 +298,12 @@ func testUnchangedDeclarationMove(t *testing.T, reverse bool) {
 			assert.Equal(t, record.Declaration == nil, true)
 		}
 		for range 2 {
-			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+			proposal, err := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+			)
 			assert.NoError(t, err)
 			var renderers []manifest.NamedResource
 			for _, id := range proposal.Needed {

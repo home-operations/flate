@@ -12,6 +12,8 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -145,7 +147,7 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 			if phase.name == "initial" || phase.name == "credential" {
 				level = manifest.DrainCascade
 			}
-			accepted = c.ReconcileNode(ctx, repo.Named(), level)
+			accepted = c.ReconcileNode(ctx, repo.Named(), level, schedule.Result{})
 		})
 		c.Tasks.BlockTillDone()
 		if previous != nil {
@@ -218,7 +220,7 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 			attempted := make(chan struct{})
 			var provisional *base.Execution
 			c.Tasks.Go(t.Context(), "provisional", func(ctx context.Context) {
-				provisional = c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone)
+				provisional = c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone, schedule.Result{})
 				close(attempted)
 			})
 			c.Tasks.Go(t.Context(), "producer", func(context.Context) {
@@ -426,14 +428,14 @@ func testSourceDeclarationContributorsReuseCase(
 	first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
 	second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
 	var filterLoader *loader.Loader
-	var filter *change.Filter
+	var filter *selection.Session
 	if testCaseInput.tc.filtered {
 		index := &manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				chart.Named(): {File: "chart.yaml"},
 			},
 		}
-		filterLoader = admissiontest.New(
+		filterLoader, _ = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet([]string{"chart.yaml"}),
@@ -442,13 +444,13 @@ func testSourceDeclarationContributorsReuseCase(
 				Root:      "/repo",
 			},
 		)
-		admissiontest.Commit(t, filterLoader, nil)
-		filter = filterLoader.Options.Filter
+		admissiontest.Commit(t, filterLoader.Options.Session, nil)
+		filter = filterLoader.Options.Session
 	}
 	c, st := newConfiguredController(
 		t,
 		map[string]src.Fetcher{manifest.KindHelmChart: f},
-		FetchOptions{Filter: filter, Loader: filterLoader},
+		FetchOptions{Session: filter, Loader: filterLoader},
 	)
 	st.AddObjects([]manifest.BaseManifest{first, second})
 	secret := &manifest.Secret{
@@ -500,7 +502,7 @@ func testSourceDeclarationContributorsReuseCase(
 	}
 	var accepted *base.Execution
 	c.Tasks.Go(t.Context(), "initial", func(ctx context.Context) {
-		accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
+		accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone, schedule.Result{})
 	})
 	if (*testCaseInput.timing) != "accepted" {
 		<-entered
@@ -530,7 +532,7 @@ func testSourceDeclarationContributorsReuseCase(
 
 		accepted.Retire()
 		c.Tasks.Go(t.Context(), "changed content", func(ctx context.Context) {
-			accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
+			accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone, schedule.Result{})
 		})
 		c.Tasks.BlockTillDone()
 		wantCalls = 2
@@ -566,7 +568,7 @@ func testSourceDeclarationContributorsReuseCase(
 	)
 
 	c.Tasks.Go(t.Context(), "successor", func(ctx context.Context) {
-		next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
+		next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone, schedule.Result{})
 		defer next.Close()
 		assert.ErrorIf(
 			t,
@@ -603,9 +605,9 @@ func testSourceDeclarationProgressCase(t *testing.T, testCaseInput *string,
 	dispatch := controllertest.Dispatch{
 		Tasks: c.Tasks,
 		Store: st,
-		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel, previous schedule.Result) *base.Execution {
 			if id == repo.Named() {
-				return c.ReconcileNode(ctx, id, level)
+				return c.ReconcileNode(ctx, id, level, previous)
 			}
 			run := controllertest.NewExecution(c.Controller, id)
 			run.Dispatch(
@@ -811,7 +813,7 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 	c := New(st, tasks)
 	f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 	c.Fetchers[manifest.KindGitRepository] = f
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet(nil),
@@ -820,16 +822,16 @@ func testControllerShortCircuitsToReadyUnchanged(t *testing.T) {
 			Root:      "",
 		},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
-	c.Configure(FetchOptions{Filter: filter, Loader: filterLoader}, sourcecache.RetryConfig{})
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
+	c.Configure(FetchOptions{Session: filter, Loader: filterLoader}, sourcecache.RetryConfig{})
 	t.Cleanup(func() { tasks.BlockTillDone() })
 	repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
 	st.AddObject(repo)
 	c.StartLifecycle()
 	tasks.Go(t.Context(), repo.Named().String(), func(ctx context.Context) {
 		{
-			deps := c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone).Blocked
+			deps := c.ReconcileNode(ctx, repo.Named(), manifest.DrainNone, schedule.Result{}).Blocked
 			assert.ErrorIf(t, len(deps) != 0, "blocked source %s: %v", repo.Named(), deps)
 		}
 	})

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -86,8 +86,7 @@ func testRenderTreesSuppliedViewsCaseTail(t *testing.T, tailCaseInput *testRende
 		tailCaseInput.cfg.
 			ExternalChanges = change.NewSet(nil)
 	}
-	renderedTrees9, err := RenderTrees(
-		t.Context(),
+	renderedTrees9, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				RepoRoot:        (*tailCaseInput.root),
@@ -156,8 +155,7 @@ func testRenderTreesSuppliedViewsSameInputOverrideCase(
 	}
 	var previous [2]map[manifest.NamedResource][]map[string]any
 	for run := range 2 {
-		renderedTrees1, err := RenderTrees(
-			t.Context(),
+		renderedTrees1, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					RepoRoot:        root,
@@ -184,7 +182,7 @@ func testRenderTreesSuppliedViewsSameInputOverrideCase(
 				directCfg.Path = root
 				direct, err := newTestOrchestrator(t, directCfg.Tree, directCfg.Config)
 				assert.NoError(t, err)
-				result, err := direct.render(t.Context())
+				result, err := direct.render(t.Context(), t)
 				assert.NoError(t, err)
 				assert.Diff(t, outputByParent(result.Manifests), outputByParent(rendered.Result.Manifests))
 			}

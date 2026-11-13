@@ -7,6 +7,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -41,7 +43,9 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	c := New(s, slots)
 	parent := testutil.KustomizationID("apps", "parent")
 	source := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
-	s.AddObject(source)
+	s.AddObjects([]manifest.BaseManifest{
+		&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}, source,
+	})
 	s.SetIncluded(source.Named(), false, false)
 	child := &manifest.HelmRelease{
 		ChartRef:  &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name},
@@ -52,7 +56,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	index := &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
 	}
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"parent.yaml"}),
@@ -61,9 +65,9 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 			Root:      "/repo",
 		},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
-	c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
+	c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
 	captured := new(Execution)
 	captured.Init(c, source.Named())
 	defer captured.Close()
@@ -77,7 +81,11 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 		slots.Go(t.Context(), "admit", func(context.Context) {
 			ready.Done()
 			<-start
-			c.KeepEmitted(t.Context(), parent, store.Child{Obj: child}, nil)
+			c.KeepEmitted(
+				t.Context(),
+				parent,
+				selection.PrepareRequest{Generation: []store.Child{{Obj: child}}, Reads: nil},
+			)
 		})
 	}
 	ready.Wait()
@@ -87,7 +95,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{source.Named()})
 	assert.Equal(t, captured.Reads.Valid(), false)
 	assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
-	assert.Equal(t, filter.ShouldReconcile(source.Named()), true)
+	assert.Equal(t, filter.Snapshot().Reconcile(source.Named()), true)
 }
 
 func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
@@ -125,20 +133,17 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 						input,
 					},
 				)
-				l := admissiontest.New(t, admissiontest.Config{Inventory: st})
-				_, retry := l.Options.Filter.AddEmitted(change.MembershipUpdate{Needed: []manifest.NamedResource{
-					consumer.Named(),
-				}, Selected: []manifest.NamedResource{
-					consumer.Named(),
-				}, Dirty: []manifest.NamedResource{
-					consumer.Named(),
-				}, Ordinary: []manifest.NamedResource{
-					consumer.Named(),
-				}}, 0)
-				assert.Equal(t, retry, false)
+				l, _ := admissiontest.New(
+					t,
+					admissiontest.Config{
+						Inventory: st,
+						Request:   selection.Request{Roots: []manifest.NamedResource{consumer.Named()}},
+					},
+				)
+				admissiontest.Commit(t, l.Options.Session, nil)
 				st.SetIncluded(input.Named(), false, false)
 				c := New(st, task.NewBounded(2))
-				c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+				c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
 				var execution Execution
 				execution.Init(c, consumer.Named())
 				defer execution.Close()
@@ -146,8 +151,7 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 					_, err := c.KeepEmitted(
 						t.Context(),
 						manifest.NamedResource{},
-						store.Child{Obj: consumer},
-						&execution.Reads,
+						selection.PrepareRequest{Generation: []store.Child{{Obj: consumer}}, Reads: &execution.Reads},
 					)
 					assert.NoError(t, err)
 				}
@@ -168,7 +172,7 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 				assert.FatalIf(t, err == nil, "%v", "the input without acquired content did not block")
 				assert.FatalIf(
 					t,
-					!l.Options.Filter.ShouldReconcile(input.Named()),
+					!l.Options.Session.Snapshot().Reconcile(input.Named()),
 					"%v",
 					"a present runtime input was left excluded from acquisition",
 				)
@@ -179,9 +183,9 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 					t,
 					execution.Reads.Work().Scope().Admission().Counts,
 					manifest.WorkCounts{
-						Attempts:      3,
-						Completed:     3,
-						OwnerPrepares: 3,
+						Attempts:      2,
+						Completed:     2,
+						OwnerPrepares: 2,
 					},
 				)
 			},
@@ -208,33 +212,27 @@ func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
 	}})
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
-	l.Options.Changes, l.Options.Filter = change.NewSet([]string{"unrelated.yaml"}), change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"unrelated.yaml"})
+	l.Options.Session, _ = selection.New(st, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
-	_, retry := l.Options.Filter.AddEmitted(
-		change.MembershipUpdate{
-			Needed:   []manifest.NamedResource{input},
-			Selected: nil,
-			Dirty:    nil,
-			Ordinary: []manifest.NamedResource{input},
-		},
-		0,
-	)
-	assert.Equal(t, retry, false)
 	st.SetIncluded(input, true, true)
 	c := New(st, task.NewBounded(2))
-	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+	c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
 	var reads store.ReadSet
 	reads.Init(st, manifest.NamedResource{}, nil)
 	defer reads.Retire()
 	reads.RequireData(input)
-	_, err = c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{}, &reads)
+	_, err = c.KeepEmitted(
+		t.Context(),
+		manifest.NamedResource{},
+		selection.PrepareRequest{Generation: nil, Reads: &reads},
+	)
 	assert.NoError(t, err)
 	owner := testutil.KustomizationID("apps", "owner")
-	assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), true)
+	assert.Equal(t, l.Options.Session.Snapshot().Reconcile(owner), true)
 	assert.Equal(t, st.GetDeclaration(owner) != nil, true)
 }
 
@@ -256,9 +254,8 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	}})
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes = change.NewSet(nil)
+	l.Options.Session, _ = selection.New(st, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -271,23 +268,23 @@ func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 		},
 	}
 	st.AddObjects([]manifest.BaseManifest{input, consumer})
-	_, retry := l.Options.Filter.AddEmitted(
-		change.MembershipUpdate{
-			Needed:   []manifest.NamedResource{input.Named()},
-			Selected: []manifest.NamedResource{input.Named()},
-			Dirty:    []manifest.NamedResource{input.Named()},
-			Ordinary: []manifest.NamedResource{input.Named()},
-		},
-		0,
-	)
-	assert.Equal(t, retry, false)
 	c := New(st, nil)
-	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+	c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
+	var initial store.ReadSet
+	initial.Init(st, manifest.NamedResource{}, nil)
+	initial.RequireData(input.Named())
+	_, initialErr := c.KeepEmitted(t.Context(), manifest.NamedResource{}, selection.PrepareRequest{Reads: &initial})
+	assert.NoError(t, initialErr)
+	initial.Close()
 	var reads store.ReadSet
 	reads.Init(st, input.Named(), nil)
 	defer reads.Retire()
 	reads.GetObject(input.Named())
-	_, err = c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: input}, &reads)
+	_, err = c.KeepEmitted(
+		t.Context(),
+		manifest.NamedResource{},
+		selection.PrepareRequest{Generation: []store.Child{{Obj: input}}, Reads: &reads},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, reads.Valid(), true)
 	st.DeleteObject(consumer.Named())
@@ -310,11 +307,11 @@ func TestDispatch_AdmissionDoesNotConsumeProducerInventory(t *testing.T) {
 	st.RecordEmitted(producer.Named(), &first, nil)
 	assert.Equal(t, st.GetObject(child.Named()), manifest.BaseManifest(child))
 	l := loader.New(st)
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection = manifest.Selection{Changed: true}
 	l.Options.Changes = change.NewSet(nil)
+	l.Options.Session, _ = selection.New(st, l, selection.Request{Changed: true})
+	admissiontest.Commit(t, l.Options.Session, nil)
 	c := New(st, nil)
-	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+	c.Configure(Options{Loader: l, Session: l.Options.Session, Index: l.Index})
 	var execution Execution
 	execution.Init(c, child.Named())
 	defer execution.Close()
@@ -379,7 +376,7 @@ func testKeepEmittedLatePromotionConvergesCase(
 				Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}},
 			},
 		}}
-		filterLoader := admissiontest.New(
+		filterLoader, _ := admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet([]string{"changed.yaml"}),
@@ -388,9 +385,9 @@ func testKeepEmittedLatePromotionConvergesCase(
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, filterLoader, nil)
-		filter := filterLoader.Options.Filter
-		c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
+		admissiontest.Commit(t, filterLoader.Options.Session, nil)
+		filter := filterLoader.Options.Session
+		c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
 		var rendered string
 		arrived := false
 		stop := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -426,7 +423,11 @@ func testKeepEmittedLatePromotionConvergesCase(
 			if *testCaseInput {
 				<-promoted
 			}
-			c.KeepEmitted(t.Context(), parent.Named(), store.Child{Obj: child}, nil)
+			c.KeepEmitted(
+				t.Context(),
+				parent.Named(),
+				selection.PrepareRequest{Generation: []store.Child{{Obj: child}}, Reads: nil},
+			)
 			close(admitted)
 			if !(*testCaseInput) {
 				<-promoted
@@ -446,7 +447,7 @@ func testKeepEmittedLatePromotionConvergesCase(
 				<-admitted
 			}
 			assert.Equal(t, s.GetObject(child.Named()) == nil, true)
-			c.emit(
+			(&Execution{Controller: c}).emit(
 				t.Context(),
 				primary.Named(),
 				captureEmission(
@@ -462,7 +463,7 @@ func testKeepEmittedLatePromotionConvergesCase(
 		stop()
 		assert.Equal(t, tasks.Failures(), 0)
 		assert.Equal(t, arrived, true)
-		assert.Equal(t, filter.ShouldReconcile(child.Named()), true)
+		assert.Equal(t, filter.Snapshot().Reconcile(child.Named()), true)
 		assert.Equal(t, rendered, "late consumer reconciled\n")
 		output, ok := s.GetArtifact(child.Named(), store.ArtifactContent).(*store.Emission)
 
@@ -497,6 +498,17 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 			{Owner: parent.Named(), Source: manifest.BootstrapSourceID, File: "incoming.yaml"},
 		},
 	}
+	filterLoader, _ := admissiontest.New(
+		t,
+		admissiontest.Config{
+			Changes:   change.NewSet([]string{"incoming.yaml"}),
+			Index:     index,
+			Inventory: s,
+			Root:      "/repo",
+		},
+	)
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	admissiontest.Require(t, s, filterLoader.Options.Session, []manifest.NamedResource{parent.Named()}, true)
 	attempt := captureEmission(
 		s,
 		parent.Named(),
@@ -506,17 +518,7 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 			Complete:    true,
 		},
 	)
-	filterLoader := admissiontest.New(
-		t,
-		admissiontest.Config{
-			Changes:   change.NewSet([]string{"incoming.yaml"}),
-			Index:     index,
-			Inventory: s,
-			Root:      "/repo",
-		},
-	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
+	filter := filterLoader.Options.Session
 	if (*testCaseInput) == "cached" {
 		s.RecordEmitted(parent.Named(), attempt, nil)
 	}
@@ -526,11 +528,11 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 		replacement.Path = "replacement"
 		s.AddObject(replacement)
 	}
-	assert.Equal(t, filter.ShouldReconcile(child.Obj.Named()), false)
+	assert.Equal(t, filter.Snapshot().Reconcile(child.Obj.Named()), false)
 	run := new(Execution)
 	run.Init(c, parent.Named())
 	defer run.Close()
-	c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
+	c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
 	arrivals := 0
 	stop := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		if id == child.Obj.Named() && payload != nil {
@@ -538,7 +540,7 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 
 			assert.ErrorIf(
 				t,
-				!filter.ShouldReconcile(id),
+				!filter.Snapshot().Reconcile(id),
 				"%v",
 				"incoming contribution was not selected before arrival",
 			)
@@ -553,7 +555,7 @@ func testFingerprintDedupIncomingSelectionEvidenceCase(
 		assert.NoError(t, err)
 		assert.Equal(t, handled, true)
 	}
-	assert.Equal(t, filter.ShouldReconcile(child.Obj.Named()), true)
+	assert.Equal(t, filter.Snapshot().Reconcile(child.Obj.Named()), true)
 	if (*testCaseInput) == "emit" {
 		assert.Equal(t, arrivals, 1)
 	}

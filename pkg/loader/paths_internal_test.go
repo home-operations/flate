@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -42,9 +43,9 @@ func TestFinalizeIndex_ProducedChildPath(t *testing.T) {
 			}})
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection = manifest.Selection{Changed: true}
+			configureSelection(t, l, selection.Request{Changed: true})
 			l.Options.Changes = change.NewSet([]string{"apps/red/cm.yaml"})
-			l.Options.Filter = change.NewFilter()
+
 			_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -62,7 +63,12 @@ func TestFinalizeIndex_ProducedChildPath(t *testing.T) {
 			assert.Equal(t, l.CatalogObject(child).(*manifest.Kustomization).Path, "./${ROOT}")
 			parent, _ := l.Index.Lookup(owner)
 			assert.Equal(t, parent.StaticOutput, tc.known)
-			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+			proposal, err := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, child), true)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner), true)
@@ -83,9 +89,9 @@ func TestFinalizeIndex_EffectiveInputContent(t *testing.T) {
 				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 				l := New(st)
 				l.SourceRoot = root
-				l.Options.Selection = manifest.Selection{Changed: true}
+				configureSelection(t, l, selection.Request{Changed: true})
 				l.Options.Changes = change.NewSet([]string{"flux/settings.yaml"})
-				l.Options.Filter = change.NewFilter()
+
 				_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 				assert.NoError(t, err)
 				assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
@@ -155,6 +161,10 @@ func effectiveInputCases() []effectiveInputCase {
 			same:       true,
 		},
 		{name: "activation", expression: "${MISSING:=fallback}", known: true},
+		{
+			name: "Always activation", expression: "${MISSING:=fallback}",
+			postbuild: ", substituteStrategy: Always", known: true, same: true,
+		},
 		{name: "invalid syntax", expression: "${ARR[@]}"},
 		{name: "invalid names", expression: "${OTHER}"},
 		{name: "missing provider", expression: "${OTHER}"},
@@ -199,7 +209,7 @@ func (c *effectiveInputCase) files(side int) fstest.MapFS {
 	if side == 1 {
 		data = "{CHANGED: new, OTHER: same}"
 	}
-	if tc.name == "activation" && side == 0 {
+	if (tc.name == "activation" || tc.name == "Always activation") && side == 0 {
 		data = "{}"
 	}
 	if tc.name == "invalid names" {
@@ -256,7 +266,7 @@ func TestFinalizeIndex_InputProjectionLifetime(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), filepath.Join(root, "flux"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))

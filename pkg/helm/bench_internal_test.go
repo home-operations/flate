@@ -485,7 +485,7 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 		b.Fatalf("warm render differs: %v", err)
 	}
 	assert.Diff(b, second, first)
-	loaded, err := cli.describeChart(b.Context(), hr, cliSources)
+	loaded, err := cli.describeChart(b.Context(), hr, cliSources.chartInput(hr))
 	if err != nil || loaded.valuesPin == "" {
 		b.Fatalf("source values are not pinned: %v", err)
 	}
@@ -617,7 +617,7 @@ func benchmarkSourceValuesPersistence(b *testing.B, inputs *benchmarkSourceValue
 		},
 		&sourcecache.Policy{},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-			err := writeTestRecord(
+			err := writeTestRecord(b.Context(),
 				w,
 				sourcecache.BlobKey{Content: inputs.loaded.record.key, Render: sourcecache.RenderAccepted},
 				&renderRecord{Output: output, Analysis: inputs.loaded.record.Analysis},

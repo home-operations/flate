@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"slices"
 	"testing"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -11,6 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -36,19 +38,57 @@ func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
 		admissionConfig{changes: change.NewSet([]string{"config/prod.yaml"}), index: idx, inventory: objects, root: ""},
 	)
 	for _, id := range []manifest.NamedResource{release, owner.Named(), parent.Named()} {
-		assert.Equal(t, f.ShouldReconcile(id), true)
+		assert.Equal(t, f.Reconcile(id), true)
 	}
-	assert.Equal(t, f.ShouldReconcile(sibling), false)
+	assert.Equal(t, f.Reconcile(sibling), false)
 	for _, emitter := range []manifest.NamedResource{owner.Named(), parent.Named()} {
 		assert.Equal(t, len(f.AddEmitted(emitter, new(store.Child{Obj: refObj(sibling)}), f.objs)), 0)
-		assert.Equal(t, f.ShouldReconcile(sibling), false)
+		assert.Equal(t, f.Reconcile(sibling), false)
 	}
+	assert.Equal(t, f.loader.Store.GetDeclaration(release), nil)
+	releaseObject := &manifest.HelmRelease{Name: release.Name, Namespace: release.Namespace}
+	f.prepare(selection.PrepareRequest{Invocation: true, Generation: []store.Child{{
+		Obj: releaseObject, Productions: []manifest.Production{{Owner: owner.Named()}},
+	}}}, false)
+	f.settle()
+	f.loader.Store.RecordEmitted(owner.Named(), &store.Emission{
+		Children: []store.Child{{Obj: releaseObject}}, Complete: true,
+	}, nil)
 	child := testutil.HelmReleaseID("apps", "rendered")
 	assert.Diff(t, f.AddEmitted(release, new(store.Child{Obj: refObj(child)}), f.objs), []manifest.NamedResource{child})
 }
 
 func TestFilter_AcceptedChildren(t *testing.T) {
 	t.Parallel()
+	for _, parent := range []manifest.BaseManifest{
+		&manifest.RawObject{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization, Name: "owner"},
+		&manifest.RawObject{APIVersion: manifest.HelmReleaseDomain + "/v2", Kind: manifest.KindHelmRelease, Name: "owner"},
+		&manifest.RawObject{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "owner"},
+	} {
+		t.Run("raw_"+parent.Named().Kind, func(t *testing.T) {
+			t.Parallel()
+			document := map[string]any{
+				"apiVersion": "v1",
+				"kind":       manifest.KindConfigMap,
+				"metadata":   map[string]any{"name": "child"},
+			}
+			result := ParseChildren(
+				parent,
+				[]manifest.DocOccurrence{{Document: document}},
+				manifest.ParseDocOptions{DefaultNamespace: "default"},
+				nil,
+			)
+			assert.Equal(t, len(result.Failures), 0)
+			assert.Equal(t, len(result.Children), 1)
+			assert.Equal(t, result.Children[0].Obj.Named().Namespace, "default")
+			assert.Equal(t, manifest.KindOf(parent).Parent, false)
+		})
+	}
+	assert.Equal(
+		t,
+		len(ParseChildren(nil, nil, manifest.ParseDocOptions{DefaultNamespace: "default"}, nil).Children),
+		0,
+	)
 	for _, phase := range []string{"initial", "runtime", "unselected", "declaration", "file_indexed"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
@@ -163,14 +203,14 @@ func testFilterAcceptedChildrenCase(t *testing.T, testCaseInput *string,
 	for _, obj := range []manifest.BaseManifest{child, leaf} {
 		assert.Equal(
 			t,
-			f.ShouldReconcile(obj.Named()), (*testCaseInput) ==
+			f.Reconcile(obj.Named()), (*testCaseInput) ==
 				"initial" || (*testCaseInput) == "runtime" || (*testCaseInput) == "file_indexed",
 		)
 	}
-	assert.Equal(t, f.ShouldReconcile(sibling.Named()), (*testCaseInput) == "declaration")
+	assert.Equal(t, f.Reconcile(sibling.Named()), (*testCaseInput) == "declaration")
 	assert.Equal(
 		t,
-		f.ShouldReconcile(transformed.Named()), (*testCaseInput) ==
+		f.Reconcile(transformed.Named()), (*testCaseInput) ==
 			"initial" || (*testCaseInput) == "runtime" || (*testCaseInput) == "file_indexed",
 	)
 }
@@ -218,14 +258,30 @@ func testFilterLateProducerIndexedDeclarationsOciProviderCredentials(t *testing.
 					inventory: st,
 				},
 			)
-			filter.loader.locations = map[manifest.NamedResource]Occurrence{
+			filter.loader.locations = map[manifest.NamedResource]authoredOccurrence{
 				provider.Named(): compactOccurrence(provider, projectedProducerForTest(provider)),
 			}
-			filter.prepare(new(store.Child{}), nil, false)
-			for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
-				assert.Equal(t, filter.ShouldReconcile(id), true)
+			filter.prepare(selection.PrepareRequest{Invocation: true}, false)
+			var preparation *selection.Preparation
+			defer func() { preparation.Retire() }()
+			for range 2 {
+				proposal, err := prepareSelection(t.Context(), t, filter.loader, selection.PrepareRequest{
+					Changes:     filter.loader.Options.Changes,
+					Invocation:  true,
+					Preparation: &preparation,
+				})
+				assert.NoError(t, err)
+				for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
+					assert.Equal(t, slices.Contains(proposal.Needed, id), true)
+				}
+				assert.Equal(t, slices.Contains(proposal.Needed, sibling.Named()), false)
+				proposal.Retire()
 			}
-			assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+
+			for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
+				assert.Equal(t, filter.Reconcile(id), true)
+			}
+			assert.Equal(t, filter.Reconcile(sibling.Named()), false)
 			assert.Equal(t, st.GetObject(provider.Named()) == nil, true)
 			assert.Equal(t, st.GetObject(secret.Named()) == nil, true)
 			assert.Equal(t, st.GetObject(producer.Named()) == nil, true)
@@ -279,7 +335,7 @@ func testFilterLateProducerIndexedDeclarationsCase(
 		},
 	)
 	f.AddEmitted(emitter.Named(), new(store.Child{Obj: parent}), st)
-	assert.Equal(t, f.ShouldReconcile(parent.Named()), true)
+	assert.Equal(t, f.Reconcile(parent.Named()), true)
 	f.AddEmitted(
 		parent.Named(),
 		new(store.Child{
@@ -288,5 +344,5 @@ func testFilterLateProducerIndexedDeclarationsCase(
 		}),
 		st,
 	)
-	assert.Equal(t, f.ShouldReconcile(child.Named()), testCaseInput.want)
+	assert.Equal(t, f.Reconcile(child.Named()), testCaseInput.want)
 }

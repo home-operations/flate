@@ -112,7 +112,7 @@ func TestCacheGC_WarningWriteError(t *testing.T) {
 		}
 	}
 	writeErr := errors.New("diagnostic closed")
-	cmd := New("test")
+	cmd := New("test", RunConfig{})
 	cmd.SetArgs(args)
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -122,7 +122,7 @@ func TestCacheGC_WarningWriteError(t *testing.T) {
 		assert.FatalIf(t, !errors.Is(err, writeErr), "warning write error = %v", err)
 	}
 	assert.FatalIf(t, stdout.String() != wantOut, "product = %q, want %q", stdout.String(), wantOut)
-	cmd = New("test")
+	cmd = New("test", RunConfig{})
 	cmd.SetArgs(args)
 	cmd.SetOut(failingWriter{err: io.ErrClosedPipe})
 	var stderr bytes.Buffer

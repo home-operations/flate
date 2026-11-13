@@ -16,13 +16,13 @@ import (
 
 type request struct {
 	work     manifest.AcquisitionWork
-	Output   output
+	Output   manifest.ArtifactGeneratorOutput
 	Captures map[string]string
 }
 
 var captureName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func expand(ctx context.Context, spec *specification, inputs map[string]fs.FS) ([]request, error) {
+func expand(ctx context.Context, spec *manifest.ArtifactGeneratorSpec, inputs map[string]fs.FS) ([]request, error) {
 	matcher, input, err := pathMatcher(spec.PathPattern, inputs)
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func expand(ctx context.Context, spec *specification, inputs map[string]fs.FS) (
 }
 
 type requestExpansion struct {
-	spec     *specification
+	spec     *manifest.ArtifactGeneratorSpec
 	requests []request
 	names    map[string]bool
 }
@@ -94,9 +94,9 @@ func (x *requestExpansion) add(raw map[string]string) error {
 	return nil
 }
 
-func renderCopies(artifact *output, raw map[string]string) error {
+func renderCopies(artifact *manifest.ArtifactGeneratorOutput, raw map[string]string) error {
 	var err error
-	artifact.Copy = append([]operation(nil), artifact.Copy...)
+	artifact.Copy = append([]manifest.ArtifactGeneratorCopy(nil), artifact.Copy...)
 	for i := range artifact.Copy {
 		artifact.Copy[i].From, err = render(artifact.Copy[i].From, raw)
 		if err != nil {

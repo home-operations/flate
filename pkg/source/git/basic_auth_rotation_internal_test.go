@@ -7,7 +7,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -60,11 +63,16 @@ func testFetcherHTTPSBasicAuthSnapshotRotationCase(
 		t.Setenv("no_proxy", "*")
 	}
 	c := cachetest.New(t, (*testCaseInput.cacheRoot), sourcecache.New)
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
 		testCaseInput.lookups.Add(1)
-		return (*testCaseInput.sec)
+
+		secretInput := (*testCaseInput.sec)
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
-	f := &Fetcher{Cache: c}
+	f := &Fetcher{Network: networktest.New(t), Cache: c}
 	before := testCaseInput.requests.Load()
 	art, err := fetchtest.Fetch(
 		t.Context(),

@@ -1,29 +1,29 @@
 package helm
 
 import (
-	"slices"
 	"strings"
 
 	"helm.sh/helm/v4/pkg/chart/common"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 // RenderOptions supplies one render's captured sources and template settings.
 type RenderOptions struct {
 	Options
 
+	// Preparation borrows immutable values across calls. Retire all owners before mutation.
+	Preparation *Preparation `json:"-"`
+
 	// Work borrows stage counters from this render execution.
 	Work    *manifest.RenderWork `json:"-"`
 	Sources Sources              `json:"Sources"`
 	// PreparationTasks gates history decoding outside a task body.
 	// Callers already holding a task slot MUST leave it nil.
-	PreparationTasks *task.Service `json:"-"`
-	// DependencySubstitutions binds emitted dependency projection to accepted history.
-	DependencySubstitutions values.DependencySubstitutions      `json:"DependencySubstitutions"`
-	Admit                   func(RenderAdmission) (bool, error) `json:"Admit"`
+	PreparationTasks *task.Service                       `json:"-"`
+	Omitted          []manifest.NamedResource            `json:"Omitted"`
+	Admit            func(RenderAdmission) (bool, error) `json:"Admit"`
 }
 
 // RenderAdmission carries accepted cache evidence bound to the current request.
@@ -41,11 +41,12 @@ type Options struct {
 	// False enables tracking. Revision validation and full source cache identity
 	// apply in every mode.
 	DisableChartDigestTracking bool `json:"DisableChartDigestTracking"`
-	// SkipCRDs excludes CRDs from the rendered output.
+	// SkipCRDs controls upstream Helm CRD generation.
 	SkipCRDs bool `json:"SkipCRDs"`
 	// SkipTests excludes templates that are helm test hooks.
 	SkipTests bool `json:"SkipTests"`
-	// SkipKinds is an arbitrary list of kinds to drop.
+	// SkipKinds MUST hold the complete, sorted, unique emission policy, including CRDs.
+	// Callers keep it immutable and keep SkipCRDs consistent with its CRD membership.
 	SkipKinds []string `json:"SkipKinds"`
 
 	// KubeVersion overrides Capabilities.KubeVersion (.Capabilities.KubeVersion).
@@ -56,16 +57,6 @@ type Options struct {
 
 	// EnableDNS enables DNS lookups during templating.
 	EnableDNS bool `json:"EnableDNS"`
-}
-
-// SkipResourceKinds returns the union of canonical and user-specified
-// kinds to drop from rendered output.
-func (o Options) SkipResourceKinds() []string {
-	out := slices.Grow(slices.Clone(o.SkipKinds), 1)
-	if o.SkipCRDs {
-		out = append(out, manifest.KindCustomResourceDefinition)
-	}
-	return out
 }
 
 // capabilities builds common.Capabilities from the supplied options.

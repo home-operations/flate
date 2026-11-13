@@ -124,13 +124,11 @@ data:
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "my-cm"}
 	assert.FatalIf(t, st.GetObject(id) != nil, "precondition: CM should not be in store yet")
 	{
-		promoted, err := Promote(
-			t.Context(),
+		promoted, err := promoteForTest(t.Context(), t,
 			l.Store,
 			id,
 			PromoteOptions{
 				Record: productionForTest(new(l.Index.Records[id])),
-				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		)
 		assert.FatalIf(t, err != nil ||
@@ -149,13 +147,11 @@ func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
 	{
-		got, err := Promote(
-			t.Context(),
+		got, err := promoteForTest(t.Context(), t,
 			idx.Store,
 			id,
 			PromoteOptions{
 				Record: productionForTest(new(idx.Index.Records[id])),
-				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		)
 		assert.ErrorIf(t, err != nil ||
@@ -190,13 +186,11 @@ data:
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
 	{
-		got, err := Promote(
-			t.Context(),
+		got, err := promoteForTest(t.Context(), t,
 			l.Store,
 			id,
 			PromoteOptions{
 				Record: productionForTest(new(l.Index.Records[id])),
-				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		)
 		assert.ErrorIf(t, err != nil ||
@@ -228,16 +222,14 @@ sops: {encrypted_regex: "^(data|stringData)$", version: 3.9.0}
 			cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "app-config"}
 			secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "app-secret"}
 			record := manifest.Production{Authored: cmID, Path: filepath.Join(dir, "bundle.yaml")}
-			opts := PromoteOptions{
-				Admit: func(manifest.BaseManifest) (bool, error) { return true, nil },
-			}
+			opts := PromoteOptions{}
 			if input == "built" {
 				record = manifest.Production{}
 				opts.Documents = builtObjectsForTest(t, bundle)
 			}
 			opts.Record = record
 			{
-				promoted, err := Promote(t.Context(), st, cmID, opts)
+				promoted, err := promoteForTest(t.Context(), t, st, cmID, opts)
 				assert.FatalIf(t, err != nil || !promoted, "%s", "ConfigMap promotion failed")
 			}
 			for _, id := range []manifest.NamedResource{cmID, secretID} {
@@ -373,7 +365,6 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	options := PromoteOptions{
 		Record: manifest.Production{Source: source.Named(), Authored: id, Path: filepath.Join(root, "values.yaml")},
 		Reads:  &first,
-		Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 	}
 	var arrivals int
 	st.AddListener(store.EventObjectAdded, func(changed manifest.NamedResource, _ any) {
@@ -383,7 +374,7 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	}, false)
 	done := make(chan bool, 1)
 	go func() {
-		promoted, err := Promote(t.Context(), st, id, options)
+		promoted, err := promoteForTest(t.Context(), t, st, id, options)
 		assert.ErrorIf(t, err != nil, "%v", err)
 		done <- promoted
 	}()
@@ -401,7 +392,7 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	second.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
 	options.Reads = &second
 	{
-		promoted, err := Promote(t.Context(), st, id, options)
+		promoted, err := promoteForTest(t.Context(), t, st, id, options)
 		assert.FatalIf(t, err != nil || !promoted, "%s", "current captured source did not admit")
 	}
 	if got, _ := second.Get[*manifest.ConfigMap](id); got == nil || got.Data["value"] != "new" || !second.Valid() {
@@ -418,7 +409,7 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	third.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
 	options.Reads = &third
 	{
-		promoted, err := Promote(t.Context(), st, id, options)
+		promoted, err := promoteForTest(t.Context(), t, st, id, options)
 		assert.FatalIf(t, err != nil || !promoted, "%s", "replacement source could not replace raw admission")
 	}
 	if got, _ := third.Get[*manifest.ConfigMap](id); got == nil || got.Data["value"] != "third" || !third.Valid() {
@@ -475,16 +466,14 @@ stringData: {value: fixture}
 				id = secret
 			}
 			record := manifest.Production{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
-			opts := PromoteOptions{
-				Admit: func(obj manifest.BaseManifest) (bool, error) { return obj.Named() == cm.Named(), nil },
-			}
+			opts := PromoteOptions{}
 			if (*testCaseInput) == "built" {
 				record = manifest.Production{}
 				opts.Documents = builtObjectsForTest(t, bundle)
 			}
 			opts.Record = record
 			{
-				got, err := Promote(t.Context(), st, id, opts)
+				got, err := promoteForTest(t.Context(), t, st, id, opts, cm.Named())
 				assert.ErrorIf(t, err != nil || got == tc.secret, "Promote returned %v, want %v", got, !tc.secret)
 			}
 			assert.ErrorIf(
@@ -542,13 +531,11 @@ func testPromoteAuthoredDocumentProjectionCase(
 		record.Authored = id
 		record.Authored.Namespace = testCaseInput.authored
 	}
-	if got, err := Promote(
-		t.Context(),
+	if got, err := promoteForTest(t.Context(), t,
 		st,
 		id,
 		PromoteOptions{
 			Record: productionForTest(new(record)),
-			Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 		},
 	); err != nil ||
 		got != (testCaseInput.version != "") {
@@ -560,13 +547,11 @@ func testPromoteAuthoredDocumentProjectionCase(
 	foreign := id
 	foreign.Group = "foreign.example"
 	{
-		promoted, err := Promote(
-			t.Context(),
+		promoted, err := promoteForTest(t.Context(), t,
 			st,
 			foreign,
 			PromoteOptions{
 				Record: productionForTest(new(record)),
-				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		)
 		assert.FatalIf(t, err != nil ||
@@ -645,13 +630,11 @@ func testPromoteSourceViewCase(t *testing.T, testCaseInput *bool,
 		Productions: []manifest.Production{{Source: source.Named()}},
 	}
 	record.Authored.Namespace = "authored"
-	got, err := Promote(
-		t.Context(),
+	got, err := promoteForTest(t.Context(), t,
 		st,
 		id,
 		PromoteOptions{
 			Record: productionForTest(new(record)),
-			Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 		},
 	)
 	assert.FatalIf(

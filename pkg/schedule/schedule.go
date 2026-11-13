@@ -42,7 +42,7 @@ type Result struct {
 // Dispatcher connects execution and publication delivery to the scheduler.
 // SDK embedders implement this seam without exposing their input representation.
 type Dispatcher interface {
-	Dispatch(context.Context, NodeID, manifest.DrainLevel) Result
+	Dispatch(context.Context, NodeID, manifest.DrainLevel, Result) Result
 	// Sweep permits final classification only when the invocation's work is quiescent.
 	// A nonempty result MUST keep the structural boundary open.
 	Sweep(context.Context, bool) []NodeID
@@ -294,7 +294,7 @@ func (s *Scheduler) dispatchNextLocked(ctx context.Context) {
 	s.tasks.Go(ctx, "schedule/"+id.String(), func(ctx context.Context) {
 		var result Result
 		defer func() { s.complete(n, result, true) }()
-		result = s.disp.Dispatch(ctx, id, manifest.DrainNone)
+		result = s.disp.Dispatch(ctx, id, manifest.DrainNone, Result{Assessment: n.assessment})
 	})
 	s.mu.Lock()
 }

@@ -36,18 +36,30 @@ func assertHTTPChartWork(
 	wantAcquisition := manifest.WorkCounts{Attempts: 3, Completed: 3, RemoteTransfers: 3}
 	wantCache := manifest.WorkCounts{Attempts: 6, Completed: 6, CacheService: 3}
 	wantDecode := manifest.WorkCounts{Attempts: 1, Completed: 1}
+	wantValidation := manifest.WorkCounts{}
 	if wave == "source-warm" {
 		wantAcquisition, wantDecode = manifest.WorkCounts{}, manifest.WorkCounts{}
 		wantCache = manifest.WorkCounts{Attempts: 4, Completed: 4, CacheService: 4}
 	} else {
-		assert.Equal(t, len(acquired), 3)
+		unique := 3
+		if wave == "source-stale" {
+			unique = 2
+		}
+		assert.Equal(t, len(acquired), unique)
 		for _, artifact := range artifacts[0] {
 			assert.Equal(t, acquired[artifact.Key], uint64(1))
 		}
 	}
+	if wave == "source-stale" {
+		wantAcquisition = manifest.WorkCounts{Attempts: 2, Completed: 2}
+		wantCache.CacheService = 6
+		wantDecode = manifest.WorkCounts{}
+		wantValidation = manifest.WorkCounts{Attempts: 2, Completed: 2}
+	}
 	assert.Equal(t, counts[string(manifest.WorkAcquisition)], wantAcquisition)
 	assert.Equal(t, counts[string(manifest.WorkCache)], wantCache)
 	assert.Equal(t, counts[string(manifest.WorkIndexDecode)], wantDecode)
+	assert.Equal(t, counts[string(manifest.WorkValidation)], wantValidation)
 }
 
 func assertHTTPChartArtifact(t *testing.T, art *store.SourceArtifact, name string, expected []byte) {
@@ -61,6 +73,9 @@ func assertHTTPChartArtifact(t *testing.T, art *store.SourceArtifact, name strin
 	if _, err := fs.Stat(art.FS, "chart.tgz"); err != nil {
 		t.Errorf("%s chart.tgz: %v", name, err)
 	}
+	body, err := fs.ReadFile(art.FS, "chart.tgz")
+	assert.NoError(t, err)
+	assert.Equal(t, string(body), string(expected))
 }
 
 type assertHTTPChartConsumerWorkInputs struct {

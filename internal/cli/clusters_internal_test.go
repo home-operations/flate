@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	io "io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -12,19 +11,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/homeport/dyff/pkg/dyff"
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/imageutil"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 func runClusterInputs(t *testing.T, argv ...string) cliResult {
@@ -62,7 +59,7 @@ func runClusterInputs(t *testing.T, argv ...string) cliResult {
 	}
 	cfg := buildOrchCfg(&c)
 	cfg.HeadOnly = verb != "diff" && c.pathOrig != ""
-	runs, err := orchestrator.RenderTrees(t.Context(), trees, cfg)
+	runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 	assert.FatalIf(t, len(runs) == 0, "independent trees unavailable: %v", err)
 	kinds := renderKinds
 	switch kind {
@@ -101,7 +98,7 @@ func runClusterInputs(t *testing.T, argv ...string) cliResult {
 	return cliResult{stdout: stdout.String(), stderr: stderr.String(), code: 0}
 }
 
-func clusterSnapshot(side *selection.Selection) diff.Snapshot {
+func clusterSnapshot(side *selection.Result) diff.Snapshot {
 	return diff.Snapshot{
 		Subjects:     side.Subjects,
 		Manifests:    side.Manifests,
@@ -112,52 +109,36 @@ func clusterSnapshot(side *selection.Selection) diff.Snapshot {
 
 func clusterDiffPayload(t *testing.T, inv *selectedInvocation, encoder output.Encoder) selectedPayload {
 	t.Helper()
-	groups := make([]output.DiffGroup, len(inv.groups))
-	native := make([]dyff.Report, len(inv.groups))
-	lines := make([][]output.LineChange, len(inv.groups))
+	groups := make([]diff.Group, len(inv.groups))
+	for i, group := range inv.groups {
+		groups[i] = diff.Group{
+			Cluster: group.cluster,
+			Orig:    clusterSnapshot(group.sides[0]),
+			Current: clusterSnapshot(group.sides[1]),
+			Added:   group.absent[manifest.TreeBase],
+			Removed: group.absent[manifest.TreeHead],
+		}
+	}
+	comparison, err := diff.Compare(
+		groups,
+		diff.Options{
+			Format:      diff.Format(encoder.Format),
+			StripAttrs:  diff.DefaultStripAttrs,
+			StripFields: diff.DefaultStripFields,
+		},
+	)
+	assert.NoError(t, err)
 	payload := selectedPayload{
-		warnings: make([][]manifest.Warning, len(inv.groups)),
-		subjects: make([][]manifest.NamedResource, len(inv.groups)),
+		warnings: make([][]manifest.Warning, len(groups)),
+		subjects: make([][]manifest.NamedResource, len(groups)),
 	}
-	clusterDiffPayloadLoop(t, struct {
-		inv     **selectedInvocation
-		encoder *struct {
-			Writer io.Writer
-			Format output.Format
-			Color  bool
-		}
-		groups  *[]output.DiffGroup
-		payload *selectedPayload
-		lines   *[][]output.LineChange
-		native  *[]dyff.Report
-	}{inv: &inv, encoder: (*struct {
-		Writer io.Writer
-		Format output.Format
-		Color  bool
-	})(&encoder), groups: &groups, payload: &payload, lines: &lines, native: &native})
-	aggregate := aggregateNative(native)
-	payload.prepare = func(names []output.Names) {
-		from, to := 0, 0
-		for i := range inv.groups {
-			output.NameLines(lines[i], names[i])
-			for j, name := range native[i].From.Names {
-				aggregate.From.Names[from+j] = names[i].Prefix + name
-			}
-			for j, name := range native[i].To.Names {
-				aggregate.To.Names[to+j] = names[i].Prefix + name
-			}
-			from, to = from+len(native[i].From.Names), to+len(native[i].To.Names)
-		}
+	for i, result := range comparison.Groups {
+		payload.warnings[i] = diff.MergeWarnings(result.Warnings, result.Suppressed)
+		payload.subjects[i] = result.Subjects
 	}
-	payload.write = func() error {
-		if encoder.Format == output.FormatJSON {
-			return encoder.DiffGroups(groups)
-		}
-		if encoder.Format == output.FormatDiff || encoder.Format == output.FormatHTML {
-			return encoder.Lines(slices.Concat(lines...))
-		}
-		return encoder.Native(aggregate)
-	}
+	var names []diff.Names
+	payload.prepare = func(resolved []diff.Names) { names = resolved }
+	payload.write = func() error { return comparison.Write(encoder.Writer, names) }
 	return payload
 }
 
@@ -485,92 +466,6 @@ func runClusterInputsLoop(loopInputs struct {
 	}
 }
 
-func clusterDiffPayloadLoop(t *testing.T, loopInputs struct {
-	inv     **selectedInvocation
-	encoder *struct {
-		Writer io.Writer
-		Format output.Format
-		Color  bool
-	}
-	groups  *[]output.DiffGroup
-	payload *selectedPayload
-	lines   *[][]output.LineChange
-	native  *[]dyff.Report
-},
-) {
-	t.Helper()
-
-	for i, group := range (*loopInputs.inv).groups {
-		before, after := clusterSnapshot(group.sides[0]), clusterSnapshot(group.sides[1])
-		if loopInputs.encoder.Format == output.FormatJSON {
-			body, warnings, notes, err := diff.Compare(
-				before,
-				after,
-				nil,
-				diff.Options{
-					Format:      diff.FormatJSON,
-					StripAttrs:  diff.DefaultStripAttrs,
-					StripFields: diff.DefaultStripFields,
-				},
-			)
-			assert.NoError(t, err)
-			(*loopInputs.groups)[i] = output.DiffGroup{
-				Cluster: group.cluster,
-				Body:    body,
-				Added:   group.absent[manifest.TreeBase],
-				Removed: group.absent[manifest.TreeHead],
-			}
-			loopInputs.payload.warnings[i] = appendSuppressionWarnings(warnings, notes)
-			continue
-		}
-		batches := diffprep.Suppress(
-			diffprep.Snapshot{
-				Subjects:     before.Subjects,
-				Manifests:    before.Manifests,
-				Unavailable:  before.Unavailable,
-				ProducerKeys: before.ProducerKeys,
-			},
-			diffprep.Snapshot{
-				Subjects:     after.Subjects,
-				Manifests:    after.Manifests,
-				Unavailable:  after.Unavailable,
-				ProducerKeys: after.ProducerKeys,
-			},
-		)
-		left, right, notes := batches.Orig, batches.Current, batches.Suppressed
-		prepared := diffprep.Prepare(
-			diffprep.Documents(left),
-			diffprep.Documents(right),
-			&diffprep.Options{
-				Subjects:    [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{before.Subjects, after.Subjects},
-				StripAttrs:  diff.DefaultStripAttrs,
-				StripFields: diff.DefaultStripFields,
-			},
-		)
-		loopInputs.payload.warnings[i] = prepared.Warnings
-		for noteIndex := range notes {
-			note := notes[noteIndex]
-			loopInputs.payload.warnings[i] = append(
-				loopInputs.payload.warnings[i],
-				manifest.Warning{
-					Resource: note.Parent.NamedResource,
-					Subject:  note.Subject,
-					Category: manifest.WarnDiffSuppressed,
-					Message:  note.String(),
-				},
-			)
-		}
-		var err error
-		if loopInputs.encoder.Format == output.FormatDiff || loopInputs.encoder.Format == output.FormatHTML {
-			(*loopInputs.lines)[i], err = output.PrepareLines(prepared)
-			loopInputs.payload.subjects[i] = output.LineSubjects((*loopInputs.lines)[i], loopInputs.encoder.Format)
-		} else {
-			(*loopInputs.native)[i], err = prepared.Native()
-		}
-		assert.NoError(t, err)
-	}
-}
-
 func clusterSelectGroups(req *selectedRequest, inv *selectedInvocation, runs []orchestrator.Rendered) {
 	for first := 0; first < len(runs); {
 		last := first + 1
@@ -587,7 +482,8 @@ func clusterSelectGroups(req *selectedRequest, inv *selectedInvocation, runs []o
 		if !req.pair {
 			groupRuns = groupRuns[len(groupRuns)-1:]
 		}
-		group.sides, group.err, group.remainder = orchestrator.Select(groupRuns, groupErr, req.roots, nil)
+		projectedResults0, projectionErrors0 := orchestrator.Select(groupRuns, groupErr, req.roots, nil)
+		group.sides, group.err, group.remainder = projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		inv.groups = append(inv.groups, group)
 		first = last
 	}
@@ -601,6 +497,9 @@ func (c *clusterInputCommand) payload(
 	encoder output.Encoder,
 ) selectedPayload {
 	t.Helper()
+	if c.kind == "images" {
+		return c.imagePayload(inv, encoder)
+	}
 	payload := selectedPayload{}
 	switch c.verb {
 	case "get":
@@ -628,9 +527,6 @@ func (c *clusterInputCommand) payload(
 	case "diff":
 		payload = clusterDiffPayload(t, inv, encoder)
 	}
-	if c.kind == "images" {
-		return c.imagePayload(inv, encoder)
-	}
 	return payload
 }
 
@@ -653,7 +549,7 @@ func (c *clusterInputCommand) imagePayload(inv *selectedInvocation, encoder outp
 					false,
 				)
 				payload.err = errors.Join(payload.err, err)
-				payload.warnings[i] = appendSuppressionWarnings(nil, notes)
+				payload.warnings[i] = diff.MergeWarnings(nil, notes)
 			}
 			groups[i] = output.ImageGroup{
 				Cluster: group.cluster,
@@ -666,7 +562,7 @@ func (c *clusterInputCommand) imagePayload(inv *selectedInvocation, encoder outp
 			}
 		}
 		tables, _ := prepareGetTables(inv, []output.Table{table})
-		payload.prepare = func(names []output.Names) {
+		payload.prepare = func(names []diff.Names) {
 			for i := range groups {
 				for _, image := range groups[i].Images {
 					groups[i].Names = append(groups[i].Names, names[i].Prefix+image)
@@ -693,7 +589,7 @@ func runClusterInputsLoop2(loopInputs struct {
 	case "build":
 		(*loopInputs.format) = output.FormatYAML
 	case "diff":
-		(*loopInputs.format) = output.DiffFormats()[0]
+		(*loopInputs.format) = output.Format(diff.Formats()[0])
 		if (*loopInputs.kind) == "images" {
 			(*loopInputs.format) = output.FormatName
 		}

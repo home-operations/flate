@@ -23,6 +23,7 @@ import (
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -410,8 +411,10 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	}
 	location, err := gitrepo.Locate(t.Context(), root, "")
 	assert.NoError(t, err)
-	input, err := gittree.AdmitDirectory(t.Context(), location)
+	inputDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	input := inputDirectory.Artifact()
+	assert.NoError(t, inputDirectory.Close())
 	guard := &guardedSourceFS{FS: input.FS}
 	initial := *input
 	initial.Key, initial.Content, initial.FS, initial.Revision = "initial-pin", "initial-content", guard, "initial-pin"
@@ -547,7 +550,7 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 	}
 	t.Logf("persisted renderer hit enabled: %t", persistent)
 	before := guard.opened.Load()
-	prepared, err := kustomize.Prepare(ks, nil)
+	prepared, err := kustomize.Prepare(ks, nil, depwait.NewMissingPolicy(nil))
 	assert.NoError(t, err)
 	rendered, _, err := testutil.RenderMaps(
 		kustomize.Render(
@@ -636,23 +639,18 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 
 func promoteSourceCoverage(t *testing.T, s *store.Store, index *manifest.DiscoveryIndex, id manifest.NamedResource) {
 	t.Helper()
-	{
-		pValues := s.Productions(id, index)
-		for pIndex := range pValues {
-			p := pValues[pIndex]
-
-			if p.Path != "" {
-				loader.Promote(
-					t.Context(),
-					s,
-					id,
-					loader.PromoteOptions{
-						Record: p,
-						Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
-					},
-				)
-			}
+	productions := s.Productions(id, index)
+	for i := range productions {
+		production := &productions[i]
+		if production.Path == "" {
+			continue
+		}
+		children, err := loader.Promote(t.Context(), s, id, loader.PromoteOptions{Record: *production})
+		assert.NoError(t, err)
+		for child := range selection.Declarations(children) {
+			s.AddObject(child.Obj, child.Doc)
 		}
 	}
+
 	assert.FatalIf(t, s.GetObject(id) == nil, "missing promoted seed %s", id)
 }

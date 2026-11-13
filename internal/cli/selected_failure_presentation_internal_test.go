@@ -11,9 +11,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -29,12 +29,12 @@ func TestFinishSelected_JoinsWriterErrors(t *testing.T) {
 			), errors.New(
 				"render failed",
 			)
-			side := &selection.Selection{
+			side := &selection.Result{
 				Warnings: []manifest.Warning{{Category: manifest.WarnEmptyScan, Message: "advisory"}},
 			}
 			inv := &selectedInvocation{
 				groups: []selectedGroup{
-					{cluster: ".", sides: []*selection.Selection{side, side}, err: renderErr, remainder: renderErr},
+					{cluster: ".", sides: []*selection.Result{side, side}, err: renderErr, remainder: renderErr},
 				},
 			}
 			payload := selectedPayload{
@@ -78,13 +78,13 @@ func TestFinishSelected_FailureContext(t *testing.T) {
 			if pair {
 				labels = []string{"orig", "current"}
 			}
-			var sides []*selection.Selection
+			var sides []*selection.Result
 			var rows []string
 			for _, label := range labels {
 				if sides == nil {
-					sides = make([]*selection.Selection, 0, len(labels))
+					sides = make([]*selection.Result, 0, len(labels))
 				}
-				sides = append(sides, &selection.Selection{
+				sides = append(sides, &selection.Result{
 					Failed: map[manifest.NamedResource]store.StatusInfo{
 						root: {Status: store.StatusFailed, Message: label + " failure\nunchanged details"},
 					},
@@ -135,7 +135,7 @@ func TestFinishSelected_ReportOrder(t *testing.T) {
 	var combined bytes.Buffer
 	stdout, stderr := &recordingStream{all: &combined}, &recordingStream{all: &combined}
 	failure := store.StatusInfo{Status: store.StatusFailed, Message: "primary cause"}
-	side := &selection.Selection{
+	side := &selection.Result{
 		Failed:   map[manifest.NamedResource]store.StatusInfo{id: failure},
 		Causes:   map[manifest.NamedResource][]manifest.NamedResource{id: nil},
 		Warnings: []manifest.Warning{{Resource: id, Message: "selected warning"}},
@@ -151,8 +151,8 @@ func TestFinishSelected_ReportOrder(t *testing.T) {
 		&selectedRequest{roots: []manifest.NamedResource{id}, stdout: stdout, stderr: stderr, test: true},
 		&selectedInvocation{
 			groups: []selectedGroup{
-				{cluster: "alpha", sides: []*selection.Selection{side}, err: errors.New("selected failed")},
-				{cluster: "omega", sides: []*selection.Selection{{}}},
+				{cluster: "alpha", sides: []*selection.Result{side}, err: errors.New("selected failed")},
+				{cluster: "omega", sides: []*selection.Result{{}}},
 			},
 		},
 		&payload,
@@ -205,7 +205,7 @@ func TestFinishSelected_PhaseWriterErrors(t *testing.T) {
 			writeErr, renderErr := errors.New("phase write failed"), errors.New("render failed")
 			writer := &phaseFailWriter{token: phase.token, err: writeErr}
 			id := testutil.KustomizationID("ns", "root")
-			side := &selection.Selection{
+			side := &selection.Result{
 				Failed: map[manifest.NamedResource]store.StatusInfo{
 					id: {Status: store.StatusFailed, Message: "phase primary cause"},
 				},
@@ -213,8 +213,8 @@ func TestFinishSelected_PhaseWriterErrors(t *testing.T) {
 				Warnings: []manifest.Warning{{Resource: id, Message: "phase advisory"}},
 			}
 			inv := &selectedInvocation{groups: []selectedGroup{
-				{cluster: "alpha", sides: []*selection.Selection{side}, err: renderErr},
-				{cluster: "omega", sides: []*selection.Selection{{}}},
+				{cluster: "alpha", sides: []*selection.Result{side}, err: renderErr},
+				{cluster: "omega", sides: []*selection.Result{{}}},
 			}}
 			payload := selectedPayload{write: func() error {
 				_, err := io.WriteString(writer, "phase payload\n")

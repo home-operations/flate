@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sync/atomic"
 	"testing"
 	"testing/fstest"
+
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/values"
@@ -65,10 +66,11 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	s.AddObject(parent)
 	s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
 	c := New(s, task.NewBounded(2))
+	execution := &Execution{Controller: c}
 	_, _, next := s.GetEmission(parent.Named())
 	defer next.Finish()
 	next.Complete = true
-	c.emit(t.Context(), parent.Named(), &next, nil)
+	execution.emit(t.Context(), parent.Named(), &next, nil)
 	info, _ := s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 0 objects")
 	first := info
@@ -80,7 +82,7 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 					parent.Named(),
 					store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"},
 				)
-				c.emit(t.Context(), parent.Named(), &next, nil)
+				execution.emit(t.Context(), parent.Named(), &next, nil)
 			})
 			assert.FatalIf(t, allocations != 0, "applying publication allocates %g times", allocations)
 		}
@@ -90,12 +92,12 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	t.Run("first", func(t *testing.T) { publication(t, "applying 0 objects") })
 	{
 		allocations := testing.AllocsPerRun(100, func() {
-			c.emit(t.Context(), parent.Named(), &next, nil)
+			execution.emit(t.Context(), parent.Named(), &next, nil)
 		})
 		assert.FatalIf(t, allocations != 0, "repeated publication allocates %g times", allocations)
 	}
 	next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"kind": "ConfigMap"}})
-	c.emit(t.Context(), parent.Named(), &next, nil)
+	execution.emit(t.Context(), parent.Named(), &next, nil)
 	info, _ = s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 1 objects")
 	t.Run("changed", func(t *testing.T) { publication(t, "applying 1 objects") })
@@ -170,7 +172,13 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 }
 
 func (*gatePromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *gatePromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+
+//nolint:gocritic // The admission contract requires an independent request snapshot.
+func (p *gatePromotion) Promote(
+	_ context.Context,
+	_ selection.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
 	return p.promote(id), nil
 }
 
@@ -309,7 +317,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
 			}
-			filterLoader := admissiontest.New(
+			filterLoader, _ := admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"parent.yaml"}),
@@ -318,16 +326,14 @@ func TestEmit_LatePreflight(t *testing.T) {
 					Root:      "",
 				},
 			)
-			admissiontest.Commit(t, filterLoader, nil)
-			filter := filterLoader.Options.Filter
-			var reject atomic.Bool
+			admissiontest.Commit(t, filterLoader.Options.Session, nil)
+			filter := filterLoader.Options.Session
 			c := New(s, task.NewBounded(2))
 			c.Configure(
 				Options{
-					Filter:           filter,
-					Index:            index,
-					PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() },
-					Loader:           filterLoader,
+					Session: filter,
+					Index:   index,
+					Loader:  filterLoader,
 				},
 			)
 			execution := gateExecution(c, parent.Named())
@@ -342,7 +348,6 @@ func TestEmit_LatePreflight(t *testing.T) {
 			_, _, next := s.GetEmission(parent.Named())
 			defer next.Finish()
 			next.Children, next.Complete = []store.Child{{Obj: child}}, complete
-			reject.Store(true)
 			s.SetPreflight(parent.Named(), "cycle")
 			payloads := map[manifest.NamedResource]*store.SourceArtifact{child.Named(): {FS: fstest.MapFS{}}}
 			{
@@ -353,7 +358,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 				t,
 				s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named(), store.ArtifactContent) != nil ||
 					s.GetArtifact(parent.Named(), store.ArtifactContent) != nil ||
-					filter.ShouldReconcile(
+					filter.Snapshot().Reconcile(
 						child.Named(),
 					),
 				"%v",
@@ -384,10 +389,7 @@ func TestStamp_CommonMetadataIntroducesHook(t *testing.T) {
 
 func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 	t.Parallel()
-	for _, producer := range []interface {
-		manifest.BaseManifest
-		EmissionPolicy() manifest.EmissionPolicy
-	}{
+	for _, producer := range []manifest.BaseManifest{
 		&manifest.Kustomization{Name: "owner", Namespace: "apps", TargetNamespace: "target"},
 		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps", TargetNamespace: "target"},
 		&manifest.ResourceSet{Name: "owner", Namespace: "target"},
@@ -442,10 +444,7 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 
 func TestEmit_KindExclusionPolicy(t *testing.T) {
 	t.Parallel()
-	for _, producer := range []interface {
-		manifest.BaseManifest
-		EmissionPolicy() manifest.EmissionPolicy
-	}{
+	for _, producer := range []manifest.BaseManifest{
 		&manifest.Kustomization{Name: "owner", Namespace: "apps"},
 		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps"},
 		&manifest.ResourceSet{Name: "owner", Namespace: "apps"},
@@ -485,7 +484,7 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			_, _, next := s.GetEmission(producer.Named())
 			defer next.Finish()
 			next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(visible), true
-			c.emit(t.Context(), producer.Named(), &next, nil)
+			(&Execution{Controller: c}).emit(t.Context(), producer.Named(), &next, nil)
 			accepted, _ := s.GetArtifact(producer.Named(), store.ArtifactContent).(*store.Emission)
 			assert.FatalIf(t, accepted == nil || len(accepted.Manifests) != 1, "accepted=%v", accepted)
 			for _, child := range children {
@@ -609,7 +608,7 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 				)
 				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
-			c.emit(
+			(&Execution{Controller: c}).emit(
 				t.Context(),
 				parent.Named(),
 				&store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true},

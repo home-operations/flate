@@ -1,0 +1,2226 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "bdf807065e3b816152ccc2d07783f4b5cf5b9ee9",
+    "paths": [
+      "pkg/selection/admission_applications.go"
+    ],
+    "reductions": "Authored offline investigation from the reported shared-file component producer shape. No reported repository content is copied."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    },
+    {
+      "name": "baseline",
+      "directory": "repo",
+      "remotes": [
+        {
+          "name": "origin",
+          "url": "https://example.invalid/cluster.git"
+        }
+      ]
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "shared-file-ordered-repo-before",
+      "overlay": "shared-file-ordered",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "shared-file-ordered-repo-after",
+      "overlay": "image",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-file-ordered-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "shared-file-ordered-baseline-before",
+      "overlay": "shared-file-ordered",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "baseline",
+      "name": "shared-file-ordered-baseline-after",
+      "overlay": "image",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-file-ordered-baseline-before"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "shared-file-unordered-repo-before",
+      "overlay": "shared-file-unordered",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "shared-file-unordered-repo-after",
+      "overlay": "image",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-file-unordered-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "shared-file-unordered-baseline-before",
+      "overlay": "shared-file-unordered",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "baseline",
+      "name": "shared-file-unordered-baseline-after",
+      "overlay": "image",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-file-unordered-baseline-before"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "parent-context-ordered-repo-before",
+      "overlay": "parent-context-ordered",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "parent-context-ordered-repo-after",
+      "overlay": "image",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "parent-context-ordered-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "parent-context-ordered-baseline-before",
+      "overlay": "parent-context-ordered",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "baseline",
+      "name": "parent-context-ordered-baseline-after",
+      "overlay": "image",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "parent-context-ordered-baseline-before"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "parent-context-unordered-repo-before",
+      "overlay": "parent-context-unordered",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "parent-context-unordered-repo-after",
+      "overlay": "image",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "parent-context-unordered-repo-before"
+      ]
+    },
+    {
+      "repository": "baseline",
+      "name": "parent-context-unordered-baseline-before",
+      "overlay": "parent-context-unordered",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "baseline",
+      "name": "parent-context-unordered-baseline-after",
+      "overlay": "image",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "parent-context-unordered-baseline-before"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "removed-producer",
+      "overlay": "absent",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-file-ordered-repo-before"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "renamed-producer",
+      "overlay": "rename-producer",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "shared-file-ordered-repo-before"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "image",
+      "directory": "overlays/image"
+    },
+    {
+      "name": "shared-file-ordered",
+      "directory": "overlays/shared-file-ordered"
+    },
+    {
+      "name": "shared-file-unordered",
+      "directory": "overlays/shared-file-unordered"
+    },
+    {
+      "name": "parent-context-ordered",
+      "directory": "overlays/parent-context-ordered"
+    },
+    {
+      "name": "parent-context-unordered",
+      "directory": "overlays/parent-context-unordered"
+    },
+    {
+      "name": "absent",
+      "directory": "overlays/absent",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/components"
+        },
+        {
+          "delete": "baseline/kubernetes/components"
+        }
+      ]
+    },
+    {
+      "name": "rename-producer",
+      "directory": "overlays/rename-producer"
+    }
+  ],
+  "cases": [
+    {
+      "name": "shared-file-ordered",
+      "description": "Compare the component Secret producer across full, narrow, both Git snapshots, and an image-only Git diff.",
+      "setup": [
+        {
+          "commit": "shared-file-ordered-repo-after"
+        },
+        {
+          "commit": "shared-file-ordered-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "full-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full-v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "narrow-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json",
+              "--base",
+              "@@commit:shared-file-ordered-baseline-after@@"
+            ],
+            "cache": {
+              "name": "changed-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "full-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full-v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "narrow-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json",
+              "--base",
+              "@@commit:shared-file-ordered-repo-before@@"
+            ],
+            "cache": {
+              "name": "changed-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "git-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:shared-file-ordered-repo-before@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "shared-file-unordered",
+      "description": "Compare the component Secret producer across full, narrow, both Git snapshots, and an image-only Git diff.",
+      "setup": [
+        {
+          "commit": "shared-file-unordered-repo-after"
+        },
+        {
+          "commit": "shared-file-unordered-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "full-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full-v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "narrow-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json",
+              "--base",
+              "@@commit:shared-file-unordered-baseline-after@@"
+            ],
+            "cache": {
+              "name": "changed-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "full-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full-v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "narrow-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json",
+              "--base",
+              "@@commit:shared-file-unordered-repo-before@@"
+            ],
+            "cache": {
+              "name": "changed-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "git-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:shared-file-unordered-repo-before@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "parent-context-ordered",
+      "description": "Compare the component Secret producer across full, narrow, both Git snapshots, and an image-only Git diff.",
+      "setup": [
+        {
+          "commit": "parent-context-ordered-repo-after"
+        },
+        {
+          "commit": "parent-context-ordered-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "full-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full-v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "narrow-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json",
+              "--base",
+              "@@commit:parent-context-ordered-baseline-after@@"
+            ],
+            "cache": {
+              "name": "changed-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "full-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full-v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "narrow-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json",
+              "--base",
+              "@@commit:parent-context-ordered-repo-before@@"
+            ],
+            "cache": {
+              "name": "changed-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "git-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:parent-context-ordered-repo-before@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "parent-context-unordered",
+      "description": "Compare the component Secret producer across full, narrow, both Git snapshots, and an image-only Git diff.",
+      "setup": [
+        {
+          "commit": "parent-context-unordered-repo-after"
+        },
+        {
+          "commit": "parent-context-unordered-baseline-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "full-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full-v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "narrow-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-v1",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json",
+              "--base",
+              "@@commit:parent-context-unordered-baseline-after@@"
+            ],
+            "cache": {
+              "name": "changed-v1",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v1.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "full-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "full-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/full-v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "narrow-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "narrow-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "changed-v2",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json",
+              "--base",
+              "@@commit:parent-context-unordered-repo-before@@"
+            ],
+            "cache": {
+              "name": "changed-v2",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "git-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:parent-context-unordered-repo-before@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/diff.stdout",
+              "stderr": "expect/diff.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "producer-absent",
+      "description": "A required postBuild Secret stays absent without a producer, including when Secret kinds are allowed.",
+      "setup": [
+        {
+          "commit": "shared-file-unordered-repo-after"
+        },
+        {
+          "overlay": "absent"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "missing",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/absent.stdout",
+              "stderr": "expect/absent.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "producer-absent-allowed",
+      "description": "Matching Secret permission renders the required absent substitution input without fabricating a producer.",
+      "setup": [
+        {
+          "commit": "shared-file-unordered-repo-after"
+        },
+        {
+          "overlay": "absent"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "missing",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret",
+              "--only-kinds",
+              "HelmRelease,ConfigMap,ExternalSecret",
+              "--output",
+              "json"
+            ],
+            "cache": {
+              "name": "missing",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/v2.stdout",
+              "stderr": "expect/absent-allowed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "removed-producer",
+      "description": "Compare permitted unavailable identities on both shallow-history sides, then retain the missing-input failure without matching permission.",
+      "setup": [
+        {
+          "commit": "removed-producer"
+        },
+        {
+          "shallow": "removed-producer"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:shared-file-ordered-repo-before@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/absent.stdout",
+              "stderr": "expect/permitted-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "unpermitted",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:shared-file-ordered-repo-before@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/absent.stdout",
+              "stderr": "expect/removed-producer.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "removed-producer-reverse",
+      "description": "Compare permitted unavailable identities on both shallow-history sides, then retain the missing-input failure without matching permission.",
+      "setup": [
+        {
+          "commit": "shared-file-ordered-repo-before"
+        },
+        {
+          "shallow": "shared-file-ordered-repo-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:removed-producer@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/absent.stdout",
+              "stderr": "expect/permitted-reverse.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "unpermitted",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:removed-producer@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/absent.stdout",
+              "stderr": "expect/removed-producer-reverse.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "renamed-producer",
+      "description": "Compare permitted unavailable identities on both shallow-history sides, then retain the missing-input failure without matching permission.",
+      "setup": [
+        {
+          "commit": "renamed-producer"
+        },
+        {
+          "shallow": "renamed-producer"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:shared-file-ordered-repo-before@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/permitted-forward.stdout",
+              "stderr": "expect/permitted-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "unpermitted",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:shared-file-ordered-repo-before@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/absent.stdout",
+              "stderr": "expect/renamed-producer.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "renamed-producer-reverse",
+      "description": "Compare permitted unavailable identities on both shallow-history sides, then retain the missing-input failure without matching permission.",
+      "setup": [
+        {
+          "commit": "shared-file-ordered-repo-before"
+        },
+        {
+          "shallow": "shared-file-ordered-repo-before"
+        }
+      ],
+      "directory": "@@repo@@",
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:renamed-producer@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/permitted-reverse.stdout",
+              "stderr": "expect/permitted-reverse.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "unpermitted",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "paperwork-paperless",
+              "-n",
+              "paperwork",
+              "--path",
+              "@@repo@@/kubernetes/flux/cluster",
+              "--base",
+              "@@commit:renamed-producer@@",
+              "--output",
+              "diff",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "diff",
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/absent.stdout",
+              "stderr": "expect/renamed-producer-reverse.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/absent.stderr",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/absent.stdout",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/build.stderr",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/diff.stderr",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/diff.stdout",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/full-v1.stdout",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/full-v2.stdout",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/v1.stdout",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/v2.stdout",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/absent/baseline/kubernetes/apps/paperwork/paperless/bucket/kustomization.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/absent/baseline/kubernetes/apps/paperwork/paperless/bucket/marker.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/absent/baseline/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/absent/repo/kubernetes/apps/paperwork/paperless/bucket/kustomization.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/absent/repo/kubernetes/apps/paperwork/paperless/bucket/marker.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/absent/repo/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/image/baseline/kubernetes/apps/paperwork/paperless/app/helmrelease.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/image/repo/kubernetes/apps/paperwork/paperless/app/helmrelease.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/parent-context-ordered/baseline/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/parent-context-ordered/baseline/kubernetes/flux/cluster/apps.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/parent-context-ordered/repo/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/parent-context-ordered/repo/kubernetes/flux/cluster/apps.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/parent-context-unordered/baseline/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/parent-context-unordered/baseline/kubernetes/flux/cluster/apps.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/parent-context-unordered/repo/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/parent-context-unordered/repo/kubernetes/flux/cluster/apps.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/shared-file-ordered/baseline/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/shared-file-ordered/repo/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/shared-file-unordered/baseline/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "overlays/shared-file-unordered/repo/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/charts/paperless/Chart.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/charts/paperless/templates/deployment.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/apps/kustomization.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/apps/paperwork/paperless/app/helmrelease.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/apps/paperwork/paperless/app/kustomization.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/apps/paperwork/paperless/bucket/kustomization.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/apps/sibling.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/components/bucket/external.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/components/bucket/kustomization.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation.",
+      "package": "component",
+      "consumer": "repo/kubernetes/apps/paperwork/paperless/bucket"
+    },
+    {
+      "path": "repo/kubernetes/flux/cluster/apps.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/flux/cluster/kustomization.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/unrelated/kustomization.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "repo/kubernetes/unrelated/output.yaml",
+      "cases": [
+        "shared-file-ordered",
+        "shared-file-unordered",
+        "parent-context-ordered",
+        "parent-context-unordered",
+        "producer-absent",
+        "producer-absent-allowed"
+      ],
+      "purpose": "Authored input or independently derived expected output for the component producer investigation."
+    },
+    {
+      "path": "expect/removed-producer.stderr",
+      "cases": [
+        "removed-producer"
+      ],
+      "purpose": "Independent side-specific missing-Secret and suppression diagnostic."
+    },
+    {
+      "path": "expect/removed-producer-reverse.stderr",
+      "cases": [
+        "removed-producer-reverse"
+      ],
+      "purpose": "Independent side-specific missing-Secret and suppression diagnostic."
+    },
+    {
+      "path": "expect/renamed-producer.stderr",
+      "cases": [
+        "renamed-producer"
+      ],
+      "purpose": "Independent side-specific missing-Secret and suppression diagnostic."
+    },
+    {
+      "path": "expect/renamed-producer-reverse.stderr",
+      "cases": [
+        "renamed-producer-reverse"
+      ],
+      "purpose": "Independent side-specific missing-Secret and suppression diagnostic."
+    },
+    {
+      "path": "overlays/rename-producer/repo/kubernetes/apps/paperwork/paperless/ks.yaml",
+      "cases": [
+        "renamed-producer",
+        "renamed-producer-reverse"
+      ],
+      "purpose": "Rename only the demanded producer target through its inline value."
+    },
+    {
+      "path": "overlays/rename-producer/repo/kubernetes/apps/paperwork/paperless/app/helmrelease.yaml",
+      "cases": [
+        "renamed-producer",
+        "renamed-producer-reverse"
+      ],
+      "purpose": "Change the selected consumer image while its producer target changes on one side."
+    },
+    {
+      "path": "expect/absent-allowed.stderr",
+      "cases": [
+        "producer-absent-allowed"
+      ],
+      "purpose": "One unresolved warning for the explicitly permitted absent reference."
+    },
+    {
+      "path": "expect/permitted-forward.stdout",
+      "cases": [
+        "renamed-producer"
+      ],
+      "purpose": "Independently derived HelmRelease image change and per-snapshot unresolved identities under matching permission."
+    },
+    {
+      "path": "expect/permitted-forward.stderr",
+      "cases": [
+        "removed-producer",
+        "renamed-producer"
+      ],
+      "purpose": "Independently derived HelmRelease image change and per-snapshot unresolved identities under matching permission."
+    },
+    {
+      "path": "expect/permitted-reverse.stdout",
+      "cases": [
+        "renamed-producer-reverse"
+      ],
+      "purpose": "Independently derived HelmRelease image change and per-snapshot unresolved identities under matching permission."
+    },
+    {
+      "path": "expect/permitted-reverse.stderr",
+      "cases": [
+        "removed-producer-reverse",
+        "renamed-producer-reverse"
+      ],
+      "purpose": "Independently derived HelmRelease image change and per-snapshot unresolved identities under matching permission."
+    }
+  ]
+}

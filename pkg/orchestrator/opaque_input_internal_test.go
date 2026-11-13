@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -122,7 +123,7 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 		assert.NoError(t, openErr)
 		defer func() { assert.NoError(t, owner.Close()) }()
 		persistent = owner.CanPersistRenders()
-		runs, err := RenderTrees(t.Context(), input, Config{Concurrency: 2, CacheDir: cacheDir, Cache: owner})
+		runs, err := renderTreesForTest(t.Context(), t, input, Config{Concurrency: 2, CacheDir: cacheDir, Cache: owner})
 		counts := opaqueInputWork(t, &logs)
 		fetched := opaqueInputDownloadDelta(tailCaseInput.downloads, before)
 		t.Logf("%s work=%v chart_downloads=%v error=%v", label, counts, fetched, err)
@@ -143,30 +144,32 @@ func testRenderTreesRequiredOpaqueInputCaseTail(
 	}
 	delta := func(runs []Rendered, runErr error) ([]byte, error) {
 		t.Helper()
-		selected, selectedErr, err := Select(
+		projectedResults0, projectionErrors0 := Select(
 			runs,
 			runErr,
 			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 			nil,
 		)
+		selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		if err != nil {
 			return nil, err
 		}
-		body, _, _, err := diff.Compare(
-			diff.Snapshot{
-				Subjects:     selected[0].Subjects,
-				Manifests:    selected[0].Manifests,
-				ProducerKeys: selected[0].ProducerKeys,
-				Unavailable:  selected[0].Unavailable,
-			},
-			diff.Snapshot{
-				Subjects:     selected[1].Subjects,
-				Manifests:    selected[1].Manifests,
-				ProducerKeys: selected[1].ProducerKeys,
-				Unavailable:  selected[1].Unavailable,
-			},
-			selectedErr,
-			diff.Options{Format: diff.FormatJSON},
+		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+			Subjects:     selected[0].Subjects,
+			Manifests:    selected[0].Manifests,
+			ProducerKeys: selected[0].ProducerKeys,
+			Unavailable:  selected[0].Unavailable,
+		}, Current: diff.Snapshot{
+			Subjects:     selected[1].Subjects,
+			Manifests:    selected[1].Manifests,
+			ProducerKeys: selected[1].ProducerKeys,
+			Unavailable:  selected[1].Unavailable,
+		}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+		var comparisonOutput1 bytes.Buffer
+		writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+		body, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+			preparationErr1,
+			writeErr1,
 		)
 		return body, errors.Join(err, runErr)
 	}
@@ -315,11 +318,15 @@ func assertOpaqueInputInventory(t *testing.T, runs []Rendered, owner *sourcecach
 		reads.Init(run.Store(), id, nil)
 		controller := *run.hrc
 		controller.Helm = helm.NewClient(owner)
-		records, complete := controller.PreviousRender(
+		preparedHistory318 := controller.PreviousRender(
 			t.Context(),
 			run.Store().GetObject(id),
-			&reads,
+			schedule.Result{},
 		)
+		if preparedHistory318.Assessment != nil {
+			t.Cleanup(preparedHistory318.Assessment.Close)
+		}
+		records, complete := preparedHistory318.Records, preparedHistory318.Complete
 		assert.Equal(t, complete, true)
 		found := false
 		if records != nil {

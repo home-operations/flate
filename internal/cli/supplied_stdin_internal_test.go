@@ -189,7 +189,7 @@ func testRunSupplyStdin(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}")
 	input := &countedInput{reader: strings.NewReader(externalCM)}
 	var stdout, stderr bytes.Buffer
-	cmd := New("test")
+	cmd := New("test", RunConfig{})
 	cmd.SetIn(input)
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)

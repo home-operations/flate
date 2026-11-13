@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/depwait"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 
@@ -77,7 +79,9 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 		c.Tasks.Go(
 			t.Context(),
 			"reconcile",
-			func(ctx context.Context) { next = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone) },
+			func(ctx context.Context) {
+				next = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone, schedule.Result{})
+			},
 		)
 		c.Tasks.BlockTillDone()
 		if previous != nil {
@@ -119,7 +123,7 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 	}
 }
 
-func TestReconcile_RequiredPostBuildNotWaived(t *testing.T) {
+func TestReconcile_RequiredPostBuildPermission(t *testing.T) {
 	t.Parallel()
 	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
 		t.Skip(reason)
@@ -128,9 +132,9 @@ func TestReconcile_RequiredPostBuildNotWaived(t *testing.T) {
 		for _, allowed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/allowed=%t", kind, allowed), func(t *testing.T) {
 				t.Parallel()
-				testReconcileRequiredPostBuildNotWaivedCase(
+				testReconcileRequiredPostBuildPermissionCase(
 					t,
-					testReconcileRequiredPostBuildNotWaivedCaseInputs{kind: &kind, allowed: &allowed},
+					testReconcileRequiredPostBuildPermissionCaseInputs{kind: &kind, allowed: &allowed},
 				)
 			},
 			)
@@ -211,7 +215,7 @@ func testReconcileDeclarationChangeBeforeCaptureCase(
 	var run *base.Execution
 	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) {
 		defer close(finished)
-		run = c.ReconcileNode(ctx, input.Named(), manifest.DrainNone)
+		run = c.ReconcileNode(ctx, input.Named(), manifest.DrainNone, schedule.Result{})
 	})
 	c.Tasks.Go(t.Context(), "replace", func(context.Context) {
 		reached := false
@@ -273,6 +277,7 @@ func testReconcileDeclarationChangeBeforeCaptureCaseTail(
 		func(ctx context.Context) {
 			(*tailCaseInput.run) = (*tailCaseInput.c).ReconcileNode(
 				ctx, (*tailCaseInput.input).Named(), manifest.DrainNone,
+				schedule.Result{},
 			)
 		},
 	)
@@ -311,14 +316,14 @@ func testReconcileDeclarationChangeBeforeCaptureCaseTail(
 	}
 }
 
-type testReconcileRequiredPostBuildNotWaivedCaseInputs struct {
+type testReconcileRequiredPostBuildPermissionCaseInputs struct {
 	kind    *string
 	allowed *bool
 }
 
-func testReconcileRequiredPostBuildNotWaivedCase(
+func testReconcileRequiredPostBuildPermissionCase(
 	t *testing.T,
-	testCaseInput testReconcileRequiredPostBuildNotWaivedCaseInputs,
+	testCaseInput testReconcileRequiredPostBuildPermissionCaseInputs,
 ) {
 	t.Helper()
 
@@ -328,11 +333,11 @@ func testReconcileRequiredPostBuildNotWaivedCase(
 	t.Cleanup(trees.Close)
 	opts := Options{}
 	if *testCaseInput.allowed {
-		opts.AllowMissingKinds = []string{
+		opts.Missing = depwait.NewMissingPolicy([]string{
 			manifest.KindSecret,
 			manifest.KindConfigMap,
 			manifest.KindCustomResourceDefinition,
-		}
+		})
 	}
 	c := New(st, original.Tasks, trees)
 	c.Configure(opts, sourcecache.RetryConfig{})
@@ -357,12 +362,21 @@ func testReconcileRequiredPostBuildNotWaivedCase(
 		ReconcileNode: c.ReconcileNode,
 	}
 	info := controllertest.DispatchToFixpoint(t.Context(), t, dispatch)
-	assert.FatalIf(
-		t,
-		info.Status != store.StatusFailed || st.GetArtifact(ks.Named(), store.ArtifactContent) != nil,
-		"required absent postBuild input admitted: %+v",
-		info,
-	)
+	if *testCaseInput.allowed {
+		assert.Equal(t, info.Status, store.StatusReady)
+		assert.Equal(t, st.GetArtifact(ks.Named(), store.ArtifactContent) != nil, true)
+		warnings := st.Warnings()
+		assert.Equal(t, len(warnings), 1)
+		assert.Equal(t, warnings[0].Category, manifest.WarnUnresolvedSubstitution)
+		assert.Equal(t, warnings[0].Count, 1)
+	} else {
+		assert.FatalIf(
+			t,
+			info.Status != store.StatusFailed || st.GetArtifact(ks.Named(), store.ArtifactContent) != nil,
+			"required absent postBuild input admitted: %+v",
+			info,
+		)
+	}
 	input := manifest.NamedResource{Kind: (*testCaseInput.kind), Namespace: ks.Namespace, Name: "missing"}
 	if (*testCaseInput.kind) == manifest.KindSecret {
 		st.AddObject(&manifest.Secret{Name: input.Name, Namespace: input.Namespace})
@@ -373,7 +387,11 @@ func testReconcileRequiredPostBuildNotWaivedCase(
 	assert.Equal(t, info.Status, store.StatusReady)
 	assert.Equal(t, st.DeleteObject(input), true)
 	info = controllertest.DispatchToFixpoint(t.Context(), t, dispatch)
-	assert.Equal(t, info.Status, store.StatusFailed)
+	if *testCaseInput.allowed {
+		assert.Equal(t, info.Status, store.StatusReady)
+	} else {
+		assert.Equal(t, info.Status, store.StatusFailed)
+	}
 }
 
 type testReconcileDeclarationChangeBeforeCaptureCaseTailInputs struct {

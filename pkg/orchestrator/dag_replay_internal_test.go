@@ -79,7 +79,7 @@ data:
 	assert.FatalIf(t, err != nil, "%v", err)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	res, err := o.render(ctx)
+	res, err := o.render(ctx, t)
 	assert.FatalIf(t, err != nil, "Render must converge: %v", err)
 	assert.FatalIf(t, ctx.Err() != nil || len(res.Failed) != 0,
 		"Render did not converge successfully: context=%v, failures=%v", ctx.Err(), res.Failed)
@@ -183,12 +183,17 @@ func ksYAML(name, path, dependsOn string) string {
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	dir := t.TempDir()
-	produced := ksYAML("produced", "produced", "")
+	produced := ksYAML("produced", "produced", "") + "  dependsOn: [{name: ready, namespace: '${TEAM}'}]\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(produced))
 	}))
 	t.Cleanup(srv.Close)
-	testutil.WriteFile(t, dir, "flux/producer.yaml", ksYAML("producer", "producer", ""))
+	testutil.WriteFile(
+		t,
+		dir,
+		"flux/producer.yaml",
+		ksYAML("producer", "producer", "")+"  postBuild: {substitute: {TEAM: shared}}\n",
+	)
 	testutil.WriteFile(t, dir, "flux/consumer.yaml", ksYAML("consumer", "consumer", "produced"))
 	testutil.WriteFile(t, dir, "producer/kustomization.yaml", "resources:\n- "+srv.URL+"/produced.yaml\n")
 	testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
@@ -206,18 +211,20 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: produced}\ndata: {k: v}\n",
 	)
 
+	testutil.WriteFile(t, dir, "flux/ready.yaml", testutil.KustomizationYAML("ready", "shared", "  path: ./ready\n"))
+	testutil.WriteFile(t, dir, "ready/kustomization.yaml", "resources: []\n")
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{Concurrency: 4})
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	{
-		err := o.bootstrap(context.Background())
+		err := o.bootstrap(t.Context())
 		assert.FatalIf(t, err != nil, "Bootstrap: %v", err)
 	}
 	{
-		msg, ok := o.preflightFailure(testutil.KustomizationID("flux-system", "consumer"))
+		msg, ok := capturedPreflight(o.store, testutil.KustomizationID("flux-system", "consumer"))
 		assert.FatalIf(t, ok, "consumer should wait for rendered dependency, not fail preflight: %s", msg)
 	}
 	{
-		err := o.run(context.Background())
+		err := o.run(t.Context())
 		assert.FatalIf(t, err != nil, "Run: %v", err)
 	}
 	for _, name := range []string{"produced", "consumer", "producer"} {
@@ -231,6 +238,36 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 			ok,
 		)
 	}
+	ready, ok := o.Store().GetStatus(testutil.KustomizationID("shared", "ready"))
+	assert.Equal(t, ok, true)
+	assert.Equal(t, ready.Status, store.StatusReady)
+	child := o.Store().GetObject(testutil.KustomizationID("flux-system", "produced")).(*manifest.Kustomization)
+	assert.Equal(t, child.DependsOn[0].Name, "ready")
+	assert.Equal(t, child.DependsOn[0].Namespace, "shared")
+
+	t.Run("escaped namespace", func(t *testing.T) {
+		escapedRoot := t.TempDir()
+		testutil.CopyTree(t, dir, escapedRoot)
+		escapedBody := strings.Replace(produced, "${TEAM}", "$${TEAM}", 1)
+		escapedServer := httptest.NewServer(
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(escapedBody)) }),
+		)
+		t.Cleanup(escapedServer.Close)
+		testutil.WriteFile(
+			t,
+			escapedRoot,
+			"producer/kustomization.yaml",
+			"resources: ["+escapedServer.URL+"/produced.yaml]\n",
+		)
+		escaped, err := newTestOrchestrator(t, Tree{Path: escapedRoot}, Config{Concurrency: 2})
+		assert.NoError(t, err)
+		result, _ := escaped.render(t.Context(), t)
+		id := testutil.KustomizationID("flux-system", "produced")
+		child := escaped.Store().GetObject(id).(*manifest.Kustomization)
+		assert.Equal(t, child.DependsOn[0].Namespace, "${TEAM}")
+		assert.Equal(t, result.Failed[id].Status, store.StatusFailed)
+		assert.Equal(t, strings.Contains(result.Failed[id].String(), "${TEAM}/ready"), true)
+	})
 }
 
 // TestDAG_DanglingDependencyCascadesAndTerminates verifies the structural
@@ -262,7 +299,7 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	// blocking wait would hit this deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 20_000_000_000) // 20s ceiling
 	defer cancel()
-	res, _ := o.render(ctx)
+	res, _ := o.render(ctx, t)
 	assert.FatalIf(t, res == nil, "%v", "Render returned nil result")
 	leafInfo, ok := res.Failed[testutil.KustomizationID("flux-system", "leaf")]
 	assert.FatalIf(
@@ -346,8 +383,7 @@ spec:
 	defer cancel()
 	var previous []byte
 	for range 2 {
-		renderedSingleton1, err := RenderTrees(
-			ctx,
+		renderedSingleton1, err := renderTreesForTest(ctx, t,
 			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{CacheDir: t.TempDir(), Concurrency: 2},
 		)
@@ -422,15 +458,15 @@ func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 					Origin:      manifest.SuppliedDeclaration,
 				}
 			}
-			o.loader = admissiontest.New(t,
+			o.loader, o.selection = admissiontest.New(t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"consumer.yaml"}),
 					Index:     index,
 					Inventory: o.store,
 					Root:      root,
 				})
-			admissiontest.Commit(t, o.loader, nil)
-			o.filter = o.loader.Options.Filter
+			admissiontest.Commit(t, o.selection, nil)
+
 			o.configureControllers()
 			_, err = o.seedNodes()
 			assert.NoError(t, err)

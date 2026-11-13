@@ -1,0 +1,4 @@
+CLUSTER                        NAMESPACE      NAME            PATH
+kubernetes/clusters/main       flux-system    cluster-apps    ./kubernetes/apps/main
+kubernetes/clusters/test       flux-system    cluster-apps    ./kubernetes/apps/test
+kubernetes/clusters/utility    flux-system    cluster-apps    ./kubernetes/apps/utility

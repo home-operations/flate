@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/tree"
@@ -47,7 +47,7 @@ func (g *gitView) shape(ctx context.Context, optsValue *ViewOptions, input *FS) 
 	if err != nil {
 		return err
 	}
-	kept, err := g.selectNodes(names, &opts, matcher, links)
+	kept, err := input.selectNodes(names, &opts, matcher, links)
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func visible(_ []string, name string, _ fs.FileMode, _ *sourceignore.Matcher) bo
 
 func (g *gitView) resolveLinks(names []string) (*tree.Builder, error) {
 	raw := &gitView{nodes: g.nodes, backing: g.backing, current: g.current, changes: g.changes}
-	raw.storers.New = g.storers.New
+	raw.newStorer = g.newStorer
 	links := tree.NewBuilder(raw)
 	for _, name := range names {
 		if g.nodes[name].mode&fs.ModeSymlink == 0 {
@@ -97,12 +97,13 @@ func (g *gitView) resolveLinks(names []string) (*tree.Builder, error) {
 	return links, nil
 }
 
-func (g *gitView) selectNodes(
+func (g *FS) selectNodes(
 	names []string,
 	opts *ViewOptions,
 	matcher *sourceignore.Matcher,
 	links *tree.Builder,
 ) (map[string]bool, error) {
+	v := g.view.(*gitView) //nolint:errcheck // Only native Git views select their own nodes.
 	selectVisible := visible
 	switch opts.Mode {
 	case Direct:
@@ -113,24 +114,24 @@ func (g *gitView) selectNodes(
 	}
 	kept := map[string]bool{".": true}
 	for _, name := range names {
-		node := g.nodes[name]
+		node := v.nodes[name]
 		if node.mode&fs.ModeSymlink != 0 && opts.Mode != RemoteBase {
-			if g.denied == nil {
-				g.denied = make(map[string]bool)
+			if v.denied == nil {
+				v.denied = make(map[string]bool)
 			}
-			g.denied[name] = true
+			v.denied[name] = true
 		}
-		if node.mode.IsDir() || !selectVisible(opts.Sparse, name, node.mode, matcher) {
+		if g.excludes(name) || node.mode.IsDir() || !selectVisible(opts.Sparse, name, node.mode, matcher) {
 			continue
 		}
-		selected, err := g.resolveSelectedNode(name, node, links)
+		selected, err := v.resolveSelectedNode(name, node, links)
 		if err != nil {
 			return nil, err
 		}
 		if !selected {
 			continue
 		}
-		for parent := name; parent != "."; parent = path.Dir(parent) {
+		for parent := name; parent != "." && !kept[parent]; parent = path.Dir(parent) {
 			kept[parent] = true
 		}
 	}

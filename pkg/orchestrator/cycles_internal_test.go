@@ -17,9 +17,21 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
+
+func capturedPreflight(s *store.Store, id manifest.NamedResource) (string, bool) {
+	var reads store.ReadSet
+	reads.Init(s, id, nil)
+	defer reads.Retire()
+	message := reads.Preflight()
+	return message, message != ""
+}
 
 func makeKS(name, ns string, deps ...manifest.NamedResource) *manifest.Kustomization {
 	refs := make([]kustomizev1.DependencyReference, len(deps))
@@ -57,7 +69,7 @@ func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 		t.Fatalf("cycle detection must not rewrite dependsOn: a=%+v b=%+v", a.DependsOn, b.DependsOn)
 	}
 	for _, id := range []manifest.NamedResource{idA, idB} {
-		msg, ok := o.preflightFailure(id)
+		msg, ok := capturedPreflight(o.store, id)
 		assert.FatalIf(
 			t,
 			!ok || !strings.Contains(msg, "dependency cycle detected"),
@@ -68,7 +80,7 @@ func TestFailDependsOnCycles_RecordsPreflightFailures(t *testing.T) {
 		)
 	}
 	{
-		msg, ok := o.preflightFailure(idExtra)
+		msg, ok := capturedPreflight(o.store, idExtra)
 		assert.FatalIf(t, ok, "acyclic dependency was marked failed: %q", msg)
 	}
 }
@@ -83,7 +95,7 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 	o.store.AddObject(makeKS("b", "ns", idA))
 	o.failDependsOnCycles()
 	{
-		msg, ok := o.preflightFailure(idA)
+		msg, ok := capturedPreflight(o.store, idA)
 		assert.FatalIf(
 			t,
 			!ok || !strings.Contains(msg, "dependency cycle detected"),
@@ -97,7 +109,7 @@ func TestFailDependsOnCycles_ClearsResolvedCycle(t *testing.T) {
 	o.failDependsOnCycles()
 	for _, id := range []manifest.NamedResource{idA, idB} {
 		{
-			msg, ok := o.preflightFailure(id)
+			msg, ok := capturedPreflight(o.store, id)
 			assert.FatalIf(t, ok, "resolved cycle member still has preflight failure %s: %q", id, msg)
 		}
 	}
@@ -132,6 +144,81 @@ func TestFailDependsOnCycles_InvalidatesResolvedMembers(t *testing.T) {
 		"%v",
 		"cleared preflight did not invalidate its retained assessment without an arrival",
 	)
+}
+
+func TestFailDependsOnCycles_EmittedAfterCapture(t *testing.T) {
+	t.Parallel()
+	st, tasks := store.New(), task.NewBounded(2)
+	a := makeKS("a", "ns", testutil.KustomizationID("ns", "b"))
+	b := makeKS("b", "ns", a.Named())
+	parent := makeKS("parent", "ns")
+	st.AddObjects([]manifest.BaseManifest{a, parent})
+	o := &Orchestrator{store: st, depGraph: newDependencyGraph()}
+	o.failDependsOnCycles()
+	unsubCycle := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		o.updateDependencyGraphFor(id)
+	}, false)
+	defer unsubCycle()
+	c := base.New(st, tasks)
+	captured, peerSettled := make(chan struct{}), make(chan struct{})
+	var early atomic.Bool
+	var peerOnce sync.Once
+	dispatcher := fixtureDispatcher{
+		store: st,
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
+			e := controllertest.NewExecution(c, id)
+			e.Dispatch(
+				ctx,
+				level,
+				e,
+				func(e *base.Execution, ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
+					if id == a.Named() && early.CompareAndSwap(false, true) {
+						assert.Equal(t, e.Reads.Preflight(), "")
+						close(captured)
+						tasks.YieldSlot(func() { <-peerSettled })
+						assert.Equal(t, e.Valid(), false)
+					}
+					if id == parent.Named() {
+						tasks.YieldSlot(func() { <-captured })
+						_, _, next := e.Reads.GetEmission(id)
+						defer next.Finish()
+						next.Children, next.Complete = []store.Child{{Obj: b}}, true
+						return e.Emit(ctx, id, &next, nil)
+					}
+					var deps []manifest.DependencyRef
+					for _, dep := range sameKindDepTargets(obj, nil) {
+						deps = append(deps, manifest.DependencyRef{NamedResource: dep})
+					}
+					return e.Require(ctx, deps, level)
+				},
+			)
+			if id == b.Named() {
+				info, _ := st.GetStatus(id)
+				assert.Equal(t, info.Outcome(), store.OutcomeFailed)
+				peerOnce.Do(func() { close(peerSettled) })
+			}
+			return schedule.Result{Assessment: e}
+		},
+	}
+	scheduler := schedule.New(tasks, dispatcher)
+	unsubArrival := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+		scheduler.OnArrival(id, payload != nil)
+	}, false)
+	defer unsubArrival()
+	scheduler.Seed([]schedule.NodeID{a.Named(), parent.Named()})
+	assert.NoError(t, scheduler.Run(t.Context()))
+	assert.Equal(t, early.Load(), true)
+	assert.Equal(t, tasks.Failures(), int64(0))
+	assert.Equal(t, len(scheduler.Results()), 3)
+	assert.Equal(t, len(o.depGraph.Failures()), 2)
+	want := "dependency cycle detected: " + o.diagnostic(a.Named()).String() + " → " +
+		o.diagnostic(b.Named()).String() + " → " + o.diagnostic(a.Named()).String()
+	for _, id := range []manifest.NamedResource{a.Named(), b.Named()} {
+		info, _ := st.GetStatus(id)
+		assert.Equal(t, info.Outcome(), store.OutcomeFailed)
+		assert.Equal(t, info.String(), want)
+		t.Logf("settled %s: %s", id, info.String())
+	}
 }
 
 // TestFailDependsOnCycles_RenderEmittedCycle verifies the runtime
@@ -180,7 +267,7 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 		o.store.AddObject(makeKS("b", "ns", idA))
 		for _, id := range []manifest.NamedResource{idA, idB} {
 			{
-				msg, ok := o.preflightFailure(id)
+				msg, ok := capturedPreflight(o.store, id)
 				assert.ErrorIf(
 					t,
 					!ok || !strings.Contains(msg, "dependency cycle detected"),
@@ -215,7 +302,7 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 				Name:      name,
 			}
 			{
-				msg, ok := o.preflightFailure(id)
+				msg, ok := capturedPreflight(o.store, id)
 				assert.ErrorIf(t, ok, "non-render %s admitted to cycle graph: %s", id, msg)
 			}
 		}
@@ -248,7 +335,7 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 	}
 	for _, id := range ids {
 		{
-			msg, ok := o.preflightFailure(id)
+			msg, ok := capturedPreflight(o.store, id)
 			assert.FatalIf(t, ok, "acyclic %s flagged: %q", id, msg)
 		}
 	}
@@ -266,7 +353,7 @@ func TestUpdateDependencyGraphFor_LargeAcyclicAddThenCycle(t *testing.T) {
 	)
 	for _, id := range ids {
 		{
-			msg, ok := o.preflightFailure(id)
+			msg, ok := capturedPreflight(o.store, id)
 			assert.FatalIf(
 				t,
 				!ok || !strings.Contains(msg, "dependency cycle detected"),
@@ -298,7 +385,7 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 
 	for _, id := range []manifest.NamedResource{idA, idB, idC} {
 		{
-			msg, ok := o.preflightFailure(id)
+			msg, ok := capturedPreflight(o.store, id)
 			assert.FatalIf(
 				t,
 				!ok || !strings.Contains(msg, "dependency cycle detected"),
@@ -316,7 +403,7 @@ func TestUpdateDependencyGraphFor_BreaksCycle(t *testing.T) {
 
 	for _, id := range []manifest.NamedResource{idA, idB, idC} {
 		{
-			msg, ok := o.preflightFailure(id)
+			msg, ok := capturedPreflight(o.store, id)
 			assert.FatalIf(t, ok, "%s post-break still failed: %q", id, msg)
 		}
 	}
@@ -344,7 +431,7 @@ func TestUpdateDependencyGraphFor_HelmRelease(t *testing.T) {
 
 	for _, id := range []manifest.NamedResource{idX, idY} {
 		{
-			msg, ok := o.preflightFailure(id)
+			msg, ok := capturedPreflight(o.store, id)
 			assert.FatalIf(
 				t,
 				!ok || !strings.Contains(msg, "dependency cycle detected"),

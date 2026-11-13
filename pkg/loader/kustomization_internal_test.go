@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/internal/testutil"
@@ -315,13 +317,10 @@ func testFinalizeIndexResourceMembershipCase(
 	assert.NoError(t, err)
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
-	if got := l.AdmitsRoot(
-		l.IndexedObject(
-			testutil.KustomizationID("apps", "stray"),
-			l.Index.Records[testutil.KustomizationID("apps", "stray")],
-		).Obj,
-		filepath.Join(root, "app", "ks.yaml"),
-	); got != testCaseInput.want {
+	if got := selection.Root(rootAtForTest(l, l.IndexedObject(
+		testutil.KustomizationID("apps", "stray"),
+		l.Index.Records[testutil.KustomizationID("apps", "stray")],
+	).Obj, filepath.Join(root, "app", "ks.yaml"))).Admitted; got != testCaseInput.want {
 		t.Fatalf("admission=%t want %t", got, testCaseInput.want)
 	}
 	var owners []manifest.NamedResource
@@ -512,7 +511,7 @@ func testDocumentReaderSourceViewsAndReuseUnavailableSource(
 	repo := &manifest.GitRepository{Name: "released", Namespace: "n"}
 	st.AddObject(repo)
 	st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalPath: (*testCaseInput.committed), Key: "pin"})
-	testCaseInput.r.mountSources(st)
+	testCaseInput.r.mountSources(st, nil)
 	{
 		_, err := testCaseInput.r.parseFile(
 			t.Context(),
@@ -575,7 +574,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 	assert.Equal(t, st.GetObject(manifest.BootstrapSourceID) == nil, true)
 	mounted = append(mounted, bootstrapPath)
 	slices.Sort(mounted)
-	assert.Diff(t, reader.mountSources(st), mounted)
+	assert.Diff(t, reader.mountSources(st, nil), mounted)
 	assert.Equal(t, len(reader.views), len(mounted))
 	for _, path := range mounted {
 		body := reader.read(path).body
@@ -591,7 +590,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 			assert.FatalIf(t, again != body, "%s", "unchanged mounted document was re-parsed")
 		}
 	}
-	assert.Equal(t, len(reader.mountSources(st)), 0)
+	assert.Equal(t, len(reader.mountSources(st, nil)), 0)
 	ociPath, bucketPath := filepath.Join(root, "oci"), filepath.Join(root, "bucket")
 	late := filepath.Join(ociPath, "late")
 	{
@@ -603,7 +602,7 @@ func testDocumentReaderSourceViewsAndReuseArtifactMembershipAndInvalidation(t *t
 		"late/Kustomization": {Data: []byte("namespace: late\n")},
 	}})
 	st.DeleteObject(bucket.Named())
-	assert.Diff(t, reader.mountSources(st), []string{bucketPath, ociPath})
+	assert.Diff(t, reader.mountSources(st, nil), []string{bucketPath, ociPath})
 	{
 		body := reader.read(ociPath).body
 		assert.FatalIf(
@@ -635,12 +634,14 @@ func testDocumentReaderSourceViewsAndReuseNativeReaderOwnership(t *testing.T) {
 	testutil.WriteFile(t, root, "kustomization.yaml", "namespace: native\n")
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	artifact, err := gittree.AdmitDirectory(t.Context(), location)
+	artifactDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	artifact := artifactDirectory.Artifact()
+	assert.NoError(t, artifactDirectory.Close())
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, artifact)
 	r := documentReader{}
-	r.mountSources(st)
+	r.mountSources(st, nil)
 	assert.FatalIf(t, r.views[root] != artifact.FS, "%s", "temporary reader constructed a private operation view")
 	l := New(st)
 	l.mountSources()

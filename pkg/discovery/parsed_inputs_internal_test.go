@@ -2,11 +2,13 @@ package discovery
 
 import (
 	"io/fs"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -43,10 +45,19 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	)
 	assert.NoError(t, err)
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
-	entries, err := Plan(t.Context(), Config{Input: input, Path: root})
+	var recorder manifest.WorkRecorder
+	entries, err := Plan(t.Context(), Config{Input: input, Path: root, Work: recorder.Scope()})
+	var counts manifest.WorkCounts
+	for _, record := range recorder.Scope().Snapshot(0) {
+		counts.Add(&record.Counts)
+	}
+	assert.Equal(t, counts.OwnerPrepares, uint64(3))
+	assert.Equal(t, counts.FileEntries, uint64(25))
+	assert.Equal(t, counts.ReaderEdges, uint64(10))
 	assert.NoError(t, err)
-	assert.FatalIf(t, len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0,
-		"expected one literal entry with prepared aliases: %+v", entries)
+	// The owner ruling restores #1379's two owner-scoped prepared entries.
+	assert.FatalIf(t, len(entries) != 2 || len(entries[0].prepared.aliasViews) == 0,
+		"expected two prepared alias-backed entries: %+v", entries)
 
 	before := map[string]int64{}
 	for name, count := range reads {
@@ -86,16 +97,21 @@ func testPlanParsedInputHandoffCase1(t *testing.T, entries *[]Entry, input **sto
 				"matching input did not borrow its parsed evidence",
 			)
 
-			_, err := d.resolveEntrySources(t.Context(), false)
+			_, err := d.resolveTestSources(t.Context(), false)
 			assert.NoError(t, err)
-			assert.NoError(t, d.loadManifests(t.Context(), (*root), false))
-			assert.Equal(t, entry.Path, (*root))
-			for _, side := range []string{"left", "right"} {
-				if _, ok := d.loader.Index.Lookup(
-					manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "payload"},
-				); !ok {
-					t.Fatalf("%s leaf evidence missing", side)
-				}
+			assert.NoError(t, d.loadManifestsTest(t.Context(), (*root), false))
+			owner := d.loader.CatalogObject(manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "owner"}).(*manifest.Kustomization)
+			side := strings.Split(owner.Path, "/")[1]
+			// The owner ruling restores #1379's owner-path and sibling-isolation expectations.
+			assert.Equal(t, entry.Path, filepath.Join(*root, side))
+			_, found := d.loader.Index.Lookup(
+				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "payload"},
+			)
+			assert.Equal(t, found, true)
+			for i := range d.loader.Index.Records {
+				record := d.loader.Index.Records[i]
+				assert.FatalIf(t, record.File != "" && !strings.Contains(record.File, side+"/"),
+					"entry admitted sibling evidence: %+v", record)
 			}
 			for key, view := range entry.prepared.aliasViews {
 				assert.Equal(t, d.aliasViews[key], view)

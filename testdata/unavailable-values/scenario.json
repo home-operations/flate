@@ -1,0 +1,928 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "bdf807065e3b816152ccc2d07783f4b5cf5b9ee9",
+    "paths": [
+      "pkg/values",
+      "pkg/controllers/helmrelease"
+    ],
+    "reductions": "Authored local chart and data inputs cover unavailable values, readable siblings, supplied data, and kind permission."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "name": "base",
+      "repository": "repo",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/heads/main"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "combined-secret",
+      "directory": "overlays/combined-secret"
+    },
+    {
+      "name": "combined-configmap",
+      "directory": "overlays/combined-configmap"
+    },
+    {
+      "name": "strict-encryption",
+      "directory": "overlays/strict-encryption"
+    },
+    {
+      "name": "wrong-kind-permission",
+      "directory": "overlays/wrong-kind-permission"
+    },
+    {
+      "name": "supply",
+      "directory": "overlays/supply"
+    },
+    {
+      "name": "configmap-supply",
+      "directory": "overlays/configmap-supply"
+    },
+    {
+      "name": "produced-allowed",
+      "directory": "overlays/produced-allowed"
+    },
+    {
+      "name": "produced-strict",
+      "directory": "overlays/produced-strict"
+    },
+    {
+      "name": "missing-key-allowed",
+      "directory": "overlays/missing-key-allowed"
+    },
+    {
+      "name": "missing-key-strict",
+      "directory": "overlays/missing-key-strict"
+    },
+    {
+      "name": "missing-key-supply",
+      "directory": "overlays/missing-key-supply"
+    }
+  ],
+  "cases": [
+    {
+      "name": "combined-secret",
+      "description": "combined secret.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "combined-secret"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/combined-secret.stdout",
+              "stderr": "expect/combined-secret.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "combined-configmap",
+      "description": "combined configmap.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "combined-configmap"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "expect": {
+              "stdout": "expect/combined-configmap.stdout",
+              "stderr": "expect/combined-configmap.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "strict-encryption",
+      "description": "strict encryption.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "strict-encryption"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/strict-encryption.stdout",
+              "stderr": "expect/strict-encryption.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "wrong-kind-permission",
+      "description": "wrong kind permission.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "wrong-kind-permission"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/wrong-kind-permission.stdout",
+              "stderr": "expect/wrong-kind-permission.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "supply",
+      "description": "supply.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "supply"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--supply",
+              "@@repo@@/supplied.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/supply.stdout",
+              "stderr": "expect/supply.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "configmap-supply",
+      "description": "configmap supply.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "configmap-supply"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--supply",
+              "@@repo@@/supplied.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/configmap-supply.stdout",
+              "stderr": "expect/configmap-supply.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "produced-allowed",
+      "description": "produced allowed.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "produced-allowed"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/produced-allowed.stdout",
+              "stderr": "expect/produced-allowed.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "produced-strict",
+      "description": "produced strict.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "produced-strict"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/produced-strict.stdout",
+              "stderr": "expect/produced-strict.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-key-allowed",
+      "description": "missing key allowed.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-key-allowed"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "expect": {
+              "stdout": "expect/missing-key-allowed.stdout",
+              "stderr": "expect/missing-key-allowed.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-key-strict",
+      "description": "missing key strict.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-key-strict"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@"
+            ],
+            "expect": {
+              "stdout": "expect/missing-key-strict.stdout",
+              "stderr": "expect/missing-key-strict.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-key-supply",
+      "description": "Supplied data fills a required missing key in a readable Secret without an omission warning.",
+      "setup": [
+        {
+          "commit": "base"
+        },
+        {
+          "overlay": "missing-key-supply"
+        }
+      ],
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "hr",
+              "--path",
+              "@@repo@@/flux",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--cache-dir",
+              "@@cache@@",
+              "--supply",
+              "@@repo@@/supplied.yaml"
+            ],
+            "expect": {
+              "stdout": "expect/missing-key-supply.stdout",
+              "stderr": "expect/missing-key-supply.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/combined-configmap.stderr",
+      "cases": [
+        "combined-configmap"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/combined-configmap.stdout",
+      "cases": [
+        "combined-configmap"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/combined-secret.stderr",
+      "cases": [
+        "combined-secret"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/combined-secret.stdout",
+      "cases": [
+        "combined-secret"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/configmap-supply.stderr",
+      "cases": [
+        "configmap-supply"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/configmap-supply.stdout",
+      "cases": [
+        "configmap-supply"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/missing-key-allowed.stderr",
+      "cases": [
+        "missing-key-allowed"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/missing-key-allowed.stdout",
+      "cases": [
+        "missing-key-allowed"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/missing-key-strict.stderr",
+      "cases": [
+        "missing-key-strict"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/missing-key-strict.stdout",
+      "cases": [
+        "missing-key-strict"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/missing-key-supply.stderr",
+      "cases": [
+        "missing-key-supply"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/missing-key-supply.stdout",
+      "cases": [
+        "missing-key-supply"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/produced-allowed.stderr",
+      "cases": [
+        "produced-allowed"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/produced-allowed.stdout",
+      "cases": [
+        "produced-allowed"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/produced-strict.stderr",
+      "cases": [
+        "produced-strict"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/produced-strict.stdout",
+      "cases": [
+        "produced-strict"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/strict-encryption.stderr",
+      "cases": [
+        "strict-encryption"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/strict-encryption.stdout",
+      "cases": [
+        "strict-encryption"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/supply.stderr",
+      "cases": [
+        "supply"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/supply.stdout",
+      "cases": [
+        "supply"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/wrong-kind-permission.stderr",
+      "cases": [
+        "wrong-kind-permission"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "expect/wrong-kind-permission.stdout",
+      "cases": [
+        "wrong-kind-permission"
+      ],
+      "purpose": "Independently specified complete command output for the named case."
+    },
+    {
+      "path": "overlays/combined-configmap/repo/app/input.yaml",
+      "cases": [
+        "combined-configmap"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/combined-configmap/repo/app/release.yaml",
+      "cases": [
+        "combined-configmap"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/combined-secret/repo/app/input.yaml",
+      "cases": [
+        "combined-secret"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/combined-secret/repo/app/release.yaml",
+      "cases": [
+        "combined-secret"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/configmap-supply/repo/app/input.yaml",
+      "cases": [
+        "configmap-supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/configmap-supply/repo/app/release.yaml",
+      "cases": [
+        "configmap-supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/configmap-supply/repo/supplied.yaml",
+      "cases": [
+        "configmap-supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/missing-key-allowed/repo/app/input.yaml",
+      "cases": [
+        "missing-key-allowed"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/missing-key-allowed/repo/app/release.yaml",
+      "cases": [
+        "missing-key-allowed"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/missing-key-strict/repo/app/input.yaml",
+      "cases": [
+        "missing-key-strict"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/missing-key-strict/repo/app/release.yaml",
+      "cases": [
+        "missing-key-strict"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/missing-key-supply/repo/app/input.yaml",
+      "cases": [
+        "missing-key-supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/missing-key-supply/repo/app/release.yaml",
+      "cases": [
+        "missing-key-supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/missing-key-supply/repo/supplied.yaml",
+      "cases": [
+        "missing-key-supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/produced-allowed/repo/app/input.yaml",
+      "cases": [
+        "produced-allowed"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/produced-allowed/repo/app/release.yaml",
+      "cases": [
+        "produced-allowed"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/produced-strict/repo/app/input.yaml",
+      "cases": [
+        "produced-strict"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/produced-strict/repo/app/release.yaml",
+      "cases": [
+        "produced-strict"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/strict-encryption/repo/app/input.yaml",
+      "cases": [
+        "strict-encryption"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/strict-encryption/repo/app/release.yaml",
+      "cases": [
+        "strict-encryption"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/supply/repo/app/input.yaml",
+      "cases": [
+        "supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/supply/repo/app/release.yaml",
+      "cases": [
+        "supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/supply/repo/supplied.yaml",
+      "cases": [
+        "supply"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/wrong-kind-permission/repo/app/input.yaml",
+      "cases": [
+        "wrong-kind-permission"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "overlays/wrong-kind-permission/repo/app/release.yaml",
+      "cases": [
+        "wrong-kind-permission"
+      ],
+      "purpose": "Authored data and Helm references for the named case."
+    },
+    {
+      "path": "repo/app/kustomization.yaml",
+      "cases": [
+        "combined-secret",
+        "combined-configmap",
+        "strict-encryption",
+        "wrong-kind-permission",
+        "supply",
+        "configmap-supply",
+        "produced-allowed",
+        "produced-strict",
+        "missing-key-allowed",
+        "missing-key-strict",
+        "missing-key-supply"
+      ],
+      "purpose": "Shared local chart and Flux producer for every case."
+    },
+    {
+      "path": "repo/charts/demo/Chart.yaml",
+      "cases": [
+        "combined-secret",
+        "combined-configmap",
+        "strict-encryption",
+        "wrong-kind-permission",
+        "supply",
+        "configmap-supply",
+        "produced-allowed",
+        "produced-strict",
+        "missing-key-allowed",
+        "missing-key-strict",
+        "missing-key-supply"
+      ],
+      "purpose": "Shared local chart and Flux producer for every case."
+    },
+    {
+      "path": "repo/charts/demo/templates/cm.yaml",
+      "cases": [
+        "combined-secret",
+        "combined-configmap",
+        "strict-encryption",
+        "wrong-kind-permission",
+        "supply",
+        "configmap-supply",
+        "produced-allowed",
+        "produced-strict",
+        "missing-key-allowed",
+        "missing-key-strict",
+        "missing-key-supply"
+      ],
+      "purpose": "Shared local chart and Flux producer for every case."
+    },
+    {
+      "path": "repo/charts/demo/values.yaml",
+      "cases": [
+        "combined-secret",
+        "combined-configmap",
+        "strict-encryption",
+        "wrong-kind-permission",
+        "supply",
+        "configmap-supply",
+        "produced-allowed",
+        "produced-strict",
+        "missing-key-allowed",
+        "missing-key-strict",
+        "missing-key-supply"
+      ],
+      "purpose": "Shared local chart and Flux producer for every case."
+    },
+    {
+      "path": "repo/flux/app.yaml",
+      "cases": [
+        "combined-secret",
+        "combined-configmap",
+        "strict-encryption",
+        "wrong-kind-permission",
+        "supply",
+        "configmap-supply",
+        "produced-allowed",
+        "produced-strict",
+        "missing-key-allowed",
+        "missing-key-strict",
+        "missing-key-supply"
+      ],
+      "purpose": "Shared local chart and Flux producer for every case."
+    }
+  ]
+}

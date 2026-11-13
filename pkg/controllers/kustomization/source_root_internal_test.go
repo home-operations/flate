@@ -6,6 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -38,7 +40,7 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 			}
 			c.Tasks.Go(t.Context(), "oci cascade", func(ctx context.Context) {
 				{
-					blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade).Blocked
+					blocked := c.ReconcileNode(ctx, ks.Named(), manifest.DrainCascade, schedule.Result{}).Blocked
 					assert.ErrorIf(t, len(blocked) != 0, "blocked on %v", blocked)
 				}
 			})
@@ -166,7 +168,7 @@ func TestKustomization_ContentOnlySource(t *testing.T) {
 	st.AddObject(ks)
 	var closeFirst func()
 	c.Tasks.Go(t.Context(), "first", func(ctx context.Context) {
-		result := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone)
+		result := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone, schedule.Result{})
 		closeFirst = result.Close
 	})
 	c.Tasks.BlockTillDone()
@@ -181,7 +183,7 @@ func TestKustomization_ContentOnlySource(t *testing.T) {
 	st.SetArtifact(ks.SourceID(), &next)
 	assert.FatalIf(t, !first.Reads.Valid(), "%v", "metadata invalidated content-only Kustomization")
 	c.Tasks.Go(t.Context(), "replay", func(ctx context.Context) {
-		result := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone)
+		result := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone, schedule.Result{})
 		defer result.Close()
 		assert.ErrorIf(t, result.Progressed(), "%v", "metadata entered the renderer")
 	})

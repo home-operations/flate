@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -146,7 +146,7 @@ func testNewEntryPolicyConcurrentFirstPolicyAndCancellation(t *testing.T) {
 	wg.Wait()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = AdmitDirectory(ctx, artifact.FS.(*FS).Location())
+	_, err = OpenDirectory(ctx, artifact.FS.(*FS).Location())
 	assert.Equal(t, err, context.Canceled)
 	for _, mode := range []ViewMode{Direct, Source} {
 		_, _, err = New(ctx, nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: artifact.FS})

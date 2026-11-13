@@ -1,0 +1,4 @@
+
+  ⚠ warnings (2)
+    [UnresolvedSubstitution] orig snapshot: substituteFrom Secret "paperless" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: is produced in the cluster with unknown data; supply it with --supply
+    [UnresolvedSubstitution] current snapshot: substituteFrom Secret "paperless" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: is produced in the cluster with unknown data; supply it with --supply

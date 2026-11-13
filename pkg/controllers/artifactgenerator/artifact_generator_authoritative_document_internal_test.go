@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,43 @@ import (
 
 func TestArtifactGenerator_AuthoritativeDocument(t *testing.T) {
 	t.Parallel()
+	t.Run("malformed_copy_metadata", func(t *testing.T) {
+		t.Parallel()
+		fixture := generatorForTest(
+			t,
+			[]any{
+				map[string]any{
+					"name": "literal",
+					"copy": []any{map[string]any{"from": "@repo/file", "to": "@artifact/file", "exclude": 1}},
+				},
+			},
+		)
+		obj, doc := fixture.object, fixture.document
+		before := manifest.Fingerprint(obj)
+		refs := slices.Collect(manifest.References(obj, manifest.ReferenceRelations))
+		assert.Equal(t, len(refs), 1)
+		assert.Equal(t, refs[0].Name, "repo")
+		targets := manifest.ProducerTargets(obj)
+		assert.Equal(t, len(targets), 1)
+		assert.Equal(t, targets[0].Name, "literal")
+		st := store.New()
+		st.AddObject(obj, doc)
+		c := New(st, task.NewBounded(2), nil)
+		var got error
+		c.Tasks.Go(t.Context(), "generator", func(ctx context.Context) {
+			run := &execution{Controller: c}
+			run.run.Init(c.Controller, obj.Named())
+			defer run.run.Close()
+			got = run.reconcile(ctx, obj, manifest.DrainNone)
+		})
+		c.Tasks.BlockTillDone()
+		assert.Equal(t, c.Tasks.Failures(), 0)
+		assert.Equal(t, errors.Is(got, manifest.ErrInput), true)
+		assert.Equal(t, errors.Is(got, manifest.ErrFlux), true)
+		assert.Equal(t, strings.HasPrefix(got.Error(), "generator spec: decode spec: "), true)
+		assert.Equal(t, st.GetArtifact(obj.Named(), store.ArtifactContent) == nil, true)
+		assert.Equal(t, manifest.Fingerprint(obj), before)
+	})
 	for _, tc := range []struct {
 		name string
 		edit func(map[string]any) map[string]any

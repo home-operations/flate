@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -79,7 +81,7 @@ func TestRenderTrees_EntrySubstitutionSelectsChangedChild(t *testing.T) {
 			)
 		}
 	}
-	runs, err := RenderTrees(t.Context(), []Tree{
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{
 		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Path: roots[0]},
 		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: roots[1]},
 	}, Config{Concurrency: 2})
@@ -103,8 +105,20 @@ func TestRenderTrees_EntrySubstitutionSelectsChangedChild(t *testing.T) {
 type preparationReader struct {
 	fs.FS
 
-	parsed       atomic.Int64
-	fingerprints atomic.Int64
+	parsed                               atomic.Int64
+	fingerprints                         atomic.Int64
+	stats, parsedStats, fingerprintStats atomic.Int64
+}
+
+func (r *preparationReader) Stat(name string) (fs.FileInfo, error) {
+	r.stats.Add(1)
+	if name == "ks-a.yaml" {
+		r.parsedStats.Add(1)
+	}
+	if name == "fingerprint.txt" {
+		r.fingerprintStats.Add(1)
+	}
+	return fs.Stat(r.FS, name)
 }
 
 func (r *preparationReader) Open(name string) (fs.File, error) {
@@ -147,8 +161,7 @@ func testRenderTreesPreparesEachSideOnce(t *testing.T) {
 		readers[side] = &preparationReader{FS: os.DirFS(root)}
 		inputs[side] = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: readers[side]}
 	}
-	renderedTrees3, err := RenderTrees(
-		t.Context(),
+	renderedTrees3, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				RepoRoot:        roots[0],
@@ -184,8 +197,10 @@ func testRenderTreesPreparesEachSideOnce(t *testing.T) {
 	t.Logf("paired root builds=%d", builds)
 	for side, rendered := range []Rendered{base, head} {
 		assert.Equal(t, rendered.entryBinding.Producer, entry)
-		assert.Equal(t, readers[side].fingerprints.Load(), int64(2))
-		assert.Equal(t, readers[side].parsed.Load(), int64(5))
+		assert.Equal(t, readers[side].fingerprints.Load(), int64(1))
+		assert.Equal(t, readers[side].fingerprintStats.Load(), int64(2))
+		assert.Equal(t, readers[side].parsed.Load(), int64(3))
+		assert.Equal(t, readers[side].parsedStats.Load(), int64(3))
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-a": true})
 		t.Logf(
 			"side=%d declaration reads=%d selected evidence reads=%d",
@@ -255,8 +270,7 @@ func testRenderTreesAdmittedViewsCase(t *testing.T, testCaseInput *string,
 	); returned {
 		return
 	}
-	renderedTrees1, err := RenderTrees(
-		t.Context(),
+	renderedTrees1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				Path:            baseRoot,
@@ -377,7 +391,7 @@ func testRenderTreesAdmittedViewsCaseCase(t *testing.T, testCaseInput testRender
 		assert.NoError(t, err)
 		assert.NoError(t, direct.bootstrap(t.Context()))
 		assert.NoError(t, direct.bootstrap(t.Context()))
-		result, err := direct.render(t.Context())
+		result, err := direct.render(t.Context(), t)
 		assert.NoError(t, err)
 		assert.Diff(t, configMapNames(result), map[string]bool{"cfg-a": true})
 		if *testCaseInput.synthetic {
@@ -387,8 +401,7 @@ func testRenderTreesAdmittedViewsCaseCase(t *testing.T, testCaseInput testRender
 		assert.Equal(t, direct.Store().GetObject(foreign) == nil, true)
 		pairedCfg := directCfg
 		pairedCfg.Path = ""
-		renderedTrees1, err := RenderTrees(
-			t.Context(),
+		renderedTrees1, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					Path:            filepath.Join(roots[0], "clusters", "a"),
@@ -744,8 +757,7 @@ spec:
 		)
 		inputs[side] = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)}
 	}
-	results, err := RenderTrees(
-		t.Context(),
+	results, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				ID:              manifest.TreeID{Cluster: "entry", Side: manifest.TreeBase},
@@ -766,7 +778,7 @@ spec:
 				ExternalChanges: change.NewSet([]string{"workload/cm.yaml", "outside/cm.yaml"}),
 			},
 		},
-		Config{Concurrency: 2, Selection: manifest.Selection{Changed: true}},
+		Config{Concurrency: 2, Selection: selection.Request{Changed: true}},
 	)
 	assert.NoError(t, err)
 	for line := range strings.SplitSeq(logs.String(), "\n") {

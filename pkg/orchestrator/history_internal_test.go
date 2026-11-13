@@ -15,6 +15,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -22,7 +26,6 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -142,8 +145,8 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	t.Cleanup(func() { fresh.stop() })
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.NoError(t, fresh.bootstrap(t.Context()))
-	assert.Equal(t, fresh.filter.ShouldReconcile(child), true)
-	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(child), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
 	assert.Equal(
@@ -169,9 +172,9 @@ func TestCompleteBootstrap_Cancellation(t *testing.T) {
 	cancel()
 	o.completeBootstrap()
 	o.cfg.ExternalChanges = change.NewSet([]string{"flux/emitter.yaml"})
-	err = o.buildChangeFilter(ctx)
+	err = o.prepareInvocation(ctx)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, len(o.filter.KeepNames()) == 0, true)
+	assert.Equal(t, len(selectionNamesForTest(o.selection, o.store, o.index)) == 0, true)
 	for range o.store.Sweep() {
 		t.Fatal("canceled preparation left probe registrations")
 	}
@@ -266,7 +269,11 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 		o.configureControllers()
 		var reads store.ReadSet
 		reads.Init(o.store, owner, nil)
-		records, _ := o.controllers.PreviousRender(t.Context(), record.Declaration, &reads)
+		preparedHistory271 := o.controllers.PreviousRender(t.Context(), record.Declaration, schedule.Result{})
+		if preparedHistory271.Assessment != nil {
+			defer preparedHistory271.Assessment.Close()
+		}
+		records, _ := preparedHistory271.Records, preparedHistory271.Complete
 		reads.Retire()
 
 		assert.FatalIf(
@@ -284,12 +291,13 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 		)
 	}
 	result, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(result.Close)
 	if (*testCaseInput) == "cycle" {
 		assert.FatalIf(t, err == nil, "%v", "authored cycle rendered successfully")
 
 		for _, name := range []string{"owner", "sibling"} {
 			{
-				message, ok := o.preflightFailure(
+				message, ok := capturedPreflight(o.store,
 					testutil.KustomizationID("apps", name),
 				)
 				assert.FatalIf(t, !ok ||
@@ -468,7 +476,11 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		var reads store.ReadSet
 		reads.Init(o.store, owner, nil)
 		defer reads.Retire()
-		records, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+		preparedHistory473 := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), schedule.Result{})
+		if preparedHistory473.Assessment != nil {
+			defer preparedHistory473.Assessment.Close()
+		}
+		records, complete := preparedHistory473.Records, preparedHistory473.Complete
 
 		assert.FatalIf(t, records == nil || !complete, "%v", "entry lacks complete controller history")
 
@@ -493,7 +505,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		assert.Equal(t, len(before), 0)
 	} else {
 		child := testutil.KustomizationID("apps", "child")
-		assert.Diff(t, before[child].Refs, []manifest.NamedResource{testutil.KustomizationID("apps", "ready")})
+		assert.Diff(t, before[child].Refs, []manifest.NamedResource{testutil.KustomizationID("apps", "${DEP}")})
 		assert.Diff(
 			t,
 			before[child].ContentRoots,
@@ -547,10 +559,10 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 		}
 	}
 	paths := []string{"leaf/value.yaml", "entry/child.yaml", "unrelated/value.yaml"}
-	selection := func(records map[manifest.NamedResource]manifest.DiscoveryRecord) [][]bool {
+	selectRecords := func(records map[manifest.NamedResource]manifest.DiscoveryRecord) [][]bool {
 		selected := make([][]bool, len(paths))
 		for i, path := range paths {
-			fixture := admissiontest.New(
+			admissionLoader, session := admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{path}),
@@ -559,26 +571,27 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 					Root:      root,
 				},
 			)
-			proposal, failure := fixture.Prepare(
+			proposal, failure := admissiontest.Prepare(
 				t.Context(),
-				loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: map[manifest.NamedResource]struct {
+				t,
+				admissionLoader,
+				selection.PrepareRequest{Generation: nil, Reads: nil, History: map[manifest.NamedResource]struct {
 					Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 					Complete bool
 				}{owner: {Records: maps.All(records), Complete: true}}, Invocation: true},
 			)
 			assert.NoError(t, failure)
-			admissiontest.Commit(t, fixture, proposal)
-			filter := fixture.Options.Filter
+			admissiontest.Execute(t, admissionLoader, proposal)
 			for _, id := range append(slices.SortedFunc(maps.Keys(before), manifest.NamedResource.Compare), owner, testutil.KustomizationID("apps", "ready")) {
-				selected[i] = append(selected[i], filter.ShouldReconcile(id))
+				selected[i] = append(selected[i], session.Snapshot().Reconcile(id))
 			}
 		}
 		return selected
 	}
-	selected := selection(before)
+	selected := selectRecords(before)
 	var execution *base.Execution
 	o.tasks.Go(t.Context(), "entry history", func(ctx context.Context) {
-		execution = o.controllers.ReconcileNode(ctx, owner, manifest.DrainNone)
+		execution = o.controllers.ReconcileNode(ctx, owner, manifest.DrainNone, schedule.Result{})
 	})
 	o.tasks.BlockTillDone()
 	assert.Equal(t, o.tasks.Failures(), int64(0))
@@ -595,7 +608,7 @@ func testBootstrapEntryHistoryMatchesEmissionCase(
 	assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission).Complete, true)
 	after := readHistory()
 	assert.Diff(t, after, before)
-	assert.Diff(t, selection(after), selected)
+	assert.Diff(t, selectRecords(after), selected)
 }
 
 type testBootstrapEntryReceiptDependencySubstitutionsCaseCaseInputs struct {
@@ -627,24 +640,39 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 		o.store.AddObject(
 			&manifest.Kustomization{Name: "prod-ready", Namespace: "control", Path: "./empty"},
 		)
+		o.store.AddObject(
+			&manifest.Kustomization{Name: "${PREFIX:-dev-}ready", Namespace: "${TEAM:-dev}", Path: "./empty"},
+		)
 	}
 	assert.NoError(t, o.bootstrap(t.Context()))
 	o.configureControllers()
 	if (*(*testCaseInput.testCaseInput)) == "independent" {
 		assert.Equal(t, o.entryBinding.Producer, testutil.KustomizationID("apps", "owner"))
 		owner := o.store.GetObject(o.entryBinding.Producer).(*manifest.Kustomization)
-		assert.Equal(t, owner.DependsOn[0].Name, "prod-ready")
-		assert.Equal(t, owner.DependsOn[0].Namespace, "control")
-		assert.Equal(t, o.dependencySubstitutions.Resolve("${PREFIX}"), "prod-")
+		assert.Equal(t, owner.DependsOn[0].Name, "${PREFIX:-dev-}ready")
+		assert.Equal(t, owner.DependsOn[0].Namespace, "${TEAM:-dev}")
+		assert.Equal(
+			t,
+			o.index.Records[testutil.KustomizationID("control", "supplier")].Declaration.(*manifest.Kustomization).PostBuild.Substitute["PREFIX"],
+			"prod-",
+		)
 	} else {
-		assert.Equal(t, o.dependencySubstitutions.Resolve("${VALUE}"), "frozen")
+		assert.Equal(
+			t,
+			o.index.Records[testutil.KustomizationID("apps", "child")].Declaration.(*manifest.Kustomization).PostBuild.Substitute["VALUE"],
+			"frozen",
+		)
 	}
 	assert.Equal(t, (*testCaseInput.input).builds.Load() == 0, (*testCaseInput.lifetime) == "warm")
 	owner := o.entryBinding.Producer
 	var reads store.ReadSet
 	reads.Init(o.store, owner, nil)
 	defer reads.Retire()
-	records, narrow := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+	preparedHistory649 := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), schedule.Result{})
+	if preparedHistory649.Assessment != nil {
+		defer preparedHistory649.Assessment.Close()
+	}
+	records, narrow := preparedHistory649.Records, preparedHistory649.Complete
 
 	assert.FatalIf(
 		t,
@@ -677,7 +705,11 @@ func testBootstrapEntryReceiptDependencySubstitutionsCaseCase(
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, len(owners[owner]) != 0, true)
-	again, complete := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), &reads)
+	preparedHistory682 := o.controllers.PreviousRender(t.Context(), o.store.GetObject(owner), schedule.Result{})
+	if preparedHistory682.Assessment != nil {
+		defer preparedHistory682.Assessment.Close()
+	}
+	again, complete := preparedHistory682.Records, preparedHistory682.Complete
 
 	assert.FatalIf(
 		t,
@@ -745,6 +777,7 @@ data: {VALUE: rendered}
 	prepared, err := kustomize.Prepare(
 		warm.store.GetObject(owner).(*manifest.Kustomization),
 		values.NewStoreProvider(&reads),
+		warm.cfg.missing,
 	)
 	assert.NoError(t, err)
 	source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
@@ -757,8 +790,9 @@ data: {VALUE: rendered}
 	}
 	documents, receipt, err := kustomize.Render(t.Context(), warm.ksc.Trees, request, cfg.SourceRetry)
 	assert.NoError(t, err)
-	content := request.Content(documents)
-	assert.NoError(t, kustomize.Shape(t.Context(), prepared, documents, kustomize.ShapeOptions{Strict: true}))
+	shaping := kustomize.PrepareShape(&request, documents)
+	content := shaping.Content()
+	assert.NoError(t, shaping.Apply(t.Context(), kustomize.ShapeOptions{Strict: true}))
 	parseChildrenResult := (&base.Execution{Controller: warm.ksc.Controller}).ParseChildren(
 		prepared,
 		documents,
@@ -784,10 +818,10 @@ data: {VALUE: rendered}
 	fresh, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
 	t.Cleanup(fresh.stop)
-	result, err := fresh.render(t.Context())
+	result, err := fresh.render(t.Context(), t)
 	assert.NoError(t, err)
 	assert.Equal(t, fresh.entryBinding.Producer, testutil.KustomizationID("apps", "applier"))
-	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), true)
 	assert.Diff(t, configMapNames(result), map[string]bool{"target": true, "result": true})
 	consumer := outputByParent(result.Manifests)[testutil.KustomizationID("apps", "consumer")]
 	assert.Equal(t, len(consumer), 1)

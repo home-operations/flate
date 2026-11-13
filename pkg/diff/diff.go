@@ -1,13 +1,6 @@
 package diff
 
 import (
-	"bytes"
-	"cmp"
-	"fmt"
-	"maps"
-
-	"github.com/home-operations/flate/internal/diffprep"
-	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -31,7 +24,8 @@ type Doc struct {
 
 // Options tunes Compare and RenderDocs behavior.
 type Options struct {
-	subjects [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
+	subjects     [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
+	producerKeys [2]map[manifest.NamedResource]manifest.NamedResource
 	// StripAttrs lists annotation/label keys removed from each
 	// manifest's metadata (and pod-template metadata) before the diff
 	// is computed. Cuts chart-bump noise — annotations like
@@ -74,73 +68,7 @@ type Options struct {
 //
 //nolint:gocritic // The SDK takes a value snapshot of rendering options.
 func RenderDocs(left, right []Doc, opts Options) ([]byte, []manifest.Warning, error) {
-	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(new(opts)))
-	out, err := renderPrepared(prepared, new(opts))
-	return out, prepared.Warnings, err
-}
-
-func renderPrepared(prepared diffprep.Prepared, optsValue *Options) ([]byte, error) {
-	opts := *optsValue
-	opts.Format = cmp.Or(opts.Format, FormatHuman)
-	var out []byte
-	var err error
-	switch opts.Format {
-	case FormatDiff, FormatHTML:
-		var buf bytes.Buffer
-		encoder := output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}
-		lines, lineErr := output.PrepareLines(prepared)
-		err = lineErr
-		if err == nil {
-			subjects := prepared.Subjects[0]
-			if subjects == nil {
-				subjects = prepared.Subjects[1]
-			} else if prepared.Subjects[1] != nil {
-				subjects = maps.Clone(subjects)
-				maps.Copy(subjects, prepared.Subjects[1])
-			}
-			names := output.PrepareNames(
-				[]string{""},
-				[][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)},
-				[]map[manifest.NamedResource]manifest.DiagnosticIdentity{subjects},
-			)
-			output.NameLines(lines, names[0])
-			err = encoder.Lines(lines)
-		}
-		if err == nil {
-			out = buf.Bytes()
-		}
-	case FormatJSON:
-		out, err = renderJSON(publicChanges(prepared), opts.Suppressed, prepared.Subjects)
-	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
-		report, nativeErr := prepared.Native()
-		err = nativeErr
-		if err == nil {
-			var buf bytes.Buffer
-			err = (output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}).Native(&report)
-			if err == nil {
-				out = buf.Bytes()
-			}
-		}
-	default:
-		err = fmt.Errorf("unsupported diff format %q", opts.Format)
-	}
-	return out, err
-}
-
-func prepareDocs(docs []Doc) []diffprep.Doc {
-	out := make([]diffprep.Doc, len(docs))
-	for i, d := range docs {
-		out[i] = diffprep.Doc{Manifest: d.Manifest, Parent: diffprep.Parent(d.Parent)}
-	}
-	return out
-}
-
-func prepareOptions(optsValue *Options) *diffprep.Options {
-	opts := *optsValue
-	return &diffprep.Options{
-		StripAttrs:  opts.StripAttrs,
-		StripFields: opts.StripFields,
-		Normalize:   opts.Normalize,
-		Subjects:    opts.subjects,
-	}
+	result := prepare(left, right, &opts)
+	out, err := renderPrepared(result, &opts)
+	return out, result.Warnings, err
 }

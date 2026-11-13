@@ -56,6 +56,9 @@ func failedClassification(
 //
 //nolint:gocritic // DependencyRef remains a value in the SDK so callers retain ownership.
 func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level manifest.DrainLevel) Classification {
+	if message := w.Store.Preflight(); message != "" {
+		return Classification{Err: manifest.NewError(manifest.ErrInput, nil, message)}
+	}
 	existence := w.Existence
 	for {
 		result, promoted := w.classify(ctx, &dep, level, existence)
@@ -72,7 +75,6 @@ func (w *Waiter) classify(
 	level manifest.DrainLevel,
 	existence ExistenceLookup,
 ) (Classification, bool) {
-	reads, _ := w.Store.(*store.ReadSet)
 	id := dep.NamedResource
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
 	if dep.ArtifactOnly && w.sourceAvailable(id) {
@@ -93,7 +95,7 @@ func (w *Waiter) classify(
 		}
 	}
 	if !present && existence != nil {
-		promoted, err := existence.Promote(ctx, reads, id)
+		promoted, err := existence.Promote(ctx, w.Admission, id)
 		if err != nil {
 			return Classification{Err: err}, false
 		}
@@ -125,7 +127,7 @@ func (w *Waiter) classifyAbsent(dep *manifest.DependencyRef, level manifest.Drai
 	if level < manifest.DrainCascade {
 		return Classification{Kind: schedule.Blocked}
 	}
-	if w.AllowMissingCRDs && id.IsCRD() {
+	if dep.NamedResource.IsCRD() && w.Missing.AllowsKind(dep.Kind) {
 		return w.artifactReady(dep, level)
 	}
 	return Classification{Kind: schedule.DependencyFailed, Message: dependencyNotFound}

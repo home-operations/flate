@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -39,7 +40,7 @@ func TestLoader_CompactOwnedDataAuthority(t *testing.T) {
 	)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.PreferExisting = true
@@ -49,7 +50,7 @@ func TestLoader_CompactOwnedDataAuthority(t *testing.T) {
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "data"}
 	record, found := l.Index.Lookup(id)
 	assert.Equal(t, found, true)
-	assert.Equal(t, l.AdmitsRoot(l.CatalogObject(id), record.Path), false)
+	assert.Equal(t, selection.Root(rootAtForTest(l, l.CatalogObject(id), record.Path)).Admitted, false)
 	assert.Diff(
 		t,
 		testutil.Owners(record.Productions),
@@ -63,7 +64,7 @@ func TestLoader_ConstructionReplacesDerivedRecords(t *testing.T) {
 	st := store.New()
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	first := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "first", Namespace: "apps"}
 	for _, name := range []string{"first", "second"} {
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
@@ -98,7 +99,7 @@ func TestLoader_CompactSourceHydrationSurvivesAdmission(t *testing.T) {
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: files})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	l.Admit(root)
@@ -168,7 +169,7 @@ items:
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	facts := l.documents.cache[file].objects
@@ -186,7 +187,7 @@ items:
 	assert.Equal(t, len(st.Objects()), 0)
 	reader := l.documents
 	reader.cache = nil
-	reader.coordinate = &OccurrenceID{Document: 1, item: 1}
+	reader.coordinate = &occurrenceID{Document: 1, item: 1}
 	children, err := reader.parseFile(t.Context(), file, manifest.ParseDocOptions{})
 	assert.NoError(t, err)
 	assert.Equal(t, len(children), 1)
@@ -211,7 +212,7 @@ spec:
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	facts := l.documents.cache[file].objects
@@ -281,7 +282,7 @@ func TestLoader_CompactContextualNamespace(t *testing.T) {
 			)
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection = manifest.Selection{Changed: true}
+			configureSelection(t, l, selection.Request{Changed: true})
 			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			l.Admit(root)
@@ -316,7 +317,7 @@ func TestLoader_FreezeIncludesLateProducer(t *testing.T) {
 	}})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -343,7 +344,7 @@ func TestLoader_CompactPinnedDeclaration(t *testing.T) {
 	})
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection.Changed = true
+	configureSelection(t, l, selection.Request{Changed: true})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("apps", "owner")

@@ -3,6 +3,7 @@ package values
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,21 +20,22 @@ type sliceProvider struct {
 	Secrets    []*manifest.Secret
 }
 
-// Data finds data by its full identity.
-//
-//nolint:ireturn // The provider contract returns both ConfigMap and Secret data.
-func (p *sliceProvider) Data(id manifest.NamedResource) manifest.Data {
+type testPermissions []string
+
+func (p testPermissions) AllowsKind(kind string) bool { return slices.Contains(p, kind) }
+
+func (p *sliceProvider) Lookup(id manifest.NamedResource) store.ReferenceFacts {
 	for _, c := range p.ConfigMaps {
 		if c.Named() == id {
-			return c
+			return store.ReferenceFacts{Data: c, Original: c}
 		}
 	}
 	for _, s := range p.Secrets {
 		if s.Named() == id {
-			return s
+			return store.ReferenceFacts{Data: s, Original: s}
 		}
 	}
-	return nil
+	return store.ReferenceFacts{}
 }
 
 func expandValuesForTest(t *testing.T, hr *manifest.HelmRelease, provider Provider, cache *Cache) {
@@ -282,9 +284,9 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 	}{
 		{"absent configmap", manifest.KindConfigMap, nil, manifest.ErrObjectNotFound},
 		{"absent secret", manifest.KindSecret, nil, manifest.ErrObjectNotFound},
-		{"empty configmap", manifest.KindConfigMap, &manifest.ConfigMap{Name: "vars", Namespace: "default"}, manifest.ErrObjectNotFound},
-		{"empty secret", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default"}, manifest.ErrObjectNotFound},
-		{"empty bags", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{}, StringData: map[string]any{}}, manifest.ErrObjectNotFound},
+		{"empty configmap", manifest.KindConfigMap, &manifest.ConfigMap{Name: "vars", Namespace: "default"}, manifest.ErrInvalidValuesReference},
+		{"empty secret", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default"}, manifest.ErrInvalidValuesReference},
+		{"empty bags", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{}, StringData: map[string]any{}}, manifest.ErrInvalidValuesReference},
 		{"empty configmap value", manifest.KindConfigMap, &manifest.ConfigMap{Name: "vars", Namespace: "default", Data: map[string]any{"v": ""}}, nil},
 		{"empty secret data value", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", Data: map[string]any{"v": ""}}, nil},
 		{"empty secret stringdata value", manifest.KindSecret, &manifest.Secret{Name: "vars", Namespace: "default", StringData: map[string]any{"v": ""}}, nil},
@@ -482,7 +484,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	}
 	postBuild := ks.PostBuild
 	{
-		err := ExpandPostBuildSubstituteReference(ks, provider)
+		err := ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil))
 		assert.FatalIf(t, err != nil, "ExpandPostBuildSubstituteReference: %v", err)
 	}
 	assert.Equal(t, ks.PostBuild, postBuild)
@@ -511,11 +513,11 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 					SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "vars"}},
 				},
 			}
-			{
-				err := ExpandPostBuildSubstituteReference(ks, provider)
+			for _, permissions := range []testPermissions{nil, {kind}} {
+				err := ExpandPostBuildSubstituteReference(ks, provider, permissions)
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput), "got %v, want ErrInput", err)
+				assert.Diff(t, ks.PostBuild.Substitute, map[string]string{"INLINE": "kept"})
 			}
-			assert.Diff(t, ks.PostBuild.Substitute, map[string]string{"INLINE": "kept"})
 		})
 	}
 }
@@ -533,7 +535,7 @@ func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testin
 	}
 	_, want := sec.Value("A")
 	for range 50 {
-		err := ExpandPostBuildSubstituteReference(ks, provider)
+		err := ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil))
 
 		assert.FatalIf(t, err == nil || err.Error() != want.Error(), "got %v, want %v", err, want)
 	}
@@ -559,7 +561,7 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			}
 
 			before := ks.Clone()
-			err := ExpandPostBuildSubstituteReference(ks, provider)
+			err := ExpandPostBuildSubstituteReference(ks, provider, testPermissions(nil))
 			assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
 
 			assert.FatalIf(
@@ -587,7 +589,7 @@ func TestExpandPostBuildSubstituteReference_InvalidSingleName(t *testing.T) {
 		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"flate-campaign": "v"}},
 	}
 	before := ks.Clone()
-	err := ExpandPostBuildSubstituteReference(ks, &sliceProvider{})
+	err := ExpandPostBuildSubstituteReference(ks, &sliceProvider{}, testPermissions(nil))
 	assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
 
 	assert.FatalIf(t, err == nil || err.Error() != "invalid substitute variable flate-campaign" ||
@@ -633,7 +635,7 @@ func TestStoreProvider_LookupReadability(t *testing.T) {
 			unreadable := input.Data == nil || !input.Data.HasKeys()
 			assert.FatalIf(t, unreadable != tc.unreadable,
 				"unreadable=%t, want %t", unreadable, tc.unreadable)
-			assert.FatalIf(t, provider.Data(id) != input.Data, "%s", "expansion read a different captured value")
+			assert.FatalIf(t, provider.Lookup(id).Data != input.Data, "%s", "expansion read a different captured value")
 		})
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -15,6 +17,7 @@ import (
 )
 
 type entryQualification struct {
+	preparation    *selection.Preparation
 	arrivals       *applicationEvidence
 	loader         *loader.Loader
 	trees          *kustomize.TreeCache
@@ -58,10 +61,7 @@ func (a *Admission) AddApplication(_ *store.Store, obj manifest.BaseManifest) {
 		}
 	}
 	_, application := manifest.ApplicationFor(obj)
-	_, producer := obj.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
-	if !application && !producer {
+	if !application && !manifest.KindOf(obj).Parent {
 		return
 	}
 	for {
@@ -117,7 +117,7 @@ func (a *Admission) applicationSource(
 		resolved.artifact = nil
 	}
 	if resolved.object == nil {
-		resolved.object = a.sources[application.Source].object
+		resolved.object = a.resolvedSources.snapshot()[application.Source].object
 	}
 	if resolved.object == nil {
 		resolved.object = application.Declaration
@@ -180,7 +180,18 @@ func (a *Admission) readApplication(
 	resolved := a.applicationSource(st, reads, &application)
 	if resolved.artifact == nil {
 		var err error
-		resolved, err = a.resolve(ctx, application.Source, resolved.object, reads.WorkScope())
+		resolved, err = a.resolve(
+			ctx,
+			application.Source,
+			&sourceRequest{
+				object:    resolved.object,
+				reference: sourceReference(evidence.object, application.Source),
+				reads:     reads,
+				work:      reads.WorkScope(),
+				entry:     a.appliesEntry(&application),
+				projected: application.Declaration != nil && resolved.object == application.Declaration,
+			},
+		)
 		if err != nil {
 			return false, err
 		}
@@ -268,7 +279,7 @@ func (q *entryQualification) advance(ctx context.Context, a *Admission, st *stor
 		}
 	}
 	if q.closed ||
-		len(q.matches) != 0 && !q.loader.Options.Selection.Changed && len(q.loader.Options.Selection.Roots) == 0 {
+		len(q.matches) != 0 && q.loader.Options.Session == nil {
 		if err := walk.observe(ctx); err != nil {
 			return err
 		}
@@ -282,7 +293,7 @@ func (q *entryQualification) advance(ctx context.Context, a *Admission, st *stor
 }
 
 //nolint:nilnil // Unavailable declarations leave the supported prefix pending.
-func (w *qualificationWalk) root(ctx context.Context, root *loader.Occurrence) (*applicationEvidence, error) {
+func (w *qualificationWalk) root(ctx context.Context, root *selection.OccurrenceFacts) (*applicationEvidence, error) {
 	object := w.store.GetDeclaration(root.Identity)
 	if object != nil {
 		object = w.reads.GetDeclaration(root.Identity)
@@ -294,14 +305,14 @@ func (w *qualificationWalk) root(ctx context.Context, root *loader.Occurrence) (
 			return evidence, nil
 		}
 	}
-	if object == nil || root.Declaration != (loader.OccurrenceID{}) &&
+	if object == nil || root.Declaration != (selection.OccurrenceID{}) &&
 		w.reads.Policy(root.Identity).Origin != manifest.SuppliedDeclaration {
 		object = w.q.loader.CatalogObject(root.Identity)
 	}
-	if object == nil && root.Declaration != (loader.OccurrenceID{}) && w.q.session != nil && !w.q.closed {
+	if object == nil && root.Declaration != (selection.OccurrenceID{}) && w.q.session != nil && !w.q.closed {
 		w.reads.RequireQualification(root.Identity)
 		before := w.store.GetDeclaration(root.Identity)
-		committed, err := w.commit(ctx, &loader.PrepareRequest{Reads: w.reads, Invocation: true})
+		committed, err := w.commit(ctx, &selection.PrepareRequest{Reads: w.reads, Invocation: true})
 		w.q.changed = w.q.changed || !manifest.Equal(before, w.store.GetDeclaration(root.Identity))
 		if err != nil {
 			return nil, err
@@ -315,7 +326,6 @@ func (w *qualificationWalk) root(ctx context.Context, root *loader.Occurrence) (
 	if object == nil {
 		return nil, nil
 	}
-	object = manifest.MapDependsOn(object, w.admission.substitutions.Resolve, w.admission.substitutions.Resolve)
 	evidence := &applicationEvidence{object: object}
 	if record, ok := w.q.loader.Index.Lookup(root.Identity); ok && record.Declaration != nil {
 		evidence.document = w.q.loader.IndexedObject(root.Identity, record).Doc
@@ -459,9 +469,7 @@ func (w *qualificationWalk) execution(
 		return nil, nil
 	}
 	application, applies := manifest.ApplicationFor(evidence.object)
-	_, produces := evidence.object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
+	produces := manifest.KindOf(evidence.object).Parent
 	_, _, renders := evidence.object.SourcePath()
 	if !produces && !applies || manifest.KindOf(evidence.object).Structural && !renders {
 		return nil, nil
@@ -491,8 +499,8 @@ func (w *qualificationWalk) execution(
 	}
 	committed, err := w.commit(
 		ctx,
-		&loader.PrepareRequest{
-			Incoming:   store.Child{Obj: literal, Entry: &application},
+		&selection.PrepareRequest{
+			Generation: []store.Child{{Obj: literal, Entry: &application}},
 			Reads:      w.reads,
 			Invocation: w.q.session != nil,
 		},
@@ -507,19 +515,30 @@ func (w *qualificationWalk) execution(
 	return literal, nil
 }
 
-func (w *qualificationWalk) commit(ctx context.Context, request *loader.PrepareRequest) (bool, error) {
+func (w *qualificationWalk) commit(ctx context.Context, request *selection.PrepareRequest) (bool, error) {
 	if w.q.session != nil {
 		*request = w.q.session.prepareRequest(request)
 	}
-	proposal, err := w.q.loader.Prepare(ctx, *request)
-	if err != nil {
-		return false, err
+	if w.q.loader.Options.Session == nil {
+		for i := range request.Generation {
+			child := &request.Generation[i]
+			if child.Obj != nil {
+				request.Reads.Admit(*child, manifest.BootstrapSourceID, manifest.NamedResource{})
+			}
+		}
+		return request.Reads.Valid(), nil
 	}
-	stage := loader.Execution
+	request.Missing = w.q.loader.Options.Missing
+	if request.Preparation == nil {
+		request.Preparation = &w.q.preparation
+	}
+	stage := selection.Execution
 	if w.q.session != nil {
-		stage = loader.Construction
+		stage = selection.Construction
 	}
-	committed, err := w.q.loader.Commit(ctx, proposal, stage)
+	_, committed, err := w.q.loader.Options.Session.Admit(ctx, selection.AdmissionOptions{
+		Request: *request, Stage: stage,
+	})
 	w.q.changed = w.q.changed || request.Reads != nil && !request.Reads.Valid()
 	return committed, err
 }
@@ -534,7 +553,10 @@ func (w *qualificationWalk) admitConstructed(ctx context.Context, evidence *appl
 	}
 	incoming := *evidence.child
 	incoming.Entry = &application
-	committed, err := w.commit(ctx, &loader.PrepareRequest{Incoming: incoming, Reads: w.reads, Invocation: true})
+	committed, err := w.commit(
+		ctx,
+		&selection.PrepareRequest{Generation: []store.Child{incoming}, Reads: w.reads, Invocation: true},
+	)
 	if err != nil {
 		return false, err
 	}
@@ -618,10 +640,7 @@ func (w *qualificationWalk) construct(
 ) (qualificationBatch, error) {
 	input := evidence.source.artifact
 	if input == nil {
-		source := ks.SourceID()
-		if source.Kind == "" || source.Name == "" {
-			source = manifest.BootstrapSourceID
-		}
+		source := ks.EffectiveSourceID()
 		input, _ = w.reads.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	if input == nil || w.q.trees == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
@@ -664,7 +683,7 @@ func (w *qualificationWalk) prepare(
 			return err
 		}
 	}
-	support, current := w.preparationSupport(evidence, ks)
+	support, current := w.preparationSupport(evidence, ks.Named(), ks.EffectiveSourceID())
 	defer w.store.Retire(support)
 	defer support.ReleaseCapture()
 	if !current {
@@ -672,7 +691,7 @@ func (w *qualificationWalk) prepare(
 		return nil
 	}
 	prepared, known := w.q.session.prepared[ks.Named()]
-	reused := known && prepared.registered && prepared.matches(ks, input, w.q.session.substitutions, support)
+	reused := known && prepared.registered && prepared.matches(ks, input, support)
 	if err := w.q.session.prepareProducer(ctx, ks, input, support); err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("context: %w", ctx.Err())
@@ -686,14 +705,10 @@ func (w *qualificationWalk) prepare(
 
 func (w *qualificationWalk) preparationSupport(
 	evidence *applicationEvidence,
-	ks *manifest.Kustomization,
+	origin, source manifest.NamedResource,
 ) (*store.ReadSet, bool) {
 	support := &store.ReadSet{}
-	support.Init(w.store, ks.Named(), nil)
-	source := ks.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
-	}
+	support.Init(w.store, origin, nil)
 	support.GetArtifact(source, store.ArtifactContent)
 	support.GetDeclaration(source)
 	switch {
@@ -707,7 +722,7 @@ func (w *qualificationWalk) preparationSupport(
 	case evidence.owner != (manifest.NamedResource{}):
 		accepted, _ := evidence.ownerAccepts(support)
 		return support, accepted
-	case w.q.loader.AdmitsEntry(evidence.object.Named()):
+	case selection.Root(w.q.loader.RootEvidence(evidence.object.Named(), nil, true)).InitialEntry:
 		current := support.SourceAdmission(evidence.object.Named(), source)
 		return support, current
 	default:
@@ -720,7 +735,11 @@ func (w *qualificationWalk) preparationSupport(
 func (w *qualificationWalk) await(evidence *applicationEvidence, id manifest.NamedResource) {
 	if w.q.closed {
 		w.q.pending = w.admission.entryBound.Load()
-		return
+		decision := w.q.loader.Options.Session.Snapshot()
+		if w.q.pending || evidence.owner == (manifest.NamedResource{}) ||
+			!decision.Reconcile(evidence.owner) || decision.OrdinaryDemand(evidence.owner) {
+			return
+		}
 	}
 	if id == manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.admission.entryPath(), manifest.NamedResource{}).
 		Named() {
@@ -739,102 +758,4 @@ func (w *qualificationWalk) await(evidence *applicationEvidence, id manifest.Nam
 	}
 	w.q.candidates = []manifest.NamedResource{id}
 	w.reads.RequireQualification(id)
-}
-
-func (w *qualificationWalk) follow(
-	ctx context.Context,
-	batch *qualificationBatch,
-	owner manifest.NamedResource,
-) (bool, error) {
-	children := slices.Clone(batch.children)
-	slices.SortFunc(children, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
-	continuations := make([]applicationEvidence, 0, len(children))
-	for i := range children {
-		child := &children[i]
-		if child.Obj == nil {
-			continue
-		}
-		evidence := w.followedChild(batch, child, owner)
-		if w.q.pending {
-			return false, nil
-		}
-		if evidence == nil {
-			continue
-		}
-		matched, err := w.matchChild(ctx, batch, evidence)
-		if err != nil || w.q.pending {
-			return false, err
-		}
-		if !matched {
-			continuations = append(continuations, *evidence)
-		}
-	}
-	if len(w.q.matches) != 0 {
-		return true, nil
-	}
-	if batch.root != "" &&
-		owner == manifest.NewEntryKustomization(manifest.BootstrapSourceID, w.admission.entryPath(), manifest.NamedResource{}).
-			Named() {
-		return false, nil
-	}
-	for i := range continuations {
-		found, err := w.visit(ctx, &continuations[i])
-		if err != nil || found || w.q.pending {
-			return found, err
-		}
-	}
-	return false, nil
-}
-
-func (w *qualificationWalk) followedChild(
-	batch *qualificationBatch,
-	child *store.Child,
-	owner manifest.NamedResource,
-) *applicationEvidence {
-	evidence := &applicationEvidence{
-		object:    child.Obj,
-		document:  child.Doc,
-		owner:     owner,
-		builtRoot: batch.root,
-		child:     child,
-	}
-	if batch.root != "" {
-		if current := w.reads.GetDeclaration(child.Obj.Named()); current != nil {
-			accepted := &applicationEvidence{object: current}
-			w.captureOwner(accepted)
-			if accepted.owner != (manifest.NamedResource{}) {
-				return accepted
-			}
-		}
-		return evidence
-	}
-	accepted, pending := evidence.ownerAccepts(w.reads)
-	if !accepted {
-		w.q.pending = w.q.pending || pending
-		return nil
-	}
-	return evidence
-}
-
-func (w *qualificationWalk) matchChild(
-	ctx context.Context,
-	batch *qualificationBatch,
-	evidence *applicationEvidence,
-) (bool, error) {
-	eligible, err := w.admission.readApplication(ctx, w.store, w.reads, evidence)
-	if err != nil || !eligible {
-		return false, err
-	}
-	if batch.root != "" {
-		if candidate, ok := evidence.object.(*manifest.Kustomization); ok &&
-			w.admission.reuseEntry(ctx, w.reads, evidence, candidate) {
-			current, err := w.admitConstructed(ctx, evidence)
-			if err != nil || !current {
-				return false, err
-			}
-		}
-	}
-	evidence.root = w.q.root
-	w.q.matches = append(w.q.matches, *evidence)
-	return true, nil
 }

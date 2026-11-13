@@ -7,7 +7,7 @@ import (
 
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -49,7 +49,7 @@ func TestFetcher_SuppliedHTTPSMaterial(t *testing.T) {
 		&sourcecache.Policy{},
 	)
 	assert.NoError(t, err)
-	auth, ok := prepared.options.Auth.(*githttp.BasicAuth)
+	auth, ok := prepared.auth.(*githttp.BasicAuth)
 	assert.FatalIf(
 		t,
 		!ok || auth.Username != "repository" || auth.Password != "filled",

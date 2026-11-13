@@ -45,7 +45,12 @@ func (h *HelmRelease) catalog(id NamedResource) BaseManifest {
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
 func (g *GitRepository) catalog(id NamedResource) BaseManifest {
-	return &GitRepository{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(g.Labels)}
+	return &GitRepository{
+		Name:              id.Name,
+		Namespace:         id.Namespace,
+		Labels:            maps.Clone(g.Labels),
+		GitRepositorySpec: g.GitRepositorySpec,
+	}
 }
 
 //nolint:ireturn // The manifest contract requires polymorphic results.

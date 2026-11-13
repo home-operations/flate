@@ -106,8 +106,7 @@ func (*Secret) ReferenceCapacity() ReferenceLimits {
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
 func (r *RawObject) ReferenceCapacity() ReferenceLimits {
 	if r.isArtifactGenerator() {
-		sources, _ := r.Spec["sources"].([]any)
-		return ReferenceLimits{References: len(sources)}
+		return ReferenceLimits{References: len(r.artifactGeneratorView().entries("sources"))}
 	}
 	return ReferenceLimits{}
 }

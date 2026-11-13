@@ -9,6 +9,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -35,8 +37,8 @@ func builtObjectsForTest(t *testing.T, data string) []store.Child {
 	return objects
 }
 
+//nolint:paralleltest // Kustomize builds write process-global OpenAPI data.
 func TestRegisterBuilt_TransformedEvidence(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	for file, data := range map[string]string{
 		"entry/kustomization.yaml": `resources: [bundle.yaml, selected.yaml]
@@ -159,19 +161,18 @@ spec:
 		_, exists := l.Index.Lookup(separate)
 		assert.FatalIf(t, !exists, "%s", "independently loaded evidence under the entry prefix was removed")
 	}
-	admit := func(obj manifest.BaseManifest) (bool, error) {
-		record, ok := l.Index.Lookup(obj.Named())
-		return ok && record.Parent == testutil.KustomizationID("apps", "entry"), nil
-	}
 	{
-		promoted, err := Promote(
-			t.Context(),
-			st,
-			docs[0].Obj.Named(),
-			PromoteOptions{Documents: docs, Admit: admit},
-		)
-		assert.FatalIf(t, err != nil ||
-			!promoted, "%s", "built promotion failed")
+		acquired, err := Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs})
+		assert.NoError(t, err)
+		for i := range acquired {
+			child := &acquired[i]
+			record, known := l.Index.Lookup(child.Obj.Named())
+			assert.Equal(t, known, true)
+			assert.Equal(t, record.Parent, testutil.KustomizationID("apps", "entry"))
+			st.AddObject(child.Obj, child.Doc)
+		}
+		assert.FatalIf(t, len(acquired) != len(docs) || st.GetObject(docs[0].Obj.Named()) == nil,
+			"%s", "built promotion failed")
 	}
 	selected.Namespace, selected.Name = "apps", "selected-dev"
 	rs, ok := st.GetObject(selected).(*manifest.ResourceSet)
@@ -401,8 +402,8 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	assert.Equal(t, len(l.Index.Readers), 0)
 }
 
+//nolint:paralleltest // Kustomize builds write process-global OpenAPI data.
 func TestRegisterBuilt_DeletedInvalidResource(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	for file, data := range map[string]string{
 		"kustomization.yaml": `resources: [selected.yaml, retained.yaml]
@@ -468,16 +469,11 @@ spec:
 		err := retainedErrorsForTest(l)[selectedFile]
 		assert.FatalIf(t, err != nil, "deleted resource raw error survived successful built registration: %v", err)
 	}
-	admit := func(obj manifest.BaseManifest) (bool, error) {
-		record, ok := l.Index.Lookup(obj.Named())
-		return ok && record.Parent == testutil.KustomizationID("apps", "entry"), nil
-	}
 	{
-		promoted, err := Promote(
-			t.Context(),
+		promoted, err := promoteForTest(t.Context(), t,
 			st,
 			docs[0].Obj.Named(),
-			PromoteOptions{Documents: docs, Admit: admit},
+			PromoteOptions{Documents: docs},
 		)
 		assert.FatalIf(t, err != nil ||
 			!promoted, "%s", "retained built promotion failed")
@@ -602,14 +598,12 @@ func TestPromote_ContentOnlyBinding(t *testing.T) {
 	reads.Init(st, testutil.KustomizationID("apps", "reader"), nil)
 	defer reads.Close()
 	{
-		promoted, err := Promote(
-			t.Context(),
+		promoted, err := promoteForTest(t.Context(), t,
 			st,
 			id,
 			PromoteOptions{
 				Record: manifest.Production{Source: source, Path: "/input/settings.yaml"},
 				Reads:  &reads,
-				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		)
 		assert.FatalIf(t, err != nil ||
@@ -664,7 +658,9 @@ func testRegisterBuiltTransformedEvidenceCompletion(
 		assert.ErrorIf(
 			t,
 			(*scope.st).GetObject(id) != obj || candidateForTest(t, (*scope.l), id) != obj ||
-				(*scope.l).AdmitsRoot((*scope.l).IndexedObject(id, (*scope.l).Index.Records[id]).Obj, ""),
+				selection.Root(
+					rootAtForTest((*scope.l), (*scope.l).IndexedObject(id, (*scope.l).Index.Records[id]).Obj, ""),
+				).Admitted,
 			"built identity %s did not survive admission and source mounts",
 			id,
 		)

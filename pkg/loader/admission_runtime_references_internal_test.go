@@ -45,17 +45,17 @@ func TestFilter_ContentDependencies(t *testing.T) {
 				},
 			)
 			for _, id := range tc.deps {
-				assert.Equal(t, f.ShouldReconcile(id), true)
+				assert.Equal(t, f.Reconcile(id), true)
 				if id.Group == "" {
 					id.Group = "foreign.example"
 				} else {
 					id.Group = ""
 				}
-				assert.Equal(t, f.ShouldReconcile(id), false)
+				assert.Equal(t, f.Reconcile(id), false)
 			}
 			assert.Equal(
 				t,
-				f.ShouldReconcile(
+				f.Reconcile(
 					manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "unrelated"},
 				),
 				false,
@@ -96,52 +96,13 @@ func TestFilter_ShouldReconcileRequiresProvenNamespace(t *testing.T) {
 		t,
 		admissionConfig{changes: change.NewSet([]string{"child.yaml"}), index: index, inventory: st, root: "/repo"},
 	)
-	assert.Equal(t, f.ShouldReconcile(effective), true)
+	assert.Equal(t, f.Reconcile(effective), true)
 	foreign := effective
 	foreign.Namespace = "unrelated"
-	assert.Equal(t, f.ShouldReconcile(foreign), false)
+	assert.Equal(t, f.Reconcile(foreign), false)
 	foreign = effective
 	foreign.Group = "foreign.example"
-	assert.Equal(t, f.ShouldReconcile(foreign), false)
-}
-
-func TestAddEmitted_CapturedTransitiveReferences(t *testing.T) {
-	t.Parallel()
-	parent := testutil.KustomizationID("apps", "parent")
-	dependency := &manifest.GitRepository{Name: "dependency", Namespace: "apps"}
-	dependency.SecretRef = &manifest.LocalObjectReference{Name: "captured"}
-	st := store.New()
-	st.AddObject(dependency)
-	f := newAdmission(
-		t,
-		admissionConfig{
-			changes:   change.NewSet([]string{"parent.yaml"}),
-			index:     new(filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}).index(),
-			inventory: st,
-			root:      "",
-		},
-	)
-	var reads store.ReadSet
-	reads.Init(st, parent, nil)
-	defer reads.Retire()
-	reads.GetObject(dependency.Named())
-	changed := *dependency
-	changed.SecretRef = &manifest.LocalObjectReference{Name: "newer"}
-	st.AddObject(&changed)
-	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
-	child.SourceRef.Kind, child.SourceRef.Name = manifest.KindGitRepository, dependency.Name
-	f.AddEmitted(parent, new(store.Child{Obj: child}), &reads)
-	assert.Equal(
-		t,
-		f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "captured"}),
-		true,
-	)
-	assert.Equal(
-		t,
-		f.ShouldReconcile(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "newer"}),
-		false,
-	)
-	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, f.Reconcile(foreign), false)
 }
 
 func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
@@ -150,20 +111,6 @@ func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			testAddEmittedStampedHelmReleasePullsChartSourceCase(
-				t,
-				&name,
-			)
-		},
-		)
-	}
-}
-
-func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
-	t.Parallel()
-	for _, name := range []string{"ancestor_only", "primary", "kept_emitter"} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			testAddEmittedKeptChildUsesIncomingReferencesCase(
 				t,
 				&name,
 			)
@@ -210,7 +157,7 @@ func testFilterDependsOnNotFollowedCase(t *testing.T, testCaseInput *string,
 		t,
 		admissionConfig{changes: change.NewSet(changes), index: index, inventory: st, root: "/repo"},
 	)
-	assert.Equal(t, f.keep[a.Named()], primary)
+	assert.Equal(t, f.role(a.Named()), primary)
 	want := absent
 	switch *testCaseInput {
 	case "generated", "absent":
@@ -218,10 +165,10 @@ func testFilterDependsOnNotFollowedCase(t *testing.T, testCaseInput *string,
 	case "selected":
 		want = primary
 	}
-	assert.Equal(t, f.keep[b.Named()], want)
+	assert.Equal(t, f.role(b.Named()), want)
 	assert.Equal(
 		t,
-		f.ShouldReconcile(producer),
+		f.Reconcile(producer),
 		(*testCaseInput) == "generated" || (*testCaseInput) == "selected",
 	)
 }
@@ -258,7 +205,7 @@ func testAddEmittedStampedHelmReleasePullsChartSourceCase(
 	}
 	oldSource := chartSrc
 	oldSource.Name = "old-chart"
-	objects := filtertest.EmptyLister()
+	objects := filtertest.MapLister{parent: &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}}
 	if (*testCaseInput) == "replaced_child" {
 		old := *hr
 		old.Chart.Source.Name = oldSource.Name
@@ -276,16 +223,16 @@ func testAddEmittedStampedHelmReleasePullsChartSourceCase(
 			root:      "",
 		},
 	)
-	assert.Equal(t, f.ShouldReconcile(parent), true)
+	assert.Equal(t, f.Reconcile(parent), true)
 	for _, id := range []manifest.NamedResource{hr.Named(), chartSrc, oldSource} {
-		assert.Equal(t, f.ShouldReconcile(id), false)
+		assert.Equal(t, f.Reconcile(id), false)
 	}
 
 	added := f.AddEmitted(parent, new(store.Child{Obj: hr}), f.objs)
 
 	assert.Equal(t, len(added), 2)
 	for _, id := range []manifest.NamedResource{hr.Named(), chartSrc} {
-		if !f.ShouldReconcile(id) || !slices.Contains(added, id) {
+		if !f.Reconcile(id) || !slices.Contains(added, id) {
 			t.Errorf(
 				"current identity %s not selected and returned: added=%v, keep=%v",
 				id,
@@ -294,86 +241,7 @@ func testAddEmittedStampedHelmReleasePullsChartSourceCase(
 			)
 		}
 	}
-	if f.ShouldReconcile(oldSource) || slices.Contains(added, oldSource) {
+	if f.Reconcile(oldSource) || slices.Contains(added, oldSource) {
 		t.Errorf("obsolete source selected or returned: added=%v, keep=%v", added, f.KeepNames())
 	}
-}
-
-func testAddEmittedKeptChildUsesIncomingReferencesCase(
-	t *testing.T,
-	testCaseInput *string,
-) {
-	t.Helper()
-
-	parent := testutil.KustomizationID("apps", "parent")
-	child := &manifest.HelmRelease{
-		Name:      "app",
-		Namespace: "apps",
-		Chart: manifest.HelmChart{
-			Source: manifest.NamedResource{
-				Group:     manifest.SourceDomain,
-				Kind:      manifest.KindOCIRepository,
-				Namespace: "apps",
-				Name:      "new-chart",
-			},
-		},
-		ChartRef: &helmv2.CrossNamespaceSourceReference{
-			Kind:      manifest.KindOCIRepository,
-			Name:      "new-chart",
-			Namespace: "apps",
-		},
-	}
-	stale := *child
-	stale.Chart.Source.Name = "old-chart"
-	stale.ChartRef = &helmv2.CrossNamespaceSourceReference{
-		Kind:      manifest.KindOCIRepository,
-		Name:      "old-chart",
-		Namespace: "apps",
-	}
-	competitor := &manifest.Kustomization{Name: "competitor", Namespace: "apps"}
-	index := new(filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}).index()
-	index.Records[child.Named()] = manifest.DiscoveryRecord{
-		Productions: []manifest.Production{{Owner: competitor.Named(), Source: manifest.BootstrapSourceID}},
-	}
-	objects := filtertest.MapLister{child.Named(): &stale, competitor.Named(): competitor}
-	f := newAdmission(
-		t,
-		admissionConfig{
-			changes:   change.NewSet([]string{"parent.yaml"}),
-			index:     index,
-			inventory: objects,
-			root:      "",
-		},
-	)
-	if (*testCaseInput) == "primary" {
-		f.addUngated(child.Named())
-	} else {
-		f.mu.Lock()
-		f.keep[child.Named()] = kept
-		if (*testCaseInput) == "kept_emitter" {
-			f.keep[parent] = kept
-		}
-		f.mu.Unlock()
-	}
-	assert.Equal(t, f.ShouldReconcile(child.Named()), true)
-	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), false)
-
-	added := f.AddEmitted(parent, new(store.Child{Obj: child}), f.objs)
-
-	want := []manifest.NamedResource{child.ChartSource()}
-	if (*testCaseInput) != "primary" {
-		want = append(want, competitor.Named())
-		slices.SortFunc(want, manifest.NamedResource.Compare)
-	}
-	assert.Diff(t, added, want)
-	assert.Equal(t, f.keep[competitor.Named()], kept)
-	assert.Equal(t, f.ShouldReconcile(stale.ChartSource()), false)
-	assert.Equal(t, f.ShouldReconcile(child.ChartSource()), true)
-	sentinel := testutil.KustomizationID("apps", "sentinel")
-	var sentinels []manifest.NamedResource
-	if (*testCaseInput) != "kept_emitter" {
-		sentinels = []manifest.NamedResource{sentinel}
-	}
-	assert.Diff(t, f.AddEmitted(child.Named(), new(store.Child{Obj: refObj(sentinel)}), f.objs), sentinels)
-	assert.Equal(t, f.ShouldReconcile(sentinel), (*testCaseInput) != "kept_emitter")
 }

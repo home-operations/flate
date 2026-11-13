@@ -15,19 +15,24 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 const (
+	useKustomization         = "ks [name]"
+	useHelmRelease           = "hr [name]"
+	useAll                   = "all"
 	sourceRetryAttempts      = 3
 	defaultConcurrencyPerCPU = 4
 	shortRevisionLength      = 7
@@ -37,12 +42,14 @@ const (
 )
 
 type commonFlags struct {
-	input     *store.SourceArtifact
-	baseInput *store.SourceArtifact
-	changes   *change.Set
-	owner     *sourcecache.Cache
-	path      string
-	pathOrig  string
+	gitTransports sourcegit.Transports
+	network       *source.Network
+	input         *store.SourceArtifact
+	baseInput     *store.SourceArtifact
+	changes       *change.Set
+	owner         *sourcecache.Cache
+	path          string
+	pathOrig      string
 	// Synthetic baseline labels need explicit source coordinates and identity.
 	pathRoot            string
 	pathOrigRoot        string
@@ -167,12 +174,11 @@ func bindBase(fs *pflag.FlagSet, f *commonFlags) {
 func (c *commonFlags) roots(name string, kinds ...string) []manifest.NamedResource {
 	roots := make([]manifest.NamedResource, len(kinds))
 	for i, kind := range kinds {
-		roots[i] = manifest.NamedResource{Kind: kind, Namespace: c.namespace, Name: name}
-		for info := range manifest.Kinds() {
-			if info.Kind == kind {
-				roots[i].Group = info.Group
-				break
-			}
+		roots[i] = manifest.NamedResource{
+			Group:     manifest.GroupForKind(kind),
+			Kind:      kind,
+			Namespace: c.namespace,
+			Name:      name,
 		}
 	}
 	return roots
@@ -197,7 +203,10 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) err
 		c.pathOrigSelfURLs = res.SelfURLs
 		return nil
 	}
-	res, err := baseline.AutoResolve(ctx, c.path, c.base, c.owner)
+	res, err := baseline.AutoResolve(
+		ctx,
+		baseline.Config{Path: c.path, Base: c.base, Cache: c.owner, Network: c.network, GitTransports: c.gitTransports},
+	)
 	if res != nil {
 		c.input, c.baseInput = res.Source, res.BaseInput
 	}
@@ -242,12 +251,13 @@ func inputTrees(c *commonFlags) []orchestrator.Tree {
 func buildOrchCfg(c *commonFlags) orchestrator.Config {
 	helmOptions := c.helm
 	helmOptions.SkipTests = true
-	helmOptions.SkipCRDs = slices.Contains(c.skipKinds, manifest.KindCustomResourceDefinition)
-	helmOptions.SkipKinds = slices.DeleteFunc(slices.Clone(c.skipKinds), func(kind string) bool {
-		return kind == manifest.KindCustomResourceDefinition
-	})
+	helmOptions.SkipKinds = slices.Clone(c.skipKinds)
+	slices.Sort(helmOptions.SkipKinds)
+	helmOptions.SkipKinds = slices.Compact(helmOptions.SkipKinds)
+	helmOptions.SkipCRDs = slices.Contains(helmOptions.SkipKinds, manifest.KindCustomResourceDefinition)
 	return orchestrator.Config{
 		Cache:          c.owner,
+		GitTransports:  c.gitTransports,
 		HelmOptions:    helmOptions,
 		RegistryConfig: c.registryConfig,
 		Concurrency:    c.concurrency,
@@ -291,7 +301,7 @@ type reportedError struct{ err error }
 func (e reportedError) Error() string { return e.err.Error() }
 func (e reportedError) Unwrap() error { return e.err }
 
-func failureModel(result *selection.Selection) output.Model {
+func failureModel(result *selection.Result) output.Model {
 	var primary []output.Primary
 	var missing []output.Missing
 	blocked := result.BlockedCount()
@@ -341,7 +351,7 @@ type selectedInvocation struct {
 
 type selectedGroup struct {
 	cluster        string
-	sides          []*selection.Selection
+	sides          []*selection.Result
 	absent         [2]bool
 	err, remainder error
 	complete       bool
@@ -352,7 +362,7 @@ type selectedPayload struct {
 	warnings [][]manifest.Warning
 	rosters  []output.TestReport
 	subjects [][]manifest.NamedResource
-	prepare  func([]output.Names)
+	prepare  func([]diff.Names)
 	write    func() error
 }
 
@@ -380,6 +390,7 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 	cfg := buildOrchCfg(c)
 	cfg.HelmClient, cfg.Network = helm.NewClient(owner), new(source.Network)
 	defer cfg.Network.Close()
+	c.network = cfg.Network
 	inv := selectedInvocation{}
 	if err := resolveBaseline(ctx, c, req.pair); err != nil {
 		inv.failBaseline(c, req.pair, err)
@@ -441,7 +452,7 @@ func finishSelected(req *selectedRequest, inv *selectedInvocation, payload *sele
 	return nil
 }
 
-func selectedWarnings(side *selection.Selection) []manifest.Warning {
+func selectedWarnings(side *selection.Result) []manifest.Warning {
 	total := len(side.Warnings) + len(side.Unrelated) + len(side.External)
 	if total == 0 {
 		return nil
@@ -505,7 +516,7 @@ func (i *selectedInvocation) failBaseline(c *commonFlags, pair bool, err error) 
 	group := selectedGroup{cluster: "."}
 	for _, input := range []*store.SourceArtifact{c.baseInput, c.input} {
 		if pair || len(group.sides) == 0 {
-			group.sides = append(group.sides, &selection.Selection{})
+			group.sides = append(group.sides, &selection.Result{})
 		}
 		if input != nil {
 			side := group.sides[len(group.sides)-1]
@@ -555,7 +566,9 @@ func (i *selectedInvocation) addGroup(req *selectedRequest, selected []orchestra
 		group.absent[run.ID.Side] = run.Absent
 		group.complete = group.complete && (run.Absent || run.Orchestrator != nil && run.Result != nil)
 	}
-	group.sides, group.err, group.remainder = orchestrator.Select(selected, groupErr, req.roots, req.labels)
+	var projection selection.ProjectionErrors
+	group.sides, projection = orchestrator.Select(selected, groupErr, req.roots, req.labels)
+	group.err, group.remainder = projection.Selected, projection.Remaining
 	i.groups = append(i.groups, group)
 }
 
@@ -587,7 +600,7 @@ func (i *selectedInvocation) preparePayload(
 				return group.complete &&
 					!slices.ContainsFunc(
 						group.sides,
-						func(side *selection.Selection) bool { return side.Counts[root.Kind] != 0 },
+						func(side *selection.Result) bool { return side.Counts[root.Kind] != 0 },
 					)
 			})
 		}
@@ -599,7 +612,7 @@ func (i *selectedInvocation) preparePayload(
 func selectedFailureModel(
 	req *selectedRequest,
 	group *selectedGroup,
-	side *selection.Selection,
+	side *selection.Result,
 	roster *output.TestReport,
 ) output.Model {
 	var model output.Model
@@ -676,7 +689,7 @@ func reportHasFailures(report *output.Report) bool {
 	return false
 }
 
-func appendSideDiagnostics(report *output.Report, i int, side *selection.Selection, snapshot string) {
+func appendSideDiagnostics(report *output.Report, i int, side *selection.Result, snapshot string) {
 	g := &report.Groups[i]
 	if len(side.Subjects) != 0 {
 		if g.Subjects == nil {
@@ -748,6 +761,11 @@ func (i *selectedInvocation) renderTrees(ctx context.Context, req *selectedReque
 		cfg.StatusListener, stop = session.observe, session.stop
 	}
 	runs, runErr := orchestrator.RenderTrees(ctx, inputTrees(&req.flags), *cfg)
+	defer func() {
+		for _, run := range runs {
+			run.Result.Close()
+		}
+	}()
 	if stop != nil {
 		stop()
 	}

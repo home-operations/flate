@@ -6,8 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -135,18 +135,14 @@ spec:
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection.Changed = true
-			l.Options.Filter = change.NewFilter()
+			configureSelection(t, l, selection.Request{Changed: true})
+
 			owner := testutil.KustomizationID("apps", "owner")
 			load := func() { _, err := l.Load(t.Context(), root, owner, nil); assert.NoError(t, err) }
 			if physicalFirst {
-				l.Options.Filter.AddEmitted(
-					change.MembershipUpdate{
-						Needed:   []manifest.NamedResource{owner},
-						Ordinary: []manifest.NamedResource{owner},
-					},
-					l.Options.Filter.Membership(owner).Revision,
-				)
+				_, committed, commitErr := requireSelection(t, l, []manifest.NamedResource{owner}, false)
+				assert.NoError(t, commitErr)
+				assert.Equal(t, committed, true)
 				load()
 			}
 			if !physicalFirst {
@@ -169,13 +165,9 @@ spec:
 				assert.Equal(t, len(l.inputVisibility()), 0)
 				assert.Equal(t, l.documents.cache[filepath.Join(root, "negative.yaml")].objects != nil, true)
 				assert.Equal(t, l.documents.cache[filepath.Join(root, "empty.yaml")].objects != nil, true)
-				l.Options.Filter.AddEmitted(
-					change.MembershipUpdate{
-						Needed:   []manifest.NamedResource{owner},
-						Ordinary: []manifest.NamedResource{owner},
-					},
-					l.Options.Filter.Membership(owner).Revision,
-				)
+				_, committed, commitErr := requireSelection(t, l, []manifest.NamedResource{owner}, false)
+				assert.NoError(t, commitErr)
+				assert.Equal(t, committed, true)
 				load()
 				assert.Equal(t, reads["objects.yaml"].Load(), count+1)
 			}
@@ -233,4 +225,35 @@ func TestEntryFrontier_RequiredDocumentCoverage(t *testing.T) {
 	)
 	assert.FatalIf(t, child.Obj == nil, "required source declaration disappeared")
 	assert.Equal(t, child.Obj.(*manifest.GitRepository).Reference.Tag, "pin")
+}
+
+func TestEntryFrontier_SourceLifetime(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	var reads atomic.Int64
+	input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{
+		FS: fstest.MapFS{
+			"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
+			"object.yaml":        {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: ordinary}\n")},
+		},
+		reads: map[string]*atomic.Int64{"object.yaml": &reads},
+	}}
+	l := New(store.New())
+	for range 2 {
+		possible, err := l.EntryFrontier(t.Context(), input, ".")
+		assert.NoError(t, err)
+		assert.Equal(t, possible, false)
+	}
+	assert.Equal(t, reads.Load(), int64(1))
+	replacement := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: [object.yaml]\n")},
+		"object.yaml":        {Data: []byte(testutil.KustomizationYAML("applier", "apps", "  path: ./entry\n"))},
+	}}
+	possible, err := l.EntryFrontier(t.Context(), replacement, ".")
+	assert.NoError(t, err)
+	assert.Equal(t, possible, true)
+	possible, err = l.EntryFrontier(t.Context(), input, ".")
+	assert.NoError(t, err)
+	assert.Equal(t, possible, false)
+	assert.Equal(t, reads.Load(), int64(2))
 }

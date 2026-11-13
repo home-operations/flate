@@ -40,13 +40,13 @@ func benchmarkSubstitutionLookup(b *testing.B, supplied *bool) {
 	execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 	defer execution.run.Close()
 	provider := values.NewStoreProvider(&execution.run.Reads)
-	expected := provider.Data(cm.Named())
+	expected := provider.Lookup(cm.Named()).Data
 	if expected == nil {
 		b.Fatal("lookup failed")
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		if provider.Data(cm.Named()) != expected {
+		if provider.Lookup(cm.Named()).Data != expected {
 			b.Fatal("lookup failed")
 		}
 	}

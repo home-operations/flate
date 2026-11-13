@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/manifest"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
@@ -29,7 +31,7 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 			fstest.MapFS{"apps/Prod/file": {Data: []byte("x")}},
 			[]request{
 				{
-					Output:   output{Name: "prod", Copy: []operation{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
+					Output:   manifest.ArtifactGeneratorOutput{Name: "prod", Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/apps/Prod", To: "@artifact/Prod"}}},
 					Captures: map[string]string{"App": "prod"},
 				},
 			},
@@ -54,10 +56,13 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 
 			func(t *testing.T) {
 				t.Parallel()
-				spec := specification{
+				spec := manifest.ArtifactGeneratorSpec{
 					PathPattern: tc.pattern,
-					Artifacts: []output{
-						{Name: tc.output, Copy: []operation{{From: "@repo/apps/{App}", To: "@artifact/{App}"}}},
+					Artifacts: []manifest.ArtifactGeneratorOutput{
+						{
+							Name: tc.output,
+							Copy: []manifest.ArtifactGeneratorCopy{{From: "@repo/apps/{App}", To: "@artifact/{App}"}},
+						},
 					},
 				}
 				got, err := expand(t.Context(), &spec, map[string]fs.FS{"repo": tc.input})
@@ -72,7 +77,11 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 						diff := cmp.Diff(
 							tc.want,
 							got,
-							cmp.AllowUnexported(request{}, output{}, operation{}),
+							cmp.AllowUnexported(
+								request{},
+								manifest.ArtifactGeneratorOutput{},
+								manifest.ArtifactGeneratorCopy{},
+							),
 							cmpopts.IgnoreFields(request{}, "work"),
 						)
 						assert.FatalIf(t, diff != "", "%v", diff)
@@ -90,7 +99,7 @@ func TestExpand_Canceled(t *testing.T) {
 	{
 		_, err := expand(
 			ctx,
-			&specification{PathPattern: "@repo/{App}"},
+			&manifest.ArtifactGeneratorSpec{PathPattern: "@repo/{App}"},
 			map[string]fs.FS{"repo": fstest.MapFS{"app/file": {}}},
 		)
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "expand() = %v", err)

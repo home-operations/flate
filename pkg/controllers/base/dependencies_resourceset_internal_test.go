@@ -179,7 +179,10 @@ func TestCollectDeps_ParentAndInputs(t *testing.T) {
 			}
 			deps := c.dependencies(rs, manifest.GateInputs)
 			assert.Diff(t, deps, want)
-			w := &depwait.Waiter{Store: c.Store}
+			var reads store.ReadSet
+			reads.Init(c.Store, rs.Named(), nil)
+			defer reads.Retire()
+			w := &depwait.Waiter{Store: &reads, Missing: depwait.NewMissingPolicy(nil)}
 			assert.Equal(t, rs.DependsOn[0].Ready, false)
 			assert.Equal(t, w.Classify(t.Context(), deps[0], manifest.DrainNone).Kind, schedule.Blocked)
 		})

@@ -18,6 +18,12 @@ import (
 
 func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 	t.Parallel()
+	for _, regime := range []string{"missing", "shallow"} {
+		t.Run("dependency namespaces/"+regime, func(t *testing.T) {
+			t.Parallel()
+			testDependencyNamespaceHistory(t, regime)
+		})
+	}
 
 	baseRoot, headRoot := t.TempDir(), t.TempDir()
 	for i, root := range []string{baseRoot, headRoot} {
@@ -53,8 +59,7 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 		StrictSubstitutions: true,
 		Tree:                Tree{},
 	}
-	renderedTrees1, err := RenderTrees(
-		t.Context(),
+	renderedTrees1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				RepoRoot:        baseRoot,
@@ -92,11 +97,15 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 			got := substitutionValue(t, side.Result, consumer)
 			assert.FatalIf(t, got != want, "changed consumer got %q, want %q", got, want)
 		}
-		assert.FatalIf(t, !side.filter.ShouldReconcile(consumer) || side.filter.ShouldReconcile(stable) ||
-			side.Store().GetArtifact(stable, store.ArtifactContent) != nil ||
-			!side.Store().
-				ReportHidden(source.Obj.Named()),
-			"%v", "selected-consumer admission or supplied-object isolation failed")
+		assert.FatalIf(
+			t,
+			!side.selection.Snapshot().Reconcile(consumer) || side.selection.Snapshot().Reconcile(stable) ||
+				side.Store().GetArtifact(stable, store.ArtifactContent) != nil ||
+				!side.Store().
+					ReportHidden(source.Obj.Named()),
+			"%v",
+			"selected-consumer admission or supplied-object isolation failed",
+		)
 	}
 	for _, side := range []Rendered{base, head} {
 		batches := slices.DeleteFunc(canonicalBatches(side.Result), func(batch struct {
@@ -141,12 +150,12 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 				BaseInput: testDirectoryInput(t, baseRoot),
 			},
 		)
-		res, err := o.render(t.Context())
+		res, err := o.render(t.Context(), t)
 		assert.FatalIf(t, err != nil, "%v", err)
 		id := testutil.KustomizationID("apps", "consumer")
 		assert.FatalIf(
 			t,
-			o.filter.ShouldReconcile(id) || len(res.Manifests) != 0,
+			o.selection.Snapshot().Reconcile(id) || len(res.Manifests) != 0,
 			"%v",
 			"external input selected unchanged consumer",
 		)
@@ -206,8 +215,7 @@ func testRenderTreesSuppliedTransitionsMatchFullCase1Part1(
 	t *testing.T, inputs *testRenderTreesSuppliedTransitionsMatchFullCase1Part1Inputs,
 ) {
 	t.Helper()
-	paired, err := RenderTrees(
-		t.Context(),
+	paired, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{RepoRoot: (*inputs.roots)[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: (*inputs.roots)[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -237,7 +245,7 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	last.Doc = testutil.ObjectDocument(last.Obj)
 	first.Doc = testutil.ObjectDocument(first.Obj)
 	o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.Declaration{first, last}, Path: root})
-	res, err := o.render(t.Context())
+	res, err := o.render(t.Context(), t)
 	assert.FatalIf(t, err != nil, "%s", err)
 
 	id := testutil.KustomizationID("apps", "consumer")
@@ -326,19 +334,19 @@ func canonicalBatches(res *Result) []struct {
 	return batches
 }
 
-func TestRenderTrees_RequiredPostBuildNotWaived(t *testing.T) {
+func TestRenderTrees_RequiredPostBuildPermission(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 		for _, allowed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/allowed=%t", kind, allowed), func(t *testing.T) {
 				t.Parallel()
-				testRenderTreesRequiredPostBuildNotWaivedCase1(t, &kind, &allowed)
+				testRenderTreesRequiredPostBuildPermissionCase1(t, &kind, &allowed)
 			})
 		}
 	}
 }
 
-func testRenderTreesRequiredPostBuildNotWaivedCase1(t *testing.T, kind *string, allowed *bool) {
+func testRenderTreesRequiredPostBuildPermissionCase1(t *testing.T, kind *string, allowed *bool) {
 	t.Helper()
 
 	roots := []string{t.TempDir(), t.TempDir()}
@@ -374,7 +382,25 @@ func testRenderTreesRequiredPostBuildNotWaivedCase1(t *testing.T, kind *string, 
 			manifest.KindCustomResourceDefinition,
 		}
 	}
-	runs, err := RenderTrees(t.Context(), trees, cfg)
+	runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
+	if *allowed {
+		assert.NoError(t, err)
+		assert.Equal(t, len(runs), 2)
+		for _, run := range runs {
+			id := testutil.KustomizationID("apps", "consumer")
+			assert.NoError(t, run.Err)
+			assert.FatalIf(t, run.Result == nil, "missing result on side %v", run.ID)
+			assert.Equal(t, len(run.Result.Failed), 0)
+			output := outputByParent(run.Result.Manifests)[id]
+			assert.Equal(t, len(output), 1)
+			assert.Diff(t, output[0]["data"], map[string]any{"value": fmt.Sprintf("${VALUE}-%d", run.ID.Side)})
+			warnings := run.Orchestrator.store.Warnings()
+			assert.Equal(t, len(warnings), 1)
+			assert.Equal(t, warnings[0].Category, manifest.WarnUnresolvedSubstitution)
+			assert.Equal(t, warnings[0].Count, 1)
+		}
+		return
+	}
 	assert.FatalIf(t, err == nil || len(runs) != 2,
 		"paired required input admitted: %+v %v", runs, err)
 
@@ -458,6 +484,7 @@ func TestRender_SubstitutionDeferredEntry(t *testing.T) {
 		"deferred entry published an effective child during discovery",
 	)
 	result, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(result.Close)
 	assert.FatalIf(t, err != nil,
 		"deferred entry did not progress: %v; failed=%v blocked=%v",
 		err,
@@ -519,18 +546,19 @@ func TestRenderTrees_IgnoredRequiredSubstitution(t *testing.T) {
 			Path:     filepath.Join(root, "flux"),
 		}
 	}
-	runs, runErr := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
+	runs, runErr := renderTreesForTest(t.Context(), t, trees, Config{Concurrency: 2})
 	assert.FatalIf(t, len(runs) != 2, "runs=%v err=%v", runs, runErr)
 	consumer := testutil.KustomizationID("flux-system", "consumer")
-	selected, selectedErr, remainder := Select(
+	projectedResults0, projectionErrors0 := Select(
 		runs,
 		runErr,
 		[]manifest.NamedResource{testutil.KustomizationID("", "")},
 		nil,
 	)
+	selected, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	for _, run := range runs {
-		adaptedResult1 := run.filter.Membership(consumer)
-		needed, output := adaptedResult1.Needed, adaptedResult1.Selected
+		adaptedResult1 := run.selection.Snapshot()
+		needed, output := adaptedResult1.Reconcile(consumer), adaptedResult1.Output(consumer)
 		status, present := run.Store().GetStatus(consumer)
 		t.Logf(
 			"side=%d needed=%t selected=%t status=%s present=%t rawFailure=%v selectedFailure=%v rawError=%v selectedError=%v",
@@ -579,8 +607,7 @@ func testRenderTreesSuppliedTransitionsMatchFullCase1Part1Tail(
 	t.Helper()
 
 	for i, root := range *(*inputs.roots) {
-		full, err := RenderTrees(
-			t.Context(),
+		full, err := renderTreesForTest(t.Context(), t,
 			[]Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, (*(*inputs.cfg)),
 		)
 		assert.NoError(t, err)

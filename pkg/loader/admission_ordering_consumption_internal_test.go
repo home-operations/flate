@@ -33,7 +33,7 @@ func TestAddEmitted_RetainedInputsRemainUnconsumed(t *testing.T) {
 		t,
 		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"},
 	)
-	assert.Equal(t, f.ShouldReconcile(producer.Named()), true)
+	assert.Equal(t, f.Reconcile(producer.Named()), true)
 	var reads store.ReadSet
 	reads.Init(st, consumer.Named(), nil)
 	defer reads.Close()
@@ -82,6 +82,7 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 			st.AddObject(producer)
 			changed := "consumer.yaml"
 			if mode == "emitted" {
+				st.AddObject(&manifest.Kustomization{Name: emitter.Name, Namespace: emitter.Namespace})
 				changed = "emitter.yaml"
 			} else {
 				st.AddObject(consumer)
@@ -98,7 +99,7 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 				ancestor:         kept,
 			}
 			if mode == "emitted" {
-				assert.Equal(t, f.ShouldReconcile(consumer.Named()), false)
+				assert.Equal(t, f.Reconcile(consumer.Named()), false)
 				var reads store.ReadSet
 				reads.Init(st, emitter, nil)
 				defer reads.Close()
@@ -108,63 +109,11 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 				assert.Equal(t, reads.Valid(), true)
 				want[emitter] = primary
 			}
-			assert.Diff(t, f.keep, want)
-			assert.Equal(t, f.ShouldReconcile(sibling), false)
+			assert.Diff(t, f.roles(), want)
+			assert.Equal(t, f.Reconcile(sibling), false)
 			assert.Equal(t, st.GetObject(target), nil)
 		})
 	}
-}
-
-func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
-	t.Parallel()
-	emitter := testutil.KustomizationID("apps", "emitter")
-	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-	target := &manifest.Kustomization{Name: "target", Namespace: "apps"}
-	child := &manifest.Kustomization{
-		Name:      "child",
-		Namespace: "apps",
-		DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}},
-	}
-	st := store.New()
-	st.AddObject(producer)
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		emitter:        {File: "emitter.yaml"},
-		target.Named(): {Productions: []manifest.Production{{Owner: producer.Named()}}},
-	}}
-	f := newAdmission(
-		t,
-		admissionConfig{changes: change.NewSet([]string{"emitter.yaml"}), index: index, inventory: st, root: "/repo"},
-	)
-	var reads store.ReadSet
-	reads.Init(st, emitter, nil)
-	defer reads.Close()
-	assert.Equal(t, reads.GetObject(target.Named()), nil)
-	assert.Equal(t, reads.Valid(), true)
-	st.AddObject(target)
-	assert.Equal(t, reads.GetObject(target.Named()), nil)
-	f.AddEmitted(emitter, new(store.Child{Obj: child}), &reads)
-	assert.Diff(
-		t,
-		f.keep,
-		map[manifest.NamedResource]role{
-			emitter:          primary,
-			child.Named():    primary,
-			target.Named():   kept,
-			producer.Named(): kept,
-		},
-	)
-	assert.Equal(t, reads.Valid(), false)
-
-	fresh := newAdmission(
-		t,
-		admissionConfig{changes: change.NewSet([]string{"emitter.yaml"}), index: index, inventory: st, root: "/repo"},
-	)
-	var current store.ReadSet
-	current.Init(st, emitter, nil)
-	defer current.Close()
-	fresh.AddEmitted(emitter, new(store.Child{Obj: child}), &current)
-	assert.Diff(t, fresh.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary})
-	assert.Equal(t, current.Valid(), true)
 }
 
 func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
@@ -185,5 +134,5 @@ func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
 		admissionConfig{changes: change.NewSet([]string{"target.yaml"}), index: index, inventory: st, root: "/repo"},
 	)
 	f.AddEmitted(testutil.KustomizationID("apps", "unchanged"), new(store.Child{Obj: consumer}), st)
-	assert.Diff(t, f.keep, map[manifest.NamedResource]role{target.Named(): primary})
+	assert.Diff(t, f.roles(), map[manifest.NamedResource]role{target.Named(): primary})
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-git/v6/plumbing/storer"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 )
@@ -32,7 +34,9 @@ func testGitViewSparseBodyReadsCase(t *testing.T, size *struct {
 		mode:   Source,
 		nodes:  map[string]*gitNode{".": {name: ".", mode: fs.ModeDir | 0o755}},
 	}
-	g.storers.New = func() any { return &testutil.CountingStorer{Storer: fixture.Repo.Storer, Reads: reads} }
+	g.newStorer = func() storer.EncodedObjectStorer {
+		return &testutil.CountingStorer{Storer: fixture.Repo.Storer, Reads: reads}
+	}
 	input := &FS{view: g, snapshot: &localPolicy{}}
 	commit, err := fixture.Repo.CommitObject(fixture.Base)
 	assert.NoError(t, err)

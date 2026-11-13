@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"runtime"
 	"slices"
+	"sync"
 	"unicode/utf8"
 
 	"sigs.k8s.io/yaml"
@@ -18,17 +20,10 @@ type Format string
 
 // Format values understood by the -o flag.
 const (
-	FormatTable  Format = "table"
-	FormatYAML   Format = "yaml"
-	FormatJSON   Format = "json"
-	FormatName   Format = "name"
-	FormatHuman  Format = "human"
-	FormatGitHub Format = "github"
-	FormatDiff   Format = "diff"
-	FormatHTML   Format = "html"
-	FormatBrief  Format = "brief"
-	FormatGitLab Format = "gitlab"
-	FormatGitea  Format = "gitea"
+	FormatTable Format = "table"
+	FormatYAML  Format = "yaml"
+	FormatJSON  Format = "json"
+	FormatName  Format = "name"
 )
 
 // Encoder writes prepared values to one destination with resolved format and color.
@@ -142,6 +137,9 @@ type Column struct {
 	Key    string
 }
 
+// yamlWorkers bounds marshaling fan-out: wider pools gain no wall time and hold more transient buffers.
+const yamlWorkers = 8
+
 // gutter is the fixed-width padding appended after each column except the last.
 const gutter = 4
 
@@ -201,15 +199,26 @@ func writeCol(b *bytes.Buffer, value string, width int, last bool) {
 
 // yamlMulti emits a multi-document YAML stream.
 func (e Encoder) yamlMulti(docs []map[string]any) error {
-	for _, d := range docs {
-		out, err := yaml.Marshal(d)
-		if err != nil {
+	outs := make([][]byte, len(docs))
+	errs := make([]error, len(docs))
+	workers := min(runtime.GOMAXPROCS(0), yamlWorkers, len(docs))
+	var wg sync.WaitGroup
+	for worker := range workers {
+		wg.Go(func() {
+			for i := worker; i < len(docs); i += workers {
+				outs[i], errs[i] = yaml.Marshal(docs[i])
+			}
+		})
+	}
+	wg.Wait()
+	for i, out := range outs {
+		if errs[i] != nil {
+			return fmt.Errorf("encode output: %w", errs[i])
+		}
+		if _, err := io.WriteString(e.Writer, "---\n"); err != nil {
 			return fmt.Errorf("encode output: %w", err)
 		}
-		if _, writeStringErr := io.WriteString(e.Writer, "---\n"); writeStringErr != nil {
-			return fmt.Errorf("encode output: %w", writeStringErr)
-		}
-		if _, err = e.Writer.Write(out); err != nil {
+		if _, err := e.Writer.Write(out); err != nil {
 			return fmt.Errorf("encode output: %w", err)
 		}
 	}

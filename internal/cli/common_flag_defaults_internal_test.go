@@ -19,7 +19,7 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 	assert.Equal(t, buildOrchCfg(&commonFlags{}).SourceRetry, sourcecache.RetryConfig{
 		Attempts: 3, MinWait: 200 * time.Millisecond, MaxWait: 3 * time.Second, Jitter: 0.1,
 	})
-	cmd := New("test")
+	cmd := New("test", RunConfig{})
 	build, _, err := cmd.Find([]string{"build", "all"})
 	assert.FatalIf(t, err != nil, "find build all: %v", err)
 	for _, name := range []string{"path", "namespace", "output", "concurrency", "skip-kinds"} {
@@ -31,12 +31,12 @@ func TestBindCommon_DefaultValues(t *testing.T) {
 	opts := buildOrchCfg(&flags).HelmOptions
 	assert.Equal(t, opts.SkipCRDs, true)
 	assert.Equal(t, opts.SkipTests, true)
-	assert.Diff(t, opts.SkipKinds, []string{"Secret"})
+	assert.Diff(t, opts.SkipKinds, []string{"CustomResourceDefinition", "Secret"})
 }
 
 func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {
 	t.Parallel()
-	cmd := New("test")
+	cmd := New("test", RunConfig{})
 	for _, tc := range []struct {
 		path, use, short string
 		aliases          []string
@@ -136,7 +136,7 @@ func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {
 		for name, want := range map[string]string{"kube-version": "1.31.2", "api-versions": "fixture.example/v1", "enable-dns": "true"} {
 			assert.Equal(t, sub.Flags().Lookup(name).Value.String(), want)
 		}
-		fresh, _, err := New("test").Find(argv)
+		fresh, _, err := New("test", RunConfig{}).Find(argv)
 		assert.NoError(t, err)
 		for _, name := range []string{"kube-version", "api-versions", "enable-dns"} {
 			assert.Equal(t, fresh.Flags().Lookup(name).Value.String(), fresh.Flags().Lookup(name).DefValue)

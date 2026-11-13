@@ -17,12 +17,13 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -79,7 +80,7 @@ func TestFetcher_SourceLinksOmitted(t *testing.T) {
 		}
 	}
 	mustCommitFile(t, src, "hello.txt", "hi")
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	art, err := fetchtest.Fetch(
 		t.Context(),
 		f.Fetch,
@@ -127,7 +128,7 @@ func TestFetcher_LocalFileURL(t *testing.T) {
 		URL: "file://" + src,
 	}
 
-	f := &Fetcher{Cache: cache}
+	f := &Fetcher{Network: networktest.New(t), Cache: cache}
 	art, err := fetchtest.Fetch(
 		context.Background(),
 		f.Fetch,
@@ -200,13 +201,15 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 				if strings.Contains(url, ":") && !strings.Contains(url, "://") {
 					identity, signer := testSSHIdentity(t)
 					repo.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
-					inputs.secrets = func(string, string) *manifest.Secret {
-						return &manifest.Secret{
+					inputs.secrets = func(string, string) store.ReferenceFacts {
+						secretInput := &manifest.Secret{
 							StringData: map[string]any{
 								"identity":    identity,
 								"known_hosts": "host.xz " + string(ssh.MarshalAuthorizedKey(signer.PublicKey())),
 							},
 						}
+
+						return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 					}
 				}
 				_, err := fetchtest.Fetch(
@@ -282,9 +285,12 @@ func TestFetcher_References(t *testing.T) {
 		warmCommit        string
 		recurse           bool
 		wantErr           bool
+		invalidInput      bool
 		errText           string
 		localAcquisitions uint64
 	}{
+		{name: "invalid full commit", ref: &sourcev1.GitRepositoryRef{Commit: strings.Repeat("g", 40)}, wantErr: true, invalidInput: true},
+		{name: "invalid commit branch", ref: &sourcev1.GitRepositoryRef{Commit: first, Branch: "bad branch"}, wantErr: true, invalidInput: true},
 		{name: "HEAD", depth: 1, want: tip, files: []string{"hello.txt", "second.txt"}, localAcquisitions: 1},
 		{
 			name:              "tag",
@@ -343,20 +349,20 @@ func TestFetcher_References(t *testing.T) {
 			ref:               &sourcev1.GitRepositoryRef{Commit: first},
 			want:              first,
 			absent:            []string{"version.txt"},
-			localAcquisitions: 2,
+			localAcquisitions: 1,
 		},
 		{
 			name:              "commit precedes name",
 			ref:               &sourcev1.GitRepositoryRef{Commit: first, Name: "refs/tags/v2.0.0"},
 			want:              first,
 			absent:            []string{"version.txt"},
-			localAcquisitions: 2,
+			localAcquisitions: 1,
 		},
 		{
 			name:              "commit precedes unresolvable name",
 			ref:               &sourcev1.GitRepositoryRef{Commit: first, Name: "refs/pull/does-not-exist/head"},
 			want:              first,
-			localAcquisitions: 2,
+			localAcquisitions: 1,
 		},
 		{
 			name:       "commit branch reachability",
@@ -390,7 +396,7 @@ func TestFetcher_SparseCheckout(t *testing.T) {
 		"infra/c/manifest.yaml":    "infra",
 	}
 	mustInitRepoWithFiles(t, src, files)
-	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
 	for _, tc := range []struct {
 		prefix string
 		want   []string
@@ -436,7 +442,7 @@ func TestFetcher_AppliesSpecIgnore(t *testing.T) {
 		URL:    "file://" + src,
 		Ignore: &patterns,
 	}
-	f := &Fetcher{Cache: cache}
+	f := &Fetcher{Network: networktest.New(t), Cache: cache}
 	art, err := fetchtest.Fetch(
 		context.Background(),
 		f.Fetch,
@@ -478,7 +484,7 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 		Reference: &sourcev1.GitRepositoryRef{Commit: commit},
 		Ignore:    &patterns,
 	}
-	f := &Fetcher{Cache: cache}
+	f := &Fetcher{Network: networktest.New(t), Cache: cache}
 	var work [2]manifest.WorkRecorder
 	for side := range work {
 		work[side].Key = manifest.WorkKey{
@@ -529,7 +535,7 @@ func TestFetcher_CommitHitSurvivesIgnore(t *testing.T) {
 				counts[string(record.Key.Phase)] = sum
 			}
 		}
-		wantAcquisition := manifest.WorkCounts{Attempts: 1, Completed: 1, LocalAcquisitions: 2}
+		wantAcquisition := manifest.WorkCounts{Attempts: 1, Completed: 1, LocalAcquisitions: 1}
 		wantCache := manifest.WorkCounts{Attempts: 1, Completed: 1}
 		if side == 1 {
 			wantAcquisition = manifest.WorkCounts{}
@@ -636,8 +642,7 @@ func malformedViewRepo(t *testing.T) string {
 	tree.Entries = append(
 		[]object.TreeEntry{{Name: "a-module", Mode: filemode.Submodule, Hash: fixture.head}},
 		tree.Entries...)
-	encoded := fixture.repo.Storer.NewEncodedObject()
-	assert.NoError(t, tree.Encode(encoded))
+	var encoded plumbing.EncodedObject = testutil.GitMalformedTree(t, tree, 1)
 	commit.TreeHash, err = fixture.repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	encoded = fixture.repo.Storer.NewEncodedObject()
@@ -668,7 +673,7 @@ func TestFetcher_GenerationAdmission(t *testing.T) {
 					if disk {
 						root = t.TempDir()
 					}
-					f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+					f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New)}
 					repo := &manifest.GitRepository{URL: "file://" + src}
 					policy := sourcecache.Policy{MaxAge: time.Hour}
 					artifact, err := fetchtest.Fetch(

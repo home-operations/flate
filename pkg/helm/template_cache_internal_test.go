@@ -209,7 +209,7 @@ data:
 		assert.NoError(t, err)
 
 		var record renderRecord
-		assert.NoError(t, decodeTestRecord(data, &record))
+		assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
 		docs, err := testutil.DecodeRender(record.Output)
 		assert.NoError(t, err)
 		return docs
@@ -231,7 +231,7 @@ data:
 			key,
 			&cache.Policy{},
 			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				writeTestRecordErr := writeTestRecord(
+				writeTestRecordErr := writeTestRecord(t.Context(),
 					w,
 					key,
 					&renderRecord{Output: encodedRender(t, data), Analysis: analysis},

@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/home-operations/flate/pkg/schedule"
+
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/inputprojection"
@@ -153,23 +155,38 @@ func TestHistory_RemovedPathSourceQualification(t *testing.T) {
 
 func TestRender_ChangedPathThroughGeneratedSource(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct{ name, kind, declaration string }{
+		{name: "produced self", kind: manifest.KindGitRepository, declaration: `    apiVersion: source.toolkit.fluxcd.io/v1
+    kind: GitRepository
+    metadata: {name: generated, namespace: apps}
+    spec: {url: https://fixture.invalid/repo}
+    ---
+`},
+		{name: "missing git", kind: manifest.KindGitRepository},
+		{name: "missing oci", kind: manifest.KindOCIRepository},
+		{name: "missing bucket", kind: manifest.KindBucket},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertChangedPathThroughGeneratedSource(t, tc.kind, tc.declaration)
+		})
+	}
+}
+
+func assertChangedPathThroughGeneratedSource(t *testing.T, kind, declaration string) {
+	t.Helper()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/producer.yaml", `apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: producer, namespace: apps}
 spec:
   resourcesTemplate: |
-    apiVersion: source.toolkit.fluxcd.io/v1
-    kind: GitRepository
-    metadata: {name: generated, namespace: apps}
-    spec: {url: https://fixture.invalid/repo}
-    ---
-    apiVersion: kustomize.toolkit.fluxcd.io/v1
+`+declaration+`    apiVersion: kustomize.toolkit.fluxcd.io/v1
     kind: Kustomization
     metadata: {name: generated, namespace: apps}
     spec:
       path: ./apps/generated
-      sourceRef: {kind: GitRepository, name: generated}
+      sourceRef: {kind: `+kind+`, name: generated}
 `)
 	testutil.WriteFile(t, root, "apps/generated/kustomization.yaml", "resources: [payload.yaml]\n")
 	testutil.WriteFile(
@@ -189,7 +206,7 @@ spec:
 		if changed {
 			tree.ExternalChanges = change.NewSet([]string{"apps/generated/payload.yaml"})
 		}
-		results, err := RenderTrees(t.Context(), []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		results, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(results), 1)
 		assert.NoError(t, results[0].Err)
@@ -277,7 +294,7 @@ spec:
 		if changed {
 			tree.ExternalChanges = change.NewSet([]string{"apps/workload/payload.yaml"})
 		}
-		results, err := RenderTrees(t.Context(), []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		results, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(results), 1)
 		if results[0].Err != nil {
@@ -345,6 +362,7 @@ func TestRender_ChangedSubstitutedChildPath(t *testing.T) {
 			assert.FatalIf(t, localErr != nil, "%v", localErr)
 		}
 		result, err := o.collectResult(o.run(t.Context()))
+		t.Cleanup(result.Close)
 		assert.FatalIf(t, err != nil, "%v", err)
 		return result
 	}
@@ -433,11 +451,11 @@ func testBuildChangeFilterReclaimsProbesCase(
 		declaration := current.store.GetObject(owner).(*manifest.Kustomization)
 		done := make(chan struct{})
 		runtime.AddCleanup(declaration, func(done chan struct{}) { close(done) }, done)
-		err := current.buildChangeFilter(ctx)
+		err := current.prepareInvocation(ctx)
 		if (*testCaseInput) == "cancel" && current.cache.CanPersistRenders() {
 			assert.Equal(t, errors.Is(err, context.Canceled), true)
 			assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
-			assert.Equal(t, len(current.filter.KeepNames()) == 0, true)
+			assert.Equal(t, len(selectionNamesForTest(current.selection, current.store, current.index)) == 0, true)
 		} else {
 			assert.NoError(t, err)
 			assert.NoError(t, ctx.Err())
@@ -446,12 +464,17 @@ func testBuildChangeFilterReclaimsProbesCase(
 			reads := &store.ReadSet{}
 			reads.Init(current.store, owner, nil)
 			defer reads.Retire()
-			records, narrow := current.controllers.PreviousRender(ctx, declaration, reads)
+			preparedHistory449 := current.controllers.PreviousRender(ctx, declaration, schedule.Result{})
+			if preparedHistory449.Assessment != nil {
+				defer preparedHistory449.Assessment.Close()
+			}
+			records, narrow := preparedHistory449.Records, preparedHistory449.Complete
 			assert.Equal(t, records == nil, true)
 			assert.Equal(t, narrow, false)
 			assert.NoError(t, ctx.Err())
 		}
 		current.store.DeleteObject(owner)
+		current.sweepProbes(false)
 		return done
 	}()
 	for id := range current.store.Sweep() {
@@ -499,6 +522,7 @@ func testRenderChangedPathUsesStaticReadersCase(
 		assert.NoError(t, err)
 		assert.NoError(t, o.bootstrap(t.Context()))
 		result, err := o.collectResult(o.run(t.Context()))
+		t.Cleanup(result.Close)
 		assert.NoError(t, err)
 		o.stop()
 		if strings.HasPrefix((*testCaseInput.file), "apps/") || strings.HasPrefix((*testCaseInput.file), "charts/") {
@@ -616,7 +640,7 @@ spec:
 		configs[side] = Config{CacheDir: cacheDir, Concurrency: 2}
 		warm, err := newTestOrchestrator(t, trees[side], configs[side])
 		assert.NoError(t, err)
-		_, err = warm.render(t.Context())
+		_, err = warm.render(t.Context(), t)
 		assert.NoError(t, err)
 	}
 	assert.NoError(t, os.Remove(filepath.Join(roots[1], "apps", "blue", "cm.yaml")))
@@ -651,13 +675,13 @@ spec:
 	for _, o := range current {
 		o.cfg.ExternalChanges = changes
 		assert.NoError(t, o.bootstrap(t.Context()))
-		assert.Equal(t, o.filter.ShouldReconcile(owner), (*testCaseInput.source) == "bootstrap")
-		assert.Equal(t, o.filter.ShouldReconcile(child), (*testCaseInput.source) == "bootstrap")
+		assert.Equal(t, o.selection.Snapshot().Reconcile(owner), (*testCaseInput.source) == "bootstrap")
+		assert.Equal(t, o.selection.Snapshot().Reconcile(child), (*testCaseInput.source) == "bootstrap")
 	}
 	var previousOutput [2][]byte
 	for run := range 2 {
 		testCaseInput.logs.Reset()
-		results, err := RenderTrees(t.Context(), trees[:], Config{CacheDir: cacheDir, Concurrency: 2})
+		results, err := renderTreesForTest(t.Context(), t, trees[:], Config{CacheDir: cacheDir, Concurrency: 2})
 		assert.NoError(t, err)
 		for side, result := range results {
 			assert.NoError(t, result.Err)

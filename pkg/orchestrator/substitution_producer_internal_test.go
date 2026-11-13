@@ -4,19 +4,256 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+//nolint:paralleltest // The orchestrator helper changes the process-global SSRF guard.
+func TestRender_ComponentSecretProducerSelection(t *testing.T) {
+	for _, name := range []string{
+		"shared-file-ordered", "shared-file-unordered",
+		"parent-context-ordered", "parent-context-unordered",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := testfixture.Materialize(t, "component-secret-producer", name)
+			testutil.WriteFile(t, fixture.Repo, "kubernetes/apps/kustomization.yaml",
+				"resources: [paperwork/paperless/ks.yaml, sibling.yaml, namespace-owner.yaml]\n")
+			testutil.WriteFile(t, fixture.Repo, "kubernetes/apps/namespace-owner.yaml",
+				testutil.KustomizationYAML("namespace-bucket", "paperwork",
+					"  path: ./kubernetes/apps/paperwork/paperless/bucket\n"+
+						"  targetNamespace: other\n"+
+						"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"+
+						"  postBuild: {substitute: {BUCKET: paperless}}\n"))
+			for _, mode := range []string{"narrow", "changed"} {
+				t.Run(mode, func(t *testing.T) {
+					root := fixture.Repo
+					consumer := testutil.KustomizationID("paperwork", "paperwork-paperless")
+					producer := testutil.KustomizationID("paperwork", "paperwork-paperless-bucket")
+					sibling := testutil.KustomizationID("paperwork", "unrelated")
+					other := testutil.KustomizationID("paperwork", "paperwork-paperless-unused-bucket")
+					otherNamespace := testutil.KustomizationID("paperwork", "namespace-bucket")
+					target := manifest.NamedResource{
+						Kind: manifest.KindSecret, Namespace: "paperwork", Name: "paperless",
+					}
+					tree := Tree{
+						Path: filepath.Join(root, "kubernetes", "flux", "cluster"), RepoRoot: root,
+						SelfURLs: []string{"https://example.invalid/cluster.git"},
+					}
+					cfg := Config{RecordWork: true, Concurrency: 2, AllowMissingKinds: []string{manifest.KindSecret}}
+					cfg.Selection = selection.Request{Roots: []manifest.NamedResource{consumer}}
+					if mode == "changed" {
+						cfg.Selection = selection.Request{Changed: true}
+						tree.ExternalChanges = change.NewSet(
+							[]string{"kubernetes/apps/paperwork/paperless/app/helmrelease.yaml"},
+						)
+					}
+					o, err := newTestOrchestrator(t, tree, cfg)
+					assert.NoError(t, err)
+					t.Cleanup(o.stop)
+					assert.NoError(t, o.bootstrap(t.Context()))
+					result, err := o.collectResult(o.run(t.Context()))
+					assert.NoError(t, err)
+					t.Cleanup(result.Close)
+					decision := o.selection.Snapshot()
+					assert.Equal(t, decision.Reconcile(producer), false)
+					assert.Equal(t, decision.Output(producer), false)
+					assert.Equal(t, decision.Output(consumer), true)
+					assert.Equal(t, decision.Reconcile(sibling), false)
+					assert.Equal(t, decision.Output(sibling), false)
+					assert.Equal(t, decision.Reconcile(other), false)
+					assert.Equal(t, decision.Output(other), false)
+					assert.Equal(t, decision.Reconcile(otherNamespace), false)
+					assert.Equal(t, decision.Output(otherNamespace), false)
+					assert.Equal(t, workCounts(result.Work, otherNamespace, manifest.WorkKustomize).Attempts, uint64(0))
+					assert.Equal(t, workCounts(result.Work, other, manifest.WorkKustomize).Attempts, uint64(0))
+					assert.Equal(t, workCounts(result.Work, sibling, manifest.WorkKustomize).Attempts, uint64(0))
+					assert.Equal(t, workCounts(result.Work, producer, manifest.WorkKustomize).Attempts, uint64(0))
+					assert.Equal(t, workCounts(result.Work, producer, manifest.WorkKustomize).Completed, uint64(0))
+					assert.Equal(t, o.store.GetArtifact(producer, store.ArtifactContent), nil)
+					productions := o.store.Productions(target, o.loader.Index)
+					assert.FatalIf(t, !slices.ContainsFunc(productions, func(p manifest.Production) bool {
+						return p.Owner == producer
+					}), "Secret producer relation missing: %+v", productions)
+					_, known := o.loader.Occurrence(producer)
+					assert.Equal(t, known, true)
+				})
+			}
+		})
+	}
+}
+
+//nolint:paralleltest // The orchestrator helper changes the process-global SSRF guard.
+func TestRender_InheritedProducerIdentities(t *testing.T) {
+	for _, tc := range []struct {
+		name, postBuild, target string
+	}{
+		{
+			name:      "reference name",
+			postBuild: "  postBuild: {substituteFrom: [{kind: ConfigMap, name: '${SETTINGS}'}]}\n",
+			target:    "${BUCKET}",
+		},
+		{
+			name:      "declaration name",
+			postBuild: "  postBuild: {substitute: {BUCKET: '${APP}'}}\n",
+			target:    "paperless",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, changed := range []bool{false, true} {
+				t.Run(fmt.Sprintf("changed_%t", changed), func(t *testing.T) {
+					fixture := testfixture.Materialize(t, "component-secret-producer", "shared-file-unordered")
+					testutil.WriteFile(t, fixture.Repo, "kubernetes/flux/cluster/apps.yaml",
+						testutil.KustomizationYAML("cluster-apps", "flux-system",
+							"  path: ./kubernetes/apps\n"+
+								"  sourceRef: {kind: GitRepository, name: flux-system}\n"+
+								"  postBuild: {substitute: {SETTINGS: settings, APP: paperless}}\n"))
+					testutil.WriteFile(t, fixture.Repo, "kubernetes/apps/paperwork/paperless/ks.yaml",
+						testutil.KustomizationYAML("paperwork-paperless-bucket", "paperwork",
+							"  path: ./kubernetes/apps/paperwork/paperless/bucket\n"+
+								"  targetNamespace: paperwork\n"+
+								"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"+
+								tc.postBuild)+"---\n"+
+							testutil.KustomizationYAML("paperwork-paperless", "paperwork",
+								"  path: ./kubernetes/apps/paperwork/paperless/app\n"+
+									"  targetNamespace: paperwork\n"+
+									"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"+
+									"  postBuild: {substituteFrom: [{kind: Secret, name: paperless}]}\n"))
+					testutil.WriteFile(t, fixture.Repo, "kubernetes/flux/cluster/settings.yaml",
+						"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: paperwork}\n"+
+							"data: {BUCKET: paperless}\n")
+					testutil.WriteFile(t, fixture.Repo, "kubernetes/flux/cluster/kustomization.yaml",
+						"resources: [apps.yaml, settings.yaml]\n")
+					testutil.WriteFile(t, fixture.Repo, "kubernetes/components/bucket/external.yaml",
+						"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: '${BUCKET}'}\n"+
+							"spec: {target: {name: '"+tc.target+"'}}\n")
+					consumer := testutil.KustomizationID("paperwork", "paperwork-paperless")
+					producer := testutil.KustomizationID("paperwork", "paperwork-paperless-bucket")
+					tree := Tree{
+						Path: filepath.Join(fixture.Repo, "kubernetes", "flux", "cluster"), RepoRoot: fixture.Repo,
+						SelfURLs: []string{"https://example.invalid/cluster.git"},
+					}
+					cfg := Config{RecordWork: true, Concurrency: 2, Selection: selection.Request{
+						Roots: []manifest.NamedResource{consumer},
+					}}
+					if changed {
+						cfg.Selection = selection.Request{Changed: true}
+						tree.ExternalChanges = change.NewSet(
+							[]string{"kubernetes/apps/paperwork/paperless/app/helmrelease.yaml"},
+						)
+					}
+					o, err := newTestOrchestrator(t, tree, cfg)
+					assert.NoError(t, err)
+					t.Cleanup(o.stop)
+					result, err := o.render(t.Context(), t)
+					assert.NoError(t, err)
+					t.Cleanup(result.Close)
+					assert.Equal(t, o.selection.Snapshot().Reconcile(producer), false)
+					assert.Equal(t, workCounts(result.Work, producer, manifest.WorkKustomize).Attempts, uint64(0))
+					assert.Equal(t, o.store.GetArtifact(producer, store.ArtifactContent), nil)
+					assert.Equal(t, len(outputByParent(result.Manifests)[consumer]) != 0, true)
+					target := manifest.NamedResource{
+						Kind: manifest.KindSecret, Namespace: "paperwork", Name: "paperless",
+					}
+					assert.Equal(t, slices.ContainsFunc(o.store.Productions(target, o.loader.Index),
+						func(p manifest.Production) bool {
+							return p.Owner == producer && p.Declaration.Name == "paperless"
+						}), true)
+				})
+			}
+		})
+	}
+}
+
+//nolint:paralleltest // The orchestrator helper changes the process-global SSRF guard.
+func TestRender_ProducerSubstitutionExclusions(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		changed     bool
+		attempts    uint64
+	}{
+		{name: "enabled narrow", attempts: 1},
+		{name: "enabled changed", changed: true, attempts: 1},
+		{name: "annotation narrow", field: "annotations"},
+		{name: "annotation changed", field: "annotations", changed: true},
+		{name: "label narrow", field: "labels"},
+		{name: "label changed", field: "labels", changed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := testfixture.Materialize(t, "component-secret-producer", "shared-file-unordered")
+			metadata := "metadata:\n  name: '${BUCKET}'\n"
+			if tc.field != "" {
+				metadata += "  " + tc.field + ": {kustomize.toolkit.fluxcd.io/substitute: disabled}\n"
+			}
+			testutil.WriteFile(t, fixture.Repo, "kubernetes/components/bucket/external.yaml",
+				"apiVersion: external-secrets.io/v1\nkind: ExternalSecret\n"+metadata+
+					"spec:\n  target: {name: '${BUCKET}'}\n  data:\n"+
+					"  - secretKey: VALUE\n    remoteRef: {key: bucket}\n")
+			consumer := testutil.KustomizationID("paperwork", "paperwork-paperless")
+			producer := testutil.KustomizationID("paperwork", "paperwork-paperless-bucket")
+			target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "paperwork", Name: "paperless"}
+			tree := Tree{
+				Path: filepath.Join(fixture.Repo, "kubernetes", "flux", "cluster"), RepoRoot: fixture.Repo,
+				SelfURLs: []string{"https://example.invalid/cluster.git"},
+			}
+			cfg := Config{RecordWork: true, Concurrency: 2, Selection: selection.Request{
+				Roots: []manifest.NamedResource{consumer},
+			}}
+			if tc.changed {
+				cfg.Selection = selection.Request{Changed: true}
+				tree.ExternalChanges = change.NewSet(
+					[]string{"kubernetes/apps/paperwork/paperless/app/helmrelease.yaml"},
+				)
+			}
+			o, err := newTestOrchestrator(t, tree, cfg)
+			assert.NoError(t, err)
+			t.Cleanup(o.stop)
+			assert.NoError(t, o.bootstrap(t.Context()))
+			assert.Equal(t, uint64(len(o.store.Productions(target, o.loader.Index))), tc.attempts)
+			declaration := manifest.NamedResource{
+				Group: "external-secrets.io", Kind: "ExternalSecret",
+				Namespace: "paperwork", Name: "paperless",
+			}
+			assert.Equal(t, uint64(len(o.store.Productions(declaration, o.loader.Index))), tc.attempts)
+			result, err := o.collectResult(o.run(t.Context()))
+			if tc.field == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.FatalIf(t, err == nil, "disabled declaration supplied the required Secret")
+				assert.Equal(t, result.Failed[consumer].Message,
+					"dependencies failed: Secret/paperwork/paperless: not found; supply it with --supply")
+				assert.Diff(t, result.Blocked[consumer], []manifest.NamedResource{target})
+			}
+			t.Cleanup(result.Close)
+			decision := o.selection.Snapshot()
+			assert.Equal(t, decision.Reconcile(producer), false)
+			assert.Equal(t, decision.Output(producer), false)
+			assert.Equal(t, decision.Output(consumer), true)
+			assert.Equal(t, workCounts(result.Work, producer, manifest.WorkKustomize).Attempts, uint64(0))
+			assert.Equal(t, o.store.GetArtifact(producer, store.ArtifactContent), nil)
+			for _, name := range []string{"unrelated", "paperwork-paperless-unused-bucket"} {
+				id := testutil.KustomizationID("paperwork", name)
+				assert.Equal(t, decision.Reconcile(id), false)
+				assert.Equal(t, decision.Output(id), false)
+				assert.Equal(t, workCounts(result.Work, id, manifest.WorkKustomize).Attempts, uint64(0))
+			}
+		})
+	}
+}
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestRender_SubstitutionProducerOrdering(t *testing.T) {
@@ -55,7 +292,7 @@ func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
 				"namespace: flux-system\nresources: [missing.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+map[string]string{manifest.KindConfigMap: "configMapGenerator", manifest.KindSecret: "secretGenerator"}[kind]+":\n- name: settings\n  envs: [version.env]\n",
 			)
 			o := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: root})
-			res, err := o.render(t.Context())
+			res, err := o.render(t.Context(), t)
 			consumer, producer := testutil.KustomizationID(
 				"flux-system",
 				"consumer",
@@ -139,7 +376,7 @@ func testRenderSubstitutionProducerOrderingCase(
 	o.tasks.Go(ctx, "producer", func(ctx context.Context) {
 		select {
 		case <-release:
-			d.Dispatch(ctx, producer, manifest.DrainNone)
+			d.Dispatch(ctx, producer, manifest.DrainNone, schedule.Result{})
 		case <-ctx.Done():
 		}
 	})
@@ -149,7 +386,7 @@ func testRenderSubstitutionProducerOrderingCase(
 	}
 	attempt := make(chan *base.Execution, 1)
 	o.tasks.Go(ctx, "consumer", func(ctx context.Context) {
-		result := d.Dispatch(ctx, consumer, manifest.DrainNone)
+		result := d.Dispatch(ctx, consumer, manifest.DrainNone, schedule.Result{})
 		attempt <- result.Assessment.(*base.Execution)
 	})
 	var execution *base.Execution
@@ -169,7 +406,7 @@ func testRenderSubstitutionProducerOrderingCase(
 	o.tasks.Go(
 		ctx,
 		"consumer",
-		func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) },
+		func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone, schedule.Result{}) },
 	)
 	o.tasks.BlockTillDone()
 	output, _ := o.store.Get[*manifest.ConfigMap](
@@ -271,7 +508,7 @@ spec:
 		o.tasks.Go(
 			t.Context(),
 			"parent",
-			func(ctx context.Context) { d.Dispatch(ctx, parent, manifest.DrainNone) },
+			func(ctx context.Context) { d.Dispatch(ctx, parent, manifest.DrainNone, schedule.Result{}) },
 		)
 		o.tasks.BlockTillDone()
 		owners := []manifest.NamedResource{
@@ -294,13 +531,13 @@ spec:
 		}
 		release, done := make(chan struct{}), make(chan struct{})
 		o.tasks.Go(t.Context(), "first", func(ctx context.Context) {
-			d.Dispatch(ctx, order[0], manifest.DrainNone)
+			d.Dispatch(ctx, order[0], manifest.DrainNone, schedule.Result{})
 			close(release)
 		})
 		o.tasks.Go(t.Context(), "second", func(ctx context.Context) {
 			select {
 			case <-release:
-				d.Dispatch(ctx, order[1], manifest.DrainNone)
+				d.Dispatch(ctx, order[1], manifest.DrainNone, schedule.Result{})
 			case <-ctx.Done():
 			}
 			close(done)
@@ -327,7 +564,7 @@ func (i testRenderResourceSetConflictingDataConsumersCaseInputs) finishConflicti
 	o.tasks.Go(
 		t.Context(),
 		"consumer",
-		func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone) },
+		func(ctx context.Context) { d.Dispatch(ctx, consumer, manifest.DrainNone, schedule.Result{}) },
 	)
 	o.tasks.BlockTillDone()
 	{

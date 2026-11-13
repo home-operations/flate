@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +20,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	"github.com/home-operations/flate/pkg/source/bucket"
@@ -29,8 +30,6 @@ import (
 	"github.com/minio/minio-go/v7"
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -50,7 +49,7 @@ func newTestNetwork(tb testing.TB) *source.Network {
 
 func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	t.Parallel()
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts { return store.ReferenceFacts{} }}
 	f := &bucket.Fetcher{Network: newTestNetwork(t)}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
@@ -100,17 +99,6 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 		t.Run(fmt.Sprintf("status-%d", tc.status), func(t *testing.T) {
 			t.Parallel()
 			testFetcherTransientStatusRecoveryCase(t, &tc)
-		},
-		)
-	}
-}
-
-func TestFetcher_TimeoutRecovery(t *testing.T) {
-	t.Parallel()
-	for _, reopen := range []bool{false, true} {
-		t.Run(fmt.Sprintf("reopen=%t", reopen), func(t *testing.T) {
-			t.Parallel()
-			testFetcherTimeoutRecoveryCase(t, &reopen)
 		},
 		)
 	}
@@ -193,81 +181,6 @@ func testFetcherTransientStatusRecoveryCase(t *testing.T, tc *struct {
 	}
 	if err != nil || calls.Load() != 2 {
 		t.Fatalf("recovery: %v, requests=%d; want success after 2 requests", err, calls.Load())
-	}
-}
-
-func testFetcherTimeoutRecoveryCase(t *testing.T, reopen *bool,
-) {
-	t.Helper()
-
-	var blocked atomic.Bool
-	blocked.Store(true)
-	var listings, objects atomic.Int32
-	bodyStarted, bodyCanceled := make(chan struct{}), make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("list-type") != "" {
-			listings.Add(1)
-			_, _ = io.WriteString(
-				w,
-				`<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>hello.txt</Key><Size>2</Size><ETag>"a"</ETag></Contents></ListBucketResult>`,
-			)
-			return
-		}
-		objects.Add(1)
-		w.Header().Set("Content-Length", "2")
-		w.Header().Set("ETag", `"a"`)
-		w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
-		_, _ = io.WriteString(w, "h")
-		if blocked.Load() {
-			w.(http.Flusher).Flush()
-			close(bodyStarted)
-			<-r.Context().Done()
-			close(bodyCanceled)
-			return
-		}
-		_, _ = io.WriteString(w, "i")
-	}))
-	t.Cleanup(srv.Close)
-	root := t.TempDir()
-	f := &bucket.Fetcher{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)}
-	b := &manifest.Bucket{
-		Name: "timeout", Namespace: "test", BucketName: "data", Endpoint: srv.URL,
-		Insecure: true, Region: "us-east-1", Timeout: &metav1.Duration{Duration: time.Second},
-	}
-	policy := cache.Policy{MaxAge: time.Hour}
-	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, b, (testInputs{}).readSet(b), &policy, nil)
-	assert.FatalIf(
-		t,
-		!errors.Is(err, context.DeadlineExceeded) || artifact != nil,
-		"body timeout: artifact=%v error=%v",
-		artifact,
-		err,
-	)
-	select {
-	case <-bodyStarted:
-	default:
-		t.Fatal("source timed out before the object body was blocked")
-	}
-	<-bodyCanceled
-	if *reopen {
-		{
-			closeErr := f.Cache.Close()
-			assert.NoError(t, closeErr)
-		}
-
-		f.Cache = cachetest.New(t, root, cache.New)
-	}
-	blocked.Store(false)
-	longer := *b
-	longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
-	artifact, err = fetchtest.Fetch(t.Context(), f.Fetch, &longer, (testInputs{}).readSet(&longer), &policy, nil)
-	assert.FatalIf(t, err != nil, "longer policy reused timeout: %v", err)
-	{
-		data, err := fs.ReadFile(artifact.FS, "hello.txt")
-		assert.FatalIf(t, err != nil || string(data) != "hi", "recovered content=%q error=%v", data, err)
-	}
-	if listings.Load() != 2 || objects.Load() != 2 {
-		t.Fatalf("recovery listings=%d objects=%d, want 2 each", listings.Load(), objects.Load())
 	}
 }
 

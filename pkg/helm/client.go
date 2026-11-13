@@ -18,11 +18,6 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// SecretGetter is the same shape as source.SecretGetter; aliased so
-// the helm Client and the source Fetchers consume one canonical type.
-// The orchestrator wires the same closure into both.
-type SecretGetter = source.SecretGetter
-
 // Client renders HelmReleases. Construct with NewClient.
 type Client struct {
 	// Canonical charts MUST remain immutable; renders clone at the mutation boundary.
@@ -70,7 +65,7 @@ type chartDescription struct {
 func (c *Client) describeChart(
 	ctx context.Context,
 	hr *manifest.HelmRelease,
-	sources Sources,
+	art *store.SourceArtifact,
 ) (chartDescription, error) {
 	if hr == nil {
 		return chartDescription{}, errors.New("nil HelmRelease")
@@ -79,11 +74,6 @@ func (c *Client) describeChart(
 	if err != nil {
 		return chartDescription{}, err
 	}
-	read := store.ArtifactContent
-	if hr.TracksDigest() {
-		read |= store.ArtifactRevision
-	}
-	art := sources.LocalSourceArtifact(hr.ChartSource(), read)
 	if art == nil || art.FS == nil {
 		return chartDescription{}, manifest.NewError(
 			manifest.ErrObjectNotFound,

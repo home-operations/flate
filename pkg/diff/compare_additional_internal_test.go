@@ -3,6 +3,7 @@ package diff
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"html"
 	"maps"
 	"reflect"
@@ -10,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -50,7 +50,16 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 			},
 		},
 	)
-	out, _, _, err := Compare(left, right, nil, Options{Format: FormatJSON})
+	comparison1, preparationErr1 := Compare(
+		[]Group{{Orig: left, Current: right, SelectedErr: nil}},
+		Options{Format: FormatJSON},
+	)
+	var comparisonOutput1 bytes.Buffer
+	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+	out, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+		preparationErr1,
+		writeErr1,
+	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	var result struct {
 		Changes    []Change      `json:"changes"`
@@ -89,7 +98,16 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 				"example.test/removed:v1",
 			},
 		), "images = %v, notes = %v, err = %v", images, notes, err)
-	out, _, _, err = Compare(left, right, nil, Options{Format: FormatDiff})
+	comparison2, preparationErr2 := Compare(
+		[]Group{{Orig: left, Current: right, SelectedErr: nil}},
+		Options{Format: FormatDiff},
+	)
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	out, _, _, err = comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
+	)
 	assert.FatalIf(t, err != nil || bytes.Contains(out, []byte("Kustomization")) ||
 		!bytes.Contains(out, []byte("Deployment apps/changed")), "ownerless heading = %q, err = %v", out, err)
 }
@@ -121,7 +139,16 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 			originalLeft := manifest.DeepCopyMap(before.Manifest)
 			originalRight := manifest.DeepCopyMap(after.Manifest)
 			originalSubjects := maps.Clone(left.Subjects)
-			out, warnings, _, err := Compare(left, right, nil, Options{Format: FormatJSON})
+			comparison3, preparationErr3 := Compare(
+				[]Group{{Orig: left, Current: right, SelectedErr: nil}},
+				Options{Format: FormatJSON},
+			)
+			var comparisonOutput3 bytes.Buffer
+			writeErr3 := comparison3.Write(&comparisonOutput3, nil)
+			out, warnings, _, err := comparisonOutput3.Bytes(), comparison3.Groups[0].Warnings, comparison3.Groups[0].Suppressed, errors.Join(
+				preparationErr3,
+				writeErr3,
+			)
 			assert.FatalIf(t, err != nil, "%v", err)
 			var result struct {
 				Changes []Change `json:"Changes"`
@@ -143,7 +170,16 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 				)
 			}
 			for _, format := range []Format{FormatHTML, FormatDiff} {
-				out, _, _, err := Compare(left, right, nil, Options{Format: format})
+				comparison4, preparationErr4 := Compare(
+					[]Group{{Orig: left, Current: right, SelectedErr: nil}},
+					Options{Format: format},
+				)
+				var comparisonOutput4 bytes.Buffer
+				writeErr4 := comparison4.Write(&comparisonOutput4, nil)
+				out, _, _, err := comparisonOutput4.Bytes(), comparison4.Groups[0].Warnings, comparison4.Groups[0].Suppressed, errors.Join(
+					preparationErr4,
+					writeErr4,
+				)
 				assert.FatalIf(t, err != nil, "%v", err)
 				want := "--- ConfigMap changed (cluster)\n+++ ConfigMap changed (cluster)\n"
 				if format == FormatHTML {

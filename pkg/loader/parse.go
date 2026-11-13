@@ -81,6 +81,9 @@ func (r documentReader) parseFile(
 		childValues := out
 		for childIndex := range childValues {
 			child := childValues[childIndex]
+			if child.outcome.Err != nil && r.coordinate != nil {
+				return nil, manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome})
+			}
 			if child.Obj != nil && child.outcome.Err == nil && manifest.KindOf(child.Obj).Tracked {
 				tracked = append(tracked, child.Child)
 			}
@@ -92,6 +95,9 @@ func (r documentReader) parseFile(
 //nolint:gocritic // Immutable reader values retain their original snapshot semantics.
 func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
 	r.restore(path)
+	if err := r.cache[path].decodeErr; err != nil {
+		return nil, err
+	}
 	out := r.cache[path].objects
 	if out == nil || !covers(r.cache[path].coverage, r.intent) {
 		out = []parsedObject{}
@@ -103,7 +109,9 @@ func (r documentReader) fileObjects(path string, opts manifest.ParseDocOptions) 
 		}
 		if r.cache != nil {
 			cached := r.cache[path]
+			cached.sourceRoot = new(r).mountedRoot(path)
 			cached.objects, cached.coverage = out, r.intent
+			cached.parsed = nil
 			r.cache[path] = cached
 		}
 	}
@@ -142,6 +150,7 @@ func (r documentReader) decodeFileObjects(
 			return fmt.Errorf("read %s: %w", path, readErr)
 		}
 		cached := r.cache[path]
+		cached.sourceRoot = new(r).mountedRoot(path)
 		cached.possible = application.Contains(data)
 		r.cache[path] = cached
 		if !cached.possible {
@@ -181,6 +190,7 @@ func (r documentReader) censusFile(
 		}
 		if application.Contains([]byte(child.version)) {
 			cached := r.cache[path]
+			cached.sourceRoot = new(r).mountedRoot(path)
 			cached.possible = true
 			r.cache[path] = cached
 		}
@@ -195,11 +205,12 @@ func (r documentReader) censusFile(
 			}
 		}
 		o := compactOccurrence(child.Obj, projection)
+		o.facts.substituteDisabled = child.substituteDisabled
 		o.facts.declared = child.declared
 		origin := new(r).localPath(path)
 		root := new(r).mountedRoot(origin)
 		file, _ := filepath.Rel(root, origin)
-		o.Declaration = OccurrenceID{
+		o.Declaration = occurrenceID{
 			Source:   root,
 			File:     filepath.ToSlash(file),
 			Document: child.outcome.Ordinal,
@@ -209,12 +220,26 @@ func (r documentReader) censusFile(
 		if o.facts.structural != nil {
 			structural = o.facts.structural
 		}
+		var payload *inputPayload
+		if r.recordInputs && o.facts.retained && child.Doc != nil {
+			payload = &inputPayload{}
+			payload.data, _ = manifest.EncodeRender(
+				[]manifest.DocOccurrence{{Document: child.Doc, Ordinal: child.outcome.Ordinal}},
+			)
+		}
 		manifest.ReleaseDoc(child.Doc)
 		outcome := child.outcome
 		outcome.Document = nil
 		facts = append(
 			facts,
-			parsedObject{Obj: structural, Warnings: child.Warnings, fact: &o, outcome: outcome, version: child.version},
+			parsedObject{
+				Obj:      structural,
+				Warnings: child.Warnings,
+				item:     child.item,
+				fact:     &o,
+				outcome:  outcome,
+				version:  child.version, payload: payload,
+			},
 		)
 	})
 	if projectionErr != nil {
@@ -224,7 +249,9 @@ func (r documentReader) censusFile(
 		resolveDeclaredFingerprints(facts)
 	}
 	cached := r.cache[path]
+	cached.sourceRoot = new(r).mountedRoot(path)
 	cached.objects, cached.decodeErr, cached.coverage = facts, err, r.intent
+	cached.parsed = nil
 	r.cache[path] = cached
 	return facts, err
 }
@@ -411,7 +438,10 @@ func (r *documentReader) prepareStreamObject(opts manifest.ParseDocOptions, leaf
 		declared = manifest.Fingerprint(manifest.WithoutOwnershipLabels(leaf.Document))
 	}
 	child, outcome, _ := Prepare(*leaf, opts)
-	return parsedObject{Child: child, outcome: outcome, version: version, declared: declared}
+	return parsedObject{
+		Child: child, outcome: outcome, version: version, declared: declared,
+		substituteDisabled: manifest.HasSubstituteDisabled(child.Doc),
+	}
 }
 
 func covers(coverage, intent manifest.DocumentRole) bool {

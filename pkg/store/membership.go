@@ -29,20 +29,13 @@ type capture struct {
 }
 
 type capturePayload struct {
-	child        Child
+	child        capturedChild
 	record       *Emission
 	payload      *SourceArtifact
 	payloadInput *ArtifactInput
 	payloadOwner *producerSlot
-	source       *sourceBinding
+	source       sourceBinding
 	reference    *Declaration
-}
-
-func (c *capture) sourceBinding() sourceBinding {
-	if c.source != nil {
-		return *c.source
-	}
-	return sourceBinding{}
 }
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
@@ -85,7 +78,7 @@ func (sh *shard) captureLocked(
 		child = sh.captureRepresentativeLocked(id, cellValue, view)
 	}
 	if view != nil {
-		view.child = child
+		view.child = snapshotChild(&child)
 	}
 	return child.Obj, child.policy
 }
@@ -103,7 +96,7 @@ func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValu
 	}
 	available := cell.rooted || !sh.derived && obj != nil
 	if view == nil && bound && available {
-		return Child{Obj: obj, Doc: cell.document, policy: policy}
+		return Child{Obj: obj, Doc: cell.document, Warnings: cell.warnings, policy: policy}
 	}
 	chosen := sh.captureMembersLocked(id, view)
 	if !cell.rooted && (cell.links == nil || !cell.links.retained.Load()) || !bound {
@@ -111,7 +104,7 @@ func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValu
 			record := chosen.slot.current.Load()
 			child := &record.entries[chosen.position].child
 			if view != nil {
-				view.owner, view.record, view.revision, view.child, view.source = chosen.slot, record, record.publication(), *child, &record.entries[chosen.position].binding
+				view.owner, view.record, view.revision, view.source = chosen.slot, record, record.publication(), record.entries[chosen.position].binding
 				view.generation = max(cell.generation, record.entries[chosen.position].objectGeneration)
 				view.position = chosen.position
 			}
@@ -124,20 +117,21 @@ func (sh *shard) captureRepresentativeLocked(id manifest.NamedResource, cellValu
 	if obj == nil && cell.reference != nil {
 		return cell.reference.child()
 	}
-	return Child{Obj: obj, Doc: cell.document, policy: policy}
+	return Child{Obj: obj, Doc: cell.document, Warnings: cell.warnings, policy: policy}
 }
 
 type regionState struct {
 	id                                  manifest.NamedResource
 	before                              manifest.BaseManifest
 	document                            map[string]any
+	warnings                            []manifest.Warning
 	payload                             *SourceArtifact
 	cell                                objectCell
 	live, static, direct, visible, seed bool
 	independent, supportsProducer       bool
 	producerGeneration                  uint64
 	owner                               *producerSlot
-	source                              *sourceBinding
+	source                              sourceBinding
 	bucketGeneration                    uint64
 }
 
@@ -272,7 +266,7 @@ func (s *Store) publishRegionObjectLocked(
 	}
 	var view capture
 	sh.captureLocked(id, new(cell), &view)
-	after := view.child
+	after := view.child.input()
 
 	s.advanceRegionObjectLocked(new(state), &cell, new(view))
 	if cell.generation != generation || cell.retired != retired || cell.hidden != hidden ||
@@ -478,6 +472,7 @@ func (s *Store) captureRegionStateLocked(state *regionState, admissions *[shardC
 	sh.captureLocked(id, new(state.cell), &view)
 	before := view.child
 	state.before, state.document, state.payload = before.Obj, before.Doc, view.payload
+	state.warnings = before.Warnings
 	state.owner, state.source = view.owner, view.source
 	state.visible = !state.cell.hidden && (state.cell.static != nil || len(sh.members[id]) > 0)
 	if state.cell.publication == ^uint64(0) || artifact.publication == ^uint64(0) ||
@@ -551,7 +546,7 @@ func (s *Store) publishRegionVisibilityLocked(region objectRegion) {
 		sh := s.shardFor(id)
 		sh.derived = true
 		if slot := sh.slots[id]; slot != nil {
-			if (slot.visible.Load() != state.live || slot.hidden.Load() == state.live) &&
+			if slot.current.Load() != nil && (slot.visible.Load() != state.live || slot.hidden.Load() == state.live) &&
 				slot.generation == state.producerGeneration {
 				slot.authority = sh.advanceLocked(slot.authority)
 			}
@@ -577,7 +572,7 @@ func (e *Emission) visitEntryTargets(add func(manifest.NamedResource)) {
 func (s *Store) advanceRegionObjectLocked(stateValue *regionState, cell *objectCell, viewValue *capture) {
 	state := *stateValue
 	view := *viewValue
-	after := view.child
+	after := view.child.input()
 	id := state.id
 	sh := s.shardFor(id)
 	referenceChanged := state.before != after.Obj && after.Origin == manifest.SuppliedDeclaration
@@ -585,8 +580,8 @@ func (s *Store) advanceRegionObjectLocked(stateValue *regionState, cell *objectC
 		sh.clearFacetsLocked(id)
 	}
 	cell.policy = after.policy
-	sameDeclaration := reconcileEqual(Child{Obj: state.before, Doc: state.document}, after)
-	sameAuthority := state.owner == view.owner && state.source.equal(view.source) && sameDeclaration
+	sameDeclaration := reconcileEqual(Child{Obj: state.before, Doc: state.document, Warnings: state.warnings}, after)
+	sameAuthority := state.owner == view.owner && state.source.equal(&view.source) && sameDeclaration
 	sameVisibility := cell.retired == state.cell.retired && cell.hidden == state.cell.hidden &&
 		cell.policy == state.cell.policy
 	if state.direct && (cell.links == nil || !cell.links.retained.Load() || !sameAuthority || !sameVisibility) ||
@@ -658,4 +653,41 @@ func (s *Store) appendRegionArtifactLocked(
 		}
 	}
 	return publications
+}
+
+func (u *objectUpdate) advanceCollection(generation uint64) {
+	if captured := u.collection; captured != nil && captured.head != nil {
+		if captured.absent != nil {
+			captured.generation.Store(0)
+		} else {
+			captured.generation.Store(generation)
+		}
+	}
+	if captured := u.inventory; captured != nil && captured.head != nil {
+		captured.generation.Store(0)
+	}
+}
+
+type capturedChild struct {
+	Warnings    []manifest.Warning
+	Obj         manifest.BaseManifest
+	Doc         map[string]any
+	Productions []manifest.Production
+	Origin      manifest.DeclarationOrigin
+	Generated   bool
+	policy      manifest.DeclarationPolicy
+}
+
+func snapshotChild(child *Child) capturedChild {
+	return capturedChild{
+		Obj: child.Obj, Doc: child.Doc, Productions: child.Productions, Warnings: child.Warnings,
+		Origin: child.Origin, Generated: child.Generated, policy: child.policy,
+	}
+}
+
+func (c *capturedChild) input() Child {
+	return Child{
+		Obj: c.Obj, Doc: c.Doc, Productions: c.Productions, Warnings: c.Warnings,
+		Origin: c.Origin, Generated: c.Generated, policy: c.policy,
+	}
 }

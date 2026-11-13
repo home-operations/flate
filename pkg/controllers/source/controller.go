@@ -14,17 +14,27 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
-	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
+
+type localSources interface {
+	Resolve(
+		context.Context,
+		manifest.NamedResource,
+		manifest.BaseManifest,
+		*store.ReadSet,
+	) (store.Child, *store.SourceArtifact, error)
+}
 
 type sourceFacts interface {
 	ExistenceOnly() bool
@@ -47,7 +57,7 @@ type Controller struct {
 	// skip (StatusReady with ReasonSkipped). Wired from
 	// FetchOptions.AllowMissingSecrets via Configure.
 	allowMissingSecrets bool
-	admission           *discovery.Admission
+	admission           localSources
 }
 
 // FetchOptions carries the post-bootstrap state the orchestrator wires
@@ -56,10 +66,10 @@ type Controller struct {
 type FetchOptions struct {
 	// Loader borrows the invocation's declaration admission boundary.
 	Loader              *loader.Loader
-	Filter              *change.Filter
+	Session             *selection.Session
 	AllowMissingSecrets bool
 	// Admission resolves runtime sources against immutable discovery policy.
-	Admission *discovery.Admission
+	Admission localSources
 }
 
 type execution struct {
@@ -81,7 +91,7 @@ func New(s *store.Store, t *task.Service) *Controller {
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle.
 func (c *Controller) Configure(opts FetchOptions, retry cache.RetryConfig) {
-	common := base.Options{Filter: opts.Filter, Loader: opts.Loader}
+	common := base.Options{Session: opts.Session, Loader: opts.Loader}
 	if opts.Loader != nil {
 		common.Index = opts.Loader.Index
 	}
@@ -103,7 +113,7 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 		return false
 	}
 	obj := c.Store.GetObject(id)
-	return obj == nil && id.Group == manifest.SourceDomain || manifest.KindOf(obj).Runnable
+	return obj == nil && id.KindInfo().IsSource() || manifest.KindOf(obj).Runnable
 }
 
 // ReconcileNode returns the captured assessment of a source acquisition.
@@ -111,11 +121,20 @@ func (c *Controller) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	ex := &execution{Controller: c}
 	ex.run.Init(c.Controller, id)
+	ex.run.Take(previous)
 	for {
 		ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
+		if artifact, _ := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); c.admission != nil &&
+			artifact != nil && !artifact.Reads.Valid() {
+			if err := c.construct(ctx, id, false); err != nil {
+				c.Store.UpdateFailure(id, err)
+				return &ex.run
+			}
+		}
 		if ex.acquired == nil || ex.run.Reads.Valid() {
 			return &ex.run
 		}
@@ -126,6 +145,7 @@ func (c *Controller) ReconcileNode(
 			return &ex.run
 		}
 		next.run.Reads.CarryAdvisories(&ex.run.Reads)
+		next.run.Take(schedule.Result{Assessment: &ex.run})
 		ex.run.Retire()
 		ex = next
 	}
@@ -150,16 +170,16 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 				return false, nil
 			}
 			var err error
-			_, selected, err = c.admission.Resolve(ctx, id, obj, c.run.Reads.Work().Scope())
+			_, selected, err = c.admission.Resolve(ctx, id, obj, &c.run.Reads)
 			return selected != nil, err
 		},
 		Resolve: func(ctx context.Context, level manifest.DrainLevel) (*store.SourceArtifact, error) {
+			if artifact := c.resolve(obj, selected); artifact != nil {
+				return artifact, nil
+			}
 			// Declaration and input gates MUST follow credential settlement.
 			if _, err := c.run.RequireRefresh(ctx, obj, manifest.GateParents, level); err != nil {
 				return nil, err
-			}
-			if artifact := c.resolve(obj, selected); artifact != nil {
-				return artifact, nil
 			}
 			if level == manifest.DrainNone {
 				if blocked := c.run.Reads.UnsettledProducers(id); len(blocked) != 0 {
@@ -177,8 +197,8 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 			c.SetPendingUnlessReady(id, "fetching")
 			return nil, nil
 		},
-		Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
-			return c.completeFetch(obj, artifact, unavailable)
+		Complete: func(fetchCtx context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+			return c.completeFetch(fetchCtx, obj, artifact, unavailable)
 		},
 	}, level)
 }
@@ -195,7 +215,12 @@ func (c *execution) resolve(obj manifest.BaseManifest, resolved *store.SourceArt
 	return resolved
 }
 
-func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.SourceArtifact, err error) error {
+func (c *execution) completeFetch(
+	ctx context.Context,
+	obj manifest.BaseManifest,
+	artifact *store.SourceArtifact,
+	err error,
+) error {
 	if artifact != nil {
 		{
 			warningValues3 := artifact.Warnings
@@ -211,7 +236,7 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	}
 	if c.run.Disposition == store.AssessmentReused {
 		if artifact != nil && !artifact.Reads.Valid() {
-			c.Store.SetArtifact(obj.Named(), artifact.WithReads(&c.run.Reads))
+			c.publish(artifact)
 		}
 		return nil
 	}
@@ -220,8 +245,18 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 			c.acquired = artifact
 			return nil
 		}
-		c.Store.SetArtifact(obj.Named(), artifact.WithReads(&c.run.Reads))
+		c.publish(artifact)
 	}
-	slog.Debug("source: fetch complete", "id", manifest.DiagnosticFor(obj.Named(), obj).String())
+	if slog.Default().Enabled(ctx, slog.LevelDebug) {
+		slog.DebugContext(ctx, "source: fetch complete", "id", manifest.DiagnosticFor(obj.Named(), obj).String())
+	}
 	return nil
+}
+
+func (c *execution) publish(artifact *store.SourceArtifact) {
+	for range c.run.Reads.Inputs() {
+		artifact = artifact.WithReads(&c.run.Reads)
+		break
+	}
+	c.Store.SetArtifact(c.run.Reads.ID(), artifact)
 }

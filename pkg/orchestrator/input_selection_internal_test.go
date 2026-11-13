@@ -10,9 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/home-operations/flate/internal/testutil/networktest"
+	"github.com/home-operations/flate/pkg/selection"
+
+	"github.com/home-operations/flate/pkg/schedule"
+
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -28,7 +33,7 @@ import (
 func TestRenderTrees_UnchangedNamedSelection(t *testing.T) {
 	t.Parallel()
 	roots := unchangedNamedSelectionRoots(t)
-	runs, err := RenderTrees(t.Context(), []Tree{
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{
 		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Path: roots[0]},
 		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: roots[1]},
 	}, Config{Concurrency: 2})
@@ -38,7 +43,8 @@ func TestRenderTrees_UnchangedNamedSelection(t *testing.T) {
 	} {
 		t.Run(id.Kind, func(t *testing.T) {
 			t.Parallel()
-			selected, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{id}, nil)
+			projectedResults0, projectionErrors0 := Select(runs, err, []manifest.NamedResource{id}, nil)
+			selected, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.NoError(t, selectedErr)
 			assert.NoError(t, remainder)
 			assert.Equal(t, len(selected), 2)
@@ -91,25 +97,26 @@ func TestRenderTrees_UnchangedNamedSelection(t *testing.T) {
 				}
 				assert.Equal(t, len(result.Manifests), 0)
 			}
-			filtered, selectedErr, remainder := Select(
+			projectedResults1, projectionErrors1 := Select(
 				runs,
 				err,
 				[]manifest.NamedResource{id},
 				map[string]string{"team": "other"},
 			)
+			filtered, selectedErr, remainder := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 			assert.NoError(t, selectedErr)
 			assert.NoError(t, remainder)
 			for _, result := range filtered {
 				assert.Equal(t, result.Counts[id.Kind], 1)
 				assert.Equal(t, len(result.Objects), 0)
 			}
-			full, fullErr := RenderTrees(
-				t.Context(),
+			full, fullErr := renderTreesForTest(t.Context(), t,
 				[]Tree{{Path: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-				Config{Concurrency: 2, Selection: manifest.Selection{Roots: []manifest.NamedResource{id}}},
+				Config{Concurrency: 2, Selection: selection.Request{Roots: []manifest.NamedResource{id}}},
 			)
 			assert.NoError(t, fullErr)
-			objects, selectedErr, remainder := Select(full, fullErr, []manifest.NamedResource{id}, nil)
+			projectedResults2, projectionErrors2 := Select(full, fullErr, []manifest.NamedResource{id}, nil)
+			objects, selectedErr, remainder := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 			assert.NoError(t, selectedErr)
 			assert.NoError(t, remainder)
 			assert.Equal(t, len(objects[0].Objects), 1)
@@ -136,7 +143,7 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 			if cold {
 				runCfg.Cache = cachetest.New(t, "", sourcecache.New)
 			}
-			renderedTrees1, err := RenderTrees(t.Context(), []Tree{
+			renderedTrees1, err := renderTreesForTest(t.Context(), t, []Tree{
 				{
 					RepoRoot: cfg.BaseInput.LocalPath, SelfURLs: []string{url},
 					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
@@ -152,14 +159,14 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 			assert.NoError(t, err)
 			for side, rendered := range []Rendered{base, head} {
 				fixture.assertWork(t, rendered, side, cold)
-				assert.Equal(t, len(rendered.filter.KeepNames()), 0)
+				assert.Equal(t, len(selectionNamesForTest(rendered.selection, rendered.store, rendered.index)), 0)
 				assert.Equal(t, len(rendered.Result.Manifests), 0)
-				assert.Equal(t, rendered.filter.ShouldReconcile(rendered.entryBinding.Producer), false)
+				assert.Equal(t, rendered.selection.Snapshot().Reconcile(rendered.entryBinding.Producer), false)
 				delta, err := change.Detect(
 					t.Context(),
 					base.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
 					head.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact),
-					manifest.WorkScope{},
+					change.DetectConfig{},
 				)
 				assert.NoError(t, err)
 				assert.Diff(t, delta.Paths(), []string(nil))
@@ -218,7 +225,10 @@ func TestRenderTrees_LocalAliasSelfProducer(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: after}\n",
 	)
 	cache := cachetest.New(t, "", sourcecache.New)
-	selected, err := baseline.AutoResolve(t.Context(), root, "HEAD", cache)
+	selected, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: root, Base: "HEAD", Cache: cache},
+	)
 	assert.NoError(t, err)
 	trees := make([]Tree, 0, 2)
 	for side, input := range []*store.SourceArtifact{selected.BaseInput, selected.Source} {
@@ -237,7 +247,7 @@ func TestRenderTrees_LocalAliasSelfProducer(t *testing.T) {
 			},
 		)
 	}
-	rendered, err := RenderTrees(t.Context(), trees, Config{Cache: cache, Concurrency: 2})
+	rendered, err := renderTreesForTest(t.Context(), t, trees, Config{Cache: cache, Concurrency: 2})
 	assert.NoError(t, err)
 	for side, result := range rendered {
 		value := "before"
@@ -343,7 +353,7 @@ func newSelectedSelfFixture(t *testing.T) selectedSelfFixture {
 		root,
 		"source.yaml",
 		"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\n"+
-			"metadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {branch: selected}}\n",
+			"metadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+", ref: {name: refs/heads/selected}}\n",
 	)
 	for i := range 145 {
 		name := fmt.Sprintf("app-%03d", i)
@@ -393,7 +403,10 @@ func newSelectedSelfFixture(t *testing.T) selectedSelfFixture {
 		repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName("selected"), headHash)),
 	)
 	cache := cachetest.New(t, "", sourcecache.New)
-	selected, err := baseline.AutoResolve(t.Context(), root, baseHash.String(), cache)
+	selected, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: root, Base: baseHash.String(), Cache: cache},
+	)
 	assert.NoError(t, err)
 
 	cfg := treeConfig{
@@ -460,12 +473,12 @@ func (f *selectedSelfFixture) assertPreparation(
 		Source: manifest.BootstrapSourceID,
 		Phase:  manifest.WorkPreparation,
 	}
-	delete(preparation, bootstrapKey)
+	assert.Equal(t, preparation[bootstrapKey], manifest.WorkCounts{})
 	files, readers := uint64(2066), uint64(2)
 	sourcePrepares, sourceEntries, sourceReaders := uint64(2), uint64(6), uint64(3)
-	rootReaders, rootEntries := uint64(438), uint64(2650)
+	rootReaders, rootEntries := uint64(438), uint64(2503)
 	if side == 1 {
-		files, readers, rootReaders, rootEntries = 884, 1, 728, 1768
+		files, readers, rootReaders, rootEntries = 884, 1, 728, 1621
 		sourcePrepares, sourceEntries, sourceReaders = 1, 4, 2
 	}
 	assertWitnessPreparations(
@@ -489,7 +502,6 @@ func (f *selectedSelfFixture) assertPreparation(
 				OwnerPrepares: sourcePrepares,
 			},
 		},
-		witnessPreparationLimit(len(f.admissions)),
 	)
 }
 
@@ -552,7 +564,7 @@ func (f *selectedSelfFixture) assertBootstrap(t *testing.T) {
 		assert.NoError(t, o.bootstrap(t.Context()))
 		var execution *controllerbase.Execution
 		o.tasks.Go(t.Context(), "bootstrap-proof", func(ctx context.Context) {
-			execution = o.src.ReconcileNode(ctx, manifest.BootstrapSourceID, manifest.DrainNone)
+			execution = o.src.ReconcileNode(ctx, manifest.BootstrapSourceID, manifest.DrainNone, schedule.Result{})
 		})
 		o.tasks.BlockTillDone()
 		assert.Equal(
@@ -562,11 +574,11 @@ func (f *selectedSelfFixture) assertBootstrap(t *testing.T) {
 		)
 		execution.Close()
 		if side == 0 {
-			assert.Equal(t, len(o.filter.KeepNames()), 0)
+			assert.Equal(t, len(selectionNamesForTest(o.selection, o.store, o.index)), 0)
 		} else {
-			assert.Diff(t, o.filter.KeepNames(), want)
+			assert.Diff(t, selectionNamesForTest(o.selection, o.store, o.index), want)
 		}
-		t.Logf("current-only side=%d exact keep=%v", side, o.filter.KeepNames())
+		t.Logf("current-only side=%d exact keep=%v", side, selectionNamesForTest(o.selection, o.store, o.index))
 		o.stop()
 	}
 }

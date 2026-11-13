@@ -8,6 +8,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -35,7 +36,7 @@ func TestParsedInputs_DeclarationFingerprints(t *testing.T) {
 				})
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection.Changed = true
+			configureSelection(t, l, selection.Request{Changed: true})
 			_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))

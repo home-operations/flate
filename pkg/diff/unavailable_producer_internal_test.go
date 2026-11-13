@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -302,7 +303,16 @@ func testCompareUnavailableProducerPolicyCase(
 	if testCaseInput.tc.keepError {
 		runErr = (*testCaseInput.selectedErr)
 	}
-	out, warnings, suppressed, err := Compare(selected[0], selected[1], runErr, Options{Format: FormatJSON})
+	comparison1, preparationErr1 := Compare(
+		[]Group{{Orig: selected[0], Current: selected[1], SelectedErr: runErr}},
+		Options{Format: FormatJSON},
+	)
+	var comparisonOutput1 bytes.Buffer
+	writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+	out, warnings, suppressed, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+		preparationErr1,
+		writeErr1,
+	)
 	if errors.Is(err, (*testCaseInput.selectedErr)) != testCaseInput.tc.keepError {
 		t.Errorf("selected error = %v; want preserved=%t", err, testCaseInput.tc.keepError)
 	}

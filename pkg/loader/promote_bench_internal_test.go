@@ -15,13 +15,12 @@ func BenchmarkPromoteAvailable(b *testing.B) {
 	idx.Index.Records[cm.Named()] = manifest.DiscoveryRecord{Authored: cm.Named(), Path: "values.yaml"}
 	b.ReportAllocs()
 	for b.Loop() {
-		if promoted, err := Promote(
-			b.Context(),
+		if promoted, err := promoteForTest(b.Context(),
+			b,
 			idx.Store,
 			cm.Named(),
 			PromoteOptions{
 				Record: productionForTest(new(idx.Index.Records[cm.Named()])),
-				Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
 			},
 		); err != nil ||
 			!promoted {

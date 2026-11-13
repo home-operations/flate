@@ -15,7 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -36,9 +39,15 @@ func testFetcherConcurrentCustomTLSCase(t *testing.T, concurrency *int,
 	unblock := sync.OnceFunc(func() { close(release) })
 	var workers sync.WaitGroup
 	fInputs := testInputs{}
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	secrets := map[string]*manifest.Secret{}
-	fInputs.secrets = func(_, name string) *manifest.Secret { return secrets[name] }
+	fInputs.secrets = func(_, name string) store.ReferenceFacts {
+		secretInput := secrets[name]
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	}
 	repos := make([]*manifest.GitRepository, (*concurrency)-1)
 	proxies := make([]*atomic.Int32, len(repos))
 	for i := range repos {

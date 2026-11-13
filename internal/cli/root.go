@@ -19,6 +19,7 @@ import (
 	"io"
 	"log" //nolint:depguard // Standard-log routing must capture or suppress dependency log output.
 	"log/slog"
+	"maps"
 	"os"
 	"os/signal"
 	"syscall"
@@ -26,7 +27,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 )
 
 type renderNoticeKey struct{}
@@ -34,10 +37,17 @@ type renderNoticeKey struct{}
 //nolint:gochecknoglobals // The startup reason is fixed once and replaced by serial diagnostic tests.
 var renderPersistenceDisabledReason = sourcecache.RenderPersistenceDisabledReason()
 
-// New constructs the root command and wires every subcommand into it.
-// Callers that want full control over I/O streams should use Run.
-// version is exposed via --version and the standard cobra template.
-func New(version string) *cobra.Command {
+// RunConfig supplies invocation transports without exposing command-line flags.
+type RunConfig struct {
+	GitTransports sourcegit.Transports
+}
+
+// New snapshots invocation transports before command execution.
+func New(version string, cfg RunConfig) *cobra.Command {
+	cfg.GitTransports = maps.Clone(cfg.GitTransports)
+	network := new(source.Network)
+	_, transportErr := sourcegit.NewClient(sourcegit.ClientConfig{Transports: cfg.GitTransports, Network: network})
+	network.Close()
 	root := &cobra.Command{
 		Use:           "flate",
 		Short:         "Render and compare Flux manifests offline",
@@ -47,13 +57,18 @@ func New(version string) *cobra.Command {
 	}
 	root.PersistentFlags().String("log-level", "error", "Set log level: debug,info,warn,error")
 	root.PersistentFlags().Bool("no-progress", false, "Hide live progress on stderr")
-	root.PersistentPreRunE = prepareCommand
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if transportErr != nil {
+			return transportErr
+		}
+		return prepareCommand(cmd, args)
+	}
 
 	root.AddCommand(
-		newGetCmd(),
-		newBuildCmd(),
-		newDiffCmd(),
-		newTestCmd(),
+		newGetCmd(cfg),
+		newBuildCmd(cfg),
+		newDiffCmd(cfg),
+		newTestCmd(cfg),
 		newCacheCmd(),
 	)
 
@@ -66,24 +81,20 @@ func New(version string) *cobra.Command {
 // suggested process exit code. version is the build identifier
 // surfaced via --version.
 func Execute(version string) int {
-	return run(version, os.Args[1:], os.Stdout, os.Stderr)
+	return run(New(version, RunConfig{}), os.Args[1:], os.Stdout, os.Stderr)
 }
 
-// Run executes flate with the supplied argv and I/O streams, returning
-// the exit code. Test-only — production callers go through Execute.
-func Run(args []string, stdout, stderr io.Writer) int {
-	return run("dev", args, stdout, stderr)
+// Run routes dependency logs through stderr and changes process logging state.
+func Run(args []string, stdout, stderr io.Writer, cfg RunConfig) int {
+	return run(New("dev", cfg), args, stdout, stderr)
 }
 
-// run is the shared body of Execute / Run.
-//
 // A context that listens for SIGINT / SIGTERM is propagated to commands
 // via cobra.Command.Context, so Ctrl-C cleanly cancels in-flight work.
-func run(version string, args []string, stdout, stderr io.Writer) int {
+func run(root *cobra.Command, args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root := New(version)
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)

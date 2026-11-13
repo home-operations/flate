@@ -218,7 +218,9 @@ func TestWalkBucket_Faults(t *testing.T) {
 			t.Run(route+"/"+tc.name, func(t *testing.T) {
 				t.Parallel()
 
-				testWalkBucketFaultsCase(t, &route, &tc)
+				synctest.Test(t, func(t *testing.T) {
+					testWalkBucketFaultsCase(t, &route, &tc)
+				})
 			},
 			)
 		}
@@ -308,7 +310,9 @@ func TestWalkBucket_LargeListedSize(t *testing.T) {
 	for _, ranges := range []bool{false, true} {
 		t.Run(fmt.Sprintf("ranges=%t", ranges), func(t *testing.T) {
 			t.Parallel()
-			testWalkBucketLargeListedSizeCase(t, &ranges)
+			synctest.Test(t, func(t *testing.T) {
+				testWalkBucketLargeListedSizeCase(t, &ranges)
+			})
 		},
 		)
 	}
@@ -353,7 +357,7 @@ func (w *cancelArchiveWriter) Write(p []byte) (int, error) {
 func TestWalkBucket_Ranges(t *testing.T) {
 	t.Parallel()
 
-	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered", "probe_forbidden", "probe_limited", "probe_server"} {
+	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered", "probe_forbidden", "probe_limited", "probe_server", "mixed_etags", "untagged_ignore_cancel", "untagged_ignore_changed"} {
 		t.Run(behavior, func(t *testing.T) {
 			t.Parallel()
 			testWalkBucketRangesCase(t, &behavior)
@@ -493,20 +497,23 @@ func testWalkBucketFaultsCase(t *testing.T, route *string,
 	},
 ) {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		testWalkBucketFaultsCaseCallback(w, r, testWalkBucketFaultsCaseCallbackInputs{route: &route, tc: &tc})
-	},
-	))
-	defer srv.Close()
 	var transfers atomic.Uint64
 	transport := bucketRoundTrip(func(req *http.Request) (*http.Response, error) {
-		response, err := srv.Client().Transport.RoundTrip(req)
-		if err == nil && req.URL.Query().Get("list-type") == "" && response.StatusCode == http.StatusOK {
+		recorder := httptest.NewRecorder()
+		testWalkBucketFaultsCaseCallback(
+			recorder, req, testWalkBucketFaultsCaseCallbackInputs{route: &route, tc: &tc},
+		)
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
+		response := recorder.Result()
+		response.Request = req
+		if req.URL.Query().Get("list-type") == "" && response.StatusCode == http.StatusOK {
 			transfers.Add(1)
 		}
-		return response, err
+		return response, nil
 	})
-	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{
+	client, err := minio.New("bucket.invalid", &minio.Options{
 		Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1, Transport: transport,
 	})
 	assert.NoError(t, err)

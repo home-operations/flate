@@ -12,6 +12,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -47,8 +49,10 @@ func TestHelmRepoTransport_CertSecret(t *testing.T) {
 	r := httpRepo("https://charts.example")
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	ca := testutil.SelfSignedCA(t)
-	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	})
 
 	prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).resolvedHTTP(r)
@@ -71,7 +75,13 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	r.Name, r.Namespace = "charts", "ns"
 	r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	secret := &manifest.Secret{StringData: map[string]any{"ca.crt": testutil.SelfSignedCA(t)}}
-	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) store.ReferenceFacts {
+		secretInput := secret
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	})
 	preparedHTTP(t, f, fInputs, r)
 	secret = nil
 
@@ -118,7 +128,13 @@ func TestHelmRepoTransport_MissingMaterialSoftSkips(t *testing.T) {
 			r := httpRepo("https://charts.example")
 			r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 			secret := &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
-			f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
+			f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) store.ReferenceFacts {
+				secretInput := secret
+				if secretInput == nil {
+					return store.ReferenceFacts{}
+				}
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+			})
 			preparedHTTP(t, f, fInputs, r)
 			secret = &manifest.Secret{StringData: tc.data}
 			prepared, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).resolvedHTTP(r)
@@ -282,7 +298,13 @@ func testHelmRepoTransportClientReuseCase(t *testing.T, ca *string,
 	if (*settings) == "proxy" {
 		t.Setenv("http_proxy", "http://proxy:first@proxy.invalid:8080")
 	}
-	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) store.ReferenceFacts {
+		secretInput := secret
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	})
 	other := *r
 	other.Name = "other"
 	if r.SecretRef != nil {

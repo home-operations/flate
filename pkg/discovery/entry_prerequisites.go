@@ -4,22 +4,22 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 type entryPrerequisites struct {
-	loader        *loader.Loader
-	substitutions values.DependencySubstitutions
-	reads         *store.ReadSet
-	owner         *manifest.Kustomization
-	children      []store.Child
-	batch         map[manifest.NamedResource]manifest.BaseManifest
-	roots         []loader.Occurrence
-	seen          map[manifest.NamedResource]bool
-	source        manifest.NamedResource
+	loader   *loader.Loader
+	reads    *store.ReadSet
+	owner    *manifest.Kustomization
+	children []store.Child
+	batch    map[manifest.NamedResource]manifest.BaseManifest
+	roots    []selection.OccurrenceFacts
+	seen     map[manifest.NamedResource]bool
+	source   manifest.NamedResource
 }
 
 func (e *entryPrerequisites) eligible(owner *manifest.Kustomization, children []store.Child) bool {
@@ -35,22 +35,22 @@ func (e *entryPrerequisites) eligible(owner *manifest.Kustomization, children []
 	}
 	e.seen = map[manifest.NamedResource]bool{}
 
-	e.source = owner.SourceID()
-	if e.source.Name == "" || e.source.Kind == "" {
-		e.source = manifest.BootstrapSourceID
-	}
+	e.source = owner.EffectiveSourceID()
 	return !e.prerequisites(owner)
 }
 
 func (e *entryPrerequisites) prerequisites(obj manifest.BaseManifest) bool {
-	obj = manifest.MapDependsOn(obj, e.substitutions.Resolve, e.substitutions.Resolve)
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.ContentInput() && ref.ArtifactStages == 0 && !ref.Acquisition {
 			facts := e.reads.ReferenceFacts(ref.NamedResource, e.loader.Index, obj.Named())
-			if facts.Data != nil {
+			admission := e.loader.Options.Missing.Admission(&ref, &facts)
+			if admission == selection.AvailableInput {
 				continue
 			}
-			if _, accepted := acceptedApplicationOutput(e.reads, obj.Named()); accepted && facts.AllowsAbsence() {
+			if _, accepted := acceptedApplicationOutput(
+				e.reads,
+				obj.Named(),
+			); accepted && admission == selection.OptionalInput {
 				continue
 			}
 			if !ref.Optional {

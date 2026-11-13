@@ -5,6 +5,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -18,7 +21,7 @@ func BenchmarkRender_Namespace(b *testing.B) {
 			tree, artifact := namespaceChildrenFixtureResult1.tree, namespaceChildrenFixtureResult1.artifact
 			cfg := Config{
 				Concurrency: 2,
-				Selection: manifest.Selection{
+				Selection: selection.Request{
 					Roots: []manifest.NamedResource{
 						testutil.KustomizationID("apps", ""),
 						testutil.HelmReleaseID("apps", ""),
@@ -32,7 +35,13 @@ func BenchmarkRender_Namespace(b *testing.B) {
 			}
 			var renders, fetches int64
 			for b.Loop() {
-				o := newOrchestrator(b.Context(), new(prepared.cfg.Config), new(prepared.cfg.Tree), task.NewBounded(2))
+				o, constructionErr := newOrchestrator(
+					b.Context(),
+					new(prepared.cfg.Config),
+					new(prepared.cfg.Tree),
+					task.NewBounded(2),
+				)
+				assert.NoError(b, constructionErr)
 				fetcher := &generatedOCIFetcher{root: artifact}
 				o.src.Fetchers[manifest.KindOCIRepository] = fetcher
 				var emissions atomic.Int64
@@ -41,7 +50,7 @@ func BenchmarkRender_Namespace(b *testing.B) {
 						emissions.Add(1)
 					}
 				}, false)
-				_, err = o.render(b.Context())
+				_, err = o.render(b.Context(), b)
 				unsub()
 				if err != nil {
 					b.Fatal(err)

@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,13 +11,14 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testfixture"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -58,9 +60,12 @@ func TestRenderTrees_ScopeInputCorpus(t *testing.T) {
 			if strings.Contains(name, "committed") {
 				resolved, err = baseline.AutoResolve(
 					t.Context(),
-					paths[1],
-					fixture.Resolve(t, "@@commit:"+name+"-base@@", ""),
-					cache,
+					baseline.Config{
+						Network: networktest.New(t),
+						Path:    paths[1],
+						Base:    fixture.Resolve(t, "@@commit:"+name+"-base@@", ""),
+						Cache:   cache,
+					},
 				)
 			} else {
 				resolved, err = baseline.ResolvePaths(t.Context(), paths[1], paths[0])
@@ -73,8 +78,22 @@ func TestRenderTrees_ScopeInputCorpus(t *testing.T) {
 				if strings.HasPrefix(name, "optional-changed-") {
 					testScopeInputManifests(t, selected, universal)
 				}
-				got, _, _, err := diff.Compare(scopeInputSnapshot(selected[0]), scopeInputSnapshot(selected[1]), nil,
-					diff.Options{Format: diff.FormatDiff})
+				comparison1, preparationErr1 := diff.Compare(
+					[]diff.Group{
+						{
+							Orig:        scopeInputSnapshot(selected[0]),
+							Current:     scopeInputSnapshot(selected[1]),
+							SelectedErr: nil,
+						},
+					},
+					diff.Options{Format: diff.FormatDiff},
+				)
+				var comparisonOutput1 bytes.Buffer
+				writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+				got, _, _, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+					preparationErr1,
+					writeErr1,
+				)
 				assert.NoError(t, err)
 				if !bytes.Equal(got, want) || run == 1 && !bytes.Equal(got, previous) {
 					t.Fatalf(
@@ -96,26 +115,37 @@ func scopeInputFullOracle(
 	name string,
 	paths [2]string,
 	cache *sourcecache.Cache,
-) (universal [2]*selection.Selection, changes []byte) {
+) (universal [2]*selection.Result, changes []byte) {
 	t.Helper()
 	roots := []manifest.NamedResource{
 		testutil.KustomizationID("", ""), testutil.HelmReleaseID("", ""),
 	}
 	for side, path := range paths {
-		runs, err := RenderTrees(t.Context(), []Tree{{
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{{
 			Path: path, RepoRoot: filepath.Dir(path),
 			SelfURLs: []string{"https://example.test/cluster.git"},
 			ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
 		}}, Config{Cache: cache, Concurrency: 2})
 		assert.NoError(t, err)
-		selected, selectedErr, remainder := Select(runs, err, roots, nil)
+		projectedResults0, projectionErrors0 := Select(runs, err, roots, nil)
+		selected, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, selectedErr)
 		assert.NoError(t, remainder)
 		assert.Equal(t, len(selected), 1)
 		universal[side] = selected[0]
 	}
-	changes, _, _, err := diff.Compare(scopeInputSnapshot(universal[0]), scopeInputSnapshot(universal[1]), nil,
-		diff.Options{Format: diff.FormatDiff})
+	comparison2, preparationErr2 := diff.Compare(
+		[]diff.Group{
+			{Orig: scopeInputSnapshot(universal[0]), Current: scopeInputSnapshot(universal[1]), SelectedErr: nil},
+		},
+		diff.Options{Format: diff.FormatDiff},
+	)
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	changes, _, _, err := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
+	)
 	assert.NoError(t, err)
 	if strings.HasPrefix(name, "chart-input-") {
 		testScopeChartOracle(t, name, universal, changes)
@@ -140,13 +170,14 @@ func scopeInputTrees(resolved *baseline.Result, selfURLs []string) []Tree {
 	}
 }
 
-func testScopeInputRun(t *testing.T, name string, trees []Tree, cache *sourcecache.Cache) []*selection.Selection {
+func testScopeInputRun(t *testing.T, name string, trees []Tree, cache *sourcecache.Cache) []*selection.Result {
 	t.Helper()
-	runs, err := RenderTrees(t.Context(), trees, Config{Cache: cache, Concurrency: 2, RecordWork: true})
+	runs, err := renderTreesForTest(t.Context(), t, trees, Config{Cache: cache, Concurrency: 2, RecordWork: true})
 	assert.NoError(t, err)
-	selected, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{
+	projectedResults1, projectionErrors1 := Select(runs, err, []manifest.NamedResource{
 		testutil.KustomizationID("", ""), testutil.HelmReleaseID("", ""),
 	}, nil)
+	selected, selectedErr, remainder := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
 	assert.NoError(t, selectedErr)
 	assert.NoError(t, remainder)
 	assert.Equal(t, len(selected), 2)
@@ -156,14 +187,14 @@ func testScopeInputRun(t *testing.T, name string, trees []Tree, cache *sourcecac
 	return selected
 }
 
-func testScopeInputManifests(t *testing.T, selected []*selection.Selection, universal [2]*selection.Selection) {
+func testScopeInputManifests(t *testing.T, selected []*selection.Result, universal [2]*selection.Result) {
 	t.Helper()
 	for side := range selected {
 		assert.Diff(t, outputByParent(selected[side].Manifests), outputByParent(universal[side].Manifests))
 	}
 }
 
-func testScopeChartOracle(t *testing.T, name string, universal [2]*selection.Selection, body []byte) {
+func testScopeChartOracle(t *testing.T, name string, universal [2]*selection.Result, body []byte) {
 	t.Helper()
 	precision := slices.Contains([]string{
 		"chart-input-excluded-payload", "chart-input-unchanged", "chart-input-remote-chart-excludes-local-payload",
@@ -176,10 +207,20 @@ func testScopeChartOracle(t *testing.T, name string, universal [2]*selection.Sel
 	}
 }
 
-func testScopeChartLifecycle(t *testing.T, name string, universal [2]*selection.Selection) {
+func testScopeChartLifecycle(t *testing.T, name string, universal [2]*selection.Result) {
 	t.Helper()
-	document, _, _, err := diff.Compare(scopeInputSnapshot(universal[0]), scopeInputSnapshot(universal[1]), nil,
-		diff.Options{Format: diff.FormatJSON})
+	comparison3, preparationErr3 := diff.Compare(
+		[]diff.Group{
+			{Orig: scopeInputSnapshot(universal[0]), Current: scopeInputSnapshot(universal[1]), SelectedErr: nil},
+		},
+		diff.Options{Format: diff.FormatJSON},
+	)
+	var comparisonOutput3 bytes.Buffer
+	writeErr3 := comparison3.Write(&comparisonOutput3, nil)
+	document, _, _, err := comparisonOutput3.Bytes(), comparison3.Groups[0].Warnings, comparison3.Groups[0].Suppressed, errors.Join(
+		preparationErr3,
+		writeErr3,
+	)
 	assert.NoError(t, err)
 	var got struct {
 		Changes []diff.Change `json:"changes"`
@@ -196,7 +237,7 @@ func testScopeChartLifecycle(t *testing.T, name string, universal [2]*selection.
 	assert.Equal(t, got.Changes[0].Status, want)
 }
 
-func testScopeOptionalOracle(t *testing.T, name string, universal [2]*selection.Selection) {
+func testScopeOptionalOracle(t *testing.T, name string, universal [2]*selection.Result) {
 	t.Helper()
 	app := testutil.KustomizationID("flux-system", "app")
 	for side, result := range universal {
@@ -270,22 +311,36 @@ func testScopeInputCacheLifecycle(t *testing.T, name, layout string) {
 	var prior []byte
 	for run := range 2 {
 		cache := cachetest.New(t, cachePath, sourcecache.New)
-		resolved, err := baseline.AutoResolve(t.Context(), filepath.Join(fixture.Repo, "flux"),
-			fixture.Resolve(t, "@@commit:"+name+"-base@@", ""), cache)
+		resolved, err := baseline.AutoResolve(
+			t.Context(),
+			baseline.Config{
+				Network: networktest.New(t),
+				Path:    filepath.Join(fixture.Repo, "flux"),
+				Base:    fixture.Resolve(t, "@@commit:"+name+"-base@@", ""),
+				Cache:   cache,
+			},
+		)
 		assert.NoError(t, err)
 		trees := scopeInputTrees(resolved, resolved.SelfURLs)
-		rendered, renderErr := RenderTrees(t.Context(), trees, Config{Cache: cache, Concurrency: 2})
+		rendered, renderErr := renderTreesForTest(t.Context(), t, trees, Config{Cache: cache, Concurrency: 2})
 		assert.NoError(t, renderErr)
-		selected, selectedErr, remainder := Select(rendered, renderErr, []manifest.NamedResource{
+		projectedResults2, projectionErrors2 := Select(rendered, renderErr, []manifest.NamedResource{
 			testutil.KustomizationID("", ""), testutil.HelmReleaseID("", ""),
 		}, nil)
+		selected, selectedErr, remainder := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
 		assert.NoError(t, selectedErr)
 		assert.NoError(t, remainder)
-		body, _, _, err := diff.Compare(
-			scopeInputSnapshot(selected[0]),
-			scopeInputSnapshot(selected[1]),
-			nil,
+		comparison4, preparationErr4 := diff.Compare(
+			[]diff.Group{
+				{Orig: scopeInputSnapshot(selected[0]), Current: scopeInputSnapshot(selected[1]), SelectedErr: nil},
+			},
 			diff.Options{Format: diff.FormatDiff},
+		)
+		var comparisonOutput4 bytes.Buffer
+		writeErr4 := comparison4.Write(&comparisonOutput4, nil)
+		body, _, _, err := comparisonOutput4.Bytes(), comparison4.Groups[0].Warnings, comparison4.Groups[0].Suppressed, errors.Join(
+			preparationErr4,
+			writeErr4,
 		)
 		assert.NoError(t, err)
 		if run == 1 && !bytes.Equal(body, prior) {
@@ -297,7 +352,7 @@ func testScopeInputCacheLifecycle(t *testing.T, name, layout string) {
 	}
 }
 
-func scopeInputSnapshot(selected *selection.Selection) diff.Snapshot {
+func scopeInputSnapshot(selected *selection.Result) diff.Snapshot {
 	return diff.Snapshot{
 		Subjects: selected.Subjects, Manifests: selected.Manifests,
 		ProducerKeys: selected.ProducerKeys, Unavailable: selected.Unavailable,
@@ -312,7 +367,7 @@ func testScopeInputWork(t *testing.T, name string, side int, rendered Rendered) 
 		}, name) {
 			return
 		}
-		keep := rendered.filter.KeepNames()
+		keep := selectionNamesForTest(rendered.selection, rendered.store, rendered.index)
 		for _, id := range []manifest.NamedResource{
 			testutil.HelmReleaseID("apps", "demo"),
 			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"},
@@ -326,7 +381,7 @@ func testScopeInputWork(t *testing.T, name string, side int, rendered Rendered) 
 		}
 		return
 	}
-	keep := rendered.filter.KeepNames()
+	keep := selectionNamesForTest(rendered.selection, rendered.store, rendered.index)
 	if !slices.Contains(keep, testutil.KustomizationID("flux-system", "app").String()) {
 		t.Fatalf("side %d omits optional-data consumer: %v", side, keep)
 	}

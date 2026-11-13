@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  value: changed
+kind: ConfigMap
+metadata:
+  labels:
+    kustomize.toolkit.fluxcd.io/name: a
+    kustomize.toolkit.fluxcd.io/namespace: apps
+  name: a
+  namespace: apps

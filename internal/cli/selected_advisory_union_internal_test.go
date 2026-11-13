@@ -9,9 +9,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
@@ -35,7 +35,7 @@ func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 				Count:    1,
 			},
 		}
-		inv.groups = append(inv.groups, selectedGroup{cluster: cluster, sides: []*selection.Selection{
+		inv.groups = append(inv.groups, selectedGroup{cluster: cluster, sides: []*selection.Result{
 			{Warnings: []manifest.Warning{ordinary, other}},
 			{Warnings: []manifest.Warning{ordinary, other}, ClusterWarnings: advisories},
 		}})

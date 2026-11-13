@@ -4,13 +4,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
-	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -45,9 +46,9 @@ func TestAdvance_UnreadableInputReachesFixpoint(t *testing.T) {
 	)
 	st := store.New()
 	l := loader.New(st)
-	l.Options.Filter = change.NewFilter()
+	configureSelection(t, l, selection.Request{Changed: true})
 	l.Options.Changes = change.NewSet([]string{"flux/consumer.yaml"})
-	session, err := Begin(
+	session, err := beginTest(
 		t.Context(),
 		Config{
 			Path:      filepath.Join(root, "flux"),
@@ -56,14 +57,13 @@ func TestAdvance_UnreadableInputReachesFixpoint(t *testing.T) {
 			Store:     st,
 			Loader:    l,
 			Trees:     kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2)),
-			Selection: manifest.Selection{Changed: true},
+			Selection: selection.Request{Changed: true},
 		},
 	)
 	assert.NoError(t, err)
 	for range 3 {
-		proposal, err := l.Prepare(
-			t.Context(),
-			loader.PrepareRequest{Incoming: store.Child{}, Reads: nil, History: nil, Invocation: true},
+		proposal, err := admitSelection(t.Context(), t, l,
+			selection.PrepareRequest{Generation: nil, Reads: nil, History: nil, Invocation: true},
 		)
 		assert.NoError(t, err)
 		advanced, err := session.Advance(t.Context(), proposal)

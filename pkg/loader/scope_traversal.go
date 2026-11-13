@@ -11,11 +11,12 @@ import (
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 type scopeTraversal struct {
 	visits     []graphVisit
-	reached    fileEligibility
+	reached    selection.RootEligibility
 	controlled bool
 }
 
@@ -33,40 +34,39 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 	root := *rootArg
 
 	walk, seen := l.scopes.walks[root.graphContext]
-	var source parsedSource
-	var key physicalContext
-	if !seen && l.documents.compact {
-		source = l.sourceFacts(root.root)
-		key = physicalContext{
-			graphContext: root.graphContext,
-			sourceRoot:   l.SourceRoot,
-			prefix:       root.prefix,
-			localBase:    root.localBase,
-		}
-		walk.visits, seen = source.walks[key]
-		if seen {
-			l.scopes.walks[root.graphContext] = walk
+	if seen {
+		return walk.visits
+	}
+	source := l.sourceFacts(root.root)
+	key := physicalContext{
+		graphContext: root.graphContext,
+		sourceRoot:   l.SourceRoot,
+		prefix:       root.prefix,
+		localBase:    root.localBase,
+	}
+	physical, known := source.walk(&key)
+	if physical.cached != nil {
+		physical, known = l.restoreWalk(new(l.documents).mountedRoot(root.root), physical.cached)
+		if known {
+			source.walks.values[key] = physical
 		}
 	}
-	if seen {
+	if known {
+		walk.visits = physical.visits
+		l.scopes.walks[root.graphContext] = walk
 		return walk.visits
 	}
 
 	var visits []graphVisit
+	var inputs []walkInput
 	if k := l.documents.cache[filepath.Join(root.root, root.dir)].body; k != nil {
 		visits = make([]graphVisit, 0, len(k.Resources)+len(k.Components)+1)
 	}
-	var work *manifest.WorkRecord
-	if l.work != nil {
-		work = l.work
-		if root.input != 0 {
-			source := &l.scopes.sources[l.scopes.inputs[root.input-1].source]
-			if source.id == root.source && source.root == root.root {
-				work = l.Options.Work.Traversal(source.id)
-			}
-		}
+	work := l.scopeWork(&root)
+	w := traversal{work: work, documents: l.documents, loader: l, scopeVisits: &visits}
+	if l.inputCaches[root.root] != nil {
+		w.scopeInputs = &inputs
 	}
-	w := traversal{work: work, documents: l.documents}
 	collect := func(v graphVisit) bool {
 		if origin := new(l.documents).localPath(v.file); origin != v.file {
 			v.origin = origin
@@ -77,15 +77,11 @@ func (l *Loader) scopeWalk(rootArg *graphVisit) []graphVisit {
 		visits = append(visits, v)
 		return true
 	}
-	physical := root
-	if l.documents.compact {
-		physical.owner, physical.source, physical.input, physical.membershipOnly = manifest.NamedResource{}, manifest.NamedResource{}, 0, false
-	}
-	w.walk(context.TODO(), physical, collect)
+	physicalRoot := root
+	physicalRoot.owner, physicalRoot.source, physicalRoot.input, physicalRoot.membershipOnly = manifest.NamedResource{}, manifest.NamedResource{}, 0, false
+	w.walk(context.TODO(), physicalRoot, collect)
 	walk.visits = visits
-	if l.documents.compact {
-		source.walks[key] = visits
-	}
+	source.walks.values[key] = physicalWalk{visits: visits, inputs: inputs}
 	l.scopes.walks[root.graphContext] = walk
 
 	return walk.visits
@@ -148,22 +144,35 @@ func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, member
 			input:          root.input,
 		},
 	)
-	{
-		vValues := visits
-		for vIndex := range vValues {
-			v := vValues[vIndex]
-			v.owner, v.source, v.input = root.owner, root.source, root.input
-			v.membershipOnly = membershipOnly
-			if membershipOnly {
-				// Membership projects identities without owning or materializing bootstrap files.
-				v.owner, v.deferMaterialization = manifest.NamedResource{}, false
-			}
-			l.scopes.visits[v.file] = append(l.scopes.visits[v.file], v)
-			if local := v.localCoordinate(); local != "" {
-				file := filepath.Join(l.SourceRoot, filepath.FromSlash(local))
-				l.scopes.visits[file] = append(l.scopes.visits[file], v)
-			}
+	contribution := len(l.scopes.contributions) - 1
+	for i := range visits {
+		v := &visits[i]
+		ref := scopeVisit{contribution: contribution, visit: i}
+		l.scopes.visits[v.file] = append(l.scopes.visits[v.file], ref)
+		if v.localFile != "" && v.localFile != v.file {
+			l.scopes.visits[v.localFile] = append(l.scopes.visits[v.localFile], ref)
+		}
+		if v.origin != "" && v.origin != v.file && v.origin != v.localFile {
+			l.scopes.visits[v.origin] = append(l.scopes.visits[v.origin], ref)
 		}
 	}
 	return visits
+}
+
+func (l *Loader) scopeWork(root *graphVisit) *manifest.WorkRecord {
+	var work *manifest.WorkRecord
+	if l.work != nil {
+		work = l.work
+		if sourceWork := l.scopes.traversalWork[root.root]; root.source == (manifest.NamedResource{}) &&
+			sourceWork != nil {
+			work = sourceWork
+		}
+		if root.input != 0 {
+			source := &l.scopes.sources[l.scopes.inputs[root.input-1].source]
+			if source.id == root.source && source.root == root.root {
+				work = l.Options.Work.Traversal(source.id)
+			}
+		}
+	}
+	return work
 }

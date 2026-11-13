@@ -62,8 +62,24 @@ func partialSourcePublicationCase(t *testing.T, output *[]map[string]any) {
 	outputs := make([]any, 0, unrelated+1)
 	partialPublicationOutputs(&outputs)
 	generatorForTestResult1 := generatorForTest(t, outputs)
-	generator, generatorDoc := generatorForTestResult1.object, generatorForTestResult1.document
+	generatorDoc := generatorForTestResult1.document
+	spec := generatorDoc["spec"].(map[string]any)
+	spec["sources"] = append([]any{map[string]any{
+		"alias": "unused", "kind": manifest.KindGitRepository, "name": "unused", "namespace": "apps",
+	}}, spec["sources"].([]any)...)
+	parsedGenerator, err := manifest.ParseDoc(generatorDoc, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	generator, generatorDoc := parsedGenerator.Object.(*manifest.RawObject), parsedGenerator.Document
 	st.AddObject(generator, generatorDoc)
+	st.SetArtifact(
+		manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Namespace: "apps",
+			Name:      "unused",
+		},
+		&store.SourceArtifact{Key: "unused", Content: "unused", FS: fstest.MapFS{"file": {Data: []byte("unused")}}},
+	)
 	consumerDoc := map[string]any{
 		"apiVersion": manifest.FluxKustomizeDomain + "/v1",
 		"kind":       manifest.KindKustomization,

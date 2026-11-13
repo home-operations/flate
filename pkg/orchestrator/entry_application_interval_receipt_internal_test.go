@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -104,7 +106,7 @@ spec:
 	}
 	prime, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	primed, err := prime.render(t.Context())
+	primed, err := prime.render(t.Context(), t)
 	assert.NoError(t, err)
 	assertEntryReceiptInterval(t, primed, "1h")
 	testutil.WriteFile(
@@ -130,7 +132,7 @@ spec:
 	}
 	full, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	complete, err := full.render(t.Context())
+	complete, err := full.render(t.Context(), t)
 	assert.NoError(t, err)
 	assertEntryReceiptInterval(t, complete, "2h")
 	if fixture.persists {
@@ -186,7 +188,7 @@ func testEntryReceiptInterval(t *testing.T, fixture *entryReceiptFixture, mode s
 		var admissions [2]atomic.Int64
 		id := testutil.HelmReleaseID("apps", "generator")
 		selected := Config{
-			CacheDir: fixture.cfg.CacheDir, Concurrency: 2, Selection: manifest.Selection{Changed: true},
+			CacheDir: fixture.cfg.CacheDir, Concurrency: 2, Selection: selection.Request{Changed: true},
 			Supply: fixture.cfg.Supply,
 			StatusListener: func(tree manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
 				if subject.ID == id && info.String() == "rendering" {
@@ -198,7 +200,7 @@ func testEntryReceiptInterval(t *testing.T, fixture *entryReceiptFixture, mode s
 			selected.CacheDir = t.TempDir()
 		}
 		changes := change.NewSet([]string{"entry/child.yaml"})
-		results, err := RenderTrees(t.Context(), []Tree{
+		results, err := renderTreesForTest(t.Context(), t, []Tree{
 			{
 				ID:   manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
 				Path: filepath.Join(fixture.root, "entry"), RepoRoot: fixture.root, SelfURLs: fixture.tree.SelfURLs,
@@ -268,7 +270,7 @@ func testEntryReceiptWorkload(t *testing.T, fixture *entryReceiptFixture) {
 		var admissions [2]atomic.Int64
 		id := testutil.HelmReleaseID("apps", "generator")
 		selected := Config{
-			CacheDir: fixture.cfg.CacheDir, Concurrency: 2, Selection: manifest.Selection{Changed: true},
+			CacheDir: fixture.cfg.CacheDir, Concurrency: 2, Selection: selection.Request{Changed: true},
 			Supply: fixture.cfg.Supply,
 			StatusListener: func(tree manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
 				if subject.ID == id && info.String() == "rendering" {
@@ -277,7 +279,7 @@ func testEntryReceiptWorkload(t *testing.T, fixture *entryReceiptFixture) {
 			},
 		}
 		changes := change.NewSet([]string{"workload/cm.yaml"})
-		results, err := RenderTrees(t.Context(), []Tree{
+		results, err := renderTreesForTest(t.Context(), t, []Tree{
 			{
 				ID:   manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
 				Path: filepath.Join(fixture.root, "entry"), RepoRoot: fixture.root, SelfURLs: fixture.tree.SelfURLs,
@@ -491,7 +493,12 @@ func testColdSelfApplierSubstituteFrom(t *testing.T) {
 	for side := range full {
 		reference := selfApplierTrees(t)[side]
 		reference.BaseInput, reference.ExternalChanges = nil, nil
-		runs, err := RenderTrees(t.Context(), []Tree{reference}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		runs, err := renderTreesForTest(
+			t.Context(),
+			t,
+			[]Tree{reference},
+			Config{CacheDir: t.TempDir(), Concurrency: 2},
+		)
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 1)
 		full[side] = runs[0]
@@ -499,9 +506,9 @@ func testColdSelfApplierSubstituteFrom(t *testing.T) {
 	for repeat := range measured {
 		for side := range measured[repeat] {
 			tree := selfApplierTrees(t)[side]
-			runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{
+			runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{
 				CacheDir: t.TempDir(), Concurrency: 2, RecordWork: true,
-				Selection: manifest.Selection{Changed: true},
+				Selection: selection.Request{Changed: true},
 			})
 			assert.Equal(t, len(runs), 1)
 			measured[repeat][side], finalErrors[repeat][side] = runs[0], err

@@ -43,11 +43,16 @@ func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest 
 	return new(view).declaration()
 }
 
-func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedResource) bool {
+// Discovery preserves a distinct authored File only for unchanged builder output;
+// raw self evidence MUST NOT override another builder's transformed declaration.
+func rawDeclarationAuthority(index *manifest.DiscoveryIndex, id manifest.NamedResource, classified bool) bool {
 	record, _ := index.Lookup(id)
-	return len(record.Productions) == 0 || slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
-		return p.Owner == (manifest.NamedResource{}) || p.Owner == id
-	})
+	self := record.BuilderOwner == (manifest.NamedResource{}) || record.BuilderOwner == id ||
+		record.Authored == id && record.File != "" && record.Builder != "" && record.File != record.Builder
+	return self && (classified || len(record.Productions) == 0) ||
+		slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+			return p.Owner == (manifest.NamedResource{}) || self && p.Owner == id
+		})
 }
 
 //nolint:ireturn // The manifest contract requires polymorphic results.
@@ -104,7 +109,7 @@ func (s *Store) getEmission(
 			owner:      view.owner,
 			generation: view.generation,
 			revision:   view.revision,
-			binding:    view.sourceBinding(),
+			binding:    view.source,
 		},
 	}
 	if head != nil {
@@ -132,19 +137,15 @@ func (s *Store) getEmission(
 	return obj, view.child.Doc, e
 }
 
-// ReferenceFacts preserves visible data separately from accepted authority and relations.
+// ReferenceFacts MUST retain selected warnings and the original data before supply.
 type ReferenceFacts struct {
-	Data                        manifest.Data
+	Data, Original              manifest.Data
+	Warnings                    []manifest.Warning
 	Materializers               []manifest.NamedResource
 	Generated, Offline, Private bool
 	Accepted                    bool
 	Productions                 []manifest.Production
 	ReferenceData               []manifest.ReferenceData
-}
-
-// AllowsAbsence MUST preserve omission policy for producer-owned inputs.
-func (f *ReferenceFacts) AllowsAbsence() bool {
-	return f.Private || f.Generated && !f.Offline
 }
 
 // Productions merges discovery evidence with accepted reverse memberships into a read-only snapshot.
@@ -178,6 +179,7 @@ func (s *Store) ReferenceFacts(
 	}
 	facts := ReferenceFacts{
 		Data:          result.data,
+		Warnings:      result.warnings,
 		Accepted:      result.accepted,
 		Productions:   result.out,
 		ReferenceData: candidates,
@@ -264,6 +266,7 @@ type productionResult struct {
 	qualified     bool
 	reference     *Declaration
 	data          manifest.Data
+	warnings      []manifest.Warning
 	out           []manifest.Production
 	id            manifest.NamedResource
 	parent        manifest.NamedResource
@@ -435,7 +438,7 @@ func (e *Emission) bindSource(s *Store, obj manifest.BaseManifest, reads *ReadSe
 		getArtifact = reads.GetArtifact
 	}
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if ref.Use == sourceReferenceUse {
+		if ref.BindsSource() {
 			e.binding.source = ref.NamedResource
 			if a, ok := getArtifact(ref.NamedResource, ArtifactContent).(*SourceArtifact); ok {
 				e.binding.artifact = a
@@ -464,8 +467,12 @@ func (s *Store) discoveryCoverage(index *manifest.DiscoveryIndex) map[manifest.N
 		if len(r.Productions) == 0 {
 			continue
 		}
-		independent := declarationIndependent(index, id)
-		s.addDiscoveryCoverage(coverage, id, &r, independent)
+		record := footprint{
+			id: id, record: r,
+			independent: rawDeclarationAuthority(index, id, false),
+			classified:  rawDeclarationAuthority(index, id, true),
+		}
+		s.addDiscoveryCoverage(coverage, &record)
 	}
 	return coverage
 }
@@ -484,6 +491,7 @@ func (s *Store) installDiscoveryCoverageLocked(
 					sh := s.shardFor(record.id)
 					if cell, exists := sh.cells[record.id]; exists {
 						cell.independent = record.independent
+						cell.classified = cell.classified && record.classified
 						sh.cells[record.id] = cell
 					}
 				}
@@ -505,10 +513,9 @@ func (s *Store) installDiscoveryCoverageLocked(
 
 func (s *Store) addDiscoveryCoverage(
 	coverage map[manifest.NamedResource]*contributor,
-	id manifest.NamedResource,
-	r *manifest.DiscoveryRecord,
-	independent bool,
+	record *footprint,
 ) {
+	id, r := record.id, &record.record
 	{
 		pValues5 := r.Productions
 		for pIndex4 := range pValues5 {
@@ -523,7 +530,7 @@ func (s *Store) addDiscoveryCoverage(
 			}
 			// Each identity is visited once, so repeated owner evidence can only match the tail.
 			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
-				c.records = append(c.records, footprint{id: id, record: *r, independent: independent})
+				c.records = append(c.records, *record)
 			}
 			if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
 				c.binding.artifact = a
@@ -720,7 +727,7 @@ func (s *Store) declaredReferenceData(
 		return candidate
 	}
 	candidate.DeclaredKeys = nil
-	binding := view.sourceBinding()
+	binding := view.source
 	if (view.owner == nil || view.owner.id == p.Owner) &&
 		(p.Source == (manifest.NamedResource{}) || binding.source == (manifest.NamedResource{}) || p.Source == binding.source) {
 		for _, target := range manifest.ProducerTargets(object, id) {
@@ -790,6 +797,7 @@ func (r *productionResult) captureReferenceLocked(sh *shard, id manifest.NamedRe
 	sh.captureLocked(id, new(sh.cells[id]), &view)
 	if view.child.Origin.Policy(id, nil).Root {
 		r.data, _ = view.child.Obj.(manifest.Data)
+		r.warnings = view.child.Warnings
 	}
 	r.reference = view.reference
 	r.accepted = view.accepted || view.owner != nil

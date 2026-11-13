@@ -12,10 +12,10 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -175,6 +175,8 @@ func TestRun_AliasesURLMatchedInTreeGitRepository(t *testing.T) {
 	repo := testutil.GitInit(t, dir)
 	testutil.WriteFile(t, dir, ".git/config", `[core]
 	repositoryformatversion = 0
+[commit]
+ gpgSign = false
 [remote "origin"]
 	url = git@github.com:Example/home-ops.git
 `)
@@ -341,7 +343,7 @@ configMapGenerator:
 	cmID := manifest.NamedResource{
 		Kind: manifest.KindConfigMap, Name: "cluster-settings",
 	}
-	cm, _ := values.NewStoreProvider(st).Data(cmID).(*manifest.ConfigMap)
+	cm, _ := values.NewStoreProvider(st).Lookup(cmID).Data.(*manifest.ConfigMap)
 	assert.FatalIf(t, st.GetObject(cmID) != nil, "%v", "generator lookup entered canonical inventory")
 	assert.FatalIf(t, cm == nil, "ConfigMap %s unavailable through generator lookup", cmID)
 	{
@@ -608,7 +610,7 @@ stringData: {HOST: fixture-value}
 	}
 	assert.FatalIf(
 		t,
-		(*scenario) == "graph-owned" && values.NewStoreProvider(st).Data(id) != nil,
+		(*scenario) == "graph-owned" && values.NewStoreProvider(st).Lookup(id).Data != nil,
 		"%s",
 		"remote declaration fabricated data",
 	)
@@ -660,9 +662,11 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 	}
 	st.AddObject(pinned)
 	objects := make([]manifest.BaseManifest, 0, 6)
-	want := []string{
+	want := make([]string, 0, 5)
+	want = append(
+		want,
 		(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}).String(),
-	}
+	)
 	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
 		sourceID := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
@@ -670,9 +674,7 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 			Namespace: "other",
 			Name:      "missing",
 		}
-		if kind == manifest.KindGitRepository {
-			want = append(want, sourceID.String())
-		}
+		want = append(want, sourceID.String())
 		for _, name := range []string{"one", "two"} {
 			objects = append(
 				objects,

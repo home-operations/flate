@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/httpconditional"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -34,7 +35,6 @@ func (f *Fetcher) fetchHTTPChart(
 ) (*store.SourceArtifact, error) {
 	policy := *policyValue
 
-	chartName, version := hc.Chart, hc.Version
 	key := cache.BlobKey{
 		Content:  struct{ Repository, Chart, Transport any }{r.Content(), hc.Content(), r.material},
 		Required: []string{"chart-version", "chart-url"},
@@ -67,47 +67,7 @@ func (f *Fetcher) fetchHTTPChart(
 			if err != nil {
 				return cache.ProducerResult{}, err
 			}
-			cv, err := idx.Get(chartName, version)
-			if err != nil {
-				return cache.ProducerResult{}, manifest.NewError(
-					manifest.ErrObjectNotFound,
-					err,
-					fmt.Sprintf("chart %s %s not found in %s", chartName, version, r.URL),
-				)
-			}
-			if len(cv.URLs) == 0 {
-				return cache.ProducerResult{}, manifest.NewError(
-					manifest.ErrObjectNotFound,
-					nil,
-					fmt.Sprintf("chart %s@%s in %s has no URLs", chartName, version, r.URL),
-				)
-			}
-			chartURL, err := absChartURL(r.URL, cv.URLs[0])
-			if err != nil {
-				return cache.ProducerResult{}, err
-			}
-			desc, err := r.get(ctx, chartURL, w, w.Work().Physical())
-			if err != nil {
-				return cache.ProducerResult{Descriptor: desc}, err
-			}
-			expected := normalizeChartDigest(cv.Digest)
-			if expected != "" && desc.Digest.Encoded() != expected {
-				return cache.ProducerResult{
-					Descriptor: desc,
-				}, fmt.Errorf(
-					"chart %s@%s digest mismatch: index has %s, downloaded %s",
-					chartName,
-					cv.Version,
-					expected,
-					desc.Digest.Encoded(),
-				)
-			}
-			desc.Annotations = map[string]string{
-				"flate.chart-version": cv.Version,
-				"flate.chart-url":     chartURL,
-				"flate.chart-digest":  expected,
-			}
-			return cache.ProducerResult{Descriptor: desc}, nil
+			return r.fetchChart(ctx, idx, hc, w)
 		},
 	)
 	if err != nil {
@@ -125,6 +85,59 @@ func (f *Fetcher) fetchHTTPChart(
 		Size:     desc.Size,
 	}
 	return artifact, nil
+}
+
+func (r *httpRepository) fetchChart(
+	ctx context.Context,
+	index *repo.IndexFile,
+	hc *manifest.HelmChartSource,
+	w cache.ProducerInput,
+) (cache.ProducerResult, error) {
+	chartName, version := hc.Chart, hc.Version
+	cv, err := index.Get(chartName, version)
+	if err != nil {
+		return cache.ProducerResult{}, manifest.NewError(
+			manifest.ErrObjectNotFound,
+			err,
+			fmt.Sprintf("chart %s %s not found in %s", chartName, version, r.URL),
+		)
+	}
+	if len(cv.URLs) == 0 {
+		return cache.ProducerResult{}, manifest.NewError(
+			manifest.ErrObjectNotFound,
+			nil,
+			fmt.Sprintf("chart %s@%s in %s has no URLs", chartName, version, r.URL),
+		)
+	}
+	chartURL, err := absChartURL(r.URL, cv.URLs[0])
+	if err != nil {
+		return cache.ProducerResult{}, err
+	}
+	previous, err := w.Previous(ctx)
+	if err != nil {
+		return cache.ProducerResult{}, err
+	}
+	if previous != nil && previous.Annotations["flate.chart-url"] != chartURL {
+		previous = nil
+	}
+	result, err := r.get(ctx, chartURL, httpDownload{Writer: w, previous: previous, work: w.Work()})
+	if err != nil {
+		return result, err
+	}
+	expected := normalizeChartDigest(cv.Digest)
+	if expected != "" && result.Digest.Encoded() != expected {
+		return result, fmt.Errorf(
+			"chart %s@%s digest mismatch: index has %s, downloaded %s",
+			chartName,
+			cv.Version,
+			expected,
+			result.Digest.Encoded(),
+		)
+	}
+	result.Annotations["flate.chart-version"] = cv.Version
+	result.Annotations["flate.chart-url"] = chartURL
+	result.Annotations["flate.chart-digest"] = expected
+	return result, nil
 }
 
 func (f *Fetcher) fetchIndex(
@@ -149,10 +162,18 @@ func (f *Fetcher) fetchIndex(
 	}
 	generation, desc, _, err := f.cache.Blob(ctx, key, &indexPolicy,
 		func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			_, descriptor, err := f.loadIndex(ctx, indexURL, func(input io.Writer) (ocispec.Descriptor, error) {
-				return r.get(ctx, indexURL, io.MultiWriter(w, input), w.Work().Physical())
+			previous, err := w.Previous(ctx)
+			if err != nil {
+				return cache.ProducerResult{}, err
+			}
+			_, result, err := f.loadIndex(ctx, indexURL, func(input io.Writer) (cache.ProducerResult, error) {
+				return r.get(
+					ctx,
+					indexURL,
+					httpDownload{Writer: io.MultiWriter(w, input), previous: previous, work: w.Work()},
+				)
 			}, indexWork.Attribution())
-			return cache.ProducerResult{Descriptor: descriptor}, err
+			return result, err
 		})
 	if err != nil {
 		return nil, err
@@ -160,13 +181,14 @@ func (f *Fetcher) fetchIndex(
 	if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
 		return v.(*repo.IndexFile), nil //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	}
-	candidate, _, err := f.loadIndex(ctx, indexURL, func(w io.Writer) (ocispec.Descriptor, error) {
+	candidate, _, err := f.loadIndex(ctx, indexURL, func(w io.Writer) (cache.ProducerResult, error) {
+		result := cache.ProducerResult{Descriptor: desc}
 		input, openErr := generation.Open("content")
 		if openErr != nil {
-			return desc, openErr //nolint:wrapcheck // Filesystem content adapters retain the original fs.PathError and io sentinel contracts.
+			return result, openErr //nolint:wrapcheck // Filesystem content adapters retain the original fs.PathError and io sentinel contracts.
 		}
 		_, openErr = io.Copy(w, input)
-		return desc, errors.Join(openErr, input.Close())
+		return result, errors.Join(openErr, input.Close())
 	}, indexWork.Attribution())
 	return candidate, err
 }
@@ -174,13 +196,16 @@ func (f *Fetcher) fetchIndex(
 func (f *Fetcher) loadIndex(
 	ctx context.Context,
 	indexURL string,
-	produce func(io.Writer) (ocispec.Descriptor, error),
+	produce func(io.Writer) (cache.ProducerResult, error),
 	scope manifest.WorkScope,
-) (*repo.IndexFile, ocispec.Descriptor, error) {
+) (*repo.IndexFile, cache.ProducerResult, error) {
 	var data bytes.Buffer
 	desc, err := produce(&data)
 	if err != nil {
 		return nil, desc, fmt.Errorf("fetch %s: %w", indexURL, err)
+	}
+	if desc.Unchanged {
+		return nil, desc, nil
 	}
 	release, err := f.indexLocks.Acquire(ctx, desc.Digest.String())
 	if err != nil {
@@ -252,31 +277,47 @@ func normalizeChartDigest(d string) string {
 	return strings.TrimPrefix(strings.TrimSpace(d), "sha256:")
 }
 
+type httpDownload struct {
+	io.Writer
+
+	previous *ocispec.Descriptor
+	work     *manifest.AcquisitionWork
+}
+
+//nolint:nonamedreturns // Validation must record the returned outcome on every exit.
 func (r *httpRepository) get(
 	ctx context.Context,
 	target string,
-	w io.Writer,
-	work *manifest.WorkRecord,
-) (ocispec.Descriptor, error) {
+	download httpDownload,
+) (result cache.ProducerResult, resultErr error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
-		return ocispec.Descriptor{}, fmt.Errorf("create source HTTP request: %w", err)
+		return result, fmt.Errorf("create source HTTP request: %w", err)
 	}
 	base, err := url.Parse(r.URL)
 	if err != nil {
-		return ocispec.Descriptor{}, fmt.Errorf("resolve chart URL: %w", err)
+		return result, fmt.Errorf("resolve chart URL: %w", err)
 	}
 	if (r.PassCredentials || base.Scheme == req.URL.Scheme && base.Host == req.URL.Host) && r.username != "" &&
 		r.password != "" {
 		req.SetBasicAuth(r.username, r.password)
 	}
+	if httpconditional.Apply(req, download.previous) {
+		work := download.work.Validate()
+		work.Add(&manifest.WorkCounts{Attempts: 1})
+		defer func() { work.Finish(resultErr) }()
+	}
 	response, err := r.client.Do(req)
 	if err != nil {
-		return ocispec.Descriptor{}, err //nolint:wrapcheck // The HTTP client already returns a URL error identifying method and target, including net.Error behavior.
+		return result, err //nolint:wrapcheck // The HTTP client already returns a URL error identifying method and target, including net.Error behavior.
 	}
 	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return ocispec.Descriptor{}, &fetcherr.ResponseError{
+	validStatus := response.StatusCode == http.StatusOK || response.StatusCode == http.StatusNotModified
+	if validStatus {
+		result.Descriptor, result.Unchanged, err = httpconditional.Metadata(req, response, download.previous)
+	}
+	if !validStatus || err != nil {
+		return result, &fetcherr.ResponseError{
 			StatusCode: response.StatusCode,
 			Op:         http.MethodGet,
 			Message: fmt.Sprintf(
@@ -287,11 +328,15 @@ func (r *httpRepository) get(
 			),
 		}
 	}
-	work.Add(&manifest.WorkCounts{RemoteTransfers: 1})
+	if result.Unchanged {
+		return result, nil
+	}
+	download.work.Physical().Add(&manifest.WorkCounts{RemoteTransfers: 1})
 	h := digest.SHA256.Digester()
-	size, err := io.Copy(io.MultiWriter(w, h.Hash()), response.Body)
+	size, err := io.Copy(io.MultiWriter(download.Writer, h.Hash()), response.Body)
 	if err != nil {
 		err = &url.Error{Op: "Get", URL: target, Err: err}
 	}
-	return ocispec.Descriptor{Digest: h.Digest(), Size: size, MediaType: response.Header.Get("Content-Type")}, err
+	result.Digest, result.Size, result.MediaType = h.Digest(), size, response.Header.Get("Content-Type")
+	return result, err
 }

@@ -166,35 +166,21 @@ func (k *Kustomization) SourceID() NamedResource {
 	)
 }
 
+// EffectiveSourceID defaults incomplete execution coordinates without changing authored facts.
+func (k *Kustomization) EffectiveSourceID() NamedResource {
+	source := k.SourceID()
+	if source.Kind == "" || source.Name == "" {
+		return BootstrapSourceID
+	}
+	return source
+}
+
 // IsFragment identifies patch fragments without a render path or source name.
 func (k *Kustomization) IsFragment() bool { return k.Path == "" && k.SourceRef.Name == "" }
 
 // SubstituteStrategy returns the upstream post-build substitution policy.
 func (k *Kustomization) SubstituteStrategy() kustomizev1.SubstituteStrategy {
 	return (kustomizev1.Kustomization{Spec: k.KustomizationSpec}).GetSubstituteStrategy()
-}
-
-func (k *Kustomization) mapDependsOn(name, namespace func(string) string) *Kustomization {
-	var out *Kustomization
-	for i, dep := range k.DependsOn {
-		resolvedName := name(dep.Name)
-		resolvedNamespace := dep.Namespace
-		if namespace != nil {
-			resolvedNamespace = namespace(dep.Namespace)
-		}
-		if resolvedName == dep.Name && resolvedNamespace == dep.Namespace {
-			continue
-		}
-		if out == nil {
-			out = k.Clone()
-		}
-		out.DependsOn[i].Name = resolvedName
-		out.DependsOn[i].Namespace = resolvedNamespace
-	}
-	if out == nil {
-		return k
-	}
-	return out
 }
 
 func (k *Kustomization) references(yield func(Reference) bool, view ReferenceView) {
@@ -349,12 +335,14 @@ func (k *Kustomization) sourceReference(yield func(Reference) bool, view Referen
 		content := src.Kind != "" && src.Name != ""
 		use := sourceKey
 		if !content && k.Path != "" {
-			src = BootstrapSourceID
+			src = k.EffectiveSourceID()
 			use = ""
 		}
 		if (view == ReferenceAll || use != "") && !yield(Reference{
-			NamedResource: src,
-			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
+			NamedResource:   src,
+			bindsSource:     true,
+			readsSourceTree: true,
+			Use:             use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
 			ArtifactStages: GateInputs | GateArtifacts,
 
 			NamespaceDefault: use != "" && k.SourceRef.Namespace == "",

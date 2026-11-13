@@ -124,6 +124,7 @@ type RenderHistory struct {
 type historyRecord struct {
 	identity   string
 	identities map[manifest.SourceIdentity]string
+	Format     int                    `json:"Format"`
 	Acceptance string                 `json:"Acceptance"`
 	Build      string                 `json:"Build"`
 	Owner      manifest.NamedResource `json:"Owner"`
@@ -156,7 +157,7 @@ func (hv *RenderHistory) record(acceptance string) *historyRecord {
 	if h.Sources == nil || acceptance == "" {
 		return nil
 	}
-	record := historyRecord{Build: processIdentity, Owner: h.Owner, Acceptance: acceptance}
+	record := historyRecord{Format: frameVersion, Build: processIdentity, Owner: h.Owner, Acceptance: acceptance}
 	paths := map[string][]historyPath{}
 	identities := map[manifest.SourceIdentity]string{}
 	record.identities = identities
@@ -199,7 +200,7 @@ func (r *historyRecord) matches(hValue *RenderHistory, acceptance string) bool {
 	if h.Sources == nil || acceptance == "" {
 		return r == nil
 	}
-	if r == nil || r.Owner != h.Owner || r.Acceptance != acceptance || r.Build != processIdentity {
+	if r == nil || r.Owner != h.Owner || !r.admits(acceptance) {
 		return false
 	}
 	for _, evidence := range h.Sources {
@@ -365,10 +366,8 @@ func (c *Cache) pathProducer(
 	}
 	seen[identity] = struct{}{}
 	var record historyRecord
-	if json.Unmarshal([]byte(data), &record) != nil || record.Build != processIdentity || record.Owner.Name == "" ||
-		record.Owner.Kind == "" ||
-		record.Acceptance == "" ||
-		record.Acceptance != descriptor.Annotations[acceptedRenderAnnotation] {
+	if json.Unmarshal([]byte(data), &record) != nil ||
+		!record.admits(descriptor.Annotations[acceptedRenderAnnotation]) {
 		//nolint:nilerr // Invalid persisted history metadata is a cache miss, including decode failures.
 		return manifest.NamedResource{}, nil, nil
 	}
@@ -387,4 +386,11 @@ func (c *Cache) pathProducer(
 		return manifest.NamedResource{}, nil, nil
 	}
 	return record.Owner, matched, nil
+}
+
+func (r *historyRecord) admits(acceptance string) bool {
+	if r.Format != frameVersion || r.Build != processIdentity || r.Owner.Name == "" || r.Owner.Kind == "" {
+		return false
+	}
+	return r.Acceptance != "" && r.Acceptance == acceptance
 }

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -62,10 +64,13 @@ spec:
 
 	ksID := testutil.KustomizationID("flux-system", "flux-entry-repos")
 	assert.ErrorIf(t, s.GetObject(ksID) != nil ||
-		l.AdmitsRoot(
-			l.IndexedObject(ksID, l.Index.Records[ksID]).Obj,
-			filepath.Join(dir, "repositories", "# flux-entry.yaml"),
-		), "%s", "unlisted declaration became runnable")
+		selection.Root(
+			rootAtForTest(
+				l,
+				l.IndexedObject(ksID, l.Index.Records[ksID]).Obj,
+				filepath.Join(dir, "repositories", "# flux-entry.yaml"),
+			),
+		).Admitted, "%s", "unlisted declaration became runnable")
 	{
 		got, want := filesForTest(l.Index)[ksID], "repositories/# flux-entry.yaml"
 		assert.ErrorIf(t, got != want, "SourceFiles[KS] = %q; want %q", got, want)

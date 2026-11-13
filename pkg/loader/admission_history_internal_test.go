@@ -9,8 +9,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -52,25 +52,25 @@ func TestAdmission_EffectiveProviderHistory(t *testing.T) {
 				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 				Complete bool
 			}{owner: {Records: records, Complete: tc.complete}}
-			proposal, err := l.Prepare(t.Context(), PrepareRequest{History: history, Invocation: true})
+			proposal, err := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, History: history, Invocation: true},
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner), tc.needed)
-			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), false)
-			_, retry := l.Options.Filter.AddEmitted(
-				change.MembershipUpdate{
-					Needed:   proposal.Needed,
-					Selected: proposal.Selected,
-					Dirty:    proposal.Dirty,
-					Ordinary: proposal.Ordinary,
-				},
-				proposal.Revision,
-			)
-			assert.Equal(t, retry, false)
-			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), tc.needed)
+			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(owner), false)
+			objectsBeforeCommit := slices.Clone(proposal.Objects)
+			_, committed, err := l.commitSelection(t.Context(), t, proposal, selection.Execution)
+			assert.NoError(t, err)
+			assert.Equal(t, committed, true)
+			_ = objectsBeforeCommit
+			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(owner), tc.needed)
 			assert.Equal(
 				t,
 				slices.ContainsFunc(
-					proposal.Objects,
+					objectsBeforeCommit,
 					func(
 						child store.Child,
 					) bool {
@@ -96,26 +96,31 @@ func TestAdmission_EffectiveProviderHistory(t *testing.T) {
 		lookedUp, invalidated := make(chan struct{}), make(chan struct{})
 		tasks := task.NewBounded(2)
 		tasks.Go(t.Context(), "lookup", func(ctx context.Context) {
-			proposal, err := l.Prepare(ctx, PrepareRequest{Reads: &reads, History: history})
+			proposal, err := prepareSelection(
+				ctx,
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Reads: &reads, History: history},
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner), false)
 			close(lookedUp)
 			<-invalidated
 			assert.Equal(t, reads.Valid(), false)
-			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), false)
-			proposal, err = l.Prepare(ctx, PrepareRequest{Invocation: true})
-			assert.NoError(t, err)
-			_, retry := l.Options.Filter.AddEmitted(
-				change.MembershipUpdate{
-					Needed:   proposal.Needed,
-					Selected: proposal.Selected,
-					Dirty:    proposal.Dirty,
-					Ordinary: proposal.Ordinary,
-				},
-				proposal.Revision,
+			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(owner), false)
+			proposal, err = prepareSelection(
+				ctx,
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
 			)
-			assert.Equal(t, retry, false)
-			assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), true)
+			assert.NoError(t, err)
+			objectsBeforeCommit := slices.Clone(proposal.Objects)
+			_, committed, err := l.commitSelection(t.Context(), t, proposal, selection.Execution)
+			assert.NoError(t, err)
+			assert.Equal(t, committed, true)
+			_ = objectsBeforeCommit
+			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(owner), true)
 		})
 		tasks.Go(t.Context(), "invalidate", func(context.Context) {
 			<-lookedUp
@@ -166,10 +171,10 @@ func effectiveProviderHistoryLoader(t *testing.T) (*Loader, manifest.NamedResour
 	st.SetArtifact(charts.Named(), input)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
-	l.Options.Selection = manifest.Selection{
+
+	configureSelection(t, l, selection.Request{
 		Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "consumer")},
-	}
+	})
 	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))

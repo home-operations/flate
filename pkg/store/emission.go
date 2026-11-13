@@ -223,9 +223,9 @@ type contributor struct {
 }
 
 type footprint struct {
-	id          manifest.NamedResource
-	record      manifest.DiscoveryRecord
-	independent bool
+	id                      manifest.NamedResource
+	record                  manifest.DiscoveryRecord
+	independent, classified bool
 }
 
 type sourceBinding struct {
@@ -325,7 +325,7 @@ func footprintReferenceRoots(record *manifest.DiscoveryRecord, entry *admission)
 	for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
 		if ref.Name != "" {
 			record.Refs = append(record.Refs, ref.NamedResource)
-			if ref.Use == sourceReferenceUse {
+			if ref.BindsSource() {
 				source = ref.NamedResource
 			}
 		}

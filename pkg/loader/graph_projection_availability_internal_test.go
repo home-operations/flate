@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -42,10 +44,13 @@ func testAdmitGraphProjectionInactiveUnresolvedSource(t *testing.T) {
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	child := testutil.KustomizationID("apps", "child")
 	assert.FatalIf(t, l.Store.GetObject(child) != nil ||
-		l.AdmitsRoot(
-			l.IndexedObject(child, l.Index.Records[child]).Obj,
-			filepath.Join(root, "target", "child.yaml"),
-		), "%s", "inactive unresolved owner enabled builder-free descendant")
+		selection.Root(
+			rootAtForTest(
+				l,
+				l.IndexedObject(child, l.Index.Records[child]).Obj,
+				filepath.Join(root, "target", "child.yaml"),
+			),
+		).Admitted, "%s", "inactive unresolved owner enabled builder-free descendant")
 }
 
 func testAdmitGraphProjectionPlainEntryUnderInactiveClaim(t *testing.T) {
@@ -68,10 +73,9 @@ func testAdmitGraphProjectionPlainEntryUnderInactiveClaim(t *testing.T) {
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	id := testutil.KustomizationID("apps", "direct")
 	assert.FatalIf(t, l.Store.GetObject(id) == nil ||
-		!l.AdmitsRoot(
-			l.IndexedObject(id, l.Index.Records[id]).Obj,
-			filepath.Join(root, "direct.yaml"),
-		), "%s", "inactive broad claim disabled the plain entry's direct manifest")
+		!selection.Root(
+			rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "direct.yaml")),
+		).Admitted, "%s", "inactive broad claim disabled the plain entry's direct manifest")
 }
 
 func testAdmitGraphProjectionInactiveAliasResourceOutsideClaim(t *testing.T) {
@@ -120,10 +124,13 @@ func testAdmitGraphProjectionInactiveAliasResourceOutsideClaim(t *testing.T) {
 		Name:      "inactive-source",
 	}
 	assert.FatalIf(t, st.GetObject(id) != nil ||
-		l.AdmitsRoot(
-			l.IndexedObject(id, l.Index.Records[id]).Obj,
-			filepath.Join(root, "outside", "source.yaml"),
-		), "%s", "inactive alias enabled its physical resource outside the path claim")
+		selection.Root(
+			rootAtForTest(
+				l,
+				l.IndexedObject(id, l.Index.Records[id]).Obj,
+				filepath.Join(root, "outside", "source.yaml"),
+			),
+		).Admitted, "%s", "inactive alias enabled its physical resource outside the path claim")
 	for child := range l.Sources(t.Context()) {
 		assert.FatalIf(
 			t,
@@ -180,7 +187,7 @@ func testAdmitGraphProjectionCase3(t *testing.T, testCaseInput *bool,
 		}
 	}
 	{
-		roots := l.StandaloneRoots(root)
+		roots := standaloneRootsForTest(t, l, root)
 		assert.FatalIf(
 			t,
 			!(*testCaseInput) && len(roots) != 1,
@@ -191,10 +198,15 @@ func testAdmitGraphProjectionCase3(t *testing.T, testCaseInput *bool,
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	id := testutil.KustomizationID("apps", "disabled")
 	file := filepath.Join(root, "apps", "disabled.yaml")
-	if l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file) != (*testCaseInput) {
+	if selection.Root(
+		rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, file),
+	).Admitted != (*testCaseInput) {
 		t.Fatalf(
 			"finalized admission=%t want %t",
-			l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file), (*testCaseInput),
+			selection.Root(
+				rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, file),
+			).Admitted,
+			(*testCaseInput),
 		)
 	}
 	{

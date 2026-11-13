@@ -5,12 +5,12 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -62,8 +62,8 @@ func duplicateAdmissionInputPair(t *testing.T, scenario string) ([2]*Loader, [2]
 		l := New(st)
 		loaders[side] = l
 		l.SourceRoot = root
-		l.Options.Selection = manifest.Selection{Changed: true}
-		l.Options.Filter = change.NewFilter()
+		configureSelection(t, l, selection.Request{Changed: true})
+
 		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -149,8 +149,8 @@ func admissionVisibilityPair(t *testing.T, policy string, hide bool) ([2]*Loader
 		l := New(st)
 		loaders[side] = l
 		l.SourceRoot = root
-		l.Options.Selection = manifest.Selection{Changed: true}
-		l.Options.Filter = change.NewFilter()
+		configureSelection(t, l, selection.Request{Changed: true})
+
 		_, err = l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))

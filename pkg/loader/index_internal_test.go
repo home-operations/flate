@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -81,7 +82,7 @@ func admitForTest(s *store.Store, root string) {
 func rendererFixture(t *testing.T, l *Loader, root string) *manifest.DiscoveryIndex {
 	t.Helper()
 	admitForTest(l.Store, root)
-	l.documents.mountSources(l.Store)
+	l.documents.mountSources(l.Store, nil)
 	{
 		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
@@ -336,9 +337,10 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 
 func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
 	t.Parallel()
+	root := t.TempDir()
 	l := New(store.New())
 	{
-		err := l.FinalizeIndex(t.Context(), "", true)
+		err := l.FinalizeIndex(t.Context(), root, true)
 		assert.NoError(t, err)
 	}
 	assert.FatalIf(
@@ -347,12 +349,16 @@ func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
 		"%s",
 		"unobserved bootstrap census is complete",
 	)
+	assert.Equal(t, l.SourceRoot, root)
+	facts := l.SourceFacts(manifest.BootstrapSourceID, nil)
+	assert.Equal(t, facts.Origin, root)
+	assert.Equal(t, facts.ToIndex, ".")
 }
 
 func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {
 	t.Parallel()
 	l := New(store.New())
-	l.Options.Selection = manifest.Selection{Changed: true}
+	configureSelection(t, l, selection.Request{Changed: true})
 	objects := []manifest.BaseManifest{
 		&manifest.RawObject{
 			Kind:       "Widget",
@@ -380,7 +386,7 @@ func TestFinalizeIndex_PathlessCompactReconstruction(t *testing.T) {
 			if r.Path != "" || r.File != "" || len(r.Productions) != 0 || r.Parent != (manifest.NamedResource{}) {
 				t.Fatalf("pathless record: %+v", r)
 			}
-			assert.Equal(t, l.AdmitsRoot(obj, ""), false)
+			assert.Equal(t, selection.Root(rootAtForTest(l, obj, "")).Admitted, false)
 		}
 	}
 }

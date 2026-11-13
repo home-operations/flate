@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -35,7 +36,7 @@ type Missing struct {
 type Model struct {
 	// Subjects overrides group context; an empty non-nil map retains ordinary snapshot identities.
 	Subjects map[manifest.NamedResource]manifest.DiagnosticIdentity
-	Names    *Names
+	Names    *diff.Names
 	Context  string
 	Primary  []Primary
 	Missing  []Missing
@@ -63,7 +64,7 @@ type Warning struct {
 	// Group is the cluster index; negative values denote invocation-wide notices.
 	Group   int
 	Context string
-	Subject Subject
+	Subject diff.Subject
 	prefix  string
 }
 
@@ -73,7 +74,7 @@ type ReportGroup struct {
 	Subjects map[manifest.NamedResource]manifest.DiagnosticIdentity
 	Models   []Model
 	Test     *TestReport
-	Names    Names
+	Names    diff.Names
 }
 
 // Report coordinates the invocation's results, warnings and summaries.
@@ -86,42 +87,56 @@ type Report struct {
 }
 
 // Prepare samples continuations and resolves every printed subject before writing.
-func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
-	n := reportNames{}
-	n.collect(r, extra)
-	n.collectOverrides(r)
-	n.collectContexts(r)
-	occurrences := nameOccurrenceUpdater()
-	n.collisions, n.update = occurrences.collisions, occurrences.update
-	collectNameOccurrences(n.inventory, n.subjects, n.update)
-	n.names = prepareNames(n.clusters, n.inventory, n.subjects, n.collisions)
-	n.bindModels(r)
-	n.bindWarnings(r)
-	n.bindOverrides(r)
-	return n.names
-}
-
-type reportNames struct {
-	clusters    []string
-	inventory   [][]manifest.NamedResource
-	overrides   [][]int
-	subjects    []map[manifest.NamedResource]manifest.DiagnosticIdentity
-	occurrences []map[manifest.NamedResource]int
-	names       []Names
-	collisions  map[string]bool
-	update      func(string, string, int)
-}
-
-func (n *reportNames) collect(r *Report, extra [][]manifest.NamedResource) {
-	n.clusters = make([]string, len(r.Groups))
-	n.inventory = make([][]manifest.NamedResource, len(r.Groups))
-	for i, g := range r.Groups {
-		n.clusters[i] = g.Cluster
-		if i < len(extra) {
-			n.inventory[i] = append(n.inventory[i], extra[i]...)
+func (r *Report) Prepare(extra [][]manifest.NamedResource) []diff.Names {
+	naming := r.naming(extra)
+	for i := range r.Groups {
+		r.Groups[i].Names = naming.Groups[i]
+		for j, model := range r.Groups[i].Models {
+			if model.Subjects != nil {
+				prepared := naming.Model(i, model.Subjects)
+				r.Groups[i].Models[j].Names = &prepared
+			}
 		}
-		n.inventory[i] = g.appendNameInventory(n.inventory[i])
 	}
+	for i := range r.Warnings {
+		warning := &r.Warnings[i]
+		r.Warnings[i].prefix = ""
+		if warning.Group < 0 {
+			continue
+		}
+		if warning.Warning.Resource == (manifest.NamedResource{}) {
+			r.Warnings[i].prefix = naming.Groups[warning.Group].Prefix
+		} else {
+			r.Warnings[i].Subject = naming.Warning(warning.Group, warning.Warning)
+		}
+	}
+	return naming.Groups
+}
+
+func (r *Report) naming(extra [][]manifest.NamedResource) *diff.Naming {
+	clusters := make([]string, len(r.Groups))
+	inventory := make([][]manifest.NamedResource, len(r.Groups))
+	var subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity
+	for i, group := range r.Groups {
+		clusters[i] = group.Cluster
+		if i < len(extra) {
+			inventory[i] = append(inventory[i], extra[i]...)
+		}
+		inventory[i] = group.appendNameInventory(inventory[i])
+		if len(group.Subjects) != 0 {
+			if subjects == nil {
+				subjects = make([]map[manifest.NamedResource]manifest.DiagnosticIdentity, len(r.Groups))
+			}
+			subjects[i] = group.Subjects
+		}
+	}
+	for i := range r.Warnings {
+		warning := &r.Warnings[i]
+		if warning.Group >= 0 && warning.Warning.Resource != (manifest.NamedResource{}) {
+			inventory[warning.Group] = append(inventory[warning.Group], warning.Warning.Resource)
+		}
+	}
+	return diff.PrepareNames(clusters, inventory, subjects)
 }
 
 func (g *ReportGroup) appendNameInventory(inventory []manifest.NamedResource) []manifest.NamedResource {
@@ -149,99 +164,6 @@ func (m *Model) appendNameInventory(inventory []manifest.NamedResource) []manife
 		inventory = append(inventory, missing.RequiredBy[:min(len(missing.RequiredBy), blockedSample)]...)
 	}
 	return inventory
-}
-
-func (n *reportNames) collectOverrides(r *Report) {
-	for i := range r.Warnings {
-		w := r.Warnings[i]
-		if w.Group >= 0 && w.Warning.Resource != (manifest.NamedResource{}) {
-			n.inventory[w.Group] = append(n.inventory[w.Group], w.Warning.Resource)
-			prepared := manifest.DiagnosticFor(w.Warning.Resource, nil)
-			if subject, ok := r.Groups[w.Group].Subjects[w.Warning.Resource]; ok {
-				prepared = subject
-			}
-			if w.Warning.Subject.ID != (manifest.NamedResource{}) && w.Warning.Subject != prepared {
-				if n.overrides == nil {
-					n.overrides = make([][]int, len(r.Groups))
-				}
-				n.overrides[w.Group] = append(n.overrides[w.Group], i)
-			}
-		}
-	}
-}
-
-func (n *reportNames) collectContexts(r *Report) {
-	for i, group := range r.Groups {
-		adjust := i < len(n.overrides) && len(n.overrides[i]) > 0
-		for _, model := range group.Models {
-			adjust = adjust || model.Subjects != nil
-		}
-		if len(group.Subjects) != 0 || adjust {
-			if n.subjects == nil {
-				n.subjects = make([]map[manifest.NamedResource]manifest.DiagnosticIdentity, len(r.Groups))
-			}
-			n.subjects[i] = group.Subjects
-		}
-		if adjust {
-			if n.occurrences == nil {
-				n.occurrences = make([]map[manifest.NamedResource]int, len(n.inventory))
-			}
-			n.occurrences[i] = make(map[manifest.NamedResource]int, len(n.inventory[i]))
-			for _, raw := range n.inventory[i] {
-				n.occurrences[i][raw]++
-			}
-		}
-	}
-}
-
-func (n *reportNames) bindModels(r *Report) {
-	for i := range r.Groups {
-		r.Groups[i].Names = n.names[i]
-		for j, model := range r.Groups[i].Models {
-			if model.Subjects != nil {
-				adjustNameOccurrences(n.occurrences[i], n.subjects[i], model.Subjects, n.update)
-				prepared := prepareGroupNames(n.names[i].Prefix, n.inventory[i], model.Subjects, n.collisions)
-				r.Groups[i].Models[j].Names = &prepared
-				adjustNameOccurrences(n.occurrences[i], model.Subjects, n.subjects[i], n.update)
-			}
-		}
-	}
-}
-
-func (n *reportNames) bindWarnings(r *Report) {
-	for i := range r.Warnings {
-		w := r.Warnings[i]
-		r.Warnings[i].prefix = ""
-		if w.Group < 0 {
-			continue
-		}
-		if w.Warning.Resource == (manifest.NamedResource{}) {
-			r.Warnings[i].prefix = n.names[w.Group].Prefix
-		} else {
-			r.Warnings[i].Subject = n.names[w.Group].Subjects[w.Warning.Resource]
-		}
-	}
-}
-
-func (n *reportNames) bindOverrides(r *Report) {
-	for group, indices := range n.overrides {
-		if len(indices) == 0 {
-			continue
-		}
-		adjustNameOccurrences(n.occurrences[group], n.subjects[group], nil, n.update)
-		for _, i := range indices {
-			w := r.Warnings[i].Warning
-			count := n.occurrences[group][w.Resource]
-			n.update(w.Resource.Kind, w.Resource.Group, -count)
-			n.update(w.Subject.Resource.Kind, w.Subject.Resource.Group, count)
-			labels := subjectLabels(&w.Subject.Resource, w.Subject.Path, n.names[group].Prefix, n.collisions)
-
-			r.Warnings[i].Subject = Subject{ID: w.Resource, Kind: labels.kind, Name: labels.name}
-			n.update(w.Subject.Resource.Kind, w.Subject.Resource.Group, -count)
-			n.update(w.Resource.Kind, w.Resource.Group, count)
-		}
-		adjustNameOccurrences(n.occurrences[group], nil, n.subjects[group], n.update)
-	}
 }
 
 // Report writes results, warnings, cluster summaries and the test invocation total in order.
@@ -295,7 +217,7 @@ func (e Encoder) Report(r *Report, results Encoder) error {
 	return writeErr
 }
 
-func (m *Model) failuresBlock(names Names, color bool) string {
+func (m *Model) failuresBlock(names diff.Names, color bool) string {
 	rows := make([]string, 0, len(m.Primary)+len(m.Missing))
 	for _, p := range m.Primary {
 		row := fmt.Sprintf(
@@ -432,21 +354,10 @@ func Verdict(color bool, glyph string, elapsed time.Duration, counts ...Count) s
 }
 
 // summarize caps an id list at blockedSample and includes kinds for ambiguous names.
-func summarize(ids []manifest.NamedResource, labels Names) string {
+func summarize(ids []manifest.NamedResource, labels diff.Names) string {
 	total := len(ids)
 	ids = ids[:min(len(ids), blockedSample)]
-	names := make([]string, 0, len(ids))
-	counts := make(map[string]int, len(ids))
-	for _, id := range ids {
-		name := labels.Subjects[id].Name
-		names = append(names, name)
-		counts[name]++
-	}
-	for i, name := range names {
-		if counts[name] > 1 {
-			names[i] = labels.Subjects[ids[i]].Kind + " " + name
-		}
-	}
+	names := labels.Labels(ids)
 	if total <= blockedSample {
 		return strings.Join(names, ", ")
 	}

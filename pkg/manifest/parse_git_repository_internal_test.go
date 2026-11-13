@@ -18,6 +18,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 		kind, value, label, spec string
 		normalized               sourcev1.GitRepositoryRef
 		pinned                   bool
+		bootstrap                [2]bool
 	}{
 		{name: "nil"},
 		{name: "empty", ref: &GitRepositoryRef{}},
@@ -27,6 +28,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			kind:       "commit",
 			value:      commit,
 			label:      "commit:" + commit,
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Commit: commit},
 			pinned:     true,
 		},
@@ -36,6 +38,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			kind:       "commit",
 			value:      commit,
 			label:      "branch:main@commit:" + commit,
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Commit: commit, Branch: "main"},
 		},
 		{
@@ -44,6 +47,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			kind:       "commit",
 			value:      commit,
 			label:      "commit:" + commit,
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Commit: commit},
 		},
 		{
@@ -52,6 +56,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			kind:       "commit",
 			value:      commit,
 			label:      "commit:" + commit,
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Commit: commit},
 		},
 		{
@@ -60,6 +65,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			kind:       "commit",
 			value:      commit,
 			label:      "commit:" + commit,
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Commit: commit},
 		},
 		{
@@ -68,6 +74,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			kind:       "commit",
 			value:      commit,
 			label:      "branch:main@commit:" + commit,
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Commit: commit, Branch: "main"},
 		},
 		{
@@ -77,6 +84,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			value:      "refs/heads/release",
 			label:      "name:refs/heads/release",
 			spec:       "+refs/heads/release:refs/heads/release",
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Name: "refs/heads/release"},
 		},
 		{
@@ -86,6 +94,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			value:      ">=1.0",
 			label:      "semver:>=1.0",
 			spec:       "+refs/tags/*:refs/tags/*",
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{SemVer: ">=1.0"},
 		},
 		{
@@ -95,6 +104,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			value:      "refs/pull/420/head",
 			label:      "name:refs/pull/420/head",
 			spec:       "+refs/pull/420/head:refs/pull/420/head",
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Name: "refs/pull/420/head"},
 		},
 		{
@@ -104,6 +114,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			value:      "v1.2.3",
 			label:      "tag:v1.2.3",
 			spec:       "+refs/tags/v1.2.3:refs/tags/v1.2.3",
+			bootstrap:  [2]bool{true, true},
 			normalized: sourcev1.GitRepositoryRef{Tag: "v1.2.3"},
 		},
 		{
@@ -113,6 +124,7 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			value:      "main",
 			label:      "branch:main",
 			spec:       "+refs/heads/main:refs/heads/main",
+			bootstrap:  [2]bool{false, true},
 			normalized: sourcev1.GitRepositoryRef{Branch: "main"},
 		},
 	} {
@@ -132,6 +144,12 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			assert.Equal(t, string(tc.ref.RefSpec()), tc.spec)
 			assert.Equal(t, tc.ref.Normalized(), tc.normalized)
 			assert.Equal(t, tc.ref.Pinned(), tc.pinned)
+			for recursive, wantPinned := range tc.bootstrap {
+				var repository GitRepository
+				repository.Reference = (*sourcev1.GitRepositoryRef)(tc.ref)
+				repository.RecurseSubmodules = recursive != 0
+				assert.Equal(t, repository.BootstrapPinned(), wantPinned)
+			}
 			assert.Equal(t, tc.ref.Validate(), nil)
 			assert.Equal(t, Fingerprint(tc.ref), before)
 		})

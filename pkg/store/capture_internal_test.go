@@ -734,3 +734,44 @@ func testReadRegistrationActivationUnderReadLockCase(
 	}
 	assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
 }
+
+func TestReadRegistration_ProducerActivation(t *testing.T) {
+	t.Parallel()
+	for _, settled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("settled=%t", settled), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			t.Cleanup(reads.Retire)
+			var selected capture
+			for _, name := range []string{"first", "second", "third"} {
+				producer := ownerID(name)
+				s.AddObject(&manifest.Kustomization{Name: producer.Name, Namespace: producer.Namespace})
+				child := emissionChild(name, "old")
+				s.RecordEmitted(producer, &Emission{Children: []Child{child}, Complete: settled}, nil)
+				sh := s.shardFor(child.Obj.Named())
+				sh.mu.RLock()
+				var view capture
+				sh.captureLocked(child.Obj.Named(), new(sh.cells[child.Obj.Named()]), &view)
+				sh.mu.RUnlock()
+				reads.sample(child.Obj.Named(), view.owner, view.record, false)
+				reads.sample(child.Obj.Named(), view.owner, view.record, false)
+				if name == "second" {
+					selected = view
+				}
+			}
+			reads.activateProducers()
+			assert.Equal(t, reads.Valid(), true)
+			reads.sample(emissionChild("second", "old").Obj.Named(), selected.owner, selected.record, true)
+			reads.activateProducers()
+			assert.Equal(t, reads.Valid(), true)
+			s.RecordEmitted(
+				ownerID("second"),
+				&Emission{Children: []Child{emissionChild("second", "new")}, Complete: true},
+				nil,
+			)
+			assert.Equal(t, reads.Valid(), false)
+		})
+	}
+}

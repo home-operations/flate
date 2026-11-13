@@ -52,6 +52,7 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 					"apps",
 				), "raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
 			res, err := o.collectResult(o.run(t.Context()))
+			t.Cleanup(res.Close)
 			assert.FatalIf(
 				t,
 				err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0,
@@ -93,8 +94,7 @@ func TestRenderTrees_UnknownOrderingTargetStillFails(t *testing.T) {
 	for _, dir := range []string{baseDir, headDir} {
 		testutil.WriteFile(t, dir, "flux/selected.yaml", ksYAML("selected", "apps/selected", "unknown"))
 	}
-	renderedTrees2, err := RenderTrees(
-		t.Context(),
+	renderedTrees2, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -204,33 +204,8 @@ func assertExcludedOrderingWork(t *testing.T, side Rendered, broken bool) {
 
 func testExcludedOrderingAndPromotion(t *testing.T, broken bool) {
 	t.Helper()
-	baseDir, headDir := t.TempDir(), t.TempDir()
-	testutil.WriteFilteredOrderingCluster(t, baseDir, "v1", broken)
-	testutil.WriteFilteredOrderingCluster(t, headDir, "v2", broken)
-	for _, dir := range []string{baseDir, headDir} {
-		testutil.WriteFile(
-			t,
-			dir,
-			"apps/monitor-b/kustomization.yaml",
-			"resources: [missing.yaml, hr.yaml, invalid.yaml]\n",
-		)
-		testutil.WriteFile(
-			t,
-			dir,
-			"apps/monitor-b/invalid.yaml",
-			"apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name"+
-				": invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: exa"+
-				"mple.test/, kind: Widget, name: missing}]\n",
-		)
-	}
-	renderedTrees1, err := RenderTrees(
-		t.Context(),
-		[]Tree{
-			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
-			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
-		},
-		Config{RecordWork: true, Concurrency: 4, CacheDir: t.TempDir()},
-	)
+	baseDir, headDir := excludedOrderingFixture(t, broken)
+	renderedTrees1, err := renderOrderingTreesForTest(t, baseDir, headDir)
 	base, head := renderedTrees1[0], renderedTrees1[1]
 	assert.FatalIf(t, (err != nil) != broken, "RenderTrees error=%v, want failure=%v", err, broken)
 	sourceID := manifest.NamedResource{
@@ -294,7 +269,7 @@ func assertExcludedOrderingState(t *testing.T, side Rendered, broken bool) {
 	)
 	assert.FatalIf(
 		t,
-		st.GetObject(chart) == nil || !side.filter.ShouldReconcile(chart),
+		st.GetObject(chart) == nil || !side.selection.Snapshot().Reconcile(chart),
 		"required shared chart was not admitted: %s",
 		chart,
 	)
@@ -305,8 +280,9 @@ func assertExcludedOrderingState(t *testing.T, side Rendered, broken bool) {
 		Name:      "selected-source",
 	}
 	{
-		info, known := side.statusOf(otherSource)
-		assert.FatalIf(t, side.filter.ShouldReconcile(otherSource) ||
+		projected, _ := Select([]Rendered{side}, nil, []manifest.NamedResource{otherSource}, nil)
+		info, known := projected[0].Statuses[otherSource]
+		assert.FatalIf(t, side.selection.Snapshot().Reconcile(otherSource) ||
 			(known || st.GetObject(otherSource) != nil) &&
 				info.Outcome() != store.OutcomeUnchanged, "excluded source sibling was activated: %+v", info)
 	}
@@ -322,7 +298,7 @@ func assertExcludedOrderingState(t *testing.T, side Rendered, broken bool) {
 	} {
 		assert.FatalIf(
 			t,
-			st.GetObject(id) == nil || !side.filter.ShouldReconcile(id),
+			st.GetObject(id) == nil || !side.selection.Snapshot().Reconcile(id),
 			"selected source or consumer missing: %s",
 			id,
 		)
@@ -393,6 +369,13 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken bool)
 	}
 	prepares := excludedOrderingPreparations(side)
 	if broken {
+		prepares[manifest.WorkKey{
+			Tree: side.ID, Owner: testutil.KustomizationID("\x00", "."),
+			Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation,
+		}] = manifest.WorkCounts{
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6, FileEntries: 13,
+		}
+
 		source := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
 			Kind:      manifest.KindOCIRepository,
@@ -400,33 +383,31 @@ func assertExcludedOrderingPreparation(t *testing.T, side Rendered, broken bool)
 			Name:      "selected-source",
 		}
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: source, Source: source, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
-			Attempts:       variablePreparation,
-			Completed:      variablePreparation,
-			OwnerPrepares:  variablePreparation,
-			FileEntries:    variablePreparation,
+			Attempts:       1,
+			Completed:      1,
+			OwnerPrepares:  1,
+			FileEntries:    2,
 			RawKeyPrepares: 1,
 		}
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Owner: selectedHR, Source: source, Phase: manifest.WorkPreparation,
-		}] = manifest.WorkCounts{Attempts: 6, Completed: 6, OwnerPrepares: 6}
+		}] = manifest.WorkCounts{Attempts: 1, Completed: 1, OwnerPrepares: 1}
 	} else {
-		// The preparation deduplication lane restores an exact shared-chart vector.
 		chartPreparation := workCounts(side.Result.Work, chart, manifest.WorkPreparation)
-		assert.Equal(t, chartPreparation.Attempts >= 1, true)
-		assert.Equal(t, chartPreparation.FileEntries == 2*chartPreparation.Attempts, true)
+		assert.Equal(t, chartPreparation.Attempts, uint64(1))
+		assert.Equal(t, chartPreparation.FileEntries, uint64(2))
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: chart, Source: chart, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
-			Attempts:      chartPreparation.Attempts,
-			Completed:     chartPreparation.Attempts,
-			OwnerPrepares: chartPreparation.Attempts,
-			FileEntries:   chartPreparation.FileEntries,
+			Attempts:      1,
+			Completed:     1,
+			OwnerPrepares: 1,
+			FileEntries:   2,
 		}
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Owner: selectedHR, Source: chart, Phase: manifest.WorkPreparation,
-		}] = manifest.WorkCounts{Attempts: 5, Completed: 5, OwnerPrepares: 5, RawKeyPrepares: 6}
+		}] = manifest.WorkCounts{Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 6}
 	}
 	assertWitnessPreparations(
 		t, witnessPreparations(side.Result.Work), prepares,
-		witnessPreparationLimit(len(witnessWork(side.Result.Work, manifest.WorkAdmission))),
 	)
 }
 
@@ -505,12 +486,12 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 	}
 	prepares := map[manifest.WorkKey]manifest.WorkCounts{
 		{Tree: side.ID, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
-			Attempts:       8,
-			Completed:      8,
-			OwnerPrepares:  8,
+			Attempts:       6,
+			Completed:      6,
+			OwnerPrepares:  6,
 			RawKeyPrepares: 7,
-			FileEntries:    variablePreparation,
-			ReaderEdges:    89,
+			FileEntries:    246,
+			ReaderEdges:    46,
 		},
 		{Tree: side.ID, Source: alias, Phase: manifest.WorkPreparation}: {FileEntries: 20, ReaderEdges: 14},
 		{
@@ -518,37 +499,37 @@ func excludedOrderingPreparations(side Rendered) map[manifest.WorkKey]manifest.W
 			Owner:  manifest.BootstrapSourceID,
 			Source: manifest.BootstrapSourceID,
 			Phase:  manifest.WorkPreparation,
-		}: {Attempts: variablePreparation, Completed: variablePreparation, OwnerPrepares: variablePreparation},
+		}: {Attempts: 1, Completed: 1, OwnerPrepares: 1},
 		{Tree: side.ID, Owner: alias, Source: alias, Phase: manifest.WorkPreparation}: {
-			Attempts:      variablePreparation,
-			Completed:     variablePreparation,
-			OwnerPrepares: variablePreparation,
+			Attempts:      4,
+			Completed:     4,
+			OwnerPrepares: 4,
 			FileEntries:   74,
 			ReaderEdges:   7,
 		},
 		{Tree: side.ID, Owner: entry, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation}: {
-			Attempts: 7, Completed: 7, OwnerPrepares: 7, RawKeyPrepares: 6, FileEntries: 42,
+			Attempts: 2, Completed: 2, OwnerPrepares: 2, RawKeyPrepares: 6, FileEntries: 13,
 		},
 		{Tree: side.ID, Owner: selectedKS, Source: alias, Phase: manifest.WorkPreparation}: {
-			Attempts: 6, Completed: 6, OwnerPrepares: 6, RawKeyPrepares: 13, ReaderEdges: 3,
+			Attempts: 3, Completed: 3, OwnerPrepares: 3, RawKeyPrepares: 13, ReaderEdges: 0,
 		},
 	}
 	if side.ID.Side == manifest.TreeBase {
 		prepares[manifest.WorkKey{
 			Tree: side.ID, Source: manifest.BootstrapSourceID, Phase: manifest.WorkPreparation,
 		}] = manifest.WorkCounts{
-			Attempts:       8,
-			Completed:      8,
-			OwnerPrepares:  8,
+			Attempts:       6,
+			Completed:      6,
+			OwnerPrepares:  6,
 			RawKeyPrepares: 7,
-			FileEntries:    variablePreparation,
-			ReaderEdges:    97,
+			FileEntries:    428,
+			ReaderEdges:    54,
 		}
 		prepares[manifest.WorkKey{Tree: side.ID, Owner: alias, Source: alias, Phase: manifest.WorkPreparation}] = manifest.WorkCounts{
-			Attempts:      variablePreparation,
-			Completed:     variablePreparation,
-			OwnerPrepares: variablePreparation,
-			FileEntries:   304,
+			Attempts:      4,
+			Completed:     4,
+			OwnerPrepares: 4,
+			FileEntries:   238,
 			ReaderEdges:   7,
 		}
 	}
@@ -574,8 +555,7 @@ func testSelectedMalformedOrderingReference(t *testing.T) {
 			"e: invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: e"+
 			"xample.test/, kind: Widget, name: missing}]\n",
 	)
-	renderedSingleton1, err := RenderTrees(
-		t.Context(),
+	renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{RecordWork: true, Concurrency: 2, CacheDir: t.TempDir()},
 	)
@@ -601,12 +581,13 @@ func testSelectedMalformedOrderingReference(t *testing.T) {
 	}
 	runs := []Rendered{{Orchestrator: o, Result: res, Err: err}}
 	for _, name := range []string{"apps", "good"} {
-		_, selectedErr, remainder := Select(
+		projectedResults0, projectionErrors0 := Select(
 			runs,
 			err,
 			[]manifest.NamedResource{testutil.KustomizationID("flux-system", name)},
 			nil,
 		)
+		_, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.FatalIf(
 			t,
 			remainder != nil || (selectedErr != nil) != (name == "apps"),
@@ -629,7 +610,8 @@ func assertExcludedOrderingSiblings(t *testing.T, side Rendered) {
 	} {
 		assert.ErrorIf(
 			t,
-			(id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) || side.filter.ShouldReconcile(id),
+			(id.Kind != manifest.KindKustomization && st.GetObject(id) != nil) ||
+				side.selection.Snapshot().Reconcile(id),
 			"excluded sibling or ordering target admitted: %s",
 			id,
 		)
@@ -641,8 +623,9 @@ func assertExcludedOrderingSiblings(t *testing.T, side Rendered) {
 		Name:      "excluded-source",
 	}
 	{
-		info, known := side.statusOf(excludedSource)
-		assert.FatalIf(t, side.filter.ShouldReconcile(excludedSource) ||
+		projected, _ := Select([]Rendered{side}, nil, []manifest.NamedResource{excludedSource}, nil)
+		info, known := projected[0].Statuses[excludedSource]
+		assert.FatalIf(t, side.selection.Snapshot().Reconcile(excludedSource) ||
 			(known || st.GetObject(excludedSource) != nil) &&
 				info.Outcome() != store.OutcomeUnchanged, "discovered excluded source was activated: %+v", info)
 	}

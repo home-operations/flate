@@ -34,8 +34,10 @@ func sourceValuesCacheFixture(t *testing.T) (string, *store.Store, *manifest.Hel
 	testutil.WriteFile(t, root, "config/prod.yaml", "marker: first\n")
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	admittedDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	admitted := admittedDirectory.Artifact()
+	assert.NoError(t, admittedDirectory.Close())
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
 		Namespace: "apps",
@@ -207,7 +209,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	assert.NoError(t, err)
 
 	var record renderRecord
-	assert.NoError(t, decodeTestRecord(data, &record))
+	assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
 	decoded, err := testutil.DecodeRender(record.Output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, first)
@@ -217,7 +219,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
 		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			writeTestRecordErr := writeTestRecord(
+			writeTestRecordErr := writeTestRecord(t.Context(),
 				w,
 				cache.BlobKey{Content: key, Render: cache.RenderAccepted},
 				&renderRecord{Output: encodedRender(t, cached), Analysis: initial.analyze()},
@@ -289,7 +291,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 
 	assert.NoError(t, err)
 	assert.FatalIf(t, !hasRenderField(first, "marker", "packaged"), "%v", first)
-	initial, err := newClientCli2.describeChart(t.Context(), hr, newSourcesCliSources2)
+	initial, err := newClientCli2.describeChart(t.Context(), hr, newSourcesCliSources2.chartInput(hr))
 	assert.NoError(t, err)
 	key := computeTemplateKey(&initial, map[string]any{}, Options{}, hr)
 	assert.FatalIf(t, key == "", "%s", "fixture has no completed-output key")
@@ -304,7 +306,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	assert.NoError(t, err)
 
 	var record renderRecord
-	assert.NoError(t, decodeTestRecord(data, &record))
+	assert.NoError(t, decodeTestRecord(t.Context(), data, &record))
 	decoded, err := testutil.DecodeRender(record.Output)
 	assert.NoError(t, err)
 	assert.Diff(t, decoded, first)
@@ -341,7 +343,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 		err,
 	)
 	assert.FatalIf(t, !strings.Contains(err.Error(), `read values file "prod.yaml"`), "%v", err)
-	missing, err := fresh.describeChart(t.Context(), sourceHR, freshSources)
+	missing, err := fresh.describeChart(t.Context(), sourceHR, freshSources.chartInput(sourceHR))
 	assert.NoError(t, err)
 	missing.values, missing.valuesErr = fresh.observeValuesFiles(
 		t.Context(), &missing, sourceHR.ChartValuesFiles,

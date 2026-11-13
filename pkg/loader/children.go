@@ -8,10 +8,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-type emissionProducer interface {
-	EmissionPolicy() manifest.EmissionPolicy
-}
-
 // ParseChildren selects output and retains authoritative sanitized child documents.
 // Producer namespace policy overrides opts.DefaultNamespace; raw parents use that default.
 // The returned objects and maps MUST remain immutable after publication.
@@ -22,8 +18,8 @@ func ParseChildren(
 	skipKinds []string,
 ) store.ChildDocuments {
 	var policy manifest.EmissionPolicy
-	if producer, ok := parent.(emissionProducer); ok {
-		policy = producer.EmissionPolicy()
+	if manifest.KindOf(parent).Parent {
+		policy = parent.EmissionPolicy()
 		if policy.InternalNamespace {
 			opts.DefaultNamespace = ""
 		} else {

@@ -11,13 +11,14 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -111,9 +112,12 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 	statementInput.cfg.Cache = cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(
 		t.Context(),
-		(*statementInput.headRoot),
-		old.String(),
-		statementInput.cfg.Cache,
+		baseline.Config{
+			Network: networktest.New(t),
+			Path:    (*statementInput.headRoot),
+			Base:    old.String(),
+			Cache:   statementInput.cfg.Cache,
+		},
 	)
 	assert.NoError(t, err)
 	statementInput.cfg.Input, statementInput.cfg.BaseInput = selected.Source, selected.BaseInput
@@ -124,8 +128,7 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 	(*statementInput.baseRoot) = statementInput.cfg.BaseInput.LocalPath
 	var previous [2]map[manifest.NamedResource][]map[string]any
 	for run := range 2 {
-		renderedTrees2, err := RenderTrees(
-			t.Context(),
+		renderedTrees2, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					Path:            (*statementInput.baseRoot),
@@ -151,7 +154,7 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 		source := (&manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}).Named()
 		left := base.Store().GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 		right := head.Store().GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-		payload, err := change.Detect(t.Context(), left, right, manifest.WorkScope{})
+		payload, err := change.Detect(t.Context(), left, right, change.DetectConfig{})
 		assert.NoError(t, err)
 		if (*(*statementInput.testCaseInput)) != "selected_payload_only" {
 			assert.Equal(t, payload.Len(), 0)
@@ -176,7 +179,7 @@ func selectedAliasAdmittedViews(t *testing.T, statementInput *testRenderTreesAdm
 				directCfg.Path, directCfg.SelfURLs = directCfg.Input.LocalPath, []string{admittedViewsURL}
 				direct, err := newTestOrchestrator(t, directCfg.Tree, directCfg.Config)
 				assert.NoError(t, err)
-				result, err := direct.render(t.Context())
+				result, err := direct.render(t.Context(), t)
 				assert.NoError(t, err)
 				assert.Diff(t, outputByParent(result.Manifests), outputByParent(rendered.Result.Manifests))
 			}
@@ -246,9 +249,12 @@ func pinnedSourceAdmittedViews(t *testing.T, statementInput *testRenderTreesAdmi
 	statementInput.cfg.Cache = cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(
 		t.Context(),
-		(*statementInput.headRoot),
-		baseHash.String(),
-		statementInput.cfg.Cache,
+		baseline.Config{
+			Network: networktest.New(t),
+			Path:    (*statementInput.headRoot),
+			Base:    baseHash.String(),
+			Cache:   statementInput.cfg.Cache,
+		},
 	)
 	assert.NoError(t, err)
 	statementInput.cfg.BaseInput, statementInput.cfg.Input = selected.BaseInput, selected.Source
@@ -308,6 +314,7 @@ func unavailableSourceAdmittedViews(t *testing.T, statementInput *testRenderTree
 	o.Store().
 		UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "fixture unavailable payload"})
 	result, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(result.Close)
 	assert.FatalIf(
 		t,
 		err == nil || result == nil || result.Failed[(*statementInput.changed)].Status != store.StatusFailed,
@@ -355,7 +362,7 @@ func selectedAliasRepository(
 				),
 			)
 		}
-		ref := ", ref: {branch: selected}"
+		ref := ", ref: {name: refs/heads/selected}"
 		if (*(*statementInput.testCaseInput)) == "selected_payload_only" {
 			ref = ""
 		}

@@ -151,6 +151,78 @@
       "refs": [
         "refs/tags/literal-kustomization-path-reverse-diff-repo-0"
       ]
+    },
+    {
+      "repository": "repo",
+      "name": "required-missing-secret-old",
+      "overlay": "required-missing-secret-old",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/required-missing-secret-old"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "required-missing-secret-new",
+      "overlay": "required-missing-secret-new",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/required-missing-secret-new"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "required-missing-secret-one-sided",
+      "overlay": "required-missing-secret-one-sided",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/required-missing-secret-one-sided"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "required-missing-configmap-old",
+      "overlay": "required-missing-configmap-old",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/required-missing-configmap-old"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "required-missing-configmap-new",
+      "overlay": "required-missing-configmap-new",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/required-missing-configmap-new"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "required-missing-configmap-one-sided",
+      "overlay": "required-missing-configmap-one-sided",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [],
+      "refs": [
+        "refs/tags/required-missing-configmap-one-sided"
+      ]
     }
   ],
   "overlays": [
@@ -271,6 +343,12 @@
         },
         {
           "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod",
+            "to": "repo/kubernetes/apps/${ENV:=prod}"
+          }
         }
       ]
     },
@@ -301,6 +379,12 @@
         },
         {
           "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod",
+            "to": "repo/kubernetes/apps/${ENV:=prod}"
+          }
         }
       ]
     },
@@ -331,6 +415,12 @@
         },
         {
           "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod",
+            "to": "repo/kubernetes/apps/${ENV:=prod}"
+          }
         }
       ]
     },
@@ -361,20 +451,239 @@
         },
         {
           "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod",
+            "to": "repo/kubernetes/apps/${ENV:=prod}"
+          }
         }
       ]
     },
     {
       "name": "setup-literal-kustomization-path-changed-only-2",
-      "directory": "overlays/setup-literal-kustomization-path-changed-only-2"
+      "directory": "overlays/setup-literal-kustomization-path-changed-only-2",
+      "operations": [
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod/cm.yaml",
+            "to": "repo/kubernetes/apps/${ENV:=prod}/cm.yaml"
+          }
+        },
+        {
+          "delete": "repo/kubernetes/apps/env-prod"
+        }
+      ]
     },
     {
       "name": "setup-literal-kustomization-path-paired-diff-2",
-      "directory": "overlays/setup-literal-kustomization-path-paired-diff-2"
+      "directory": "overlays/setup-literal-kustomization-path-paired-diff-2",
+      "operations": [
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod/cm.yaml",
+            "to": "repo/kubernetes/apps/${ENV:=prod}/cm.yaml"
+          }
+        },
+        {
+          "delete": "repo/kubernetes/apps/env-prod"
+        }
+      ]
     },
     {
       "name": "setup-literal-kustomization-path-reverse-diff-2",
-      "directory": "overlays/setup-literal-kustomization-path-reverse-diff-2"
+      "directory": "overlays/setup-literal-kustomization-path-reverse-diff-2",
+      "operations": [
+        {
+          "rename": {
+            "from": "repo/kubernetes/apps/env-prod/cm.yaml",
+            "to": "repo/kubernetes/apps/${ENV:=prod}/cm.yaml"
+          }
+        },
+        {
+          "delete": "repo/kubernetes/apps/env-prod"
+        }
+      ]
+    },
+    {
+      "name": "required-missing-secret-old",
+      "directory": "overlays/required-missing-secret-old",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "required-missing-secret-new",
+      "directory": "overlays/required-missing-secret-new",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "required-missing-secret-one-sided",
+      "directory": "overlays/required-missing-secret-one-sided",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "required-missing-configmap-old",
+      "directory": "overlays/required-missing-configmap-old",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "required-missing-configmap-new",
+      "directory": "overlays/required-missing-configmap-new",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        }
+      ]
+    },
+    {
+      "name": "required-missing-configmap-one-sided",
+      "directory": "overlays/required-missing-configmap-one-sided",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/apps/cluster-secrets.sops.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/kustomization.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/cluster-settings.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/cluster/flux-system.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/ks.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/script-cm.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/apps/leaf/app/kustomization.yaml"
+        }
+      ]
     }
   ],
   "inputs": "inputs",
@@ -928,6 +1237,510 @@
           }
         }
       ]
+    },
+    {
+      "name": "required-missing-secret",
+      "description": "Required absent Secret permission, wrong-kind control, changed-only rendering, and both image diff directions with symmetric and one-sided references.",
+      "setup": [
+        {
+          "commit": "required-missing-secret-new"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "required-missing-secret-new"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-secret-build.stdout",
+              "stderr": "expect/required-missing-secret-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "missing",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-secret-empty.stdout",
+              "stderr": "expect/required-missing-secret-missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "wrong-kind",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-secret-empty.stdout",
+              "stderr": "expect/required-missing-secret-missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--base",
+              "required-missing-secret-old",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-secret-build.stdout",
+              "stderr": "expect/required-missing-secret-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--base",
+              "required-missing-secret-old",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-secret-forward.stdout",
+              "stderr": "expect/required-missing-secret-pair.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "one-sided-forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--base",
+              "required-missing-secret-one-sided",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-secret-forward.stdout",
+              "stderr": "expect/required-missing-secret-one-sided-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "old-tree",
+          "edit": {
+            "overlay": "required-missing-secret-old"
+          }
+        },
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--base",
+              "required-missing-secret-new",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-secret-reverse.stdout",
+              "stderr": "expect/required-missing-secret-pair.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "one-sided-tree",
+          "edit": {
+            "overlay": "required-missing-secret-one-sided"
+          }
+        },
+        {
+          "id": "one-sided-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--base",
+              "required-missing-secret-new",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-secret-reverse.stdout",
+              "stderr": "expect/required-missing-secret-one-sided-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "required-missing-configmap",
+      "description": "Required absent ConfigMap permission, wrong-kind control, changed-only rendering, and both image diff directions with symmetric and one-sided references.",
+      "setup": [
+        {
+          "commit": "required-missing-configmap-new"
+        },
+        {
+          "ref": {
+            "repository": "repo",
+            "name": "refs/heads/master",
+            "commit": "required-missing-configmap-new"
+          }
+        }
+      ],
+      "env": {
+        "SSH_AUTH_SOCK": "@@inputs@@/absent-agent"
+      },
+      "cache": {
+        "repeat": "reuse"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-configmap-build.stdout",
+              "stderr": "expect/required-missing-configmap-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "missing",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-configmap-empty.stdout",
+              "stderr": "expect/required-missing-configmap-missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "wrong-kind",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-configmap-empty.stdout",
+              "stderr": "expect/required-missing-configmap-missing.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "changed-only",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--base",
+              "required-missing-configmap-old",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-configmap-build.stdout",
+              "stderr": "expect/required-missing-configmap-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--base",
+              "required-missing-configmap-old",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-configmap-forward.stdout",
+              "stderr": "expect/required-missing-configmap-pair.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "one-sided-forward",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--base",
+              "required-missing-configmap-one-sided",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-configmap-forward.stdout",
+              "stderr": "expect/required-missing-configmap-one-sided-forward.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "old-tree",
+          "edit": {
+            "overlay": "required-missing-configmap-old"
+          }
+        },
+        {
+          "id": "reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--base",
+              "required-missing-configmap-new",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-configmap-reverse.stdout",
+              "stderr": "expect/required-missing-configmap-pair.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "one-sided-tree",
+          "edit": {
+            "overlay": "required-missing-configmap-one-sided"
+          }
+        },
+        {
+          "id": "one-sided-reverse",
+          "invoke": {
+            "argv": [
+              "diff",
+              "images",
+              "--base",
+              "required-missing-configmap-new",
+              "--path",
+              "@@repo@@/kubernetes/apps",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "name": "default"
+            },
+            "expect": {
+              "stdout": "expect/required-missing-configmap-reverse.stdout",
+              "stderr": "expect/required-missing-configmap-one-sided-reverse.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
     }
   ],
   "files": [
@@ -1236,7 +2049,7 @@
       "purpose": "Input, exclusion control, or independently derived output for the named behavioral variants."
     },
     {
-      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-changed-only",
         "literal-kustomization-path-paired-diff"
@@ -1244,7 +2057,7 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "path": "overlays/literal-kustomization-path-changed-only-repo-0-tree/repo/kubernetes/apps/env-prod/kustomization.yaml",
       "cases": [
         "literal-kustomization-path-changed-only",
         "literal-kustomization-path-paired-diff"
@@ -1284,14 +2097,14 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-full-build"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "path": "overlays/literal-kustomization-path-full-build-repo-base-tree/repo/kubernetes/apps/env-prod/kustomization.yaml",
       "cases": [
         "literal-kustomization-path-full-build"
       ],
@@ -1305,14 +2118,14 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-own-postbuild"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "path": "overlays/literal-kustomization-path-own-postbuild-repo-base-tree/repo/kubernetes/apps/env-prod/kustomization.yaml",
       "cases": [
         "literal-kustomization-path-own-postbuild"
       ],
@@ -1326,14 +2139,14 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-reverse-diff"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/${ENV:=prod}/kustomization.yaml",
+      "path": "overlays/literal-kustomization-path-reverse-diff-repo-0-tree/repo/kubernetes/apps/env-prod/kustomization.yaml",
       "cases": [
         "literal-kustomization-path-reverse-diff"
       ],
@@ -1368,21 +2181,21 @@
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/setup-literal-kustomization-path-changed-only-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/setup-literal-kustomization-path-changed-only-2/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-changed-only"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/setup-literal-kustomization-path-paired-diff-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/setup-literal-kustomization-path-paired-diff-2/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-paired-diff"
       ],
       "purpose": "Shared input tree or the declared case edit."
     },
     {
-      "path": "overlays/setup-literal-kustomization-path-reverse-diff-2/repo/kubernetes/apps/${ENV:=prod}/cm.yaml",
+      "path": "overlays/setup-literal-kustomization-path-reverse-diff-2/repo/kubernetes/apps/env-prod/cm.yaml",
       "cases": [
         "literal-kustomization-path-reverse-diff"
       ],
@@ -1510,6 +2323,258 @@
         "unapplied-package-patches-unapplied"
       ],
       "purpose": "Shared input tree or the declared case edit."
+    },
+    {
+      "path": "overlays/required-missing-secret-old/repo/kubernetes/apps/ks.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-secret-old/repo/kubernetes/apps/tunnel/kustomization.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-secret-old/repo/kubernetes/apps/tunnel/pod.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-secret-new/repo/kubernetes/apps/ks.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-secret-new/repo/kubernetes/apps/tunnel/kustomization.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-secret-new/repo/kubernetes/apps/tunnel/pod.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-secret-one-sided/repo/kubernetes/apps/ks.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-secret-one-sided/repo/kubernetes/apps/tunnel/kustomization.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-secret-one-sided/repo/kubernetes/apps/tunnel/pod.yaml",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-build.stdout",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-build.stderr",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-empty.stdout",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-missing.stderr",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-forward.stdout",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-reverse.stdout",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-pair.stderr",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-one-sided-forward.stderr",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-secret-one-sided-reverse.stderr",
+      "cases": [
+        "required-missing-secret"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-old/repo/kubernetes/apps/ks.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-old/repo/kubernetes/apps/tunnel/kustomization.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-old/repo/kubernetes/apps/tunnel/pod.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-new/repo/kubernetes/apps/ks.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-new/repo/kubernetes/apps/tunnel/kustomization.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-new/repo/kubernetes/apps/tunnel/pod.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-one-sided/repo/kubernetes/apps/ks.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-one-sided/repo/kubernetes/apps/tunnel/kustomization.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "overlays/required-missing-configmap-one-sided/repo/kubernetes/apps/tunnel/pod.yaml",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-build.stdout",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-build.stderr",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-empty.stdout",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-missing.stderr",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-forward.stdout",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-reverse.stdout",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-pair.stderr",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-one-sided-forward.stderr",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
+    },
+    {
+      "path": "expect/required-missing-configmap-one-sided-reverse.stderr",
+      "cases": [
+        "required-missing-configmap"
+      ],
+      "purpose": "Authored missing-reference workload or independently derived complete CLI expectation."
     }
   ]
 }

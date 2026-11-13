@@ -14,11 +14,11 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage"
 
 	"github.com/home-operations/flate/internal/assert"
 
@@ -36,8 +36,7 @@ func timeoutAcquisition(
 	t.Helper()
 	if kind == "git" {
 		src := t.TempDir()
-		repo, err := git.PlainInit(src, false)
-		assert.NoError(t, err)
+		repo := testutil.GitInit(t, src)
 
 		testutil.WriteFile(t, src, "file", "complete")
 		testutil.GitCommitAll(

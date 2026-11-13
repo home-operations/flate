@@ -19,10 +19,19 @@ import (
 type pairedBarrierReader struct {
 	fs.FS
 
-	entered    chan struct{}
-	release    chan struct{}
-	blocked    atomic.Bool
-	inputOpens atomic.Int64
+	entered           chan struct{}
+	release           chan struct{}
+	blocked           atomic.Bool
+	inputOpens        atomic.Int64
+	stats, inputStats atomic.Int64
+}
+
+func (r *pairedBarrierReader) Stat(name string) (fs.FileInfo, error) {
+	r.stats.Add(1)
+	if name == "apps/app-a/render-input.env" {
+		r.inputStats.Add(1)
+	}
+	return fs.Stat(r.FS, name)
 }
 
 func (r *pairedBarrierReader) Open(name string) (fs.File, error) {
@@ -75,8 +84,7 @@ func TestRenderTrees_JoinsPreparationBeforeDispatch(t *testing.T) {
 		}
 		done := make(chan error, 1)
 		go func() {
-			_, err := RenderTrees(
-				t.Context(),
+			_, err := renderTreesForTest(t.Context(), t,
 				[]Tree{
 					{
 						RepoRoot:        roots[0],
@@ -99,11 +107,13 @@ func TestRenderTrees_JoinsPreparationBeforeDispatch(t *testing.T) {
 		}()
 		<-entered
 		synctest.Wait()
-		assert.Equal(t, readers[0].inputOpens.Load(), int64(2))
+		assert.Equal(t, readers[0].inputOpens.Load(), int64(1))
+		assert.Equal(t, readers[0].inputStats.Load(), int64(1))
 		close(release)
 		assert.NoError(t, <-done)
 		for side, reader := range readers {
-			assert.Equal(t, reader.inputOpens.Load(), int64(7))
+			assert.Equal(t, reader.inputOpens.Load(), int64(3))
+			assert.Equal(t, reader.inputStats.Load(), int64(5))
 			t.Logf("side=%d render input opens=%d", side, reader.inputOpens.Load())
 		}
 	})

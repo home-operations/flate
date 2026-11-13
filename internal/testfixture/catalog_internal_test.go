@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"golang.org/x/mod/module"
 	"sigs.k8s.io/kustomize/api/konfig"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
@@ -77,6 +78,10 @@ func assertScenarioFiles(t *testing.T, dir string, s *scenario) map[string]bool 
 		}
 		if rel != "scenario.json" && !used[filepath.ToSlash(rel)] {
 			t.Errorf("fixture file %s requires a declared case and purpose", rel)
+		}
+		zipPath := filepath.ToSlash(filepath.Join("testdata", filepath.Base(dir), rel))
+		if err := module.CheckFilePath(zipPath); err != nil {
+			t.Errorf("fixture file breaks the module zip: %v", err)
 		}
 		return nil
 	}))

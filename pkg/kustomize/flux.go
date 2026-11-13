@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 	"sigs.k8s.io/kustomize/api/resmap"
 
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
@@ -22,12 +22,12 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
 type RenderRequest struct {
+	Preparation *Preparation `json:"-"`
 	// Work borrows stage counters from this render execution.
 	Work *manifest.RenderWork `json:"-"`
 	// HeldSlot is TreeCache's borrowed service when this render holds its slot.
@@ -49,8 +49,6 @@ type RenderRequest struct {
 	StrictSubstitutions bool `json:"StrictSubstitutions"`
 	// SkipKinds binds the effective emitted-kind policy to accepted history.
 	SkipKinds []string `json:"SkipKinds"`
-	// DependencySubstitutions binds emitted dependency projection to accepted history.
-	DependencySubstitutions values.DependencySubstitutions `json:"DependencySubstitutions"`
 }
 
 // Render returns unstamped renderer documents from an admitted source and a private overlay.
@@ -102,31 +100,82 @@ func Render(
 	return result.docs, result.receipt, nil
 }
 
+// Preparation MUST remain owned by one logical render consumer until transfer or retirement.
+type Preparation struct {
+	decoded        *decodedRender
+	shaping        *preparedShaping
+	cache          *TreeCache
+	spec           *manifest.Kustomization
+	source         *store.SourceArtifact
+	label, subPath string
+	applyIgnore    bool
+	complete       bool
+	lower          fs.FS
+	root, key      string
+	binding        renderBinding
+}
+
+// Retire MUST follow the final consumer and clears retained input references.
+func (p *Preparation) Retire() {
+	if p != nil {
+		*p = Preparation{}
+	}
+}
+
+// Take MUST NOT move a live capture or grant publication authority.
+func (p *Preparation) Take(previous *Preparation, cache *TreeCache, request *RenderRequest) bool {
+	if p == nil || p.complete || previous == nil || !previous.complete {
+		return false
+	}
+	if !previous.matchesOwner(cache, request) {
+		return false
+	}
+	*p, *previous = *previous, Preparation{}
+	return true
+}
+
+func (p *Preparation) matchesOwner(cache *TreeCache, request *RenderRequest) bool {
+	owner := p.spec == request.Spec || p.spec != nil && request.Spec != nil && manifest.Equal(p.spec, request.Spec)
+	policy := p.binding.Strict == request.StrictSubstitutions && slices.Equal(p.binding.Skip, request.SkipKinds)
+	location := p.label == request.Label && p.subPath == request.SubPath && p.applyIgnore == request.ApplyIgnore
+	return p.cache == cache && owner && policy && location
+}
+
+func (p *Preparation) matchesSource(source *store.SourceArtifact) bool {
+	if p.source == source {
+		return true
+	}
+	return p.source != nil && source != nil && source.Content != "" &&
+		p.source.Input(store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin) ==
+			source.Input(store.ArtifactContent|store.ArtifactRevision|store.ArtifactOrigin)
+}
+
 type renderRequest struct {
-	request   RenderRequest
-	retry     sourcecache.RetryConfig
-	maxAge    time.Duration
-	lower     fs.FS
-	root, key string
-	binding   renderBinding
+	Preparation
+
+	request RenderRequest
+	retry   sourcecache.RetryConfig
+	maxAge  time.Duration
 }
 
 func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) (renderRequest, error) {
 	req := *incoming
 	work := req.Work.Preparation()
-	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	if c == nil {
 		err := manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		return renderRequest{}, err
 	}
 	if err := ctx.Err(); err != nil {
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return renderRequest{}, err
 	}
 	if req.Source == nil || req.Source.FS == nil {
 		err := manifest.NewError(manifest.ErrInput, nil, "source artifact content unavailable")
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		return renderRequest{}, err
 	}
@@ -135,6 +184,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	if req.ApplyIgnore {
 		input, err := c.sourceRootFor(ctx, req.Source, root)
 		if err != nil {
+			work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 			work.Finish(err)
 			return renderRequest{}, err
 		}
@@ -143,17 +193,31 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	var err error
 	root, err = filepath.Abs(root)
 	if err != nil {
+		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(err)
 		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
+	if previous := req.Preparation; previous != nil && previous.complete {
+		inputs := previous.root == root && previous.subPath == req.SubPath && previous.applyIgnore == req.ApplyIgnore
+		if inputs && previous.matchesOwner(c, &req) && previous.matchesSource(req.Source) {
+			req.Work.Fingerprint(previous.key)
+			return renderRequest{Preparation: *previous}, nil
+		}
+	}
+	if req.Preparation != nil {
+		req.Preparation.Retire()
+	}
+	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	key := renderKey(&req, root, ignore)
 	req.Work.Fingerprint(key)
 	source := manifest.BootstrapSourceID
 	if req.Spec != nil {
-		source = req.Spec.SourceID()
+		source = req.Spec.EffectiveSourceID()
 	}
 	work.Finish(nil)
-	return renderRequest{
+	prepared := Preparation{
+		cache: c, spec: req.Spec, source: req.Source, label: req.Label, subPath: req.SubPath,
+		applyIgnore: req.ApplyIgnore, complete: true,
 		lower: lower, root: root, key: key,
 		binding: renderBinding{
 			key,
@@ -169,9 +233,12 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 
 			req.StrictSubstitutions,
 			slices.Clone(req.SkipKinds),
-			req.DependencySubstitutions,
 		},
-	}, nil
+	}
+	if req.Preparation != nil {
+		*req.Preparation = prepared
+	}
+	return renderRequest{Preparation: prepared}, nil
 }
 
 // Mutable files are validated by the read set; immutable generations are part
@@ -273,18 +340,9 @@ func (r *renderRequest) validate(
 	generation fs.FS,
 ) (bool, error) {
 	result.receipt = nil
-	raw, readFileErr := fs.ReadFile(generation, "content")
-	if readFileErr != nil {
-		return false, manifest.NewError(
-			manifest.ErrFlux,
-			fmt.Errorf("read kustomize render cache: %w", readFileErr),
-			"",
-		)
-	}
-	frame, readFileErr := decodeFrame(raw)
-	if readFileErr != nil || frame.header.Key != r.key {
-		slog.Debug("kustomize: decode render frame", "err", readFileErr)
-		return false, nil
+	frame, decoded, readFileErr := r.request.Preparation.readFrame(ctx, generation)
+	if readFileErr != nil || !decoded || frame.header.Key != r.key {
+		return false, readFileErr
 	}
 	valid, readFileErr := frame.header.Reads.stillValid(
 		ctx,
@@ -303,8 +361,7 @@ func (r *renderRequest) validate(
 	frame.binding = r.binding
 	binding := manifest.Fingerprint(r.binding)
 	if frame.header.Binding != binding {
-		frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-		frame.accepted, frame.acceptedKey = nil, ""
+		frame.header.Binding, frame.stored = binding, nil
 	}
 	result.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 	return true, nil
@@ -365,14 +422,18 @@ func (r *renderRequest) produce(
 	if cleanedAbsErr != nil {
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
-	data, cleanedAbsErr := encodeFrame(
-		&renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
+	frame, cleanedAbsErr := sourcecache.NewFrame(
+		frameDomain,
+		renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
 		payload,
 	)
-	if cleanedAbsErr == nil {
-		_, cleanedAbsErr = w.Write(data)
+	if cleanedAbsErr != nil || frame == nil {
+		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
-	//nolint:wrapcheck // Cache production must preserve the writer's original error value.
+	publication, cleanedAbsErr := frame.PreparePublication(ctx, sourcecache.FramePublicationInput{})
+	if cleanedAbsErr == nil {
+		_, cleanedAbsErr = publication.WriteTo(w)
+	}
 	return sourcecache.ProducerResult{}, cleanedAbsErr
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -12,6 +13,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -61,7 +63,12 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	assert.FatalIf(t, len(one) != 2 || len(two) != 2, "%s", "same-identity declarations lost occurrence evidence")
 	repeated, err := l.Occurrences(t.Context(), filepath.Join(root, "one"), "")
 	assert.NoError(t, err)
-	assert.Equal(t, slices.Equal(repeated, one), true)
+	assert.Equal(
+		t,
+		//nolint:govet // Snapshot equality must include immutable unexported facts.
+		reflect.DeepEqual(repeated, one),
+		true,
+	)
 	repeated[0].Identity.Name = "caller-owned"
 	assert.Equal(t, one[0].Identity.Name, "one-owner")
 	assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 2)
@@ -71,10 +78,10 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(mounted), 2)
 	for i, o := range mounted {
-		assert.Equal(t, o.Declaration, OccurrenceID{Source: pin, File: "one/owners.yaml", Document: i})
+		assert.Equal(t, o.Declaration, selection.OccurrenceID{Source: pin, File: "one/owners.yaml", Document: i})
 		assert.Equal(t, o.Identity, one[i].Identity)
 		assert.Equal(t, o.Authored, one[i].Authored)
-		assert.Equal(t, o.object.Named(), o.Authored)
+		assert.Equal(t, o.Object.Named(), o.Authored)
 	}
 	assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 2)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -101,8 +108,8 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 		assert.Equal(t, occurrence.Declaration, before[i].Declaration)
 		assert.Equal(t, occurrence.Identity, before[i].Identity)
 		assert.Equal(t, occurrence.Authored, testutil.KustomizationID("authored", "owner"))
-		assert.Equal(t, occurrence.object, before[i].object)
-		assert.Equal(t, occurrence.object.Named(), occurrence.Authored)
+		assert.Equal(t, occurrence.Object, before[i].Object)
+		assert.Equal(t, occurrence.Object.Named(), occurrence.Authored)
 	}
 	assert.Equal(t, captured[0].Identity, testutil.KustomizationID("one", "one-owner"))
 	assert.Equal(t, captured[1].Identity, captured[0].Identity)
@@ -110,8 +117,8 @@ func TestOccurrenceClaims_CapturedSubsetAndIdentity(t *testing.T) {
 	assert.Equal(
 		t,
 		slices.Equal(
-			[]OccurrenceID{captured[0].Declaration, captured[1].Declaration, captured[2].Declaration},
-			[]OccurrenceID{
+			[]selection.OccurrenceID{captured[0].Declaration, captured[1].Declaration, captured[2].Declaration},
+			[]selection.OccurrenceID{
 				{Source: root, File: "one/owners.yaml", Document: 0},
 				{Source: root, File: "one/owners.yaml", Document: 1},
 				{Source: root, File: "two/owners.yaml", Document: 0},
@@ -149,6 +156,7 @@ func TestPackages_ScanProvenance(t *testing.T) {
 	for i, dir := range []string{"one", "two"} {
 		assert.Equal(t, packages[i].Path, filepath.ToSlash(filepath.Join(dir, "pkg")))
 		assert.Diff(t, packages[i].Scans, []string{".", dir, dir + "/pkg"})
+		assert.Equal(t, packages[i].Independent, false)
 	}
 }
 
@@ -282,7 +290,7 @@ func TestEntryFailure_ChangedUnownedResource(t *testing.T) {
 			}})
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Selection = manifest.Selection{Changed: true}
+			configureSelection(t, l, selection.Request{Changed: true})
 			l.Options.Changes = change.NewSet([]string{file})
 			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
@@ -323,20 +331,29 @@ func testOccurrenceClaimsCapturedSubsetAndIdentityRetainedFailureBeforeSuccessfu
 	assert.Equal(t, children[0].outcome.Ordinal, 0)
 	assert.Equal(t, children[1].outcome.Ordinal, 1)
 	want := testutil.KustomizationID("selected", "pre-owner-post")
-	var first []Occurrence
+	var first []selection.OccurrenceFacts
 	for range 2 {
 		got, err := l.Occurrences(t.Context(), filepath.Join(root, "overlay"), "")
 		assert.NoError(t, err)
 		assert.FatalIf(t, len(got) != 1, "successful declaration count: got %d, want 1", len(got))
-		assert.Equal(t, got[0].Declaration, OccurrenceID{Source: root, File: "overlay/owners.yaml", Document: 1})
+		assert.Equal(
+			t,
+			got[0].Declaration,
+			selection.OccurrenceID{Source: root, File: "overlay/owners.yaml", Document: 1},
+		)
 		assert.Equal(t, got[0].Identity, want)
 		assert.Equal(t, got[0].Authored, testutil.KustomizationID("authored", "owner"))
-		assert.Equal(t, got[0].object.Named(), got[0].Authored)
+		assert.Equal(t, got[0].Object.Named(), got[0].Authored)
 		assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 1)
 		if first == nil {
 			first = got
 		} else {
-			assert.Equal(t, slices.Equal(got, first), true)
+			assert.Equal(
+				t,
+				//nolint:govet // Snapshot equality must include immutable unexported facts.
+				reflect.DeepEqual(got, first),
+				true,
+			)
 		}
 	}
 	assert.Diff(t, l.OccurrenceClaims(root, first), []manifest.KSClaim{{ID: want, Prefix: "captured/"}})
@@ -459,5 +476,62 @@ func testProjectIdentityCompleteInputsExcludedTransformsStillDistinguishExactInp
 		assert.NoError(t, err)
 		assert.Equal(t, got, manifest.NamedResource{Kind: "Namespace", Name: "selected"})
 		assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), i+1)
+	}
+}
+
+func TestEntryFailure_NamedSelectionDoesNotTraverse(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: [input.yaml]\n")},
+		"input.yaml": {Data: []byte(
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: [unterminated\n",
+		)},
+	}})
+	var work manifest.WorkRecorder
+	st.SetWorkTree(manifest.TreeID{Cluster: "cluster", Side: manifest.TreeHead}, work.Scope())
+	l := New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	configureSelection(t, l, selection.Request{
+		Roots: []manifest.NamedResource{testutil.KustomizationID("apps", "selected")},
+	})
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	traversal := work.Scope().Traversal(manifest.BootstrapSourceID)
+	before := traversal.Counts
+	assert.NoError(t, l.EntryFailure(t.Context(), root))
+	assert.Equal(t, traversal.Counts, before)
+}
+
+func TestOccurrenceRoots_ProjectedSource(t *testing.T) {
+	t.Parallel()
+	for _, namespace := range []string{"", "source-ns"} {
+		t.Run(namespace, func(t *testing.T) {
+			t.Parallel()
+			object := &manifest.Kustomization{Name: "owner", Path: "./app"}
+			object.SourceRef.Kind, object.SourceRef.Name, object.SourceRef.Namespace = manifest.KindGitRepository, "repo", namespace
+			occurrence := compactOccurrence(object, manifest.TemplateProjection{})
+			occurrence.Identity, occurrence.Authored = object.Named(), object.Named()
+			l := New(store.New())
+			l.locations = map[manifest.NamedResource]authoredOccurrence{object.Named(): occurrence}
+			id := object.Named()
+			id.Namespace = "projected"
+			source, roots := l.OccurrenceRoots(id)
+			want := manifest.NamedResource{
+				Group:     manifest.SourceDomain,
+				Kind:      manifest.KindGitRepository,
+				Name:      "repo",
+				Namespace: namespace,
+			}
+			if namespace == "" {
+				want.Namespace = id.Namespace
+			}
+			assert.Equal(t, source, want)
+			assert.Diff(t, roots, []string{"app"})
+			assert.Equal(t, &roots[0], &occurrence.facts.roots[0])
+			assert.Equal(t, l.locations[object.Named()].Identity, object.Named())
+		})
 	}
 }

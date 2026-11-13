@@ -61,7 +61,7 @@ func testRenderTreesClusterAdvisoriesCase(t *testing.T, testCaseInput *string,
 			trees = append(trees, Tree{ID: manifest.TreeID{Cluster: cluster, Side: side}, RepoRoot: root})
 		}
 	}
-	runs, err := RenderTrees(t.Context(), trees, cfg)
+	runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 	failed := (*testCaseInput) == "head_failed" || (*testCaseInput) == "base_failed"
 	assert.FatalIf(
 		t,

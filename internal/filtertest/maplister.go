@@ -86,9 +86,13 @@ func (m MapLister) GetEmission(manifest.NamedResource) (manifest.BaseManifest, m
 func (m MapLister) ReferenceFacts(
 	id manifest.NamedResource,
 	index *manifest.DiscoveryIndex,
-	_ bool,
 	_ manifest.NamedResource,
 ) store.ReferenceFacts {
 	data, _ := m[id].(manifest.Data)
-	return store.ReferenceFacts{Data: data, Accepted: data != nil, Productions: m.Productions(id, index)}
+	return store.ReferenceFacts{
+		Data:        data,
+		Original:    data,
+		Accepted:    data != nil,
+		Productions: m.Productions(id, index),
+	}
 }

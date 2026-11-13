@@ -1,11 +1,11 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,8 +16,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	src "github.com/home-operations/flate/pkg/source"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -26,6 +24,8 @@ import (
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
+	src "github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -68,22 +68,24 @@ type countedNodeController struct {
 }
 
 type reconcileController interface {
+	CompleteOrphan(manifest.NamedResource, string) bool
 	Owns(manifest.NamedResource) bool
-	ReconcileNode(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution
+	ReconcileNode(context.Context, manifest.NamedResource, manifest.DrainLevel, schedule.Result) *base.Execution
 	PreviousRender(
 		context.Context,
 		manifest.BaseManifest,
-		*store.ReadSet,
-	) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool)
+		schedule.Result,
+	) base.History
 }
 
 func (c countedNodeController) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	c.calls[id].Add(1)
-	execution := c.reconcileController.ReconcileNode(ctx, id, level)
+	execution := c.reconcileController.ReconcileNode(ctx, id, level, previous)
 	if execution != nil && execution.Reads.Admitted() {
 		c.admitted[id].Add(1)
 	}
@@ -171,7 +173,7 @@ func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-chart}\n",
 	)
 	inputs := [2]*store.SourceArtifact{testDirectoryInput(t, roots[0]), testDirectoryInput(t, roots[1])}
-	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], manifest.WorkScope{})
+	changes, err := change.Detect(t.Context(), inputs[0], inputs[1], change.DetectConfig{})
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"ks-a.yaml"})
 	for side, root := range roots {
@@ -230,15 +232,16 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 			<-release
 			return failure
 		}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "base warning"}}}
+		headFailure := errors.New("head discovery failed")
 		headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
 			close(headEntered)
-			return errors.New("head discovery failed")
+			return headFailure
 		}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
 		var baseRef, head Rendered
 		done := make(chan error, 1)
 		go func() {
 			var err error
-			runs, runErr := RenderTrees(t.Context(), []Tree{
+			runs, runErr := renderTreesForTest(t.Context(), t, []Tree{
 				{
 					ID:              manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
 					Input:           baseInput,
@@ -272,7 +275,8 @@ func testRenderTreesCancellationJoinsBeforeCacheCloseDiscoveryFailure(t *testing
 			"discovery cause lost or duplicated: %v",
 			err,
 		)
-		for _, side := range []Rendered{baseRef, head} {
+		for i, side := range []Rendered{baseRef, head} {
+			assert.Equal(t, errors.Is(side.Err, []error{failure, headFailure}[i]), true)
 			assert.FatalIf(t, side.Orchestrator != nil || side.Result == nil ||
 				len(
 					side.Result.Manifests,
@@ -385,6 +389,7 @@ func testRenderDeclarationOnlyExcludesUnrelatedWorkCase(
 	assert.Equal(t, admitted[ids[0]].Load(), int64(1))
 	assert.Equal(t, admitted[ids[1]].Load(), int64(1))
 	result, err := o.collectResult(runErr)
+	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	var interval any
 	for _, batch := range result.Manifests {
@@ -452,7 +457,7 @@ func testRenderTreesEntryQualificationTransitionsCase(
 	}
 	var previous []byte
 	for range 2 {
-		runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 2)
 		for side, run := range runs {
@@ -460,7 +465,13 @@ func testRenderTreesEntryQualificationTransitionsCase(
 			assert.Equal(t, run.entryBinding != (discovery.Binding{}), qualified)
 			assert.Diff(t, configMapNames(run.Result), map[string]bool{"a": true, "b": true})
 		}
-		selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+		projectedResults0, projectionErrors0 := Select(
+			runs,
+			nil,
+			[]manifest.NamedResource{testutil.KustomizationID("", "")},
+			nil,
+		)
+		selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
 		assert.Equal(t, len(selected), 2)
 		for side, selection := range selected {
@@ -471,21 +482,22 @@ func testRenderTreesEntryQualificationTransitionsCase(
 			assert.Equal(t, len(selection.ProducerKeys), wantKeys)
 			assert.Equal(t, len(selection.Unavailable), 0)
 		}
-		body, _, notes, err := diff.Compare(
-			diff.Snapshot{
-				Subjects:     selected[0].Subjects,
-				Manifests:    selected[0].Manifests,
-				ProducerKeys: selected[0].ProducerKeys,
-				Unavailable:  selected[0].Unavailable,
-			},
-			diff.Snapshot{
-				Subjects:     selected[1].Subjects,
-				Manifests:    selected[1].Manifests,
-				ProducerKeys: selected[1].ProducerKeys,
-				Unavailable:  selected[1].Unavailable,
-			},
-			nil,
-			diff.Options{Format: diff.FormatJSON},
+		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+			Subjects:     selected[0].Subjects,
+			Manifests:    selected[0].Manifests,
+			ProducerKeys: selected[0].ProducerKeys,
+			Unavailable:  selected[0].Unavailable,
+		}, Current: diff.Snapshot{
+			Subjects:     selected[1].Subjects,
+			Manifests:    selected[1].Manifests,
+			ProducerKeys: selected[1].ProducerKeys,
+			Unavailable:  selected[1].Unavailable,
+		}, SelectedErr: nil}}, diff.Options{Format: diff.FormatJSON})
+		var comparisonOutput1 bytes.Buffer
+		writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+		body, _, notes, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+			preparationErr1,
+			writeErr1,
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, len(notes), 0)
@@ -599,8 +611,7 @@ func testRenderTreesCancellationCaseBubble(
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, innerLocalErr := RenderTrees(
-			ctx,
+		_, innerLocalErr := renderTreesForTest(ctx, t,
 			[]Tree{
 				{
 					RepoRoot:        inputs[0].LocalPath,

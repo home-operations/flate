@@ -33,6 +33,8 @@ func testNewEntryPolicyLocalMetadataCase(t *testing.T, testCaseInput testNewEntr
 
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "file", "content")
+	artifact, err := admitLocal(t, root)
+	assert.NoError(t, err)
 	for _, prefix := range []string{"", "nested/"} {
 		name := prefix + ".git"
 		if *testCaseInput.directory {
@@ -40,8 +42,6 @@ func testNewEntryPolicyLocalMetadataCase(t *testing.T, testCaseInput testNewEntr
 		}
 		testutil.WriteFile(t, root, name, "metadata")
 	}
-	artifact, err := admitLocal(t, root)
-	assert.NoError(t, err)
 	input := artifact.FS.(*FS)
 	location := input.Location()
 	assert.Equal(t, location.ContentRoot, root)

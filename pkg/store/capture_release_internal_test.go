@@ -409,3 +409,206 @@ func TestCapture_AcquiringOwnSource(t *testing.T) {
 	s.AddObject(changed)
 	assert.Equal(t, acquisition.Valid(), false)
 }
+
+//nolint:gocognit // The capture scope MUST end before collection across all authority transitions.
+func TestReadSet_SourceBindingRetainsOnlySourceCapture(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"source", "owned source", "producer", "late producer"} {
+		t.Run(change, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			source := manifest.BootstrapSourceID
+			original := &SourceArtifact{
+				Content: "content", Metadata: map[string]string{"org.opencontainers.image.revision": "first"},
+			}
+			st.SetArtifact(source, original)
+			child := &manifest.ConfigMap{Name: "admitted", Namespace: "apps"}
+			var owner manifest.NamedResource
+			if change != "source" {
+				owner = ownerID("producer")
+				recordForTest(t, st, owner, nil)
+				st.SetDiscoveryIndex(
+					&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						child.Named(): {Productions: []manifest.Production{{Owner: owner, Source: source}}},
+					}},
+				)
+			}
+			captured := func() weak.Pointer[ReadSet] {
+				reads := new(ReadSet)
+				reads.Init(st, manifest.NamedResource{}, nil)
+				for i := range 10 {
+					object := &manifest.ConfigMap{Name: fmt.Sprintf("input-%d", i), Namespace: "apps"}
+					st.AddObject(object)
+					reads.GetObject(object.Named())
+				}
+				if owner != (manifest.NamedResource{}) && change != "late producer" {
+					reads.Productions(child.Named(), nil)
+					assert.Equal(t, reads.input(owner).cell(producerFacet).head != nil, true)
+				}
+				reads.Admit(Child{Obj: child}, source, owner)
+				if change == "late producer" {
+					reads.Productions(child.Named(), nil)
+				}
+				reads.GetArtifact(source, ArtifactOrigin)
+				reads.Retire()
+				return weak.Make(reads)
+			}()
+			for range st.Sweep() {
+			}
+			runtime.GC()
+			assert.Equal(t, captured.Value() == nil, true)
+			assert.Equal(t, st.GetObject(child.Named()), manifest.BaseManifest(child))
+			if change == "producer" || change == "late producer" {
+				recordForTest(t, st, owner, nil)
+			} else {
+				replacement := *original
+				replacement.Metadata = map[string]string{"org.opencontainers.image.revision": "second"}
+				st.SetArtifact(source, &replacement)
+			}
+			assert.Equal(t, st.GetObject(child.Named()), nil)
+		})
+	}
+}
+
+func TestReadSet_ObjectCaptureDefersOtherFacets(t *testing.T) {
+	t.Parallel()
+	st := New()
+	var reads ReadSet
+	reads.Init(st, ownerID("reader"), nil)
+	defer reads.Close()
+	reads.GetObject(ownerID("inline"))
+	for i := range 16 {
+		object := &manifest.OCIRepository{Name: fmt.Sprintf("source-%d", i), Namespace: "apps"}
+		id := object.Named()
+		st.AddObject(object)
+		assert.Equal(t, reads.GetObject(id), manifest.BaseManifest(object))
+		assert.Equal(t, reads.input(id).details.Load() == nil, true)
+	}
+	source := (&manifest.OCIRepository{Name: "source-8", Namespace: "apps"}).Named()
+	input := &SourceArtifact{Content: "before"}
+	st.SetArtifact(source, input)
+	assert.Equal(t, reads.GetArtifact(source, ArtifactContent), Artifact(input))
+	assert.Equal(t, reads.input(source).details.Load() != nil, true)
+	assert.Equal(t, reads.Valid(), true)
+	st.SetArtifact(source, &SourceArtifact{Content: "after"})
+	assert.Equal(t, reads.Valid(), false)
+}
+
+func TestReadSet_ProducerCaptureDefersOtherFacets(t *testing.T) {
+	t.Parallel()
+	st := New()
+	owner := ownerID("producer")
+	child := (&manifest.ConfigMap{Name: "child", Namespace: "apps"}).Named()
+	recordForTest(t, st, owner, nil)
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		child: {Productions: []manifest.Production{{Owner: owner}}},
+	}})
+	var reads ReadSet
+	reads.Init(st, ownerID("reader"), nil)
+	defer reads.Close()
+	reads.GetObject(ownerID("inline"))
+	reads.Productions(child, nil)
+	assert.Equal(t, reads.input(owner).details.Load() == nil, true)
+	assert.Equal(t, reads.input(child).details.Load() == nil, true)
+	var repeat ReadSet
+	repeat.Init(st, ownerID("repeat"), nil)
+	defer repeat.Close()
+	repeat.Productions(child, nil)
+	assert.Equal(t, repeat.MatchesContent(&reads, child), true)
+	assert.Equal(t, reads.Valid(), true)
+	frozen := reads.freezeEvidence()
+	assert.Equal(t, frozen.Valid(), true)
+	recordForTest(t, st, owner, nil)
+	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, frozen.Valid(), false)
+}
+
+func TestReadSet_FrozenEvidenceReleasesDiscoveryIndex(t *testing.T) {
+	t.Parallel()
+	st := New()
+	var reads ReadSet
+	reads.Init(st, ownerID("reader"), nil)
+	defer reads.Close()
+	child := (&manifest.ConfigMap{Name: "child", Namespace: "apps"}).Named()
+	index := func() weak.Pointer[manifest.DiscoveryIndex] {
+		captured := &manifest.DiscoveryIndex{}
+		reads.Productions(child, captured)
+		return weak.Make(captured)
+	}()
+	frozen := reads.freezeEvidence()
+	reads.ReleaseCapture()
+	runtime.GC()
+	assert.Equal(t, index.Value() == nil, true)
+	var replay ReadSet
+	replay.Init(st, ownerID("replay"), nil)
+	defer replay.Close()
+	assert.Equal(t, replay.Matches(frozen), true)
+	assert.Equal(t, frozen.Valid(), true)
+}
+
+func TestReadSet_RegistersOnlyConsumedFacets(t *testing.T) {
+	t.Parallel()
+	st := New()
+	id := ownerID("source")
+	st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
+	first := &SourceArtifact{Content: "same", Revision: "first"}
+	st.SetArtifact(id, first)
+	reads := new(ReadSet)
+	reads.Init(st, ownerID("reader"), nil)
+	defer reads.Retire()
+	reads.GetArtifact(id, ArtifactContent)
+	input := reads.input(id)
+	for kind := conditionFacet; kind <= reconciliationFacet; kind++ {
+		assert.Equal(t, input.cell(kind) != nil, kind == contentFacet)
+	}
+	cell := input.cell(contentFacet)
+	reads.GetArtifact(id, ArtifactContent)
+	assert.Equal(t, input.cell(contentFacet) == cell, true)
+	st.SetArtifact(id, &SourceArtifact{Content: "same", Revision: "second"})
+	assert.Equal(t, reads.Valid(), true)
+	assert.Equal(t, reads.GetArtifact(id, ArtifactRevision) == first, true)
+	assert.Equal(t, reads.Valid(), false)
+}
+
+func TestReadSet_CapturedPublicationLifetime(t *testing.T) {
+	t.Parallel()
+	st := New()
+	owner := ownerID("publisher")
+	st.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace})
+	child := emissionChild("captured", "value")
+	var reads ReadSet
+	reads.Init(st, ownerID("reader"), nil)
+	defer reads.Close()
+	warning := func() weak.Pointer[manifest.Warning] {
+		warnings := []manifest.Warning{
+			{Resource: child.Obj.Named(), Category: manifest.WarnSOPSUnreadable, Message: "publication"},
+		}
+		emitted := child
+		emitted.Warnings = warnings
+		next := &Emission{Children: []Child{emitted}, Complete: true}
+		st.RecordEmitted(owner, next, nil)
+		next.Finish()
+		assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
+		_, _, published := st.GetEmission(owner)
+		assert.Equal(t, len(published.Children[0].Warnings), 1)
+		published.Finish()
+		return weak.Make(&warnings[0])
+	}()
+	frozen := reads.freezeEvidence()
+	st.RecordEmitted(owner, &Emission{Complete: true}, nil)
+	for range st.Sweep() {
+	}
+	runtime.GC()
+	assert.Equal(t, warning.Value() != nil, true)
+	assert.Equal(t, len(frozen.findInput(child.Obj.Named()).view.child.Warnings), 1)
+	assert.Equal(t, reads.GetObject(child.Obj.Named()), child.Obj)
+	assert.Equal(t, frozen.findInput(child.Obj.Named()).view.child.Obj, child.Obj)
+	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, len(st.Warnings()), 0)
+	reads.Close()
+	reads.ReleaseCapture()
+	frozen.Retire()
+	frozen.ReleaseCapture()
+	runtime.GC()
+	assert.Equal(t, warning.Value() == nil, true)
+}

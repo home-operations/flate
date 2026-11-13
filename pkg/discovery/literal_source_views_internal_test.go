@@ -9,8 +9,11 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -20,6 +23,52 @@ import (
 
 func TestBindEntry_LiteralSourceViews(t *testing.T) {
 	t.Parallel()
+	t.Run("alias recorded after freeze", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "entry/file", "mapped input")
+		st := store.New()
+		d := Session{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
+		t.Cleanup(d.loader.Close)
+		t.Cleanup(d.Close)
+		_, err := d.resolveTestSources(t.Context(), false)
+		assert.NoError(t, err)
+		a := d.finishAdmission(t.Context())
+		before := a.resolvedSources.snapshot()
+		id := manifest.NamedResource{
+			Group:     manifest.SourceDomain,
+			Kind:      manifest.KindGitRepository,
+			Namespace: "apps",
+			Name:      "late",
+		}
+		published, err := a.Publish(
+			t.Context(),
+			id,
+			aliasRequestReads(t, st, id),
+			func(store.Child) (bool, error) { return true, nil },
+		)
+		assert.NoError(t, err)
+		assert.Equal(t, published, true)
+		assert.NoError(t, constructAdmissionTest(t.Context(), a, id))
+		_, existed := before[id]
+		assert.Equal(t, existed, false)
+		resolution := a.resolvedSources.snapshot()[id]
+		var reads store.ReadSet
+		reads.Init(st, manifest.BootstrapSourceID, nil)
+		defer reads.Retire()
+		file, err := filepath.Rel(root, filepath.Join(resolution.artifact.LocalPath, "entry", "file"))
+		assert.NoError(t, err)
+		capture := entryCapture{admission: a, reads: &reads, files: []string{filepath.ToSlash(file)}}
+		assert.Equal(t, capture.mapFiles(), true)
+		assert.Diff(t, capture.files, []string{"entry/file"})
+		assert.Equal(t, reads.Valid(), true)
+		st.DeleteObject(id)
+		qualified := a.applicationSource(st, nil, &manifest.EntryApplication{Source: id})
+		assert.Equal(t, qualified.object == resolution.object, true)
+		assert.Equal(t, qualified.artifact == nil, true)
+		assert.Equal(t, a.session == nil, true)
+		assert.Equal(t, a.qualification.session == nil, true)
+	})
 	for _, changed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("changed=%t", changed), func(t *testing.T) {
 			t.Parallel()
@@ -44,9 +93,8 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		assert.FatalIf(t, root == nil, "source replacement control did not propose an entry")
 		application, ok := manifest.ApplicationFor(root)
 		assert.Equal(t, ok, true)
-		proposal, err := f.loader.Prepare(
-			t.Context(),
-			loader.PrepareRequest{Incoming: store.Child{Obj: root, Entry: &application}, Reads: binding.Reads},
+		proposal, err := prepareSelection(t.Context(), t, f.loader,
+			selection.PrepareRequest{Generation: []store.Child{{Obj: root, Entry: &application}}, Reads: binding.Reads},
 		)
 		assert.NoError(t, err)
 		replacement := *f.views[0]
@@ -54,7 +102,7 @@ func TestBindEntry_LiteralSourceViews(t *testing.T) {
 		f.views[0] = &replacement
 		f.store.SetArtifact(f.sources[0], &replacement)
 		assert.Equal(t, binding.Reads.Valid(), false)
-		committed, err := f.loader.Commit(t.Context(), proposal, loader.Execution)
+		committed, err := commitSelection(t.Context(), f.loader, proposal, selection.Execution)
 		assert.NoError(t, err)
 		assert.Equal(t, committed, false)
 		assert.Equal(t, acceptEntryForTest(t, f.admission, &binding), Binding{})
@@ -96,7 +144,7 @@ func newLiteralSourceViewsFixture(t *testing.T, changed bool) *literalSourceView
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	f := &literalSourceViewsFixture{store: st, loader: loader.New(st), trees: testTrees(t)}
 	f.loader.SourceRoot = root
-	f.loader.Options.Selection = manifest.Selection{Changed: changed}
+	configureSelection(t, f.loader, selection.Request{Changed: changed})
 	t.Cleanup(f.loader.Retire)
 	f.admission = &Admission{
 		store:       st,
@@ -156,6 +204,7 @@ func newLiteralSourceViewsFixture(t *testing.T, changed bool) *literalSourceView
 		f.raw[i] = parsed.Object
 		st.AddObject(parsed.Object, parsed.Document)
 	}
+	qualifyForTest(t, f.loader, f.raw[0].Named(), f.raw[1].Named())
 	f.trees.SetGitBaseFetcher(
 		func(_ context.Context, _ kustomize.GitBaseRequest, _ cache.RetryConfig) (*store.SourceArtifact, error) {
 			f.fetches.Add(1)
@@ -175,15 +224,25 @@ func (f *literalSourceViewsFixture) literal(t *testing.T, index int) *manifest.K
 	literal := manifest.NewEntryKustomization(application.Source, application.Path, f.raw[index].Named())
 	var reads store.ReadSet
 	reads.Init(f.store, literal.Named(), nil)
+	reads.RequireQualification(f.raw[index].Named())
 	reads.GetDeclaration(f.raw[index].Named())
 	reads.GetArtifact(application.Source, store.ArtifactContent)
-	proposal, err := f.loader.Prepare(
-		t.Context(),
-		loader.PrepareRequest{Incoming: store.Child{Obj: literal, Entry: &application}, Reads: &reads},
-	)
-	assert.NoError(t, err)
-	committed, err := f.loader.Commit(t.Context(), proposal, loader.Execution)
-	assert.NoError(t, err)
+	child := store.Child{Obj: literal, Entry: &application}
+	var committed bool
+	if f.loader.Options.Session == nil {
+		reads.Admit(child, manifest.BootstrapSourceID, manifest.NamedResource{})
+		committed = reads.Valid()
+	} else {
+		proposal, err := prepareSelection(
+			t.Context(),
+			t,
+			f.loader,
+			selection.PrepareRequest{Generation: []store.Child{child}, Reads: &reads},
+		)
+		assert.NoError(t, err)
+		committed, err = commitSelection(t.Context(), f.loader, proposal, selection.Execution)
+		assert.NoError(t, err)
+	}
 	assert.Equal(t, committed, true)
 	reads.Retire()
 	f.literals[index] = literal
@@ -193,7 +252,7 @@ func (f *literalSourceViewsFixture) literal(t *testing.T, index int) *manifest.K
 func (f *literalSourceViewsFixture) publish(t *testing.T, index int) {
 	t.Helper()
 	literal := f.literal(t, index)
-	spec, err := kustomize.Prepare(literal, nil)
+	spec, err := kustomize.Prepare(literal, nil, depwait.NewMissingPolicy(nil))
 	assert.NoError(t, err)
 	docs, receipt, err := kustomize.Render(
 		t.Context(),
@@ -202,7 +261,10 @@ func (f *literalSourceViewsFixture) publish(t *testing.T, index int) {
 		cache.RetryConfig{},
 	)
 	assert.NoError(t, err)
-	assert.NoError(t, kustomize.Shape(t.Context(), spec, docs, kustomize.ShapeOptions{}))
+	assert.NoError(
+		t,
+		kustomize.PrepareShape(&kustomize.RenderRequest{Spec: spec}, docs).Apply(t.Context(), kustomize.ShapeOptions{}),
+	)
 	parsed := loader.ParseChildren(spec, docs, manifest.ParseDocOptions{}, nil)
 	assert.NoError(t, manifest.DocumentFailure(parsed.Failures))
 	var reads store.ReadSet

@@ -1,0 +1,14 @@
+---
+apiVersion: v1
+data:
+  absent: supplied
+  empty: ""
+  encrypted: supplied
+  plain: repository
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/name: demo
+    helm.toolkit.fluxcd.io/namespace: apps
+  name: output
+  namespace: apps

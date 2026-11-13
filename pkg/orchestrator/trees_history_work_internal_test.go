@@ -10,19 +10,21 @@ import (
 	"strings"
 	"testing"
 
-	git "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	git "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
+//nolint:gocritic // Callers MUST retain both repository coordinates and commit identity.
 func crdMutationHistoryFixture(t *testing.T, tc crdMutationCase) (Tree, string, plumbing.Hash) {
 	t.Helper()
 	tree := crdWorkTree(t, tc.before, tc.foreign)
@@ -285,17 +287,20 @@ func testCRDMutationHistoryWorkCase(t *testing.T, tc *crdMutationCase) {
 		control := tree
 		control.ID.Side, control.Input = manifest.TreeHead, nil
 		control.RepoRoot, control.Path = root, filepath.Join(root, "flux")
-		runs, err := RenderTrees(t.Context(), []Tree{control}, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{control}, Config{RecordWork: true, Concurrency: 2})
 		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 		full[side] = runs[0].Result
 	}
 	cache := cachetest.New(t, "", sourcecache.New)
-	resolved, err := baseline.AutoResolve(t.Context(), tree.Path, base.String(), cache)
+	resolved, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: tree.Path, Base: base.String(), Cache: cache},
+	)
 	assert.NoError(t, err)
 	trees := historyWorkTrees(resolved, "crd-cluster", tree.SelfURLs)
 	var previous []byte
 	for repeat := range 2 {
-		runs, runErr := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+		runs, runErr := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 		assert.Equal(t, errors.Is(runErr, manifest.ErrFlux), tc.name != "33.9-change")
 		for side, run := range runs {
 			tc.assertRun(t, run, full[side], side)
@@ -326,8 +331,7 @@ func testHistoryWorkWitnessCase(t *testing.T, name *string) {
 	reverted := (*name) == "staged-revert" || (*name) == "endpoint-revert"
 	var full [2]*Result
 	for side, directory := range []string{beforeRoot, root} {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{witnessTree(directory, manifest.TreeHead)},
 			Config{RecordWork: true, Concurrency: 2},
 		)
@@ -335,13 +339,16 @@ func testHistoryWorkWitnessCase(t *testing.T, name *string) {
 		full[side] = runs[0].Result
 	}
 	cache := cachetest.New(t, "", sourcecache.New)
-	resolved, err := baseline.AutoResolve(t.Context(), filepath.Join(root, "flux"), ref, cache)
+	resolved, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: filepath.Join(root, "flux"), Base: ref, Cache: cache},
+	)
 	assert.NoError(t, err)
 	cfg := Config{RecordWork: true, Concurrency: 2}
 	trees := historyWorkTrees(resolved, ".", nil)
 	var first []byte
 	for repeat := range 2 {
-		runs, err := RenderTrees(t.Context(), trees, cfg)
+		runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 		assert.NoError(t, err)
 		a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
 		for side, run := range runs {

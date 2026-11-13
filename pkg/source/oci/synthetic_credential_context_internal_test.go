@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -61,46 +63,22 @@ func testFetcherSyntheticCredentialContextCase1(t *testing.T, generated *bool, m
 		expected = release.Named()
 	}
 	repo := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
-	var sec *manifest.Secret
+	sec := syntheticMaterial(repo, *material)
 	ref := &manifest.LocalObjectReference{Name: "material"}
-	missing := !strings.HasSuffix((*material), "malformed")
-	switch {
-	case strings.HasPrefix((*material), "auth"):
-		repo.SecretRef = ref
-		if (*material) == "auth empty" {
-			sec = &manifest.Secret{StringData: map[string]any{".dockerconfigjson": ""}}
-		}
-		if (*material) == "auth malformed" {
-			sec = &manifest.Secret{StringData: map[string]any{".dockerconfigjson": "{"}}
-		}
-	case strings.HasPrefix((*material), "cert"):
-		repo.CertSecretRef = ref
-		if (*material) == "cert empty" {
-			sec = &manifest.Secret{StringData: map[string]any{"ca.crt": ""}}
-		}
-		if (*material) == "cert malformed" {
-			sec = &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid"}}
-		}
-	case strings.HasPrefix((*material), "proxy"):
-		repo.ProxySecretRef = ref
-		if (*material) == "proxy empty" {
-			sec = &manifest.Secret{StringData: map[string]any{"address": ""}}
-		}
-		if (*material) == "proxy malformed" {
-			sec = &manifest.Secret{StringData: map[string]any{"address": "http://invalid/%"}}
-		}
-	default:
-		repo.Provider = "aws"
-	}
+	missing := !strings.HasSuffix(*material, "malformed")
 	config := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, config, "{}")
 	op := &operation{
 		Fetcher: &Fetcher{Network: newTestNetwork(t), RegistryConfig: config},
-		secrets: func(namespace, name string) *manifest.Secret {
+		secrets: func(namespace, name string) store.ReferenceFacts {
 			assert.FatalIf(t, namespace != "sources" || name != ref.Name,
 				"Secret lookup %s/%s used display owner", namespace, name)
 
-			return sec
+			secretInput := sec
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		},
 	}
 	_, err := fetchtest.Retry(t.Context(), func(context.Context) (source.PreparedFetch, error) {
@@ -122,4 +100,38 @@ func testFetcherSyntheticCredentialContextCase1(t *testing.T, generated *bool, m
 		assert.FatalIf(t, (*material) != "provider" && failure.Secret.Namespace != "sources",
 			"Secret identity=%s", failure.Secret)
 	}
+}
+
+func syntheticMaterial(repo *manifest.OCIRepository, material string) *manifest.Secret {
+	var sec *manifest.Secret
+	ref := &manifest.LocalObjectReference{Name: "material"}
+	switch {
+	case strings.HasPrefix(material, "auth"):
+		repo.SecretRef = ref
+		if material == "auth empty" {
+			sec = &manifest.Secret{StringData: map[string]any{".dockerconfigjson": ""}}
+		}
+		if material == "auth malformed" {
+			sec = &manifest.Secret{StringData: map[string]any{".dockerconfigjson": "{"}}
+		}
+	case strings.HasPrefix(material, "cert"):
+		repo.CertSecretRef = ref
+		if material == "cert empty" {
+			sec = &manifest.Secret{StringData: map[string]any{"ca.crt": ""}}
+		}
+		if material == "cert malformed" {
+			sec = &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid"}}
+		}
+	case strings.HasPrefix(material, "proxy"):
+		repo.ProxySecretRef = ref
+		if material == "proxy empty" {
+			sec = &manifest.Secret{StringData: map[string]any{"address": ""}}
+		}
+		if material == "proxy malformed" {
+			sec = &manifest.Secret{StringData: map[string]any{"address": "http://invalid/%"}}
+		}
+	default:
+		repo.Provider = "aws"
+	}
+	return sec
 }

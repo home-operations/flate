@@ -10,7 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -216,7 +217,7 @@ func (c *entryCapture) mapFiles() bool {
 
 func (c *entryCapture) mapFile(absolute string) (string, bool) {
 	a := c.admission
-	for id := range a.sources {
+	for id := range a.resolvedSources.snapshot() {
 		artifact, _ := c.reads.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		if artifact == nil || !artifact.InputAlias || !safepath.Contains(artifact.LocalPath, absolute) {
 			continue
@@ -228,6 +229,43 @@ func (c *entryCapture) mapFile(absolute string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// Admission borrows the canonical entry owner before and after Freeze.
+func (d *Session) Admission() *Admission {
+	if d == nil {
+		return nil
+	}
+	return d.entryAdmission
+}
+
+func (a *Admission) publishEntry(reads *store.ReadSet, producer manifest.NamedResource) *selection.EntryRoute {
+	if a.loader == nil || a.loader.Options.Session == nil {
+		return nil
+	}
+	if reads == nil && a.acceptedEntry != nil && a.acceptedEntry.Reads != nil {
+		a.loader.Options.Session.PublishEntry(a.acceptedEntry)
+		return a.acceptedEntry
+	}
+	route := &selection.EntryRoute{Bound: a.entryBound.Load()}
+	if a.trees != nil && a.input != nil && a.requestedEntry.Source != (manifest.NamedResource{}) {
+		route.Application = &a.requestedEntry
+	}
+	if q := a.qualification; q != nil {
+		route.Previous = q.previous.Producer
+		if q.accepted != nil {
+			route.Root = q.accepted.Root
+		} else if len(q.matches) != 0 {
+			route.Root = q.matches[0].root
+		}
+	} else if a.entryEvidence != nil {
+		route.Previous, route.Root = a.entryEvidence.Producer, a.entryEvidence.Root
+	}
+	if reads != nil && reads.Valid() {
+		route.Reads, route.Producer = reads, producer
+	}
+	a.loader.Options.Session.PublishEntry(route)
+	return route
 }
 
 // EntryProducers MUST expose only the pending ordered prefix.
@@ -286,6 +324,7 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 		return nil, Binding{}, nil
 	}
 	if err := ctx.Err(); err != nil {
+		a.publishEntry(nil, manifest.NamedResource{})
 		return nil, Binding{}, fmt.Errorf("context: %w", err)
 	}
 	a.store = st
@@ -298,6 +337,7 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
 	root, binding, err := a.proposeEntry(ctx, reads)
 	if err != nil || binding.Reads == nil || !reads.Valid() {
+		a.publishEntry(nil, manifest.NamedResource{})
 		reads.ReleaseCapture()
 		st.Retire(reads)
 		return nil, Binding{}, err
@@ -308,6 +348,8 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 			root = current
 		}
 	}
+	binding.support = a.captureEntrySupport(reads)
+	a.publishEntry(binding.support, binding.Producer)
 	return root, binding, nil
 }
 
@@ -344,12 +386,9 @@ func (a *Admission) proposeEntry(ctx context.Context, reads *store.ReadSet) (*ma
 	}
 	binding := Binding{Source: manifest.BootstrapSourceID, Key: key, Path: relative, Reads: reads, Entry: receipt}
 	if root != nil {
-		binding.Producer, binding.Source, binding.Path = root.Named(), root.SourceID(), manifest.NormalizeClaimBase(
+		binding.Producer, binding.Source, binding.Path = root.Named(), root.EffectiveSourceID(), manifest.NormalizeClaimBase(
 			root.Path,
 		)
-		if binding.Source.Kind == "" || binding.Source.Name == "" {
-			binding.Source = manifest.BootstrapSourceID
-		}
 	}
 	if len(q.matches) > 1 && slices.ContainsFunc(q.matches, func(evidence applicationEvidence) bool {
 		return evidence.owner != (manifest.NamedResource{}) &&
@@ -420,7 +459,7 @@ func (a *Admission) reuseEntry(
 			Named() {
 		record, indexed := a.qualification.loader.Index.Lookup(candidate.Named())
 		if indexed && reads.Policy(candidate.Named()).Origin != manifest.SuppliedDeclaration &&
-			!a.qualification.loader.AdmitsEntry(candidate.Named()) &&
+			!selection.Root(a.qualification.loader.RootEvidence(candidate.Named(), nil, true)).InitialEntry &&
 			(record.Builder == "" && record.Authored != candidate.Named() || record.Builder != "" && record.File == record.Builder) {
 			return false
 		}
@@ -433,7 +472,7 @@ func (a *Admission) reuseEntry(
 			return false
 		}
 	}
-	eligibility := entryPrerequisites{loader: a.loader, reads: reads, substitutions: a.substitutions}
+	eligibility := entryPrerequisites{loader: a.loader, reads: reads}
 	return eligibility.eligible(candidate, nil)
 }
 
@@ -441,6 +480,12 @@ func (a *Admission) reuseEntry(
 //
 //nolint:gocritic // The SDK accepts an immutable binding proposal by value.
 func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, error) {
+	accepted := false
+	defer func() {
+		if !accepted {
+			a.publishEntry(nil, manifest.NamedResource{})
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return Binding{}, err
@@ -480,13 +525,13 @@ func (a *Admission) AcceptEntry(ctx context.Context, binding Binding) (Binding, 
 	a.store.Retire(reads)
 	binding.Reads = nil
 	a.entryBound.Store(true)
+	a.acceptedEntry = a.publishEntry(binding.support, binding.Producer)
+	binding.support = nil
+	accepted = true
 	if q := a.qualification; q != nil {
 		a.loader, a.trees = q.loader, q.trees
-		*q = entryQualification{}
+		q.close()
 		a.qualification = nil
-	}
-	if a.loader != nil {
-		a.loader.Options.HistoryOwners = nil
 	}
 	return binding, nil
 }
@@ -504,12 +549,16 @@ func (d *Session) entryReceipt(ctx context.Context, a *Admission, input *store.S
 		manifest.NamedResource{},
 	)
 	a.entryRequest = kustomize.RenderRequest{
-		Work: d.cfg.Work.RenderWork(), Source: input, ApplyIgnore: true, SubPath: root.Path,
-		StrictSubstitutions: d.cfg.StrictSubstitutions, SkipKinds: d.cfg.SkipKinds,
-		DependencySubstitutions: d.substitutions,
+		Work:                d.cfg.Work.RenderWork(),
+		Source:              input,
+		ApplyIgnore:         kustomize.ApplySourceIgnore(root, input),
+		SubPath:             root.Path,
+		StrictSubstitutions: d.cfg.StrictSubstitutions,
+		SkipKinds:           d.cfg.SkipKinds,
+		Preparation:         &a.entryPreparation,
 	}
 	q.previous = d.cfg.Trees.PreviousEntry(ctx, a.entryRequest)
-
+	a.publishEntry(nil, manifest.NamedResource{})
 	for i := range q.previous.Inputs {
 		input := &q.previous.Inputs[i]
 		if input.Binding.Present {
@@ -538,14 +587,7 @@ func (q *entryQualification) reusePrevious(
 			return false, true
 		}
 	}
-	for i := range q.previous.Inputs {
-		input := &q.previous.Inputs[i]
-		if input.Binding.Present {
-			reads.GetArtifact(input.Resource, store.ArtifactContent|store.ArtifactRevision)
-		} else {
-			reads.ReferenceFacts(input.Resource, q.loader.Index, manifest.NamedResource{})
-		}
-	}
+	q.captureReceiptInputs(reads)
 	if !q.trees.EntryValid(ctx, q.previous, st) || !reads.Valid() {
 		q.previous = kustomize.EntryEvidence{}
 		return false, false
@@ -578,61 +620,6 @@ func (q *entryQualification) reusePrevious(
 	return true, false
 }
 
-func (d *Session) changedEntryFiles(delta *change.Set) bool {
-	if len(d.cfg.Selection.Roots) != 0 || d.cfg.Input == nil {
-		return false
-	}
-	return slices.ContainsFunc(delta.Paths(), d.entryFileDemand)
-}
-
-func (d *Session) entryFileDemand(file string) bool {
-	if file == "" || !safepath.Contains(d.cfg.Path, filepath.Join(d.cfg.Input.LocalPath, filepath.FromSlash(file))) {
-		return false
-	}
-	index := *d.loader.Index
-	index.Readers = nil
-	localOwners := false
-	for _, id := range index.OwnersOfFile(file).Owners {
-		application, local := d.localApplication(id)
-		if !local {
-			continue
-		}
-		localOwners = true
-		if loader.AppliesToEntry(d.cfg.Store, &application, d.cfg.Input, d.cfg.Path) {
-			return true
-		}
-	}
-	if localOwners {
-		return false
-	}
-	if !d.hasEntryBuilder() || len(d.loader.Index.Readers[file]) != 0 {
-		return true
-	}
-	for id := range d.loader.Index.Records {
-		record := d.loader.Index.Records[id]
-		if record.File == file && safepath.Contains(d.cfg.Path, record.Path) {
-			return true
-		}
-	}
-	return false
-}
-
-func (d *Session) localApplication(id manifest.NamedResource) (manifest.EntryApplication, bool) {
-	object := d.loader.CatalogObject(id)
-	application, valid := manifest.ApplicationFor(object)
-	if !valid && object != nil {
-		application.Source, application.Path, valid = object.SourcePath()
-	}
-	if !valid {
-		return manifest.EntryApplication{}, false
-	}
-	location := loader.SourceView(d.cfg.Store, application.Source, d.cfg.Input.LocalPath)
-	if location.Pinned || location.External {
-		return manifest.EntryApplication{}, false
-	}
-	return application, true
-}
-
 func (w *qualificationWalk) ordinaryApplication(
 	evidence *applicationEvidence,
 	application *manifest.EntryApplication,
@@ -641,7 +628,7 @@ func (w *qualificationWalk) ordinaryApplication(
 	id := evidence.object.Named()
 	policy := w.reads.Policy(id)
 	if w.q.session != nil || !policy.Root || policy.Origin == manifest.SuppliedDeclaration ||
-		!w.q.loader.Options.Filter.OrdinaryDemand(id) || !w.reads.OrdinaryDemand(id) {
+		!w.q.loader.Options.Session.Snapshot().OrdinaryDemand(id) || !w.reads.OrdinaryDemand(id) {
 		return false
 	}
 	if possible {
@@ -649,4 +636,54 @@ func (w *qualificationWalk) ordinaryApplication(
 	}
 	info, err := fs.Stat(evidence.source.artifact.FS, path.Clean(application.Path))
 	return err == nil && info.IsDir()
+}
+
+func (q *entryQualification) captureReceiptInputs(reads *store.ReadSet) {
+	for i := range q.previous.Inputs {
+		input := &q.previous.Inputs[i]
+		if input.Binding.Present {
+			reads.GetArtifact(input.Resource, store.ArtifactContent|store.ArtifactRevision)
+		} else {
+			reads.ReferenceFacts(input.Resource, q.loader.Index, manifest.NamedResource{})
+		}
+	}
+}
+
+func (a *Admission) captureEntrySupport(original *store.ReadSet) *store.ReadSet {
+	if a.loader == nil || a.loader.Options.Session == nil || a.qualification == nil ||
+		len(a.qualification.matches) == 0 ||
+		!original.Valid() {
+		return nil
+	}
+	q := a.qualification
+	selected := &q.matches[0]
+	application := selected.application
+	var support *store.ReadSet
+	var current bool
+	if selected.history && q.accepted != nil {
+		support = &store.ReadSet{}
+		support.Init(a.store, manifest.BootstrapSourceID, nil)
+		q.captureReceiptInputs(support)
+		current = true
+		if a.entryBound.Load() {
+			current, _ = selected.ownerAccepts(support)
+		}
+	} else {
+		walk := qualificationWalk{q: q, admission: a, store: a.store}
+		support, current = walk.preparationSupport(selected, selected.object.Named(), application.Source)
+		if object := a.store.GetDeclaration(selected.object.Named()); object != nil {
+			current = current && manifest.Equal(support.GetDeclaration(selected.object.Named()), selected.object)
+		}
+	}
+	defer a.store.Retire(support)
+	support.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+	a.applicationSource(a.store, support, &application)
+	if !current || !support.MatchesContent(original, application.Source) ||
+		!support.MatchesContent(original, manifest.BootstrapSourceID) ||
+		!original.Valid() ||
+		!support.Valid() {
+		support.ReleaseCapture()
+		return nil
+	}
+	return support
 }

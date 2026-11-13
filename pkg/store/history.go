@@ -102,7 +102,7 @@ func (p *sourcePathProjection) addReadPaths(reads *ReadSet) {
 		if input.Ref.NamedResource == reads.ID() {
 			p.addRoots(new(input.view).declaration())
 		}
-		binding := input.view.sourceBinding()
+		binding := input.view.source
 		{
 			productionValues := input.view.child.Productions
 			for productionIndex := range productionValues {

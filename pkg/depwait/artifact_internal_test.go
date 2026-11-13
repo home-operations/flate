@@ -8,6 +8,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -22,7 +24,13 @@ type artifactPromotion struct {
 }
 
 func (*artifactPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *artifactPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+
+//nolint:gocritic // The admission contract requires an independent request snapshot.
+func (p *artifactPromotion) Promote(
+	_ context.Context,
+	_ selection.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
 	return p.promote(id), nil
 }
 
@@ -68,7 +76,10 @@ func TestClassify_BootstrapArtifactRequirement(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{FS: fstest.MapFS{}})
-			w := Waiter{Store: s}
+			w := Waiter{
+				Store: captureState(t, s), Missing: NewMissingPolicy(
+					nil),
+			}
 			got := w.Classify(
 				t.Context(),
 				manifest.DependencyRef{NamedResource: manifest.BootstrapSourceID, Artifact: artifact},
@@ -98,7 +109,10 @@ func TestClassify_SyntheticArtifactContext(t *testing.T) {
 				status.Message = "material unavailable"
 			}
 			st.UpdateStatus(repo.Named(), status)
-			waiter := Waiter{Store: st}
+			waiter := Waiter{
+				Store: captureState(t, st), Missing: NewMissingPolicy(
+					nil),
+			}
 			result := waiter.Classify(
 				t.Context(),
 				manifest.DependencyRef{NamedResource: repo.Named(), Artifact: true, ArtifactOnly: mode == "unreadable"},
@@ -179,11 +193,17 @@ func testClassifyArtifactRequirementCase(t *testing.T, testCaseInput *struct {
 		}
 		s.SetArtifact(source.Named(), artifact)
 	}
-	w := Waiter{Store: s}
+	reads := captureState(t, s)
+	w := Waiter{
+		Store: reads, Admission: selection.PrepareRequest{Reads: reads}, Missing: NewMissingPolicy(
+			nil),
+	}
 	if testCaseInput.promote {
 		w.Existence = &artifactPromotion{promote: func(id manifest.NamedResource) bool {
 			assert.FatalIf(t, id != source.Named(), "promotion=%s", id)
 			publish()
+			reads.Retire()
+			reads.Init(s, manifest.NamedResource{}, nil)
 			return true
 		}}
 	} else if !testCaseInput.absent {

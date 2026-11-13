@@ -3,8 +3,6 @@ package helm
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"maps"
@@ -45,22 +43,23 @@ func testTemplateAcceptedHistoryDurablePublication(
 			nil,
 		)
 		assert.NoError(t, blobErr2)
-		data, blobErr2 := fs.ReadFile(reader, "content")
-		assert.NoError(t, blobErr2)
-		stored, blobErr2 := decodeFrame(data)
-		assert.NoError(t, blobErr2)
+		var stored renderRecord
+		assert.NoError(t, readTestRecord(t.Context(), reader, &stored))
 		content := descriptor.Annotations[acceptedRenderAnnotation]
-		var actual acceptedRender
-		assert.NoError(
-			t,
-			json.Unmarshal(data[12+int(binary.BigEndian.Uint32(data[8:12]))+stored.header.Size:], &actual),
-		)
+
+		history, complete := stored.frame.stored.History(accepting, pending.Value().(renderFrame).content)
+		assert.Equal(t, complete, true)
+		storedPublication, blobErr2 := stored.frame.stored.PreparePublication(t.Context(), cache.FramePublicationInput{
+			Owner: accepting, Content: pending.Value().(renderFrame).content, Records: history, Complete: true,
+		})
+		assert.NoError(t, blobErr2)
 		assert.FatalIf(
 			t,
-			content == "" || content != manifest.Fingerprint(actual),
+			content == "" || storedPublication == nil,
 			"%s",
 			"stored accepted-frame key does not identify the actual accepted frame",
 		)
+		assert.Equal(t, content, storedPublication.Identity())
 		return content
 	}
 	unchanged := func() func() {
@@ -103,14 +102,14 @@ func testTemplateAcceptedHistoryDurablePublication(
 			t.Context(),
 			(*(*testCaseInput).hr),
 			nil,
-			RenderOptions{Sources: (*testCaseInput).input.Sources},
+			RenderOptions{Options: (*testCaseInput).input.Options, Sources: (*testCaseInput).input.Sources},
 		),
 	)
 	assert.NoError(t, (*(*testCaseInput).err))
 	resident := pending.Value().(renderFrame)
 	assert.FatalIf(
 		t,
-		resident.accepted == nil || resident.acceptedKey == "",
+		resident.stored == nil,
 		"%s",
 		"warm receipt did not carry decoded accepted evidence",
 	)
@@ -216,7 +215,7 @@ func testTemplateAcceptedHistoryDurablePublication(
 			t.Context(),
 			(*(*testCaseInput).hr),
 			nil,
-			RenderOptions{Sources: (*testCaseInput).input.Sources},
+			RenderOptions{Options: (*testCaseInput).input.Options, Sources: (*testCaseInput).input.Sources},
 		),
 	)
 	assert.NoError(t, err)

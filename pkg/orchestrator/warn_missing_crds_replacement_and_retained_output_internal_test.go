@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -68,8 +69,7 @@ spec:
 `, name, dependencies, name, name)
 		}
 		testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
-		renderedSingleton2, err := RenderTrees(
-			t.Context(),
+		renderedSingleton2, err := renderTreesForTest(t.Context(), t,
 			[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 			Config{CacheDir: cache, Concurrency: 2, AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}},
 		)
@@ -146,13 +146,13 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	o := &Orchestrator{
 		store: s,
 		cfg: treeConfig{
-			Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}},
+			Config: Config{missing: depwait.NewMissingPolicy([]string{manifest.KindCustomResourceDefinition})},
 			Tree:   Tree{},
 		},
 	}
 	parent := testutil.KustomizationID("flux-system", "parent")
 	s.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	opts := base.Options{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}
+	opts := base.Options{Missing: o.cfg.missing}
 	c := resourcesetctrl.New(s, tasks, nil)
 	c.Configure(opts)
 	c.StartLifecycle()
@@ -175,7 +175,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 		manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
 	}
 	s.AddObject(rs)
-	initial := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade)
+	initial := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade, schedule.Result{})
 	assert.FatalIf(t, initial.Outcome() == schedule.Blocked,
 		"initial render blocked: %v", initial.Blocked)
 
@@ -206,12 +206,12 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	}
 	s.AddObject(&fresh)
 	if strings.HasPrefix((*testCaseInput), "filter") {
-		opts.Loader = admissiontest.New(
+		opts.Loader, opts.Session = admissiontest.New(
 			t,
 			admissiontest.Config{Changes: change.NewSet(nil), Index: indexForTest(nil), Inventory: s, Root: ""},
 		)
-		admissiontest.Commit(t, opts.Loader, nil)
-		opts.Filter = opts.Loader.Options.Filter
+		admissiontest.Commit(t, opts.Session, nil)
+
 		c = resourcesetctrl.New(s, tasks, nil)
 		c.Configure(opts)
 		c.StartLifecycle()
@@ -221,7 +221,7 @@ func testWarnMissingCRDsReplacementAndRetainedOutputCase(
 	publications := 0
 	u := s.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { publications++ }, false)
 	defer u()
-	current := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade)
+	current := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainCascade, schedule.Result{})
 	assert.FatalIf(t, current.Outcome() == schedule.Blocked,
 		"final render blocked: %v", current.Blocked)
 

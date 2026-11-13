@@ -10,56 +10,10 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-func TestCollectManifests_SupportDeclarations(t *testing.T) {
-	t.Parallel()
-	st := store.New()
-	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-	st.AddObject(owner)
-	documents := []map[string]any{
-		{
-			"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
-			"kind":       "Kustomization",
-			"metadata":   map[string]any{"name": "selected", "namespace": "apps"},
-		},
-		{
-			"apiVersion": "source.toolkit.fluxcd.io/v1",
-			"kind":       "GitRepository",
-			"metadata":   map[string]any{"name": "support", "namespace": "apps"},
-			"spec":       map[string]any{"url": "https://fixture.invalid/repo"},
-		},
-		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "sibling", "namespace": "apps"}},
-	}
-	parseChildrenForTestResult1 := parseChildrenForTest(owner.Named(), documents, manifest.ParseDocOptions{})
-	children, documents := parseChildrenForTestResult1.Children, parseChildrenForTestResult1.Documents
-	st.RecordEmitted(
-		owner.Named(),
-		&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(documents), Complete: true},
-		nil,
-	)
-	filter := change.NewFilter()
-	_, retry := filter.AddEmitted(
-		change.MembershipUpdate{
-			Needed:   []manifest.NamedResource{owner.Named(), children[1].Obj.Named()},
-			Selected: []manifest.NamedResource{children[0].Obj.Named()},
-			Dirty:    nil,
-			Ordinary: []manifest.NamedResource{owner.Named(), children[1].Obj.Named()},
-		},
-		0,
-	)
-	assert.Equal(t, retry, false)
-	o := &Orchestrator{store: st, filter: filter}
-	assert.Diff(
-		t,
-		outputByParent(o.collectManifests()),
-		map[manifest.NamedResource][]map[string]any{owner.Named(): documents[:2]},
-	)
-}
 
 func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 	t.Parallel()

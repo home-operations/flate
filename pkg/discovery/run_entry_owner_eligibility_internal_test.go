@@ -22,7 +22,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestRun_EntryOwnerEligibility(t *testing.T) {
@@ -509,7 +508,7 @@ func testRunEntryOwnerEligibilityCase(t *testing.T, testCaseInput *string,
 			Path:  root + "/entry",
 		},
 	)
-	_, err = d.resolveEntrySources(t.Context(), false)
+	_, err = d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)
 	d.loader.SourceRoot = root
 	_, err = d.loader.Load(t.Context(), root+"/entry", manifest.NamedResource{}, nil)
@@ -620,42 +619,37 @@ func testRunEntryOwnerEligibilityCaseTail(t *testing.T, tailCaseInput *testRunEn
 			"%v",
 			"eligibility mutated the borrowed prerequisite",
 		)
-		projected := *(*tailCaseInput.owner)
+		projected := (*tailCaseInput.owner).Clone()
 		projected.DependsOn = []kustomizev1.DependencyReference{{Name: "${NEXT}", Namespace: "${NS}"}}
 		parent := &manifest.ResourceSet{Name: "updates", Namespace: "apps"}
 		(*tailCaseInput.st).AddObject(parent)
 		(*tailCaseInput.st).RecordEmitted(parent.Named(), &store.Emission{
-			Children: []store.Child{{Obj: &projected, Doc: testutil.ObjectDocument(&projected)}}, Complete: true,
+			Children: []store.Child{{Obj: projected, Doc: testutil.ObjectDocument(projected)}}, Complete: true,
 		}, nil)
-		vars := func(value string) values.DependencySubstitutions {
-			return values.NewDependencySubstitutions(
-				[]*manifest.Kustomization{
-					{
-						PostBuild: &kustomizev1.PostBuild{
-							Substitute: map[string]string{"NEXT": value, "NS": "apps"},
-						},
-					},
-				},
-			)
-		}
-		(*tailCaseInput.d).
-			substitutions = vars("sibling")
+		projected = projected.Clone()
+		projected.DependsOn = []kustomizev1.DependencyReference{{Name: "sibling", Namespace: "apps"}}
+		(*tailCaseInput.st).RecordEmitted(parent.Named(), &store.Emission{
+			Children: []store.Child{{Obj: projected, Doc: testutil.ObjectDocument(projected)}}, Complete: true,
+		}, nil)
 		assert.FatalIf(
 			t,
 			!bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root).Named().ReportHidden(),
 			"%v",
 			"new owner/snapshot retained the independent decision",
 		)
-		(*tailCaseInput.d).
-			substitutions = vars("ready")
-		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), &projected)
+		projected = projected.Clone()
+		projected.DependsOn[0].Name = "ready"
+		(*tailCaseInput.st).RecordEmitted(parent.Named(), &store.Emission{
+			Children: []store.Child{{Obj: projected, Doc: testutil.ObjectDocument(projected)}}, Complete: true,
+		}, nil)
+		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), projected)
 		before := (*tailCaseInput.d).prepared[projected.Named()]
 		replacement := *before.source
 		replacement.Key = "new-source"
 		replacement.Content = "new-content"
 		(*tailCaseInput.st).
 			SetArtifact(manifest.BootstrapSourceID, &replacement)
-		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), &projected)
+		assert.Equal(t, bindEntryForTest(t, (*tailCaseInput.d), tailCaseInput.root), projected)
 		assert.Equal(t, (*tailCaseInput.d).prepared[projected.Named()].source, &replacement)
 	}
 }

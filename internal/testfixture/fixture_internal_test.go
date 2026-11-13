@@ -3,15 +3,17 @@ package testfixture
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	filetransport "github.com/go-git/go-git/v6/plumbing/transport/file"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -330,16 +332,27 @@ func TestCopyTree_RejectsSymlink(t *testing.T) {
 func TestFixture_DeclaredGitStores(t *testing.T) {
 	t.Parallel()
 	f := materialize(t, fixtureSource(t, "reset"), "sequence")
-	endpoint, err := transport.NewEndpoint("https://fixture.invalid/repo")
+	endpoint, err := transport.ParseURL("https://fixture.invalid/repo")
 	assert.NoError(t, err)
 	for range 2 {
 		storage, loadErr := f.Load(endpoint)
 		assert.NoError(t, loadErr)
-		assert.Equal(t, storage == f.repositories["repo"].Storer, true)
-		assert.Equal(t, storage == f.repositories["baseline"].Storer, false)
+		borrowed, ok := storage.(borrowedStorage)
+		assert.Equal(t, ok, true)
+		assert.Equal(t, borrowed.Storer == f.repositories["repo"].Storer, true)
+		_, closes := storage.(io.Closer)
+		assert.Equal(t, closes, false)
+		assert.Equal(t, borrowed.Storer == f.repositories["baseline"].Storer, false)
+		session, sessionErr := filetransport.NewTransport(filetransport.Options{Loader: f}).
+			Handshake(t.Context(), &transport.Request{URL: endpoint, Command: transport.UploadPackService})
+		assert.NoError(t, sessionErr)
+		refs, refsErr := session.GetRemoteRefs(t.Context(), nil)
+		assert.NoError(t, refsErr)
+		assert.Equal(t, len(refs.References) > 0, true)
+		assert.NoError(t, session.Close())
 		f.Restore(t)
 	}
-	endpoint, err = transport.NewEndpoint("https://undeclared.invalid/repo")
+	endpoint, err = transport.ParseURL("https://undeclared.invalid/repo")
 	assert.NoError(t, err)
 	_, err = f.Load(endpoint)
 	assert.Equal(t, errors.Is(err, transport.ErrRepositoryNotFound), true)

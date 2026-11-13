@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -18,7 +20,6 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/kustomize"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -64,7 +65,7 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 				discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st},
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
-			filter := admissiontest.Filter(
+			filter := admissiontest.Decision(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"producer/values.yaml"}),
@@ -75,7 +76,7 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 			)
 			id := testutil.HelmReleaseID(ns, "consumer")
 			{
-				got := filter.ShouldReconcile(id)
+				got := filter.Reconcile(id)
 				assert.FatalIf(t, got != (ns == "apps" && tc.apiVersion == "v1"), "consumer %s selected=%t", id, got)
 			}
 		})
@@ -103,7 +104,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 				discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st},
 			)
 			assert.FatalIf(t, err != nil, "%v", err)
-			filter := admissiontest.Filter(
+			filter := admissiontest.Decision(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"producer/values.yaml"}),
@@ -114,7 +115,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 			)
 			id := testutil.KustomizationID("apps", "consumer")
 			{
-				got := filter.ShouldReconcile(id)
+				got := filter.Reconcile(id)
 				assert.FatalIf(t, !got, "optional=%t consumer selected=%t", optional, got)
 			}
 		})
@@ -392,7 +393,7 @@ data: {value: fixture}
 		testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: source, namespace: flux-system}
-spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
+spec: {url: "https://example.invalid/cluster.git", ref: {name: refs/heads/unavailable}}
 `)
 	}
 	res, err := discovery.Run(t.Context(), cfg)
@@ -421,31 +422,22 @@ spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
 		)
 	}
 
-	if strings.HasPrefix((*testCaseInput), "missing_") {
+	if strings.HasPrefix(*testCaseInput, "missing_") {
 		id := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
 			Kind:      kind,
 			Namespace: "flux-system",
 			Name:      sourceName,
 		}
+		artifact, ok := cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		assert.FatalIf(
 			t,
-			cfg.Store.GetObject(id) != nil || cfg.Store.GetArtifact(id, store.ArtifactContent) != nil,
-			"%v",
-			"missing non-Git source became available",
+			!ok || !artifact.InputAlias || cfg.Store.GetObject(id) == nil,
+			"tree source was not aliased: %v",
+			id,
 		)
-		assert.FatalIf(
-			t,
-			cfg.Store.GetObject(testutil.KustomizationID("flux-system", "child")) != nil,
-			"%v",
-			"missing source exposed a decoy child",
-		)
-		{
-			owners := ownersForTest(res.Index, "apps/cm.yaml")
-			assert.FatalIf(t, len(owners) != 0, "missing source acquired owners: %v", owners)
-		}
-		return
 	}
+
 	child := testutil.KustomizationID("flux-system", "child")
 	assert.FatalIf(
 		t,
@@ -484,6 +476,7 @@ spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
 	}
 }
 
+//nolint:gocognit // Sequential source replacements and repeated discovery share one assertion history.
 func testRunSourceValuesReadersCase(t *testing.T, testCaseInput *string,
 ) {
 	t.Helper()
@@ -589,7 +582,7 @@ spec:
 			assert.Equal(t, ok, true)
 			assert.Equal(t, record.Parent, owner)
 			assert.Equal(t, st.GetObject(demo) == nil, true)
-			filter := admissiontest.Filter(
+			candidate, session := admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"config/prod.yaml"}),
@@ -598,31 +591,35 @@ spec:
 					Root:      "",
 				},
 			)
+			admissiontest.Execute(t, candidate, nil)
+			filter := session.Snapshot()
 			for _, id := range []manifest.NamedResource{demo, owner, parent} {
-				assert.Equal(t, filter.ShouldReconcile(id), true)
+				assert.Equal(t, filter.Reconcile(id), true)
 			}
-			assert.Equal(t, filter.ShouldReconcile(sibling), false)
-			candidate := loader.New(st)
-			candidate.Index = result.Index
-			candidate.Options.Filter, candidate.Options.Selection = filter, manifest.Selection{Changed: true}
-			candidate.Options.Changes = change.NewSet([]string{"config/prod.yaml"})
-			proposal, err := candidate.Prepare(t.Context(), loader.PrepareRequest{Incoming: store.Child{
-				Obj:         &manifest.HelmRelease{Name: "sibling", Namespace: "apps"},
-				Productions: []manifest.Production{{Owner: owner}},
-			}, Reads: nil, History: nil, Invocation: true})
-			assert.NoError(t, err)
-			added, retry := filter.AddEmitted(
-				change.MembershipUpdate{
-					Needed:   proposal.Needed,
-					Selected: proposal.Selected,
-					Dirty:    proposal.Dirty,
-					Ordinary: proposal.Needed,
-				},
-				proposal.Revision,
+			assert.Equal(t, filter.Reconcile(sibling), false)
+			proposal, err := prepareSelection(
+				t.Context(),
+				t,
+				candidate,
+				selection.PrepareRequest{Generation: []store.Child{{
+					Obj:         &manifest.HelmRelease{Name: "sibling", Namespace: "apps"},
+					Productions: []manifest.Production{{Owner: owner}},
+				}}, Reads: nil, History: nil, Invocation: true},
 			)
+			assert.NoError(t, err)
+			var added []manifest.NamedResource
+			for _, id := range proposal.Needed {
+				if !filter.Reconcile(id) {
+					added = append(added, id)
+				}
+			}
+			committed, err := commitSelection(t.Context(), candidate, proposal, selection.Execution)
+			assert.NoError(t, err)
+			retry := !committed
+			filter = session.Snapshot()
 			assert.Equal(t, retry, false)
 			assert.Equal(t, len(added), 0)
-			assert.Equal(t, filter.ShouldReconcile(sibling), false)
+			assert.Equal(t, filter.Reconcile(sibling), false)
 			assert.Equal(t, len(result.Index.Claims["config/"]), 0)
 			if previous != nil {
 				{

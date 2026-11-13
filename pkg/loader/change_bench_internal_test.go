@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -148,7 +149,7 @@ func BenchmarkAddEmitted_PrimaryFanOut(b *testing.B) {
 					b.StopTimer()
 					for i := range children {
 						child := &children[i]
-						delete(filter.keep, child.Obj.Named())
+						delete(filter.roles(), child.Obj.Named())
 					}
 					next = 0
 					b.StartTimer()
@@ -345,7 +346,7 @@ func benchmarkSupplierResolve(b *testing.B, suppliers int, match bool) {
 			b,
 			admissionConfig{changes: changes, index: index, inventory: st, root: root},
 		)
-		if filter.ShouldReconcile(consumer.Named()) {
+		if filter.Reconcile(consumer.Named()) {
 			selected++
 		}
 	}
@@ -381,17 +382,18 @@ func benchmarkSupplierEmission(b *testing.B, suppliers int, match bool) {
 			},
 		}
 	}
-	setup := admissionClosure{loader: filter.loader, objects: st, incoming: children[0]}
+	direct, _, _ := changes.ForSource(manifest.BootstrapSourceID)
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name, Namespace: "apps"}
-	if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) ||
-		filter.ShouldReconcile(children[0].Obj.Named()) ||
-		setup.affected(children[0].Obj.Named(), children[0].Obj) {
+	if filter.Reconcile(emitter.Named()) || filter.Reconcile(input) ||
+		filter.Reconcile(children[0].Obj.Named()) ||
+		direct.Len() != 0 {
 		b.Fatal("supplier scan would be bypassed")
 	}
 	productions := st.IncomingProductions(children[0], index)
 	for i := range productions {
 		production := productions[i]
-		if setup.fileChanged(production.Source, production.File) {
+		delta, _, _ := changes.ForSource(production.Source)
+		if delta.Contains(production.File) {
 			b.Fatal("incoming production would bypass supplier scan")
 		}
 	}
@@ -400,8 +402,8 @@ func benchmarkSupplierEmission(b *testing.B, suppliers int, match bool) {
 	for b.Loop() {
 		if next == len(children) {
 			b.StopTimer()
-			clear(filter.keep)
-			filter.loader.Options.Filter = change.NewFilter()
+			filter.identities = nil
+			configureSelection(b, filter.loader, selection.Request{Changed: true})
 			next = 0
 			b.StartTimer()
 		}
@@ -410,7 +412,7 @@ func benchmarkSupplierEmission(b *testing.B, suppliers int, match bool) {
 		reads.Init(st, child.Obj.Named(), nil)
 		filter.AddEmitted(emitter.Named(), new(child), &reads)
 		reads.Close()
-		if filter.ShouldReconcile(child.Obj.Named()) {
+		if filter.Reconcile(child.Obj.Named()) {
 			selected++
 		}
 		next++
@@ -443,7 +445,12 @@ func benchmarkDetectCase(b *testing.B, name string) {
 	testutil.WriteFile(b, after, "mod.yaml", "BBB")
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, err := change.Detect(b.Context(), testInput(before), testInput(after), manifest.WorkScope{}); err != nil {
+		if _, err := change.Detect(
+			b.Context(),
+			testInput(before),
+			testInput(after),
+			change.DetectConfig{},
+		); err != nil {
 			b.Fatal(err)
 		}
 	}

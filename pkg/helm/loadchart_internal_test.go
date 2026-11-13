@@ -17,11 +17,11 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -196,13 +196,33 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 type chartBacking struct {
 	billy.Filesystem
 
-	opens atomic.Int32
+	reads atomic.Int32
 }
 
 //nolint:ireturn // The upstream interface contract requires this return type.
 func (b *chartBacking) Open(name string) (billy.File, error) {
-	b.opens.Add(1)
-	return b.Filesystem.Open(name)
+	file, err := b.Filesystem.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return &chartBackingFile{File: file, reads: &b.reads}, nil
+}
+
+type chartBackingFile struct {
+	billy.File
+
+	reads *atomic.Int32
+}
+
+// Go-git reuses pack descriptors, so later observations MUST count reads on held files.
+func (f *chartBackingFile) Read(p []byte) (int, error) {
+	f.reads.Add(1)
+	return f.File.Read(p)
+}
+
+func (f *chartBackingFile) ReadAt(p []byte, offset int64) (int, error) {
+	f.reads.Add(1)
+	return f.File.ReadAt(p, offset)
 }
 
 func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
@@ -290,13 +310,13 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		assert.NoError(t, err)
 		assert.FatalIf(t, first.chart == previous, "%s", "different acquisition pins shared parsed entries")
 		previous = first.chart
-		reads := backing.opens.Load()
+		reads := backing.reads.Load()
 		other := hr.Clone()
 		other.Name = "second"
 		warm, err := loadDecodedChart(t.Context(), cli, other, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, warm.chart == first.chart, true)
-		assert.Equal(t, backing.opens.Load(), reads)
+		assert.Equal(t, backing.reads.Load(), reads)
 		values, err := cli.mergeChartValuesFiles(t.Context(), &first, []string{"config/prod.yaml"}, false)
 		assert.NoError(t, err)
 		assert.Equal(t, values["marker"], any("acquired"))
@@ -327,11 +347,11 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		autoChart, err := loadDecodedChart(t.Context(), cli, auto, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, autoChart.chart == rootChart.chart, false)
-		reads = backing.opens.Load()
+		reads = backing.reads.Load()
 		warm, err = loadDecodedChart(t.Context(), cli, auto, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, warm.chart == autoChart.chart, true)
-		assert.Equal(t, backing.opens.Load(), reads)
+		assert.Equal(t, backing.reads.Load(), reads)
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err = loadDecodedChart(ctx, cli, auto, cliSources)
@@ -382,8 +402,10 @@ func testLoadChartCoalescesConcurrentFirstLoadCase(
 	owner := cachetest.New(t, "", cache.New)
 	local, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), local)
+	admittedDirectory, err := gittree.OpenDirectory(t.Context(), local)
 	assert.NoError(t, err)
+	admitted := admittedDirectory.Artifact()
+	assert.NoError(t, admittedDirectory.Close())
 	input := admitted.FS
 	location := "mychart"
 	if *testCaseInput.archive {
@@ -537,7 +559,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	)
 	assert.NoError(t, newErr)
 	assert.FatalIf(t, !hasRenderField(first, "marker", "acquired"), "%v", first)
-	reads := backing.opens.Load()
+	reads := backing.reads.Load()
 	assert.FatalIf(t, reads == 0, "%s", "first render did not read acquired backing")
 	second, _, newErr := testutil.RenderMaps(
 		renderer.Template(
@@ -549,11 +571,11 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	)
 	assert.NoError(t, newErr)
 	assert.Diff(t, second, first)
-	assert.Equal(t, backing.opens.Load(), reads)
+	assert.Equal(t, backing.reads.Load(), reads)
 	if !(*testCaseInput.persistent) {
 		return
 	}
-	d, newErr := renderer.describeChart(t.Context(), selected, rendererSources)
+	d, newErr := renderer.describeChart(t.Context(), selected, rendererSources.chartInput(selected))
 	assert.NoError(t, newErr)
 	d.values, newErr = renderer.observeValuesFiles(t.Context(), &d, selected.ChartValuesFiles, false)
 	assert.NoError(t, newErr)
@@ -569,7 +591,12 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 		key,
 		&cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			writeTestRecordErr := writeTestRecord(w, key, &renderRecord{Output: output, Analysis: d.analyze()})
+			writeTestRecordErr := writeTestRecord(
+				t.Context(),
+				w,
+				key,
+				&renderRecord{Output: output, Analysis: d.analyze()},
+			)
 			return cache.ProducerResult{}, writeTestRecordErr
 		},
 	)
@@ -577,7 +604,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 
 	fresh := NewClient(cachetest.New(t, outputRoot, cache.New))
 	freshSources := NewSources(sources)
-	before := backing.opens.Load()
+	before := backing.reads.Load()
 	hit, _, newErr := testutil.RenderMaps(
 		fresh.Template(
 			t.Context(),
@@ -588,7 +615,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	)
 	assert.NoError(t, newErr)
 	assert.Diff(t, hit, []map[string]any{witness})
-	reads = backing.opens.Load()
+	reads = backing.reads.Load()
 	assert.FatalIf(
 		t,
 		reads <= before || len(fresh.chartValuesCache) != 1,
@@ -613,7 +640,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	)
 	assert.NoError(t, newErr)
 	assert.Diff(t, hit, []map[string]any{witness})
-	assert.Equal(t, backing.opens.Load(), reads)
+	assert.Equal(t, backing.reads.Load(), reads)
 	t.Log("verified pinned persisted hits and observation-only reuse")
 }
 

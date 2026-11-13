@@ -6,6 +6,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -69,7 +71,7 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 	index := &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "release.yaml"}},
 	}
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{
 			Changes:   change.NewSet([]string{"release.yaml"}),
@@ -77,19 +79,23 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 			Inventory: filtertest.MapLister{},
 		},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
 	c, st := newTestController(t, filterLoader)
 	reconcile := func(level manifest.DrainLevel) *base.Execution {
 		var run *base.Execution
 		c.Tasks.Go(t.Context(), "release", func(ctx context.Context) {
-			run = c.ReconcileNode(ctx, hr.Named(), level)
+			run = c.ReconcileNode(ctx, hr.Named(), level, schedule.Result{})
 		})
 		c.Tasks.BlockTillDone()
 		return run
 	}
 	st.AddObject(hr)
-	c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: hr}, nil)
+	c.KeepEmitted(
+		t.Context(),
+		manifest.NamedResource{},
+		selection.PrepareRequest{Generation: []store.Child{{Obj: hr}}, Reads: nil},
+	)
 	id := hr.ChartSource()
 	arrivals := 0
 	stop := st.AddListener(store.EventObjectAdded, func(got manifest.NamedResource, value any) {
@@ -97,7 +103,7 @@ func testGeneratedObjectsPublishBeforeSourceWaitCase(
 			arrivals++
 			assert.ErrorIf(
 				t,
-				!filter.ShouldReconcile(got),
+				!filter.Snapshot().Reconcile(got),
 				"%v",
 				"generated source arrived before keep-set admission",
 			)
@@ -222,8 +228,7 @@ type testGeneratedObjectsPublishBeforeSourceWaitCaseTailInputs struct {
 			DrainLevel) *base.
 		Execution
 
-	filter **change.
-		Filter
+	filter **selection.Session
 
 	completed *store.
 			Emission
@@ -313,8 +318,8 @@ func checkGeneratedSourceReplacement(
 		)
 	}
 	assert.Diff(t, blocked.Blocked, []manifest.NamedResource{replacement})
-	assert.Equal(t, (*tailCaseInput.filter).ShouldReconcile(next.Named()), true)
-	assert.Equal(t, (*tailCaseInput.filter).ShouldReconcile(sibling.Named()), false)
+	assert.Equal(t, (*tailCaseInput.filter).Snapshot().Reconcile(next.Named()), true)
+	assert.Equal(t, (*tailCaseInput.filter).Snapshot().Reconcile(sibling.Named()), false)
 	_, _, waiting := (*tailCaseInput.st).GetEmission((*tailCaseInput.hr).Named())
 	defer waiting.Finish()
 	assert.FatalIf(

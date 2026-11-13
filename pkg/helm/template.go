@@ -37,6 +37,9 @@ const sourceHeader = "# Source: "
 
 // Template renders a HelmRelease and returns independently owned documents.
 // The immutable receipt may be persisted after complete accepted publication.
+// When input.Preparation is non-nil, hrValues and all reachable maps and slices
+// MUST remain immutable until that preparation and every transferred owner retire.
+// Callers MUST replace values or retire their preparation before mutation.
 //
 //nolint:gocritic // Preserve the existing value API and its snapshot semantics.
 func (c *Client) Template(
@@ -49,92 +52,8 @@ func (c *Client) Template(
 	if err != nil {
 		return nil, nil, err
 	}
-	prepared.release = hr
 
 	return prepared.template(ctx, c)
-}
-
-type templateRequest struct {
-	input         RenderOptions
-	release       *manifest.HelmRelease
-	loaded        chartDescription
-	caps          *common.Capabilities
-	capabilityErr error
-	key           string
-	binding       templateBinding
-	values        map[string]any
-}
-
-func (c *Client) prepareTemplate(
-	ctx context.Context,
-	hr *manifest.HelmRelease,
-	hrValues map[string]any,
-	input *RenderOptions,
-) (templateRequest, error) {
-	work := input.Work.Preparation()
-	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
-	opts := input.Options
-	if err := ctx.Err(); err != nil {
-		work.Finish(err)
-		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
-		return templateRequest{}, err
-	}
-	loaded, err := c.describeChart(ctx, hr, input.Sources)
-	if err != nil {
-		work.Finish(err)
-		return templateRequest{}, err
-	}
-	if hr.TracksDigest() {
-		loaded.oci = &ociChartContent{
-			Digest:          loaded.artifact.Digest,
-			Revision:        loaded.artifact.Revision,
-			DisableTracking: opts.DisableChartDigestTracking,
-		}
-	}
-	caps, capabilityErr := opts.capabilities()
-	if loaded.valuesFS != nil {
-		loaded.values, loaded.valuesErr = c.observeValuesFiles(
-			ctx, &loaded, hr.ChartValuesFiles,
-			hr.IgnoreMissingValuesFiles,
-		)
-	}
-	if hrValues == nil {
-		hrValues = map[string]any{}
-	}
-	key := computeTemplateKey(&loaded, hrValues, opts, hr)
-	input.Work.Fingerprint(key)
-	binding := templateBinding{
-		Policy:       hr.HistoryPolicy(),
-		Source:       hr.ChartSource(),
-		Kind:         loaded.artifact.Kind,
-		URL:          loaded.artifact.URL,
-		Path:         loaded.artifact.LocalPath,
-		Root:         loaded.artifact.LocalRoot,
-		Key:          loaded.artifact.Key,
-		Revision:     loaded.artifact.Revision,
-		Digest:       loaded.artifact.Digest,
-		Alias:        loaded.artifact.InputAlias,
-		Options:      input.Options,
-		Dependencies: input.DependencySubstitutions,
-	}
-	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(&binding) {
-		binding = loaded.record.binding
-	} else {
-		binding.Options.SkipKinds = nil
-		if len(input.SkipKinds) > 0 {
-			binding.Options.SkipKinds = slices.Clone(input.SkipKinds)
-		}
-	}
-	work.Finish(nil)
-	return templateRequest{
-		input:         *input,
-		loaded:        loaded,
-		caps:          caps,
-		capabilityErr: capabilityErr,
-		key:           key,
-		values:        hrValues,
-		binding:       binding,
-	}, nil
 }
 
 func normalizeLists(docs []manifest.DocOccurrence) []manifest.DocOccurrence {
@@ -568,6 +487,7 @@ func (r *templateRequest) render(
 			binding: r.binding,
 			chart:   r.loaded.chart,
 			output:  payload,
+			content: r.release.Clone().Content(r.key, r.input.Omitted),
 		}
 		receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 	}
@@ -622,15 +542,16 @@ func (r *templateRequest) validateRecord(
 	}
 	documents, err := manifest.DecodeRender(record.Output)
 	if err == nil {
-		if !record.binding.same(&r.binding) || record.receipt == nil {
+		if !record.binding.same(&r.binding) || record.receipt == nil ||
+			!manifest.ValueEqual(record.frame.content, r.content) {
 			fresh := *record
 			fresh.binding = r.binding
 			frame := record.frame
 			frame.binding = r.binding
+			frame.content = r.release.Clone().Content(r.key, r.input.Omitted)
 			binding := manifest.Fingerprint(r.binding)
 			if frame.header.Binding != binding {
-				frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-				frame.accepted, frame.acceptedKey = nil, ""
+				frame.header.Binding, frame.stored = binding, nil
 			}
 			fresh.frame = frame
 			fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
@@ -664,9 +585,13 @@ func (r *templateRequest) produce(
 	if frame.header.Analysis == nil {
 		frame.header.Analysis = r.loaded.analyze()
 	}
-	data, errResult2 := encodeFrame(frame.header, frame.output)
+	frame.stored, errResult2 = cache.NewFrame(frameDomain, frame.header, frame.output)
+	if errResult2 != nil || frame.stored == nil {
+		return cache.ProducerResult{}, errResult2
+	}
+	publication, errResult2 := frame.stored.PreparePublication(ctx, cache.FramePublicationInput{})
 	if errResult2 == nil {
-		_, errResult2 = w.Write(data)
+		_, errResult2 = publication.WriteTo(w)
 	}
 	if errResult2 == nil {
 		frame.chart = nil
@@ -677,7 +602,6 @@ func (r *templateRequest) produce(
 			frame:    frame,
 		}
 	}
-	//nolint:wrapcheck // The cache owner classifies producer write failures without changing their cause.
 	return cache.ProducerResult{}, errResult2
 }
 
@@ -726,27 +650,27 @@ func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalVal
 	return releaseManifest(relV1, disableHooks, skipTests), nil
 }
 
-func (r *templateRequest) cachedRecord(_ context.Context, generation fs.FS, identity string) (*renderRecord, error) {
+func (r *templateRequest) cachedRecord(ctx context.Context, generation fs.FS, identity string) (*renderRecord, error) {
 	record := r.loaded.record
 	if record == nil || record.key != r.key || record.identity != identity {
-		data, readFileErr := fs.ReadFile(generation, "content")
-		if readFileErr != nil {
-			return nil, manifest.NewError(
-				manifest.ErrFlux,
-				fmt.Errorf("read helm render cache: %w", readFileErr),
-				"",
-			)
+		var frame renderFrame
+		stored, err := cache.OpenFrame(ctx, frameDomain, generation, &frame.header)
+		if _, storage := errors.AsType[*cache.CacheError](err); storage {
+			return nil, err
 		}
-		frame, readFileErr := decodeFrame(data)
-		if readFileErr != nil || frame.header.Key != r.key || frame.header.Analysis == nil {
+		if err != nil || frame.header.Key != r.key || frame.header.Analysis == nil {
 			return nil, nil //nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
 		}
+		frame.output, err = stored.Payload(ctx)
+		if _, storage := errors.AsType[*cache.CacheError](err); storage {
+			return nil, err
+		}
+		if err != nil {
+			return nil, nil //nolint:nilerr,nilnil // Invalid reusable payload is an ordinary cache miss.
+		}
+		frame.stored = stored
 		record = &renderRecord{
-			key:      r.key,
-			identity: identity,
-			Output:   frame.output,
-			Analysis: frame.header.Analysis,
-			frame:    frame,
+			key: r.key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame,
 		}
 	}
 	return record, nil

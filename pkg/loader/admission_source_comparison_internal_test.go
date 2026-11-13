@@ -19,7 +19,7 @@ import (
 
 func TestQualify_ContentFingerprint(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"immutable", "revision", "digest", "shaping", "content", "family_only", "mutable", "empty", "unknown", "changed", "error", "canceled", "callback_canceled", "callback_deadline", "bootstrap"} {
+	for _, mode := range []string{"immutable", "revision", "digest", "shaping", "content", "family_only", "mutable", "mode", "normalized_mode", "empty", "unknown", "changed", "error", "canceled", "callback_canceled", "callback_deadline", "bootstrap"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			testQualifyContentFingerprintCase(t, &mode)
@@ -51,7 +51,15 @@ func testQualifyContentFingerprintCase(t *testing.T, testCaseInput *string,
 	}
 	var readers [2]*relationReader
 	for i := range st {
-		readers[i] = &relationReader{FS: fstest.MapFS{"file": {Data: []byte{byte(i)}}}}
+		file := &fstest.MapFile{Data: []byte{byte(i)}}
+		if *testCaseInput == "mode" || *testCaseInput == "normalized_mode" {
+			file.Data = []byte("same")
+			file.Mode = []fs.FileMode{0o644, 0o755}[i]
+			if *testCaseInput == "normalized_mode" {
+				file.Mode = []fs.FileMode{0o700, 0o755}[i]
+			}
+		}
+		readers[i] = &relationReader{FS: fstest.MapFS{"file": file}}
 		art := &store.SourceArtifact{
 			FS:        readers[i],
 			LocalPath: []string{"/a", "/b"}[i],
@@ -110,7 +118,7 @@ func testFilterEqualSelectedSourcesCase(t *testing.T, testCaseInput *string,
 		}},
 	}
 	configureSelectedSources(testCaseInput, selected)
-	delta, err := change.Detect(t.Context(), selected[0], selected[1], manifest.WorkScope{})
+	delta, err := change.Detect(t.Context(), selected[0], selected[1], change.DetectConfig{})
 	assert.NoError(t, err)
 	var wantDelta []string
 	if (*testCaseInput) == "payload_edit" || (*testCaseInput) == "ownership_only" {
@@ -214,12 +222,16 @@ func testQualifyContentFingerprintCaseCompletion(
 	}
 	assert.NoError(t, err)
 	var paths []string
-	if (*(*scope.testCaseInput)) != "immutable" && (*(*scope.testCaseInput)) != "mutable" {
+	if (*(*scope.testCaseInput)) != "immutable" && (*(*scope.testCaseInput)) != "mutable" &&
+		(*(*scope.testCaseInput)) != "normalized_mode" {
 		paths = []string{"file"}
 	}
 	assert.Diff(t, sourceChanges(qualified, (*scope.id)).Paths(), paths)
 	for _, reader := range *scope.readers {
-		assert.Equal(t, reader.opens.Load() == 0, paths == nil)
+		assert.Equal(t, reader.opens.Load() == 0, paths == nil || *(*scope.testCaseInput) == "mode")
+		if *(*scope.testCaseInput) == "mode" || *(*scope.testCaseInput) == "normalized_mode" {
+			assert.Equal(t, reader.stats.Load() > 0, true)
+		}
 	}
 }
 
@@ -311,14 +323,17 @@ func testFilterEqualSelectedSourcesCaseCompletion(
 }
 
 func configureFingerprint(mode **string, art *store.SourceArtifact, i int) {
-	if (*(*mode)) != "mutable" && (*(*mode)) != "empty" &&
-		(*(*mode)) != "unknown" &&
-		(*(*mode)) != "changed" &&
-		(*(*mode)) != "error" &&
-		(*(*mode)) !=
-			"callback_canceled" &&
-		(*(*mode)) !=
-			"callback_deadline" {
+	switch **mode {
+	case "mutable",
+		"mode",
+		"normalized_mode",
+		"empty",
+		"unknown",
+		"changed",
+		"error",
+		"callback_canceled",
+		"callback_deadline":
+	default:
 		return
 	}
 	art.Key, art.Content = "", ""

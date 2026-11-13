@@ -1,8 +1,10 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -10,12 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
@@ -86,7 +89,7 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 		t.Context(),
 		testDirectoryInput(t, roots[0]),
 		testDirectoryInput(t, roots[1]),
-		manifest.WorkScope{},
+		change.DetectConfig{},
 	)
 	assert.NoError(t, err)
 	assert.Diff(t, changes.Paths(), []string{"charts/demo/templates/cm.yaml", "flux/parent.yaml"})
@@ -94,7 +97,7 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 	parent := testutil.KustomizationID("apps", "parent")
 	full := make([]Rendered, 2)
 	for side, tree := range trees {
-		runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 1)
 		full[side] = runs[0]
@@ -112,28 +115,30 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 				assert.Diff(t, docs[0]["data"], map[string]any{"value": fmt.Sprintf("v%d", side+1)})
 			}
 		}
-		selected, selectedErr, err := Select(
+		projectedResults0, projectionErrors0 := Select(
 			runs,
 			nil,
 			[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")},
 			nil,
 		)
+		selected, selectedErr, err := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 		assert.NoError(t, err)
-		body, warnings, suppressed, err := diff.Compare(
-			diff.Snapshot{
-				Subjects:     selected[0].Subjects,
-				Manifests:    selected[0].Manifests,
-				ProducerKeys: selected[0].ProducerKeys,
-				Unavailable:  selected[0].Unavailable,
-			},
-			diff.Snapshot{
-				Subjects:     selected[1].Subjects,
-				Manifests:    selected[1].Manifests,
-				ProducerKeys: selected[1].ProducerKeys,
-				Unavailable:  selected[1].Unavailable,
-			},
-			selectedErr,
-			diff.Options{Format: diff.FormatJSON},
+		comparison1, preparationErr1 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+			Subjects:     selected[0].Subjects,
+			Manifests:    selected[0].Manifests,
+			ProducerKeys: selected[0].ProducerKeys,
+			Unavailable:  selected[0].Unavailable,
+		}, Current: diff.Snapshot{
+			Subjects:     selected[1].Subjects,
+			Manifests:    selected[1].Manifests,
+			ProducerKeys: selected[1].ProducerKeys,
+			Unavailable:  selected[1].Unavailable,
+		}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+		var comparisonOutput1 bytes.Buffer
+		writeErr1 := comparison1.Write(&comparisonOutput1, nil)
+		body, warnings, suppressed, err := comparisonOutput1.Bytes(), comparison1.Groups[0].Warnings, comparison1.Groups[0].Suppressed, errors.Join(
+			preparationErr1,
+			writeErr1,
 		)
 		assert.NoError(t, err)
 		assert.Equal(t, len(warnings), 0)
@@ -156,13 +161,19 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 		for side := range trees {
 			trees[side].ExternalChanges = changes
 		}
-		runs, err := RenderTrees(t.Context(), trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(runs), 2)
 		assert.Equal(t, string(delta(runs)), string(want))
 		for side, rendered := range runs {
-			membershipResult1 := rendered.filter.Membership(parent)
-			needed, selected, dirty, _ := membershipResult1.Needed, membershipResult1.Selected, membershipResult1.Dirty, membershipResult1.Revision
+			membershipResult1 := rendered.selection.Snapshot()
+			needed, selected, dirty := membershipResult1.Reconcile(
+				parent,
+			), membershipResult1.Output(
+				parent,
+			), membershipResult1.Changed(
+				parent,
+			)
 			assert.Equal(t, needed, true)
 			assert.Equal(t, selected, true)
 			t.Logf(
@@ -173,8 +184,8 @@ func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
 				selected,
 				dirty,
 			)
-			membershipResult2 := rendered.filter.Membership(child)
-			_, selected, dirty, _ = membershipResult2.Needed, membershipResult2.Selected, membershipResult2.Dirty, membershipResult2.Revision
+			membershipResult2 := rendered.selection.Snapshot()
+			selected, dirty = membershipResult2.Output(child), membershipResult2.Changed(child)
 			assert.Equal(t, selected, true)
 			assert.Equal(t, dirty, true)
 			assert.Equal(t, rendered.Store().GetObject(child) != nil, true)
@@ -237,8 +248,7 @@ spec:
       data: {key: losing-omitted}
 `, i+1))
 	}
-	renderedTrees3, err := RenderTrees(
-		t.Context(),
+	renderedTrees3, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -305,23 +315,25 @@ spec:
 			},
 		)
 	}
-	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
+	projectedResults1, projectionErrors1 := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
-	body, _, _, err := diff.Compare(
-		diff.Snapshot{
-			Subjects:     selected[0].Subjects,
-			Manifests:    selected[0].Manifests,
-			ProducerKeys: selected[0].ProducerKeys,
-			Unavailable:  selected[0].Unavailable,
-		},
-		diff.Snapshot{
-			Subjects:     selected[1].Subjects,
-			Manifests:    selected[1].Manifests,
-			ProducerKeys: selected[1].ProducerKeys,
-			Unavailable:  selected[1].Unavailable,
-		},
-		selectedErr,
-		diff.Options{Format: diff.FormatJSON},
+	selected, selectedErr, _ := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
+	comparison2, preparationErr2 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+		Subjects:     selected[0].Subjects,
+		Manifests:    selected[0].Manifests,
+		ProducerKeys: selected[0].ProducerKeys,
+		Unavailable:  selected[0].Unavailable,
+	}, Current: diff.Snapshot{
+		Subjects:     selected[1].Subjects,
+		Manifests:    selected[1].Manifests,
+		ProducerKeys: selected[1].ProducerKeys,
+		Unavailable:  selected[1].Unavailable,
+	}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+	var comparisonOutput2 bytes.Buffer
+	writeErr2 := comparison2.Write(&comparisonOutput2, nil)
+	body, _, _, err := comparisonOutput2.Bytes(), comparison2.Groups[0].Warnings, comparison2.Groups[0].Suppressed, errors.Join(
+		preparationErr2,
+		writeErr2,
 	)
 	assert.NoError(t, err)
 	var output struct {
@@ -384,8 +396,7 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	entry := func(root string) string { return root + "/kubernetes/flux/cluster" }
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	renderedTrees4, err := RenderTrees(
-		ctx,
+	renderedTrees4, err := renderTreesForTest(ctx, t,
 		[]Tree{
 			{RepoRoot: baseDir, Path: entry(baseDir), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 			{RepoRoot: headDir, Path: entry(headDir), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -401,23 +412,25 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 		base.Result,
 		head.Result,
 	)
-	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
+	projectedResults2, projectionErrors2 := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
-	body, _, _, err := diff.Compare(
-		diff.Snapshot{
-			Subjects:     selected[0].Subjects,
-			Manifests:    selected[0].Manifests,
-			ProducerKeys: selected[0].ProducerKeys,
-			Unavailable:  selected[0].Unavailable,
-		},
-		diff.Snapshot{
-			Subjects:     selected[1].Subjects,
-			Manifests:    selected[1].Manifests,
-			ProducerKeys: selected[1].ProducerKeys,
-			Unavailable:  selected[1].Unavailable,
-		},
-		selectedErr,
-		diff.Options{Format: diff.FormatJSON},
+	selected, selectedErr, _ := projectedResults2, projectionErrors2.Selected, projectionErrors2.Remaining
+	comparison3, preparationErr3 := diff.Compare([]diff.Group{{Orig: diff.Snapshot{
+		Subjects:     selected[0].Subjects,
+		Manifests:    selected[0].Manifests,
+		ProducerKeys: selected[0].ProducerKeys,
+		Unavailable:  selected[0].Unavailable,
+	}, Current: diff.Snapshot{
+		Subjects:     selected[1].Subjects,
+		Manifests:    selected[1].Manifests,
+		ProducerKeys: selected[1].ProducerKeys,
+		Unavailable:  selected[1].Unavailable,
+	}, SelectedErr: selectedErr}}, diff.Options{Format: diff.FormatJSON})
+	var comparisonOutput3 bytes.Buffer
+	writeErr3 := comparison3.Write(&comparisonOutput3, nil)
+	body, _, _, err := comparisonOutput3.Bytes(), comparison3.Groups[0].Warnings, comparison3.Groups[0].Suppressed, errors.Join(
+		preparationErr3,
+		writeErr3,
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	var output struct {
@@ -495,7 +508,7 @@ func testRenderTreesMultipleValuesFromKeysCase(
 			ExternalChanges: change.NewSet([]string{"flux/values.yaml"}),
 		}
 	}
-	runs, err := RenderTrees(t.Context(), trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
+	runs, err := renderTreesForTest(t.Context(), t, trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	assert.NoError(t, err)
 	assert.Equal(t, len(runs), 2)
 	app := testutil.HelmReleaseID("apps", "app")
@@ -504,8 +517,8 @@ func testRenderTreesMultipleValuesFromKeysCase(
 		assert.Equal(t, len(run.Result.Warnings), 0)
 		assert.Equal(t, len(run.Result.ClusterWarnings), 0)
 		assert.Equal(t, len(run.Result.Blocked), 0)
-		membershipResult3 := run.filter.Membership(app)
-		_, selected, dirty, _ := membershipResult3.Needed, membershipResult3.Selected, membershipResult3.Dirty, membershipResult3.Revision
+		membershipResult3 := run.selection.Snapshot()
+		selected, dirty := membershipResult3.Output(app), membershipResult3.Changed(app)
 		assert.Equal(t, selected, testCaseInput.changed)
 		assert.Equal(t, dirty, testCaseInput.changed)
 		docs := outputByParent(run.Result.Manifests)[app]
@@ -585,7 +598,10 @@ spec: {url: https://example.test/cluster.git}
 	var err error
 	if repo != nil {
 		testutil.GitCommitAll(t, repo, "optional input appears", options)
-		inputs, err = baseline.AutoResolve(t.Context(), after, base, owner)
+		inputs, err = baseline.AutoResolve(
+			t.Context(),
+			baseline.Config{Network: networktest.New(t), Path: after, Base: base, Cache: owner},
+		)
 	} else {
 		inputs, err = baseline.ResolvePaths(t.Context(), after, before)
 	}
@@ -606,8 +622,7 @@ spec: {url: https://example.test/cluster.git}
 	}
 	fullApp := make([][]map[string]any, 2)
 	for side, input := range []*store.SourceArtifact{inputs.BaseInput, inputs.Source} {
-		renderedSingleton1, err := RenderTrees(
-			t.Context(),
+		renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					Path:     input.LocalPath,
@@ -669,8 +684,7 @@ func testRenderTreesOptionalInputRoutesCaseTail(
 	}
 	var first [2][]byte
 	for run := range 2 {
-		renderedTrees2, err := RenderTrees(
-			t.Context(),
+		renderedTrees2, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					RepoRoot:        baseTree.RepoRoot,

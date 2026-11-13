@@ -23,17 +23,13 @@ func (f *admissionFixture) addUngated(id manifest.NamedResource) {
 }
 
 func (f *admissionFixture) addRecursive(id manifest.NamedResource) []manifest.NamedResource {
-	parent := manifest.NamedResource{Kind: "fixture", Name: "selected"}
-	f.mu.Lock()
-	f.keep[parent] = primary
-	f.mu.Unlock()
-	return f.AddEmitted(parent, new(store.Child{Obj: refObj(id)}), f.objs)
+	f.selectRoots([]manifest.NamedResource{id})
+	return []manifest.NamedResource{id}
 }
 
 func (f *admissionFixture) productionOwners(id manifest.NamedResource) []manifest.NamedResource {
 	var owners []manifest.NamedResource
-	s := f.last
-	productions := s.productions(id)
+	productions := f.loader.Store.Productions(id, f.loader.Index)
 	for i := range productions {
 		p := productions[i]
 		if owner := p.Materializer(id); owner != (manifest.NamedResource{}) && !slices.Contains(owners, owner) {
@@ -68,7 +64,7 @@ func TestFilter_ResolveDirectMatch(t *testing.T) {
 			root:      "",
 		},
 	)
-	if !f.ShouldReconcile(hr) {
+	if !f.Reconcile(hr) {
 		t.Fatalf("expected direct-match keep; keep=%v", f.KeepNames())
 	}
 }
@@ -105,7 +101,7 @@ func TestFilter_SharedComponentPropagatesToAllConsumers(t *testing.T) {
 	)
 
 	for _, id := range []manifest.NamedResource{ksPlex, ksAtuin, hrPlex, hrAtuin} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
 		}
 	}
@@ -145,7 +141,7 @@ func TestFilter_AncestorKSAlsoKept(t *testing.T) {
 	)
 
 	for _, id := range []manifest.NamedResource{plexID, hrPlex, metaID} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
 		}
 	}
@@ -189,7 +185,7 @@ func TestFilter_StructuralParentOfOwnerKSAlsoKept(t *testing.T) {
 	)
 
 	for _, id := range []manifest.NamedResource{hrActual, leafID, parentID} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("expected %s in keep; keep=%v", id, f.KeepNames())
 		}
 	}
@@ -295,7 +291,7 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 			root:      "",
 		},
 	)
-	if !f.ShouldReconcile(externalID) {
+	if !f.Reconcile(externalID) {
 		t.Fatalf("precondition: root-claiming KS should be an ancestor without exclusions; keep=%v", f.KeepNames())
 	}
 
@@ -316,10 +312,10 @@ func TestFilter_ExternalSourcedKSClaimsExcludedFromOwnership(t *testing.T) {
 			root:      "",
 		},
 	)
-	if !f.ShouldReconcile(plexID) {
+	if !f.Reconcile(plexID) {
 		t.Fatalf("owner of the changed file must be kept; keep=%v", f.KeepNames())
 	}
-	if f.ShouldReconcile(externalID) {
+	if f.Reconcile(externalID) {
 		t.Errorf("external-sourced root-claiming KS must not enter keep as ancestor; keep=%v", f.KeepNames())
 	}
 }
@@ -439,7 +435,7 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 			root:      "",
 		},
 	)
-	if !f.ShouldReconcile(appsID) {
+	if !f.Reconcile(appsID) {
 		t.Fatalf("owner supplied by the fileOwners fallback must be kept; keep=%v", f.KeepNames())
 	}
 
@@ -472,9 +468,9 @@ func TestFilter_FileOwnerFallbackCatchesResourcesEscape(t *testing.T) {
 				},
 			)
 			want := file != "inputs/unrelated"
-			assert.Equal(t, f.ShouldReconcile(apps.Named()), want)
-			assert.Equal(t, f.ShouldReconcile(source.Named()), want)
-			assert.Equal(t, f.ShouldReconcile(other.Named()), false)
+			assert.Equal(t, f.Reconcile(apps.Named()), want)
+			assert.Equal(t, f.Reconcile(source.Named()), want)
+			assert.Equal(t, f.Reconcile(other.Named()), false)
 		})
 	}
 }
@@ -509,10 +505,10 @@ func TestFilter_FileOwnerMergesWithPrefixClaim(t *testing.T) {
 			root:      "",
 		},
 	)
-	if !f.ShouldReconcile(postgresID) {
+	if !f.Reconcile(postgresID) {
 		t.Errorf("prefix claimant must still be kept; keep=%v", f.KeepNames())
 	}
-	if !f.ShouldReconcile(appsID) {
+	if !f.Reconcile(appsID) {
 		t.Errorf("fileOwners owner must be kept alongside the prefix claimant; keep=%v", f.KeepNames())
 	}
 }
@@ -545,7 +541,6 @@ func TestFilter_NoFileOwnerFallbackLeavesUnclaimedFileUnowned(t *testing.T) {
 
 func TestFilter_KeepNamespaces(t *testing.T) {
 	t.Parallel()
-	// Drive keep via NewFilter rather than mutating the struct.
 	ksA := &manifest.Kustomization{Name: "x", Namespace: "ns-a"}
 	ksB := &manifest.Kustomization{Name: "y", Namespace: "ns-b"}
 	ksCluster := &manifest.Kustomization{Name: "cluster-scope", Namespace: ""}
@@ -608,8 +603,8 @@ func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 		},
 	)
 
-	assert.Equal(t, f.ShouldReconcile(gitID), true)
-	assert.Equal(t, f.ShouldReconcile(depID), false)
+	assert.Equal(t, f.Reconcile(gitID), true)
+	assert.Equal(t, f.Reconcile(depID), false)
 }
 
 type testFilterAncestorKSDoesNotPullInUnrelatedSiblingsCaseInputs struct {
@@ -652,12 +647,12 @@ func testFilterAncestorKSDoesNotPullInUnrelatedSiblingsCase(
 		},
 	)
 	for _, id := range []manifest.NamedResource{(*testCaseInput.meta).Named(), (*testCaseInput.plex).Named(), (*testCaseInput.release).Named(), (*testCaseInput.source).Named()} {
-		if !f.ShouldReconcile(id) {
+		if !f.Reconcile(id) {
 			t.Errorf("required resource %s omitted: %v", id, f.KeepNames())
 		}
 	}
 	for _, id := range []manifest.NamedResource{(*testCaseInput.atuin).Named(), (*testCaseInput.hrAtuin), (*testCaseInput.independent).Named()} {
-		if f.ShouldReconcile(id) {
+		if f.Reconcile(id) {
 			t.Errorf("unrelated resource %s selected: %v", id, f.KeepNames())
 		}
 	}
@@ -726,7 +721,7 @@ func testFilterPinnedOwnershipKeepsProducerCase(
 	assert.Equal(t, len(f.productionOwners(foreign)), 0)
 	foreign = (*testCaseInput.producer).Named()
 	foreign.Group = "foreign.example"
-	assert.Equal(t, f.ShouldReconcile(foreign), false)
+	assert.Equal(t, f.Reconcile(foreign), false)
 	for _, want := range []struct {
 		id   manifest.NamedResource
 		keep bool
@@ -735,7 +730,7 @@ func testFilterPinnedOwnershipKeepsProducerCase(
 		{(*testCaseInput.consumer).Named(), testCaseInput.tt.wantConsumer},
 		{(*testCaseInput.child).Named(), testCaseInput.tt.wantChild},
 	} {
-		if got := f.ShouldReconcile(want.id); got != want.keep {
+		if got := f.Reconcile(want.id); got != want.keep {
 			t.Errorf("ShouldReconcile(%s) = %v, want %v; keep=%v", want.id, got, want.keep, f.KeepNames())
 		}
 	}
@@ -744,7 +739,7 @@ func testFilterPinnedOwnershipKeepsProducerCase(
 		f.AddEmitted((*testCaseInput.producer).Named(), new(store.Child{Obj: refObj(sentinel)}), f.objs)
 		assert.FatalIf(
 			t,
-			f.ShouldReconcile(sentinel),
+			f.Reconcile(sentinel),
 			"%s",
 			"dependency-only pinned producer selected an unrelated child",
 		)

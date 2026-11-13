@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -121,7 +123,12 @@ type declarationPromotion func(manifest.NamedResource) bool
 
 func (declarationPromotion) IsFileIndexed(manifest.NamedResource) bool { return false }
 
-func (p declarationPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+//nolint:gocritic // The admission contract requires an independent request snapshot.
+func (p declarationPromotion) Promote(
+	_ context.Context,
+	_ selection.PrepareRequest,
+	id manifest.NamedResource,
+) (bool, error) {
 	return p(id), nil
 }
 
@@ -246,7 +253,7 @@ func testExecutionSyntheticDependencyReasonsCase(
 						Input:     store.ReferenceFacts{Materializers: []manifest.NamedResource{owner.Named()}},
 					},
 				},
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error {
 					t.Error("failed input resumed")
 					return nil
 				},

@@ -15,9 +15,9 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -79,12 +79,12 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
@@ -160,12 +160,12 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 		d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 
 		{
-			_, err := d.resolveEntrySources(t.Context(), false)
+			_, err := d.resolveTestSources(t.Context(), false)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
 		{
-			_, err := d.resolveEntrySources(t.Context(), false)
+			_, err := d.resolveTestSources(t.Context(), false)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
@@ -248,14 +248,14 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 	}}
 	if testCaseInput.late {
 		{
-			_, err := d.resolveEntrySources(t.Context(), false)
+			_, err := d.resolveTestSources(t.Context(), false)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
 		st.DeleteObject(id)
 
 		{
-			_, err := d.resolveEntrySources(t.Context(), true)
+			_, err := d.resolveTestSources(t.Context(), true)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
@@ -266,7 +266,7 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 			) != nil
 			assert.FatalIf(
 				t,
-				got != (testCaseInput.kind == manifest.KindGitRepository),
+				!got,
 				"missing-source alias = %t for %s",
 				got,
 				testCaseInput.kind,
@@ -304,20 +304,19 @@ func testAliasBootstrapSourcesLocalPathOwnershipCase(
 	}
 
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
 	authored := st.GetObject(id)
 
 	{
-		aliases, err := d.resolveEntrySources(
-			t.Context(),
+		aliases, err := d.resolveTestSources(t.Context(),
 			true,
 		)
 		assert.FatalIf(t, err != nil || aliases != 0 ||
@@ -415,7 +414,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 		)
 
 		{
-			count, err := d.resolveEntrySources(t.Context(), true)
+			count, err := d.resolveTestSources(t.Context(), true)
 			assert.FatalIf(t, err != nil || count != 1, "publish alias = %d, %v", count, err)
 		}
 	}
@@ -447,7 +446,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceCase(
 		st.SetArtifact(manifest.BootstrapSourceID, &next)
 
 		{
-			_, err := d.resolveEntrySources(t.Context(), true)
+			_, err := d.resolveTestSources(t.Context(), true)
 			assert.FatalIf(t, err != nil, "%v", err)
 		}
 
@@ -492,7 +491,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
 	alias := &manifest.GitRepository{Name: "alias", Namespace: "flux-system", URL: (*testCaseInput.repository).URL}
 	alias.Ignore = new("excluded/\n")
 	(*testCaseInput.st).AddObject(alias)
-	count, err := testCaseInput.d.resolveEntrySources(t.Context(), true)
+	count, err := testCaseInput.d.resolveTestSources(t.Context(), true)
 
 	assert.FatalIf(t, err != nil || count != 1, "alias: %d, %v", count, err)
 
@@ -570,7 +569,7 @@ func testAliasBootstrapSourcesPreservesCanonicalSourceMutableAliasRefresh(
 	}
 
 	{
-		_, err := testCaseInput.d.resolveEntrySources(t.Context(), true)
+		_, err := testCaseInput.d.resolveTestSources(t.Context(), true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 

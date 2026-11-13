@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
@@ -31,11 +33,11 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 					id: {Status: store.StatusFailed, Message: "selected render failed"},
 				},
 			}
-			resourceErr := &orchestrator.FailuresError{Message: "aggregate render failure"}
+			resourceErr := &selection.FailuresError{Message: "aggregate render failure"}
 			closeErr, writeErr := errors.New("shared cleanup failed"), errors.New("payload write failed")
 			runs := []orchestrator.Rendered{{Orchestrator: o, Result: res, Err: resourceErr}}
 			roots := []manifest.NamedResource{id}
-			sides, selectedErr, remainder := orchestrator.Select(
+			projectedResults0, projectionErrors0 := orchestrator.Select(
 				runs,
 				errors.Join(
 					fmt.Errorf("head tree: %w", errors.Join(resourceErr, context.Canceled)),
@@ -44,6 +46,7 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 				roots,
 				nil,
 			)
+			sides, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.FatalIf(t, len(sides) != 1 || selectedErr == nil, "completed run selection: %v", selectedErr)
 			var stdout, stderr bytes.Buffer
 			_, payloadErr := failingWriter{err: writeErr}.Write([]byte("partial"))

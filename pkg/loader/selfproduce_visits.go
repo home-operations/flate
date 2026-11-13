@@ -2,6 +2,7 @@ package loader
 
 import (
 	"cmp"
+	"path"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -87,6 +88,14 @@ func (l *Loader) recordProductionInput(
 		if slices.ContainsFunc(ownership.Owners, pinnedOwner) || slices.ContainsFunc(ownership.Ancestors, pinnedOwner) {
 			return false
 		}
+	}
+	if v.document != nil && l.Store.GetDeclaration(v.owner) != nil {
+		directory := *v
+		directory.coordinate = path.Join(v.prefix, cmp.Or(v.dir, "."))
+		l.recordReader(
+			directory.coordinate, directory.localCoordinate(),
+			new(manifest.FileReader{Reader: v.owner, Source: v.source}),
+		)
 	}
 	if v.owner != (manifest.NamedResource{}) && v.coordinate != "" {
 		l.recordReader(v.coordinate, v.localCoordinate(), new(manifest.FileReader{Reader: v.owner, Source: v.source}))

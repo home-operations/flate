@@ -18,6 +18,9 @@ type sourceExpansion struct {
 }
 
 func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *int) error {
+	if d.loading {
+		return nil
+	}
 	input := d.cfg.Input
 	if input == nil {
 		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
@@ -37,11 +40,12 @@ func (d *Session) loadEntryInput(ctx context.Context, l *loader.Loader, total *i
 		ctx,
 		d.cfg.Path,
 		total,
-		sourceLoad{work: d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)},
+		&sourceLoad{work: d.cfg.Work.Record(manifest.WorkPreparation, d.cfg.Path)},
 	); err != nil {
 		return err
 	}
 	l.IgnoreFile = ""
+	d.loading = true
 	return nil
 }
 
@@ -52,7 +56,7 @@ func (d *Session) enqueueExpansions(
 	for i := range kustomizations {
 		child := &kustomizations[i]
 		ks := child.Obj.(*manifest.Kustomization) //nolint:errcheck // This branch handles an admitted Kustomization.
-		art, _ := d.cfg.Store.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
+		art, _ := d.cfg.Store.GetArtifact(ks.EffectiveSourceID(), store.ArtifactContent).(*store.SourceArtifact)
 		key := sourceExpansion{ks: ks, source: art}
 		pending = append(pending, key)
 	}
@@ -72,9 +76,9 @@ func (d *Session) loadExpansions(
 		if ks.IsFragment() {
 			continue
 		}
-		sourceViewResult1 := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
+		sourceViewResult1 := loader.SourceView(d.cfg.Store, ks.EffectiveSourceID(), repoRoot)
 		sourceRoot, _, external := sourceViewResult1.Path, sourceViewResult1.Pinned, sourceViewResult1.External
-		if external && d.cfg.Store.GetObject(ks.SourceID()) == nil {
+		if external && d.cfg.Store.GetObject(ks.EffectiveSourceID()) == nil {
 			next = append(next, key)
 			continue
 		}

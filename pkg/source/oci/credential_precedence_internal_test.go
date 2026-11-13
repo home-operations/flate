@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -99,8 +101,10 @@ func testFetcherResolveConfigCredentialPrecedenceCase(
 		f.RegistryConfig = filepath.Join(t.TempDir(), "config.json")
 		testutil.WriteFileAt(t, f.RegistryConfig, tt.config)
 	}
-	fInputs.secrets = func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": tt.secret}}
+	fInputs.secrets = func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{StringData: map[string]any{".dockerconfigjson": tt.secret}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 		s.URL = "oci://" + tt.registry + "/x/y"
@@ -130,12 +134,15 @@ func testFetcherResolveConfigCredentialPrecedenceCase(
 	assert.FatalIf(t, request.material == nil, "%s", "authenticated acquisition has anonymous identity")
 
 	if tt.secret != "" {
-		op.secrets = func(_, _ string) *manifest.Secret {
+		op.secrets = func(_, _ string) store.ReferenceFacts {
 			config := fmt.Sprintf(
 				`{"auths":{%q:{"username":"rotated","password":"rotated"}}}`,
 				credentials.ServerAddressFromRegistry(tt.registry),
 			)
-			return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config}}
+
+			secretInput := &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config}}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 		captured, err := request.client.Client.(*auth.Client).Credential(
 			t.Context(),

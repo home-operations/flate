@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/flate/internal/chartinput"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -214,7 +215,7 @@ func (rf *readerFinalizer) collect(ctx context.Context,
 
 func (rf *readerFinalizer) collectOccurrence(
 	ctx context.Context,
-	occurrence *Occurrence,
+	occurrence *authoredOccurrence,
 	consumer manifest.NamedResource,
 	materialize bool,
 ) error {
@@ -270,22 +271,47 @@ func (rf *readerFinalizer) admitRecord(id manifest.NamedResource, r *manifest.Di
 	}
 	kind := id.KindInfo()
 	if kind.Discovery {
-		if _, known := rf.loader.roots[id]; known {
+		if previous, known := rf.loader.roots.lookup(id); known {
+			prepared := r.Builder != "" && rf.loader.registeredRoot(id, r) != ""
+			if previous.scope.Prepared != prepared {
+				evidence := *previous
+				evidence.scope.Prepared = prepared
+				rf.loader.roots.set(id, &evidence)
+			}
+			rf.loader.retainRootApplication(id, r.Path, &previous.scope)
 			return
 		}
-		if rf.loader.roots == nil {
-			rf.loader.roots = map[manifest.NamedResource]rootEvidence{}
-		}
-		rf.loader.roots[id] = rf.loader.rootAdmission(r.Path, r.File, kind.Structural).evidence(rf.loader, id, r)
+		view := rf.loader.physicalView()
+		evidence := view.rootScope(rf.loader, &rootScopeInput{
+			identity: id, record: *r, admission: rf.loader.rootAdmission(r.Path, r.File, kind.Structural),
+		})
+		rf.loader.roots.set(id, &evidence)
+		rf.loader.retainRootApplication(id, r.Path, &evidence.scope)
 		return
 	}
 	doc := rf.loader.documents.cache[r.Path]
 	if r.Authored == (manifest.NamedResource{}) || doc.rootKnown {
 		return
 	}
-	doc.rootAdmitted = rf.loader.rootAdmission(r.Path, r.File, false).admits(rf.loader, id, r)
+	scope := rf.loader.rootAdmission(r.Path, r.File, false)
+	doc.rootOwners, doc.rootPeers, doc.rootNative = scope.owners, scope.peers, rf.loader.nativeOperand(r.Path)
+	view := rf.loader.physicalView()
+	evidence := view.rootScope(rf.loader, &rootScopeInput{identity: id, record: *r, admission: scope})
+	doc.rootAdmitted = selection.Root(evidence.view()).Admitted
 	doc.rootKnown = true
 	rf.loader.documents.cache[r.Path] = doc
+}
+
+func (l *Loader) retainRootApplication(id manifest.NamedResource, file string, scope *selection.RootScopeFacts) {
+	if !scope.Application {
+		return
+	}
+	doc := l.documents.cache[file]
+	if doc.rootApplications == nil {
+		doc.rootApplications = map[manifest.NamedResource]rootApplication{}
+	}
+	doc.rootApplications[id] = rootApplication{local: scope.LocalApplication, sameOrigin: scope.SameEntryOrigin}
+	l.documents.cache[file] = doc
 }
 
 func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
@@ -293,11 +319,14 @@ func (rf *readerFinalizer) setRecordOrigin(id manifest.NamedResource, r *manifes
 		return
 	}
 	kind := id.KindInfo()
-	if parents := rf.emittedFiles[r.File]; kind.Structural && !rf.loader.roots[id].independent &&
-		r.Parent == (manifest.NamedResource{}) && len(parents) == 1 && parents[0] != id {
+	if parents := rf.emittedFiles[r.File]; kind.Structural &&
+		!selection.Root(rf.loader.roots.get(id).view()).Independent &&
+		r.Parent == (manifest.NamedResource{}) &&
+		len(parents) == 1 &&
+		parents[0] != id {
 		r.Parent = parents[0]
 	}
-	if rf.loader.roots[id].independent {
+	if selection.Root(rf.loader.roots.get(id).view()).Independent {
 		input := rf.loader.documents.artifacts[new(rf.loader.documents).mountedRoot(r.Path)]
 		for i := range r.Productions {
 			p := &r.Productions[i]
@@ -329,10 +358,10 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 		return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
 			return owner.Owner != (manifest.NamedResource{}) &&
 				(owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
-					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), p.Path))
+					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted)
 		})
 	})
-	if rf.loader.documents.compact && rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), r.Path) {
+	if rf.loader.documents.compact && selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
 		{
 			pValues := r.Productions
 			for pIndex := range pValues {
@@ -367,9 +396,9 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 
 func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
 	kind := id.KindInfo()
-	if rf.loader.documents.compact && kind.Parent && !rf.loader.roots[id].independent &&
+	if rf.loader.documents.compact && kind.Parent && !selection.Root(rf.loader.roots.get(id).view()).Independent &&
 		r.Parent == (manifest.NamedResource{}) &&
-		!rf.loader.AdmitsRoot(rf.loader.CatalogObject(id), r.Path) {
+		!selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
 		var owner manifest.NamedResource
 		multiple := false
 		{
@@ -548,8 +577,8 @@ func (rf *readerFinalizer) observeChart(
 		rf.loader.recordReader(v.coordinate, v.localCoordinate(), new(reader))
 	}
 	namespace := reader.Reader.Namespace
-	if producer, ok := rf.object(reader.Reader).(emissionProducer); ok {
-		namespace = producer.EmissionPolicy().Namespace
+	if object := rf.object(reader.Reader); manifest.KindOf(object).Parent {
+		namespace = object.EmissionPolicy().Namespace
 	}
 	key := [2]string{location, namespace}
 	refs, seen := rf.templateRefs[key]
@@ -627,7 +656,7 @@ func readTemplateBody(_ context.Context, input fs.FS, name string, data []byte) 
 
 func (rf *readerFinalizer) projectOccurrence(
 	ctx context.Context,
-	occurrence *Occurrence,
+	occurrence *authoredOccurrence,
 	consumer manifest.NamedResource,
 ) error {
 	for i := range occurrence.facts.templateInputs {

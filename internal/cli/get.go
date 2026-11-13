@@ -10,19 +10,20 @@ import (
 
 	"github.com/home-operations/flate/internal/imageutil"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
-func newGetCmd() *cobra.Command {
-	cmd := getAllCmd("get", "List Flux resources (defaults to all)")
-	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetImagesCmd(),
-		getAllCmd("all", "List every Kustomization and HelmRelease"))
+func newGetCmd(cfg RunConfig) *cobra.Command {
+	cmd := getAllCmd(cfg, "get", "List Flux resources (defaults to all)")
+	cmd.AddCommand(newGetKSCmd(cfg), newGetHRCmd(cfg), newGetImagesCmd(cfg),
+		getAllCmd(cfg, "all", "List every Kustomization and HelmRelease"))
 	return cmd
 }
 
-func newGetKSCmd() *cobra.Command {
-	return resourceListCmd(ksView())
+func newGetKSCmd(cfg RunConfig) *cobra.Command {
+	return resourceListCmd(cfg, ksView())
 }
 
 func ksView() listView[*manifest.Kustomization] {
@@ -33,7 +34,7 @@ func ksView() listView[*manifest.Kustomization] {
 			{Header: "NAME", Key: nameKey},
 			{Header: "PATH", Key: pathKey},
 		},
-		mapper: func(_ *selection.Selection, o *manifest.Kustomization) (map[string]string, map[string]any) {
+		mapper: func(_ *selection.Result, o *manifest.Kustomization) (map[string]string, map[string]any) {
 			source := o.SourceID()
 			doc := map[string]any{
 				kindKey: manifest.KindKustomization, namespaceKey: o.Namespace,
@@ -59,8 +60,8 @@ func ksView() listView[*manifest.Kustomization] {
 	}
 }
 
-func newGetHRCmd() *cobra.Command {
-	return resourceListCmd(hrView())
+func newGetHRCmd(cfg RunConfig) *cobra.Command {
+	return resourceListCmd(cfg, hrView())
 }
 
 func hrView() listView[*manifest.HelmRelease] {
@@ -73,7 +74,7 @@ func hrView() listView[*manifest.HelmRelease] {
 			{Header: "VERSION", Key: versionFlag},
 			{Header: "SOURCE", Key: sourceKey},
 		},
-		mapper: func(res *selection.Selection, o *manifest.HelmRelease) (map[string]string, map[string]any) {
+		mapper: func(res *selection.Result, o *manifest.HelmRelease) (map[string]string, map[string]any) {
 			source := o.ChartSource()
 			chart := o.Chart
 			if source.Name != "" {
@@ -110,8 +111,8 @@ func hrView() listView[*manifest.HelmRelease] {
 	}
 }
 
-func getAllCmd(use, short string) *cobra.Command {
-	c := &commonFlags{}
+func getAllCmd(cfg RunConfig, use, short string) *cobra.Command {
+	c := &commonFlags{gitTransports: cfg.GitTransports}
 	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
@@ -133,8 +134,8 @@ func getAllCmd(use, short string) *cobra.Command {
 	return cmd
 }
 
-func newGetImagesCmd() *cobra.Command {
-	c := &commonFlags{}
+func newGetImagesCmd(cfg RunConfig) *cobra.Command {
+	c := &commonFlags{gitTransports: cfg.GitTransports}
 	cmd := &cobra.Command{
 		Use:   "images",
 		Short: "List container images across the cluster",
@@ -156,11 +157,11 @@ type listView[T manifest.BaseManifest] struct {
 	use, short, kind string
 	aliases          []string
 	cols             []output.Column
-	mapper           func(*selection.Selection, T) (map[string]string, map[string]any)
+	mapper           func(*selection.Result, T) (map[string]string, map[string]any)
 }
 
-func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
-	c := &commonFlags{}
+func resourceListCmd[T manifest.BaseManifest](cfg RunConfig, view listView[T]) *cobra.Command {
+	c := &commonFlags{gitTransports: cfg.GitTransports}
 	l := &listFlags{}
 	cmd := &cobra.Command{
 		Use: view.use + " [name]", Aliases: view.aliases, Short: view.short,
@@ -273,7 +274,7 @@ func imagePayload(inv *selectedInvocation, encoder output.Encoder) selectedPaylo
 		}
 	}
 	tables, _ := prepareGetTables(inv, []output.Table{table})
-	return selectedPayload{prepare: func(names []output.Names) {
+	return selectedPayload{prepare: func(names []diff.Names) {
 		for i := range groups {
 			for _, image := range groups[i].Images {
 				groups[i].Names = append(groups[i].Names, names[i].Prefix+image)

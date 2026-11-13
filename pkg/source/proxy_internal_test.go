@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -64,10 +66,15 @@ func testResolveProxyCase1(t *testing.T, tc struct {
 	calls := 0
 	var getter SecretGetter
 	if !tc.unwired {
-		getter = func(ns, name string) *manifest.Secret {
+		getter = func(ns, name string) store.ReferenceFacts {
 			lookup = [2]string{ns, name}
 			calls++
-			return tc.secret
+
+			secretInput := tc.secret
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 	}
 	owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "ns", Name: "r"}
@@ -99,7 +106,12 @@ func testResolveProxyCase1(t *testing.T, tc struct {
 		return
 	}
 	assert.NoError(t, err)
-	assert.Equal(t, material.ProxyComponents(), [3]string{"http://proxy.example.com:8080", "alice", "hunter2"})
+	assert.FatalIf(t, material.proxy == nil, "explicit proxy material is absent")
+	assert.Equal(
+		t,
+		[3]string{material.proxy.Address, material.proxy.Username, material.proxy.Password},
+		[3]string{"http://proxy.example.com:8080", "alice", "hunter2"},
+	)
 	selected, err := material.ProxyURL(&url.URL{Scheme: "http", Host: "target.invalid"})
 	assert.NoError(t, err)
 	assert.Equal(t, selected.User.String(), "alice:hunter2")

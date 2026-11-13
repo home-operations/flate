@@ -3,7 +3,6 @@ package kustomize
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"io/fs"
 	"maps"
@@ -62,14 +61,29 @@ func (p *acceptedHistoryPublication) storedKey(t *testing.T) string {
 	assert.NoError(t, err)
 	data, err := fs.ReadFile(reader, "content")
 	assert.NoError(t, err)
-	stored, err := decodeFrame(data)
+	stored, err := testDecodeFrame(t, data)
 	assert.NoError(t, err)
 	content := descriptor.Annotations["flate.accepted-render"]
-	assert.FatalIf(t, content == "" ||
-		content != manifest.Fingerprint(
-			data[12+int(binary.BigEndian.Uint32(data[8:12]))+stored.header.Size:],
-		), "%s", "stored accepted-frame key does not identify the actual accepted frame")
+	assert.FatalIf(t,
+		content == "" || content != testPublicationIdentity(t, &stored, p.owner),
+		"%s", "stored accepted-frame key does not identify the actual accepted frame",
+	)
 	return content
+}
+
+func testPublicationIdentity(
+	tb testing.TB,
+	frame *renderFrame,
+	owner manifest.NamedResource,
+) string {
+	tb.Helper()
+	history, complete := frame.stored.History(owner, acceptedInput)
+	assert.Equal(tb, complete, true)
+	publication, err := frame.stored.PreparePublication(tb.Context(), sourcecache.FramePublicationInput{
+		Owner: owner, Content: acceptedInput, Records: history, Complete: true,
+	})
+	assert.NoError(tb, err)
+	return publication.Identity()
 }
 
 func (p *acceptedHistoryPublication) unchanged(t *testing.T) func() {
@@ -103,10 +117,12 @@ func (p *acceptedHistoryPublication) warm(t *testing.T) {
 	resident := p.pending.Value().(renderFrame)
 	assert.FatalIf(
 		t,
-		resident.accepted == nil || resident.acceptedKey == "" || resident.lookup == "",
+		resident.stored == nil || resident.lookup == "",
 		"%s",
 		"warm receipt did not carry decoded accepted evidence",
 	)
+	_, complete := resident.stored.History(p.owner, acceptedInput)
+	assert.Equal(t, complete, true)
 	check := p.unchanged(t)
 	assert.NoError(t, p.renderer.RecordRender(t.Context(), RenderAcceptance{
 		Owner:   p.owner,

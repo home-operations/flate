@@ -89,7 +89,7 @@ spec:
 			"debug",
 		},
 		&stdout,
-		&stderr,
+		&stderr, RunConfig{},
 	)
 	assert.Equal(t, code, 1)
 	assert.Equal(t, strings.Contains(stderr.String(), "input.yaml"), true)

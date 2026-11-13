@@ -136,7 +136,9 @@ func testReconcileProviderAcquisitionSettlementCase(
 	tasks.Go(
 		t.Context(),
 		"acquire",
-		func(ctx context.Context) { run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone) },
+		func(ctx context.Context) {
+			run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone, schedule.Result{})
+		},
 	)
 	tasks.BlockTillDone()
 	defer run.Close()
@@ -376,7 +378,9 @@ func testReconcileProviderAcquisitionRefreshCase(
 		tasks.Go(
 			t.Context(),
 			"refresh",
-			func(ctx context.Context) { run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone) },
+			func(ctx context.Context) {
+				run = c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone, schedule.Result{})
+			},
 		)
 		tasks.BlockTillDone()
 		defer run.Close()

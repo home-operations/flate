@@ -48,7 +48,7 @@ func testTemplateAcceptedHistoryDisabledPreparation(
 		sources.calls.Load(),
 		counted.opens.Load(),
 	)
-	_, err := fresh.describeChart(t.Context(), (*testCaseInput.hr), observed.Sources)
+	_, err := fresh.describeChart(t.Context(), (*testCaseInput.hr), observed.Sources.chartInput((*testCaseInput.hr)))
 	assert.NoError(t, err)
 
 	assert.FatalIf(

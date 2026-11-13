@@ -113,16 +113,6 @@ func (m TransportMaterial) Identity(credentials any) any {
 //nolint:gocritic // SDK value methods retain bound-method snapshots and the TransportMaterial value method set.
 func (m TransportMaterial) Certificate() [3]string { return m.certificate }
 
-// ProxyComponents returns explicit proxy address, username and password for Git.
-//
-//nolint:gocritic // SDK value methods retain bound-method snapshots and the TransportMaterial value method set.
-func (m TransportMaterial) ProxyComponents() [3]string {
-	if m.proxy == nil {
-		return [3]string{}
-	}
-	return [3]string{m.proxy.Address, m.proxy.Username, m.proxy.Password}
-}
-
 // ProxyURL selects the captured route for an actual request or redirect URL.
 //
 //nolint:gocritic // SDK value methods retain bound-method snapshots and the TransportMaterial value method set.

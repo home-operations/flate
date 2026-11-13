@@ -19,8 +19,7 @@ func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource
 
 func completedOrchestrator(tb testing.TB) (*orchestrator.Orchestrator, error) {
 	tb.Helper()
-	runs, err := orchestrator.RenderTrees(
-		tb.Context(),
+	runs, err := renderTreesForTest(tb.Context(), tb,
 		[]orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: tb.TempDir()}},
 		orchestrator.Config{Concurrency: 2},
 	)

@@ -131,8 +131,7 @@ metadata:
   namespace: flux-system
 `)
 
-	renderedSingleton1, err := RenderTrees(
-		t.Context(),
+	renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 2},
 	)

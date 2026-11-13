@@ -11,51 +11,46 @@ import (
 	"path"
 	"slices"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/source/sourceignore"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 type selection struct {
-	repo    *git.Repository
-	base    *resolution
-	current *gittree.FS
-	owner   *sourcecache.Cache
-	content any
+	network    *source.Network
+	transports sourcegit.Transports
+	repo       *git.Repository
+	worktree   *git.Worktree
+	base       *resolution
+	current    *gittree.FS
+	input      *store.SourceArtifact
+	owner      *sourcecache.Cache
+	content    any
 }
 
-func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, string, []manifest.Warning, error) {
-	baseTree, entries, err := s.baseEntries(ctx)
+func selectChanges(ctx context.Context, s *selection) (*gittree.FS, *change.Set, string, []manifest.Warning, error) {
+	entries, comparison, err := s.baseEntries(ctx)
 	if err != nil {
 		return nil, nil, "", nil, err
 	}
-	candidates, warnings, err := s.candidates(ctx, baseTree, entries)
+	candidates, warnings, err := s.candidates(ctx, entries, comparison)
 	if err != nil {
 		return nil, nil, "", warnings, err
 	}
-	if localErr := s.acquireBodies(ctx, entries, candidates); localErr != nil {
-		return nil, nil, "", warnings, localErr
-	}
-	routing, err := s.compareCandidates(ctx, candidates, entries)
-	if err != nil {
-		return nil, nil, "", warnings, err
-	}
-	slices.Sort(routing)
-	backing := s.repo.Storer.(*filesystem.Storage).Filesystem() //nolint:errcheck // The repository uses filesystem storage.
-	if s.base.backing != nil {
-		backing = s.base.backing
-	}
-	s.repo.Storer.(*filesystem.Storage).Reindex() //nolint:errcheck // The repository uses filesystem storage.
 	// go-git initializes its pack index without synchronization, before readers share it.
 	if localErr := s.current.Location().Repository.Storer.HasEncodedObject(
 		plumbing.ZeroHash,
@@ -63,38 +58,104 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 		!errors.Is(localErr, plumbing.ErrObjectNotFound) {
 		return nil, nil, "", warnings, fmt.Errorf("hasencodedobject: %w", localErr)
 	}
-	baseline, identity, err := gittree.New(
-		ctx,
-		backing,
-		s.base.Hash,
-		gittree.ViewOptions{
-			Location: s.current.Location(),
-			Content:  s.content,
-			Mode:     gittree.Direct,
-			Current:  s.current,
-			Changes:  routing,
-		},
-	)
+	routing := slices.Sorted(maps.Keys(candidates))
+	baseline, identity, err := s.reader(ctx, entries, routing)
 	if err != nil {
 		return baseline, nil, "", warnings, err
 	}
-	changes, err := s.filterChanges(ctx, baseline, routing, entries)
+	current := s.input
+	if current == nil {
+		current = &store.SourceArtifact{FS: s.current}
+	}
+	original := &store.SourceArtifact{
+		FS:       baseline,
+		Key:      identity,
+		Content:  identity,
+		Revision: s.base.Hash.String(),
+		Kind:     manifest.KindGitRepository,
+	}
+	if location := s.current.Location(); location != nil {
+		original.LocalPath, _ = gittree.Label(
+			gittree.LabelOptions{Root: location.ContentRoot, Mode: gittree.Direct, Key: s.base.Hash.String()},
+		)
+		original.LocalRoot = location.ContentRoot
+	}
+	changes, err := change.Detect(ctx,
+		original,
+		current,
+		change.DetectConfig{Candidates: candidates},
+	)
 	if err != nil {
 		return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, err
+	}
+	selected := changes.Paths()
+	for _, input := range []*gittree.FS{baseline, s.current} {
+		policy, policyErr := input.SourcePolicy(ctx)
+		if policyErr != nil {
+			return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, policyErr
+		}
+		for _, file := range policy.Evidence() {
+			if _, candidate := candidates[file.Path]; candidate {
+				selected = append(selected, file.Path)
+			}
+		}
+	}
+	slices.Sort(selected)
+	selected = slices.Compact(selected)
+	if !slices.Equal(routing, selected) {
+		replacement, _, readerErr := s.reader(ctx, entries, selected)
+		if readerErr != nil {
+			return &gittree.FS{Warnings: baseline.Warnings}, nil, "", warnings, readerErr
+		}
+		baseline = replacement
+		original.FS = baseline
 	}
 	return baseline, changes, identity, warnings, nil
 }
 
-func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]object.TreeEntry, error) {
+func (s *selection) reader(
+	ctx context.Context,
+	entries map[string]object.TreeEntry,
+	routing []string,
+) (*gittree.FS, string, error) {
+	bodies := make(map[string]bool, len(routing))
+	for _, name := range routing {
+		bodies[name] = false
+	}
+	if err := s.acquireBodies(ctx, entries, bodies); err != nil {
+		return nil, "", err
+	}
+	backing := s.repo.Storer.(*filesystem.Storage).Filesystem() //nolint:errcheck // The repository uses filesystem storage.
+	if s.base.backing != nil {
+		backing = s.base.backing
+	}
+	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{
+		Location: s.current.Location(),
+		Content:  s.content,
+		Mode:     gittree.Direct,
+		Current:  s.current,
+		Changes:  routing,
+	})
+	if err != nil {
+		return baseline, "", err
+	}
+	if _, err := baseline.SourcePolicy(ctx); err != nil {
+		return &gittree.FS{Warnings: baseline.Warnings}, "", err
+	}
+	return baseline, identity, nil
+}
+
+func (s *selection) baseEntries(ctx context.Context) (map[string]object.TreeEntry, *gitindex.Index, error) {
 	var baseTree *object.Tree
 	var entries map[string]object.TreeEntry
+	var comparison *gitindex.Index
 	for {
 		before, err := s.base.Repo.CommitObject(s.base.Hash)
 		if err == nil {
 			baseTree, err = before.Tree()
 		}
 		if err == nil {
-			entries, err = treeEntries(ctx, baseTree)
+			entries, comparison, err = treeEntries(ctx, baseTree)
 		}
 		if err == nil {
 			break
@@ -106,24 +167,29 @@ func (s selection) baseEntries(ctx context.Context) (*object.Tree, map[string]ob
 			return nil, nil, err
 		}
 	}
-	return baseTree, entries, nil
+	return entries, comparison, nil
 }
 
-func (s selection) candidates(
+func (s *selection) candidates(
 	ctx context.Context,
-	baseTree *object.Tree,
 	entries map[string]object.TreeEntry,
+	comparison *gitindex.Index,
 ) (map[string]bool, []manifest.Warning, error) {
 	candidates := make(map[string]bool)
-	headEntries, err := s.headCandidates(ctx, baseTree, entries, candidates)
-	if err != nil {
-		return nil, nil, err
+	head, err := s.repo.Head()
+	if err != nil && !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return nil, nil, fmt.Errorf("head: %w", err)
 	}
-	worktree, err := s.repo.Worktree()
-	if err != nil {
-		return nil, nil, fmt.Errorf("worktree: %w", err)
+	if err == nil {
+		commit, commitErr := s.repo.CommitObject(head.Hash())
+		if commitErr != nil {
+			return nil, nil, fmt.Errorf("commitobject: %w", commitErr)
+		}
+		if _, treeErr := commit.Tree(); treeErr != nil {
+			return nil, nil, fmt.Errorf("tree: %w", treeErr)
+		}
 	}
-	status, statusErr := worktree.Status()
+	status, statusErr := s.worktreeChanges(ctx, s.worktree, comparison)
 	var warnings []manifest.Warning
 	if statusErr != nil {
 		warnings = []manifest.Warning{
@@ -138,69 +204,29 @@ func (s selection) candidates(
 	if localErr := ctx.Err(); localErr != nil {
 		return nil, warnings, fmt.Errorf("context: %w", localErr)
 	}
-	for name, st := range status {
-		if st.Staging != git.Unmodified || st.Worktree != git.Unmodified {
-			candidates[name] = true
+	for _, change := range status {
+		if name := change.From.String(); name != "" {
+			candidates[name] = false
 		}
-	}
-	err = walkCurrent(ctx, s.current, ".", func(name string) {
-		if _, ok := headEntries[name]; !ok {
-			candidates[name] = true
+		if name := change.To.String(); name != "" {
+			// Upstream uses a zero content hash when checkout reads fail.
+			// Such observations MUST retain the ordinary comparison's I/O error.
+			uncertain := bytes.Equal(change.To.Hash()[:plumbing.ZeroHash.Size()], plumbing.ZeroHash.Bytes())
+			candidates[name] = uncertain
 		}
-	})
-	if err != nil {
-		return nil, warnings, err
 	}
 	if statusErr != nil {
 		for name := range entries {
 			candidates[name] = true
 		}
+		if err := walkCurrent(ctx, s.current, ".", func(name string) { candidates[name] = true }); err != nil {
+			return nil, warnings, err
+		}
 	}
 	return candidates, warnings, nil
 }
 
-func (s selection) headCandidates(ctx context.Context, baseTree *object.Tree,
-	entries map[string]object.TreeEntry, candidates map[string]bool,
-) (map[string]object.TreeEntry, error) {
-	headEntries := map[string]object.TreeEntry{}
-	head, err := s.repo.Head()
-	if errors.Is(err, plumbing.ErrReferenceNotFound) {
-		for name := range entries {
-			candidates[name] = true
-		}
-		return headEntries, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("head: %w", err)
-	}
-	commit, localErr := s.repo.CommitObject(head.Hash())
-	if localErr != nil {
-		return nil, fmt.Errorf("commitobject: %w", localErr)
-	}
-	headTree, localErr := commit.Tree()
-	if localErr != nil {
-		return nil, fmt.Errorf("tree: %w", localErr)
-	}
-	headEntries, localErr = treeEntries(ctx, headTree)
-	if localErr != nil {
-		return nil, localErr
-	}
-	diff, localErr := object.DiffTree(baseTree, headTree)
-	if localErr != nil {
-		return nil, fmt.Errorf("difftree: %w", localErr)
-	}
-	for _, c := range diff {
-		if c.From.Name != "" {
-			candidates[c.From.Name] = false
-		}
-		if c.To.Name != "" {
-			candidates[c.To.Name] = false
-		}
-	}
-	return headEntries, nil
-}
-
-func (s selection) acquireBodies(
+func (s *selection) acquireBodies(
 	ctx context.Context,
 	entries map[string]object.TreeEntry,
 	candidates map[string]bool,
@@ -226,12 +252,20 @@ func (s selection) acquireBodies(
 	if s.base.remote == nil {
 		return nil
 	}
-	hashes := slices.SortedFunc(maps.Keys(routed), func(a, b plumbing.Hash) int { return bytes.Compare(a[:], b[:]) })
+	hashes := slices.SortedFunc(maps.Keys(routed), func(a, b plumbing.Hash) int { return a.Compare(b.Bytes()) })
+	// Object IDs have no exported fields, so cache payloads MUST carry their bytes.
+	var wants [][formatcfg.SHA1Size]byte
+	if hashes != nil {
+		wants = make([][formatcfg.SHA1Size]byte, len(hashes))
+	}
+	for i, hash := range hashes {
+		wants[i] = [formatcfg.SHA1Size]byte(hash.Bytes())
+	}
 	content := struct {
 		URL    string
 		Commit string
-		Wants  []plumbing.Hash
-	}{s.base.remote.url, s.base.Hash.String(), hashes}
+		Wants  [][formatcfg.SHA1Size]byte
+	}{s.base.remote.url, s.base.Hash.String(), wants}
 	generation, _, err := s.owner.Git(
 		ctx,
 		sourcecache.GitKey{Content: content, Ref: s.base.Hash.String()},
@@ -253,7 +287,7 @@ func (s selection) acquireBodies(
 	return s.base.adopt(s.repo.Storer)
 }
 
-func (s selection) transferBodies(ctx context.Context, upper storage.Storer, hashes []plumbing.Hash) error {
+func (s *selection) transferBodies(ctx context.Context, upper storage.Storer, hashes []plumbing.Hash) error {
 	var wants []plumbing.Hash
 	for _, hash := range hashes {
 		if err := ctx.Err(); err != nil {
@@ -284,7 +318,7 @@ func (s selection) transferBodies(ctx context.Context, upper storage.Storer, has
 	return nil
 }
 
-func (s selection) ensureBodies(ctx context.Context, upper storage.Storer, wants []plumbing.Hash) error {
+func (s *selection) ensureBodies(ctx context.Context, upper storage.Storer, wants []plumbing.Hash) error {
 	for _, hash := range wants {
 		err := upper.HasEncodedObject(hash)
 		if errors.Is(err, plumbing.ErrObjectNotFound) && !s.base.remote.full {
@@ -299,147 +333,7 @@ func (s selection) ensureBodies(ctx context.Context, upper storage.Storer, wants
 	return nil
 }
 
-func (s selection) compareCandidates(
-	ctx context.Context,
-	candidates map[string]bool,
-	entries map[string]object.TreeEntry,
-) ([]string, error) {
-	routing := make([]string, 0, len(candidates))
-	for name, dirty := range candidates {
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("context: %w", err)
-		}
-		entry, exists := entries[name]
-		if !exists {
-			routing = append(routing, name)
-			continue
-		}
-		if !dirty {
-			routing = append(routing, name)
-			continue
-		}
-		changed, err := s.candidateChanged(ctx, name, entry)
-		if err != nil {
-			return nil, err
-		}
-		if changed {
-			routing = append(routing, name)
-		}
-	}
-	return routing, nil
-}
-
-func (s selection) candidateChanged(ctx context.Context, name string, entry object.TreeEntry) (bool, error) {
-	info, err := s.current.Lstat(name)
-	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
-		return true, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("lstat: %w", err)
-	}
-	mode, err := entry.Mode.ToOSFileMode()
-	if err != nil {
-		return false, fmt.Errorf("toosfilemode: %w", err)
-	}
-	if info.Mode().Type() != mode.Type() || info.Mode().Perm()&0o111 != mode.Perm()&0o111 {
-		return true, nil
-	}
-	blob, err := object.GetBlob(s.base.Repo.Storer, entry.Hash)
-	if err != nil {
-		return false, fmt.Errorf("getblob: %w", err)
-	}
-	reader, err := blob.Reader()
-	if err != nil {
-		return false, fmt.Errorf("reader: %w", err)
-	}
-	current, err := s.current.Open(name)
-	if err != nil {
-		_ = reader.Close()
-		return false, fmt.Errorf("open: %w", err)
-	}
-	equal, compareErr := equalReaders(ctx, reader, current)
-	if err := errors.Join(compareErr, reader.Close(), current.Close()); err != nil {
-		return false, err
-	}
-	return !equal, nil
-}
-
-func (s selection) filterChanges(
-	ctx context.Context,
-	baseline *gittree.FS,
-	routing []string,
-	entries map[string]object.TreeEntry,
-) (*change.Set, error) {
-	beforeIgnore, err := baseline.SourcePolicy(ctx)
-	if err != nil {
-		return nil, err
-	}
-	afterIgnore, err := s.current.SourcePolicy(ctx)
-	if err != nil {
-		return nil, err
-	}
-	before, after := make(map[string]bool, len(routing)), make(map[string]bool, len(routing))
-	for _, name := range routing {
-		if _, existed := entries[name]; existed {
-			before[name] = true
-		}
-		if _, err := s.current.Lstat(name); err == nil {
-			after[name] = true
-		}
-	}
-	var membership []string
-	if slices.ContainsFunc(routing, func(name string) bool { return path.Base(name) == ".sourceignore" }) {
-		if err := walkCurrent(ctx, s.current, ".", func(name string) {
-			if _, existed := entries[name]; existed {
-				membership = append(membership, name)
-				before[name], after[name] = true, true
-			}
-		}); err != nil {
-			return nil, err
-		}
-	}
-	sourceignore.Select(beforeIgnore, before, nil)
-	sourceignore.Select(afterIgnore, after, nil)
-	selected := make([]string, 0, len(routing))
-	for _, name := range routing {
-		if before[name] || after[name] {
-			selected = append(selected, name)
-		}
-	}
-	for _, name := range membership {
-		if before[name] != after[name] {
-			selected = append(selected, name)
-		}
-	}
-	slices.Sort(selected)
-	selected = slices.Compact(selected)
-	return s.collectChanges(ctx, baseline, selected, [2]map[string]bool{before, after})
-}
-
-func (s selection) collectChanges(ctx context.Context, baseline *gittree.FS,
-	selected []string, membership [2]map[string]bool,
-) (*change.Set, error) {
-	before, after := membership[0], membership[1]
-	changes := change.NewSet(selected)
-	for _, name := range selected {
-		if before[name] == after[name] {
-			continue
-		}
-		var input fs.FS = s.current
-		if before[name] {
-			input = baseline
-		}
-		if err := changes.CollectInputs(ctx, input, name, before[name]); err != nil {
-			return nil, err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("context: %w", err)
-	}
-	return changes, nil
-}
-
-func (s selection) acquireBase(ctx context.Context) error {
+func (s *selection) acquireBase(ctx context.Context) error {
 	url, ok := originURL(s.current.Location().Config)
 	if !ok {
 		return manifest.NewError(
@@ -448,7 +342,12 @@ func (s selection) acquireBase(ctx context.Context) error {
 			fmt.Sprintf("base %s is missing objects and no origin is configured", s.base.Hash),
 		)
 	}
-	r, err := fetchBase(ctx, url, s.base.Hash.String(), s.owner)
+	r, err := fetchBase(
+		ctx,
+		url,
+		s.base.Hash.String(),
+		Config{Cache: s.owner, Network: s.network, GitTransports: s.transports},
+	)
 	if err != nil {
 		return err
 	}
@@ -460,20 +359,27 @@ func (s selection) acquireBase(ctx context.Context) error {
 	return nil
 }
 
-func treeEntries(ctx context.Context, root *object.Tree) (map[string]object.TreeEntry, error) {
+func treeEntries(ctx context.Context, root *object.Tree) (map[string]object.TreeEntry, *gitindex.Index, error) {
+	comparison := &gitindex.Index{}
 	out := make(map[string]object.TreeEntry)
 	walker := object.NewTreeWalker(root, true, nil)
 	defer walker.Close()
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("context: %w", err)
+			return nil, nil, fmt.Errorf("context: %w", err)
 		}
 		name, entry, err := walker.Next()
 		if errors.Is(err, io.EOF) {
-			return out, nil
+			return out, comparison, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("next: %w", err)
+			return nil, nil, fmt.Errorf("next: %w", err)
+		}
+		if entry.Mode.IsFile() {
+			comparison.Entries = append(
+				comparison.Entries,
+				&gitindex.Entry{Name: name, Hash: entry.Hash, Mode: entry.Mode},
+			)
 		}
 		if entry.Mode.IsFile() && entry.Mode != filemode.Symlink {
 			out[name] = entry
@@ -500,27 +406,4 @@ func walkCurrent(ctx context.Context, input fs.ReadDirFS, dir string, visit func
 		}
 	}
 	return nil
-}
-
-func equalReaders(ctx context.Context, a, b io.Reader) (bool, error) {
-	var aa, bb [32 * 1024]byte
-	for {
-		if err := ctx.Err(); err != nil {
-			return false, fmt.Errorf("context: %w", err)
-		}
-		na, ea := io.ReadFull(a, aa[:])
-		nb, eb := io.ReadFull(b, bb[:])
-		if ea != nil && !errors.Is(ea, io.EOF) && !errors.Is(ea, io.ErrUnexpectedEOF) {
-			return false, fmt.Errorf("readfull: %w", ea)
-		}
-		if eb != nil && !errors.Is(eb, io.EOF) && !errors.Is(eb, io.ErrUnexpectedEOF) {
-			return false, fmt.Errorf("readfull: %w", eb)
-		}
-		if na != nb || !bytes.Equal(aa[:na], bb[:nb]) {
-			return false, nil
-		}
-		if na < len(aa) {
-			return true, nil
-		}
-	}
 }

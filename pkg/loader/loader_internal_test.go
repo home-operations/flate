@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -642,8 +642,10 @@ func testLoaderDiscoveryBootstrapScanSkipsCoveredDirCase(
 		)
 		location, err := gitrepo.Locate(t.Context(), root, root)
 		assert.NoError(t, err)
-		input, err := gittree.AdmitDirectory(t.Context(), location)
+		inputDirectory, err := gittree.OpenDirectory(t.Context(), location)
 		assert.NoError(t, err)
+		input := inputDirectory.Artifact()
+		assert.NoError(t, inputDirectory.Close())
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		view, _, err := gittree.New(
 			t.Context(),

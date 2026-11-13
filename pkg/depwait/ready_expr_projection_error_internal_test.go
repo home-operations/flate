@@ -38,7 +38,10 @@ spec: {chartRef: {kind: OCIRepository, name: chart}, values: {version: old}}
 	reads.Init(s, dep.Named(), nil)
 	defer reads.Retire()
 	captured, info := reads.Snapshot(dep.Named(), true)
-	w := Waiter{Store: &reads, Parent: dep.Named()}
+	w := Waiter{
+		Store: &reads, Parent: dep.Named(), Missing: NewMissingPolicy(
+			nil),
+	}
 	for _, expr := range []string{`true`, `true || self.spec.values.version == dep.spec.values.version`} {
 		{
 			ok, err := w.evaluateReadyExpr(expr, dep.Named(), captured, info.Conditions)
@@ -107,7 +110,10 @@ func TestReadyExpr_AbsentSpec(t *testing.T) {
 				assert.FatalIf(t, err != nil ||
 					!ok, "absent desired fields: ok=%v err=%v", ok, err)
 			}
-			w := Waiter{Store: s, Parent: dep}
+			w := Waiter{
+				Store: captureState(t, s), Parent: dep, Missing: NewMissingPolicy(
+					nil),
+			}
 			ref := manifest.DependencyRef{NamedResource: dep, ReadyExpr: new(`has(dep.spec)`)}
 			{
 				got := w.Classify(t.Context(), ref, manifest.DrainNone)

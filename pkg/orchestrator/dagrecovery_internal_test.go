@@ -18,15 +18,16 @@ import (
 
 type fixtureDispatcher struct {
 	store    *store.Store
-	dispatch func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result
+	dispatch func(context.Context, schedule.NodeID, manifest.DrainLevel, schedule.Result) schedule.Result
 }
 
 func (d fixtureDispatcher) Dispatch(
 	ctx context.Context,
 	id schedule.NodeID,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) schedule.Result {
-	return d.dispatch(ctx, id, level)
+	return d.dispatch(ctx, id, level, previous)
 }
 
 func (d fixtureDispatcher) Sweep(context.Context, bool) []schedule.NodeID {
@@ -74,7 +75,7 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	defer unsub()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	_, err = o.render(ctx)
+	_, err = o.render(ctx, t)
 	assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil,
 		"Render error=%v context=%v, want scheduler redispatch error", err, ctx.Err())
 }
@@ -118,7 +119,7 @@ func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 	o.tasks.Go(
 		t.Context(),
 		"dispatch fixture",
-		func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainCascade) },
+		func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainCascade, schedule.Result{}) },
 	)
 	o.tasks.BlockTillDone()
 	info, _ := o.store.GetStatus(victim)
@@ -132,7 +133,7 @@ func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 	o.tasks.Go(
 		t.Context(),
 		"dispatch fixture",
-		func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone) },
+		func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone, schedule.Result{}) },
 	)
 	o.tasks.BlockTillDone()
 	info, _ = o.store.GetStatus(victim)
@@ -156,7 +157,7 @@ func testDAGDispatcherRecoveredAndPrimaryFailuresCase(
 	o.tasks.Go(
 		t.Context(),
 		"dispatch fixture",
-		func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone) },
+		func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone, schedule.Result{}) },
 	)
 	o.tasks.BlockTillDone()
 	info, _ = o.store.GetStatus(victim)
@@ -205,7 +206,7 @@ func testDAGReleasedPinRecovery(t *testing.T, dir string, workers *int, ks *mani
 	attempted, acquired := make(chan struct{}), make(chan struct{})
 	dispatch := fixtureDispatcher{
 		store: localO.store,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
 			assert.Equal(t, level, manifest.DrainNone)
 			if id == repo.Named() {
 				localO.tasks.YieldSlot(func() {
@@ -214,14 +215,14 @@ func testDAGReleasedPinRecovery(t *testing.T, dir string, workers *int, ks *mani
 					case <-ctx.Done():
 					}
 				})
-				result := d.Dispatch(ctx, id, level)
+				result := d.Dispatch(ctx, id, level, schedule.Result{})
 				info, _ := localO.store.GetStatus(id)
 				assert.Equal(t, info.Status, store.StatusReady)
 				assert.Equal(t, fetcher.fetched.Load(), true)
 				close(acquired)
 				return result
 			}
-			result := d.Dispatch(ctx, id, level)
+			result := d.Dispatch(ctx, id, level, schedule.Result{})
 			if result.Assessment.Outcome() == schedule.Blocked {
 				assert.Diff(t, result.Assessment.(*base.Execution).Blocked, []schedule.NodeID{repo.Named()})
 				close(attempted)

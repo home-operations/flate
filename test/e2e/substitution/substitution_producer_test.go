@@ -62,3 +62,19 @@ func TestE2E_LiteralKustomizationPath(t *testing.T) {
 		"literal-kustomization-path-reverse-diff",
 	)
 }
+
+//nolint:paralleltest // The corpus harness changes process-global state.
+func TestE2E_ComponentSecretProducerSelection(t *testing.T) {
+	runSubstitutionCases(t, "component-secret-producer",
+		"shared-file-ordered",
+		"shared-file-unordered",
+		"parent-context-ordered",
+		"parent-context-unordered",
+		"producer-absent",
+		"producer-absent-allowed",
+		"removed-producer",
+		"removed-producer-reverse",
+		"renamed-producer",
+		"renamed-producer-reverse",
+	)
+}

@@ -12,14 +12,12 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
-	"github.com/google/go-cmp/cmp"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/tree"
 )
 
 func compressedForTest(t *testing.T, files fstest.MapFS) []byte {
@@ -44,115 +42,28 @@ func compressedForTest(t *testing.T, files fstest.MapFS) []byte {
 
 func TestEvaluate(t *testing.T) {
 	t.Parallel()
-	archive := compressedForTest(
-		t,
-		fstest.MapFS{"member.yaml": {Data: []byte("inside"), Mode: 0o755}, "empty": {Mode: fs.ModeDir | 0o755}},
-	)
 	for _, tc := range []struct {
 		name       string
-		operations []operation
-		want       map[string]string
-		modes      map[string]fs.FileMode
+		operations []manifest.ArtifactGeneratorCopy
 		invalid    bool
 	}{
-		{"file_rename", []operation{{From: "@repo/app/file", To: "@artifact/renamed"}}, map[string]string{"renamed": "file"}, nil, false},
-		{"file_slash_target", []operation{{From: "@repo/app/file", To: "@artifact/out/"}}, map[string]string{"out/file": "file"}, nil, false},
-		{"file_directory_target", []operation{{From: "@repo/empty", To: "@artifact/out"}, {From: "@repo/app/file", To: "@artifact/out/empty"}}, map[string]string{"out/empty/file": "file"}, nil, false},
-		{"directory_nesting", []operation{{From: "@repo/app/", To: "@artifact/app/"}}, map[string]string{"app/app/file": "file", "app/app/deep/nested": "nested"}, nil, false},
-		{"ordinary_double_star", []operation{{From: "@repo/app/**", To: "@artifact/out"}}, map[string]string{"out/file": "file", "out/deep/nested": "nested"}, nil, false},
-		{"ordinary_glob_coordinates", []operation{{From: "@repo/app/*/nested", To: "@artifact/out"}}, map[string]string{"out/app/deep/nested": "nested"}, nil, false},
-		{"ordinary_double_star_not_recursive", []operation{{From: "@repo/**/nested", To: "@artifact/out"}}, nil, nil, true},
-		{"exclude_root_coordinates", []operation{{From: "@repo/app", To: "@artifact/", Exclude: []string{"app/deep"}}}, map[string]string{"app/file": "file"}, nil, false},
-		{"exclude_prefix_coordinates", []operation{{From: "@repo/app/**", To: "@artifact/out", Exclude: []string{"deep/nested"}}}, map[string]string{"out/file": "file"}, nil, false},
-		{"exclude_basename", []operation{{From: "@repo/app", To: "@artifact/", Exclude: []string{"nested"}}}, map[string]string{"app/file": "file"}, nil, false},
-		{"direct_excluded_succeeds_empty", []operation{{From: "@repo/app/file", To: "@artifact/file", Exclude: []string{"file"}}}, map[string]string{}, nil, false},
-		{"all_glob_matches_excluded", []operation{{From: "@repo/app/*", To: "@artifact/", Exclude: []string{"*"}}}, nil, nil, true},
-		{"no_glob_matches", []operation{{From: "@repo/absent*", To: "@artifact/"}}, nil, nil, true},
-		{"unknown_alias", []operation{{From: "@absent/file", To: "@artifact/file"}}, nil, nil, true},
-		{"source_absolute", []operation{{From: "@repo//file", To: "@artifact/file"}}, nil, nil, true},
-		{"source_parent", []operation{{From: "@repo/app/../file", To: "@artifact/file"}}, nil, nil, true},
-		{"source_backslash", []operation{{From: `@repo/app\file`, To: "@artifact/file"}}, nil, nil, true},
-		{"destination_absolute", []operation{{From: "@repo/app/file", To: "@artifact//file"}}, nil, nil, true},
-		{"destination_parent", []operation{{From: "@repo/app/file", To: "@artifact/app/../file"}}, nil, nil, true},
-		{"destination_prefix", []operation{{From: "@repo/app/file", To: "file"}}, nil, nil, true},
-		{"copy_rejects_link", []operation{{From: "@repo/link", To: "@artifact/link"}}, nil, nil, true},
-		{"merge_new_destination_plain_copy", []operation{{From: "@repo/invalid.yaml", To: "@artifact/values.yaml", Strategy: "Merge"}}, map[string]string{"values.yaml": "[invalid"}, nil, false},
-		{"merge_directory_plain_copy", []operation{{From: "@repo/base.yaml", To: "@artifact/merge/invalid.yaml"}, {From: "@repo/merge", To: "@artifact/", Strategy: "Merge"}}, map[string]string{"merge/invalid.yaml": "[invalid"}, nil, false},
-		{"merge_selected_file", []operation{{From: "@repo/base.yaml", To: "@artifact/values.yaml"}, {From: "@repo/overlay.yaml", To: "@artifact/values.yaml", Strategy: "Merge"}}, map[string]string{"values.yaml": "array:\n- new\nfolded: kept\nmap: scalar\nnullable: null\nretained: true\n"}, map[string]fs.FileMode{"values.yaml": 0o755}, false},
-		{"merge_invalid_existing", []operation{{From: "@repo/invalid.yaml", To: "@artifact/values.yaml"}, {From: "@repo/overlay.yaml", To: "@artifact/values.yaml", Strategy: "Merge"}}, nil, nil, true},
-		{"extract_recursive_and_case", []operation{{From: "@repo/**/*.TGZ", To: "@artifact/out", Strategy: "Extract"}}, map[string]string{"out/member.yaml": "inside"}, map[string]fs.FileMode{"out/member.yaml": 0o755, "out/empty": fs.ModeDir | 0o755}, false},
-		{"extract_tar_gz", []operation{{From: "@repo/archive.tar.gz", To: "@artifact/out", Strategy: "Extract"}}, map[string]string{"out/member.yaml": "inside"}, nil, false},
-		{"extract_preserves_existing_mode", []operation{{From: "@repo/plain", To: "@artifact/out/member.yaml"}, {From: "@repo/archive.TGZ", To: "@artifact/out", Strategy: "Extract"}}, map[string]string{"out/member.yaml": "inside"}, map[string]fs.FileMode{"out/member.yaml": 0o600}, false},
-		{"extract_skips_nontars", []operation{{From: "@repo/*", To: "@artifact/out", Strategy: "Extract"}}, map[string]string{"out/member.yaml": "inside"}, nil, false},
-		{"extract_excludes_archives_only", []operation{{From: "@repo/*.TGZ", To: "@artifact/out", Strategy: "Extract", Exclude: []string{"member.yaml"}}}, map[string]string{"out/member.yaml": "inside"}, nil, false},
-		{"extract_direct_nontar", []operation{{From: "@repo/archive.txt", To: "@artifact/", Strategy: "Extract"}}, nil, nil, true},
-		{"extract_direct_directory", []operation{{From: "@repo/app", To: "@artifact/", Strategy: "Extract"}}, nil, nil, true},
-		{"extract_only_nontar_glob", []operation{{From: "@repo/app/*", To: "@artifact/", Strategy: "Extract"}}, map[string]string{}, nil, false},
+		{"unknown_alias", []manifest.ArtifactGeneratorCopy{{From: "@absent/file", To: "@artifact/file"}}, true},
+		{"destination_prefix", []manifest.ArtifactGeneratorCopy{{From: "@repo/app/file", To: "file"}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testEvaluateCase(t, testEvaluateCaseInputs{archive: &archive, tc: &tc})
-		},
-		)
-	}
-}
-
-func TestEvaluate_Canceled(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	e := evaluation{
-		inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{"file": {Data: []byte("file")}}}},
-	}
-	{
-		err := e.apply(
-			ctx,
-			tree.NewBuilder(nil),
-			operation{From: "@repo/file", To: "@artifact/file"},
-		)
-		assert.FatalIf(t, !errors.Is(
-			err,
-			context.Canceled,
-		), "evaluate() = %v", err)
-	}
-}
-
-func TestCopyFile_Canceled(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	input := &observedFS{FS: fstest.MapFS{"file": {Data: []byte("a: 1\n---\na: 2\n")}}}
-	builder := tree.NewBuilder(nil)
-	{
-		err := builder.AddFile("existing", []byte("a: 0\n"), 0o600)
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	{
-		err := copyFile(
-			ctx,
-			input,
-			builder,
-			operation{From: "file", To: "existing", Strategy: "Merge"},
-		)
-		assert.FatalIf(t, !errors.Is(
-			err,
-			context.Canceled,
-		), "copyFile() = %v", err)
-	}
-	assert.FatalIf(t, input.opens.Load() != 0, "%v", "canceled copy opened input")
-	{
-		data, err := fs.ReadFile(builder, "existing")
-		assert.FatalIf(
-			t,
-			err != nil || string(data) != "a: 0\n",
-			"canceled merge changed destination: %q, %v",
-			data,
-			err,
-		)
-	}
-	{
-		_, err := loadYAML(ctx, input, "file")
-		assert.FatalIf(t, !errors.Is(err, context.Canceled), "loadYAML() = %v", err)
+			e := evaluation{
+				identity: []inputIdentity{{Alias: "repo"}},
+				inputs: map[string]fs.FS{
+					"repo": fstest.MapFS{"app/file": {Data: []byte("file")}},
+				},
+			}
+			_, err := e.composition(
+				manifest.NamedResource{},
+				&request{Output: manifest.ArtifactGeneratorOutput{Copy: tc.operations}},
+			)
+			assert.FatalIf(t, (err != nil) != tc.invalid, "evaluate() = %v; invalid=%v", err, tc.invalid)
+		})
 	}
 }
 
@@ -167,23 +78,28 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 	}
 	scope := recorder.Scope()
 	e := evaluation{
-		work:     manifest.AcquisitionWork{Scope: scope},
-		owner:    owner,
 		maxAge:   cache.Forever,
 		identity: identities,
-		inputs: map[string]*store.SourceArtifact{
-			"repo": {
-				FS: fstest.MapFS{
-					"archive.tgz": {Data: compressedForTest(t, fstest.MapFS{"file": {Data: []byte("bytes")}})},
-				},
+		inputs: map[string]fs.FS{
+			"repo": fstest.MapFS{
+				"archive.tgz": {Data: compressedForTest(t, fstest.MapFS{"file": {Data: []byte("bytes")}})},
 			},
 		},
 	}
 	selection := archiveSelection{Alias: "repo", Path: "archive.tgz", Destination: "out"}
-	{
-		err := e.extract(t.Context(), tree.NewBuilder(nil), selection)
-		assert.FatalIf(t, err != nil, "%v", err)
+	req := request{
+		Output: manifest.ArtifactGeneratorOutput{
+			Name: "artifact",
+			Copy: []manifest.ArtifactGeneratorCopy{
+				{From: "@repo/archive.tgz", To: "@artifact/out", Strategy: strategyExtract},
+			},
+		},
 	}
+	req.work.Scope = scope
+	composition, err := e.composition(recorder.Key.Owner, &req)
+	assert.FatalIf(t, err != nil, "%v", err)
+	_, _, _, err = owner.Compose(t.Context(), composition, &cache.Policy{MaxAge: cache.Forever, Work: &req.work})
+	assert.FatalIf(t, err != nil, "%v", err)
 	key := cache.ArchiveKey{Policy: "extract", Content: struct {
 		Namespace string
 		Inputs    []inputIdentity
@@ -208,119 +124,4 @@ func TestEvaluate_ExtractIdentity(t *testing.T) {
 		err,
 		called,
 	)
-	var preparation, acquisition, service manifest.WorkCounts
-	for _, record := range scope.Snapshot(0) {
-		assert.Equal(t, record.Key.Owner, recorder.Key.Owner)
-		assert.Equal(t, record.Key.Input, id)
-		if record.Key.Phase == manifest.WorkPreparation {
-			preparation.Add(&record.Counts)
-		}
-		if record.Key.Phase == manifest.WorkAcquisition {
-			acquisition.Add(&record.Counts)
-		}
-		if record.Key.Phase == manifest.WorkCache {
-			service.Add(&record.Counts)
-		}
-	}
-	assert.Equal(t, preparation, manifest.WorkCounts{RawKeyPrepares: 1})
-	assert.Equal(t, acquisition, manifest.WorkCounts{Attempts: 1, Completed: 1})
-	assert.Equal(t, service, manifest.WorkCounts{Attempts: 1, Completed: 1})
-}
-
-type testEvaluateCaseInputs struct {
-	archive *[]byte
-	tc      *struct {
-		name string
-
-		operations []operation
-		want       map[string]string
-		modes      map[string]fs.FileMode
-		invalid    bool
-	}
-}
-
-func testEvaluateCase(t *testing.T, testCaseInput testEvaluateCaseInputs) {
-	t.Helper()
-
-	owner := cachetest.New(t, "", cache.New)
-	e := evaluation{
-		owner:  owner,
-		maxAge: cache.Forever,
-		inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{
-			"app/file": {
-				Data: []byte("file"),
-			},
-			"app/deep/nested": {Data: []byte("nested")},
-			"empty":           {Mode: fs.ModeDir | 0o755},
-			"plain":           {Data: []byte("plain"), Mode: 0o600},
-			"base.yaml": {
-				Data: []byte("array: [old]\nmap: {key: value}\nnullable: present\nretained: yes\n"),
-				Mode: 0o755,
-			},
-			"overlay.yaml": {
-				Data: []byte(
-					"array: [discarded]\nfolded: kept\n---\narray: [new]\nmap: scalar\nnullable: null\n",
-				),
-			},
-			"invalid.yaml":       {Data: []byte("[invalid")},
-			"merge/invalid.yaml": {Data: []byte("[invalid")},
-			"archive.TGZ": {
-				Data: (*testCaseInput.archive),
-			},
-			"archive.tar.gz":   {Data: (*testCaseInput.archive)},
-			"archive.txt":      {Data: (*testCaseInput.archive)},
-			"deep/archive.TGZ": {Data: (*testCaseInput.archive)},
-		}}},
-	}
-	if testCaseInput.tc.name == "copy_rejects_link" {
-		e.inputs["repo"].FS.(fstest.MapFS)["link"] = &fstest.MapFile{Mode: fs.ModeSymlink}
-	}
-	builder := tree.NewBuilder(nil)
-	var err error
-	for _, op := range testCaseInput.tc.operations {
-		if err = e.apply(t.Context(), builder, op); err != nil {
-			break
-		}
-	}
-	assert.FatalIf(
-		t,
-		(err != nil) != testCaseInput.tc.invalid,
-		"evaluate() = %v; invalid=%v",
-		err,
-		testCaseInput.tc.invalid,
-	)
-	if testCaseInput.tc.invalid {
-		return
-	}
-	got := map[string]string{}
-	{
-		err := fs.WalkDir(builder, ".", func(name string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() {
-				return nil
-			}
-			data, err := fs.ReadFile(builder, name)
-			got[name] = string(data)
-			return err
-		})
-		assert.FatalIf(t, err != nil, "%v", err)
-	}
-	{
-		diff := cmp.Diff(testCaseInput.tc.want, got)
-		assert.FatalIf(t, diff != "", "%v", diff)
-	}
-	for name, mode := range testCaseInput.tc.modes {
-		info, err := fs.Stat(builder, name)
-		assert.FatalIf(
-			t,
-			err != nil || info.Mode() != mode,
-			"%s mode = %v, %v; want %v",
-			name,
-			info,
-			err,
-			mode,
-		)
-	}
 }

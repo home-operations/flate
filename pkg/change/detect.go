@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/go-git/go-git/v6/plumbing"
+
 	"golang.org/x/sync/errgroup"
 
 	"github.com/home-operations/flate/internal/inputprojection"
@@ -166,10 +168,10 @@ func (e *sourceDelta) compare(
 		return nil, err
 	}
 	var delta *Set
-	if equal {
+	if equal && e.immutableArtifact() {
 		delta = &Set{}
 	} else {
-		delta, err = Detect(ctx, e.artifacts[0], e.artifacts[1], work.Source(id))
+		delta, err = detect(ctx, e.artifacts, DetectConfig{Work: work.Source(id)}, equal)
 		if err != nil {
 			return nil, fmt.Errorf("compare source %s: %w", id, err)
 		}
@@ -195,13 +197,14 @@ func (e *sourceDelta) readerPair() readerPair {
 }
 
 func (e *sourceDelta) contentEqual(ctx context.Context, id manifest.NamedResource) (bool, error) {
-	a, b := e.artifacts[0], e.artifacts[1]
-	selected := id != manifest.BootstrapSourceID
-	equal := selected && a.Content != "" && a.Content == b.Content && a.Key != "" && a.Key == b.Key &&
-		a.Revision == b.Revision &&
-		a.Digest == b.Digest
-	if !selected || equal || a.ContentFingerprint == nil || b.ContentFingerprint == nil {
-		return equal, nil
+	if id == manifest.BootstrapSourceID {
+		return false, nil
+	}
+	if e.immutableArtifact() {
+		return true, nil
+	}
+	if !e.hasFingerprints() {
+		return false, nil
 	}
 	var fingerprints [2]string
 	for i, input := range e.artifacts {
@@ -215,6 +218,16 @@ func (e *sourceDelta) contentEqual(ctx context.Context, id manifest.NamedResourc
 		fingerprints[i] = fingerprint
 	}
 	return fingerprints[0] != "" && fingerprints[0] == fingerprints[1], nil
+}
+
+func (e *sourceDelta) immutableArtifact() bool {
+	a, b := e.artifacts[0], e.artifacts[1]
+	identity := a.Content != "" && a.Content == b.Content && a.Key != "" && a.Key == b.Key
+	return identity && a.Revision == b.Revision && a.Digest == b.Digest
+}
+
+func (e *sourceDelta) hasFingerprints() bool {
+	return e.artifacts[0].ContentFingerprint != nil && e.artifacts[1].ContentFingerprint != nil
 }
 
 func (s *Set) groupSources() {
@@ -264,26 +277,61 @@ func (s *Set) Contains(rel string) bool {
 	return ok
 }
 
+// DetectConfig borrows candidate evidence, which MUST remain immutable until Detect returns.
+type DetectConfig struct {
+	Work manifest.WorkScope
+	// Nil discovers all paths; an empty map compares no candidate content.
+	// True preserves read failures from uncertain checkout observations.
+	Candidates map[string]bool
+}
+
+// FileContext supplies source coordinates without granting execution membership.
+type FileContext struct {
+	Root, Origin, ToIndex string
+	Input                 *store.SourceArtifact
+	Paired                bool
+}
+
+// FileChanged preserves absent comparison evidence as unchanged.
+func (s *Set) FileChanged(location FileContext, file string) bool {
+	if s == nil {
+		return false
+	}
+	if location.Paired && location.Input != nil {
+		if location.ToIndex == "." {
+			return s.Contains(filepath.ToSlash(filepath.Clean(file)))
+		}
+		relative, err := filepath.Rel(location.Origin, filepath.Join(location.Root, filepath.FromSlash(file)))
+		return err == nil && s.Contains(filepath.ToSlash(relative))
+	}
+	return s.Contains(file)
+}
+
 // Detect compares admitted filesystems under each side's Flux ignore policy.
-func Detect(ctx context.Context, before, after *store.SourceArtifact, work manifest.WorkScope) (*Set, error) {
+func Detect(ctx context.Context, before, after *store.SourceArtifact, config DetectConfig) (*Set, error) {
+	return detect(ctx, [2]*store.SourceArtifact{before, after}, config, false)
+}
+
+func detect(
+	ctx context.Context,
+	inputs [2]*store.SourceArtifact,
+	config DetectConfig,
+	contentEqual bool,
+) (*Set, error) {
+	before, after := inputs[0], inputs[1]
 	if before == nil || after == nil || before.FS == nil || after.FS == nil {
 		return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
 	}
-	var digests [2]map[string]string
-	for i, input := range [2]*store.SourceArtifact{before, after} {
-		if source, ok := input.FS.(*gittree.FS); ok {
-			digests[i] = source.FileDigests()
-		}
-	}
-	if digests[0] == nil || digests[1] == nil {
-		digests = [2]map[string]string{}
-	}
-	scanned, err := scanInputs(ctx, [2]*store.SourceArtifact{before, after}, digests, work)
+	digests := completedDigests(inputs)
+	scanned, err := scanInputs(ctx, inputs, digests, config)
 	if err != nil {
 		return nil, err
 	}
-	comparison := compareScannedFiles(scanned.before, scanned.after, digests)
-	if err := hashJobs(ctx, before, after, comparison.jobs); err != nil {
+	comparison := compareScannedFiles(
+		&scanned,
+		comparisonEvidence{digests: digests, candidates: config.Candidates, contentEqual: contentEqual},
+	)
+	if err := hashJobs(ctx, inputs, comparison.jobs); err != nil {
 		return nil, err
 	}
 	for _, job := range comparison.jobs {
@@ -291,10 +339,10 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact, work manif
 			comparison.paths[job.name] = struct{}{}
 		}
 	}
-	out := &Set{paths: comparison.paths, origins: [2]*store.SourceArtifact{before, after}}
+	out := &Set{paths: comparison.paths, origins: inputs}
 	slices.Sort(comparison.oneSided)
 	for _, name := range comparison.oneSided {
-		_, onAfter := scanned.after[name]
+		_, onAfter := scanned.after.entries[name]
 		input := before.FS
 		if onAfter {
 			input = after.FS
@@ -310,31 +358,43 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact, work manif
 }
 
 type hashJob struct {
-	name    string
-	changed bool
+	name         string
+	present      [2]bool
+	changed      bool
+	readRequired bool
 }
 
-type scannedInputs struct{ before, after map[string]fileMeta }
+type scannedInputs struct{ before, after fileScan }
 
 func scanInputs(
 	ctx context.Context,
 	inputs [2]*store.SourceArtifact,
 	digests [2]map[string]string,
-	work manifest.WorkScope,
+	config DetectConfig,
 ) (scannedInputs, error) {
 	before, after := inputs[0], inputs[1]
-	beforeWork := work.Record(manifest.WorkPreparation, before.Key)
-	afterWork := work.Record(manifest.WorkPreparation, after.Key)
-	var bef, aft map[string]fileMeta
+	beforeWork := config.Work.Record(manifest.WorkPreparation, before.Key)
+	afterWork := config.Work.Record(manifest.WorkPreparation, after.Key)
+	var bef, aft fileScan
 	eg, scanCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		var err error
-		bef, err = scanTree(scanCtx, inputs, digests[0], beforeWork)
+		bef, err = scanTree(
+			scanCtx,
+			inputs,
+			scanEvidence{digests: digests[0], candidates: config.Candidates},
+			beforeWork,
+		)
 		return err
 	})
 	eg.Go(func() error {
 		var err error
-		aft, err = scanTree(scanCtx, [2]*store.SourceArtifact{after, before}, digests[1], afterWork)
+		aft, err = scanTree(
+			scanCtx,
+			[2]*store.SourceArtifact{after, before},
+			scanEvidence{digests: digests[1], candidates: config.Candidates},
+			afterWork,
+		)
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -343,7 +403,7 @@ func scanInputs(
 	return scannedInputs{before: bef, after: aft}, nil
 }
 
-func hashJobs(ctx context.Context, before, after *store.SourceArtifact, jobs []hashJob) error {
+func hashJobs(ctx context.Context, inputs [2]*store.SourceArtifact, jobs []hashJob) error {
 	hg, hashCtx := errgroup.WithContext(ctx)
 	const hashWorkers = 8
 	for worker := range min(hashWorkers, len(jobs)) {
@@ -352,16 +412,9 @@ func hashJobs(ctx context.Context, before, after *store.SourceArtifact, jobs []h
 				if err := hashCtx.Err(); err != nil {
 					return fmt.Errorf("context: %w", err)
 				}
-				job := &jobs[i]
-				b, err := hashFile(hashCtx, before.FS, job.name)
-				if err != nil {
+				if err := jobs[i].compare(hashCtx, inputs); err != nil {
 					return err
 				}
-				a, err := hashFile(hashCtx, after.FS, job.name)
-				if err != nil {
-					return err
-				}
-				job.changed = a != b
 			}
 			return nil
 		})
@@ -369,6 +422,47 @@ func hashJobs(ctx context.Context, before, after *store.SourceArtifact, jobs []h
 	if err := hg.Wait(); err != nil {
 		return fmt.Errorf("wait: %w", err)
 	}
+	return nil
+}
+
+func (j *hashJob) compare(ctx context.Context, inputs [2]*store.SourceArtifact) error {
+	var identities [2]string
+	for side, input := range inputs {
+		if !j.present[side] {
+			continue
+		}
+		if j.readRequired {
+			sum, err := hashFile(ctx, input.FS, j.name)
+			if err != nil {
+				return err
+			}
+			identities[side] = string(sum[:])
+			continue
+		}
+		source, native := input.FS.(*gittree.FS)
+		if !native {
+			var err error
+			source, _, err = gittree.New(
+				ctx,
+				nil,
+				plumbing.ZeroHash,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS},
+			)
+			if err != nil {
+				return err
+			}
+		}
+		observed, err := source.FreshInputs(ctx, []string{j.name}, map[string]fs.FileMode{j.name: 0})
+		if err != nil {
+			return err
+		}
+		identity, present := observed.Files[j.name]
+		if !present {
+			return fmt.Errorf("read %s: %w", j.name, fs.ErrNotExist)
+		}
+		identities[side] = identity
+	}
+	j.changed = j.changed || identities[0] != identities[1]
 	return nil
 }
 
@@ -401,10 +495,17 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 	return nil
 }
 
-func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.NamedResource]string, error) {
+func declaresInputs(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".yaml", ".yml", ".json":
+		return true
 	default:
+		return false
+	}
+}
+
+func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.NamedResource]string, error) {
+	if !declaresInputs(name) {
 		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
 	}
 	f, err := input.Open(name)
@@ -524,34 +625,73 @@ type fileComparison struct {
 	oneSided []string
 }
 
-func compareScannedFiles(
-	before, after map[string]fileMeta,
-	digests [2]map[string]string,
-) fileComparison {
-	paths := make(map[string]struct{}, len(after)/changeCapacityDivisor)
+type comparisonEvidence struct {
+	digests      [2]map[string]string
+	candidates   map[string]bool
+	contentEqual bool
+}
 
-	var jobs []hashJob
-	var oneSided []string
+func compareScannedFiles(scanned *scannedInputs, evidence comparisonEvidence) fileComparison {
+	before, after := scanned.before.entries, scanned.after.entries
+	out := fileComparison{paths: make(map[string]struct{}, len(after)/changeCapacityDivisor)}
 	for name, right := range after {
-		left, ok := before[name]
-		if !ok || left.size != right.size || digests[0] != nil && digests[0][name] != digests[1][name] {
-			paths[name] = struct{}{}
-			if !ok {
-				oneSided = append(oneSided, name)
+		left, present := before[name]
+		if !present {
+			if scanned.includesOneSided(name, evidence.candidates) {
+				out.addOneSided(name, [2]bool{false, true}, evidence)
 			}
 			continue
 		}
-		if digests[0] == nil {
-			jobs = append(jobs, hashJob{name: name})
+		uncertain, candidate := evidence.candidates[name]
+		if evidence.candidates != nil && !candidate {
+			continue
+		}
+		changed := !sameMode(left.mode, right.mode) || left.size != right.size
+		switch {
+		case uncertain:
+			out.jobs = append(
+				out.jobs,
+				hashJob{name: name, present: [2]bool{true, true}, changed: changed, readRequired: true},
+			)
+		case changed || evidence.digests[0] != nil && evidence.digests[0][name] != evidence.digests[1][name]:
+			out.paths[name] = struct{}{}
+		case evidence.digests[0] == nil && !evidence.contentEqual:
+			out.jobs = append(out.jobs, hashJob{name: name, present: [2]bool{true, true}})
 		}
 	}
 	for name := range before {
-		if _, ok := after[name]; !ok {
-			paths[name] = struct{}{}
-			oneSided = append(oneSided, name)
+		if _, present := after[name]; present {
+			continue
+		}
+		if scanned.includesOneSided(name, evidence.candidates) {
+			out.addOneSided(name, [2]bool{true, false}, evidence)
 		}
 	}
-	return fileComparison{paths: paths, jobs: jobs, oneSided: oneSided}
+	return out
+}
+
+func (s *scannedInputs) includesOneSided(name string, candidates map[string]bool) bool {
+	_, candidate := candidates[name]
+	if candidates == nil || candidate {
+		return true
+	}
+	return s.before.policy.Match(name, false) != s.after.policy.Match(name, false)
+}
+
+func (c *fileComparison) addOneSided(name string, present [2]bool, evidence comparisonEvidence) {
+	c.paths[name] = struct{}{}
+	c.oneSided = append(c.oneSided, name)
+	if evidence.candidates[name] && !declaresInputs(name) {
+		c.jobs = append(c.jobs, hashJob{name: name, present: present, changed: true, readRequired: true})
+	}
+}
+
+// Flux artifacts normalize all executable regular-file permissions to one class.
+func sameMode(a, b fs.FileMode) bool {
+	if a.Type() != b.Type() {
+		return false
+	}
+	return !a.IsRegular() || (a.Perm()&0o111 != 0) == (b.Perm()&0o111 != 0)
 }
 
 func inputDeclarations(docs []manifest.DocOccurrence) map[manifest.NamedResource]string {

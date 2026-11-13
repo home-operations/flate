@@ -81,7 +81,7 @@ func (l *Loader) buildProductions(
 	if b.err != nil {
 		return b.err
 	}
-	return l.addGenerated(ctx, generators)
+	return b.finalizeTargets(ctx, l, generators)
 }
 
 func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord) error {
@@ -100,9 +100,8 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 			}
 			p := manifest.Production{Owner: r.owner, Source: r.source, File: l.fileCoordinate(r.file)}
 			if ks, ok := l.Store.Get[*manifest.Kustomization](r.owner); ok {
-				p.Source = ks.SourceID()
-			}
-			if p.Source.Name == "" || p.Source.Kind == "" {
+				p.Source = ks.EffectiveSourceID()
+			} else if p.Source.Name == "" || p.Source.Kind == "" {
 				p.Source = manifest.BootstrapSourceID
 			}
 			if !slices.Contains(record.Productions, p) {
@@ -171,11 +170,17 @@ func (v *graphVisit) localCoordinate() string {
 }
 
 type producerDeclaration struct {
-	obj      manifest.BaseManifest
-	fact     *Occurrence
-	identity manifest.NamedResource
-	authored manifest.NamedResource
-	visit    graphVisit
+	obj                manifest.BaseManifest
+	fact               *authoredOccurrence
+	identity           manifest.NamedResource
+	authored           manifest.NamedResource
+	visit              graphVisit
+	substituteDisabled bool
+}
+
+type pendingProduction struct {
+	target     manifest.ProducerTarget
+	production manifest.Production
 }
 
 type selfProduceBuilder struct {
@@ -183,9 +188,11 @@ type selfProduceBuilder struct {
 	idx            *manifest.DiscoveryIndex
 	emittedFiles   map[string][]manifest.NamedResource
 	store          *store.Store
-	locations      map[manifest.NamedResource]Occurrence
+	locations      map[manifest.NamedResource]authoredOccurrence
 	scanExclusions bool
 	err            error
+	// Indirection keeps queue growth from escaping unrelated builder fields.
+	pending *[]pendingProduction
 }
 
 func (b *selfProduceBuilder) recordProduced(
@@ -285,43 +292,86 @@ func (b *selfProduceBuilder) recordProducer(declarationArg *producerDeclaration,
 		v.owner = projected
 	}
 	var targets []manifest.ProducerTarget
+	disabled := declaration.substituteDisabled
 	if declaration.fact != nil {
 		targets = declaration.fact.facts.authoredTargets
+		disabled = declaration.fact.facts.substituteDisabled
 	} else {
 		targets = manifest.ProducerTargets(obj, candidates...)
 	}
+	production := manifest.Production{
+		Owner: v.owner, Declaration: projected, Authored: authored,
+		Source: v.source, File: cmp.Or(v.localCoordinate(), v.coordinate),
+	}
+	uncertain := manifest.HasEnvsubstReference(projected.Name) || manifest.HasEnvsubstReference(projected.Namespace)
 	for _, target := range targets {
 		target.NamedResource = manifest.Resolve(target.NamedResource, v.namespace, v.fallback)
-		if target.Namespace == "" || target.Name == "" || manifest.HasEnvsubstReference(target.Name) ||
-			manifest.HasEnvsubstReference(target.Namespace) {
+		p := production
+		if manifest.HasEnvsubstReference(target.Name) || manifest.HasEnvsubstReference(target.Namespace) ||
+			uncertain && !disabled {
+			if disabled {
+				continue
+			}
+			if b.pending == nil {
+				b.pending = new([]pendingProduction)
+			}
+			*b.pending = append(*b.pending, pendingProduction{target: target, production: p})
 			continue
 		}
-		p := manifest.Production{
-			Owner:       v.owner,
-			Declaration: projected,
-			Authored:    authored,
-			Source:      v.source,
-			File:        cmp.Or(v.localCoordinate(), v.coordinate),
+		if uncertain {
+			p.Declaration, p.Authored = manifest.NamedResource{}, manifest.NamedResource{}
 		}
-		r := b.idx.Records[target.NamedResource]
-		if !slices.Contains(r.Productions, p) {
-			r.Productions = append(r.Productions, p)
+		b.recordTarget(&target, &p)
+	}
+}
+
+func (b *selfProduceBuilder) recordTarget(target *manifest.ProducerTarget, p *manifest.Production) {
+	if target.Namespace == "" || target.Name == "" {
+		return
+	}
+	r := b.idx.Records[target.NamedResource]
+	if !slices.Contains(r.Productions, *p) {
+		r.Productions = append(r.Productions, *p)
+	}
+	if len(target.DeclaredKeys) != 0 && !slices.ContainsFunc(
+		r.ReferenceData,
+		func(candidate manifest.ReferenceData) bool { return candidate.Production == *p },
+	) {
+		r.ReferenceData = append(
+			r.ReferenceData,
+			manifest.ReferenceData{Production: *p, DeclaredKeys: target.DeclaredKeys},
+		)
+	}
+	b.idx.Records[target.NamedResource] = r
+	if p.Owner != (manifest.NamedResource{}) && p.Declaration != (manifest.NamedResource{}) {
+		b.recordDeclarationProduction(p.Authored, p.Declaration, p)
+	}
+}
+
+func (b *selfProduceBuilder) finalizeTargets(ctx context.Context, l *Loader, generators []generatorRecord) error {
+	if err := l.addGenerated(ctx, generators); err != nil {
+		return err
+	}
+	if b.pending == nil {
+		return nil
+	}
+	resolution := substitutionResolution{loader: l}
+	for i := range *b.pending {
+		pending := &(*b.pending)[i]
+		target := pending.target
+		production := pending.production
+		known := resolution.resolveIdentity(ctx, production.Owner, &target.NamedResource)
+		if !resolution.resolveIdentity(ctx, production.Owner, &production.Declaration) {
+			production.Declaration, production.Authored = manifest.NamedResource{}, manifest.NamedResource{}
 		}
-		if len(target.DeclaredKeys) != 0 &&
-			!slices.ContainsFunc(
-				r.ReferenceData,
-				func(candidate manifest.ReferenceData) bool { return candidate.Production == p },
-			) {
-			r.ReferenceData = append(
-				r.ReferenceData,
-				manifest.ReferenceData{Production: p, DeclaredKeys: target.DeclaredKeys},
-			)
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 		}
-		b.idx.Records[target.NamedResource] = r
-		if v.owner != (manifest.NamedResource{}) && (declaration.fact == nil || !declaration.fact.facts.uncertain) {
-			b.recordDeclarationProduction(authored, projected, &p)
+		if known {
+			b.recordTarget(&target, &production)
 		}
 	}
+	return nil
 }
 
 func appendUniqueProducer[T comparable](dst []T, v T) []T {
@@ -358,10 +408,15 @@ func (b *selfProduceBuilder) recordDeclarationProduction(
 	production *manifest.Production,
 ) {
 	for _, producer := range []manifest.NamedResource{authored, projected} {
-		r := b.idx.Records[producer]
-		if !slices.Contains(r.Productions, *production) {
-			r.Productions = append(r.Productions, *production)
+		if producer.Name == "" || manifest.HasEnvsubstReference(producer.Name) ||
+			manifest.HasEnvsubstReference(producer.Namespace) {
+			continue
 		}
+		r := b.idx.Records[producer]
+		if slices.Contains(r.Productions, *production) {
+			continue
+		}
+		r.Productions = append(r.Productions, *production)
 		b.idx.Records[producer] = r
 	}
 }

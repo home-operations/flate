@@ -31,10 +31,12 @@ func TestExpandPostBuildSubstituteReference_DiagnosticLogContext(t *testing.T) {
 		SubstituteFrom: []manifest.SubstituteReference{
 			{Kind: "Unsupported", Name: "ignored"},
 			{Kind: manifest.KindConfigMap, Name: "missing"},
+			{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+			{Kind: manifest.KindSecret, Name: "unreadable"},
 		},
 	}
 	{
-		err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New()))
+		err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New()), testPermissions(nil))
 		assert.NoError(t, err)
 	}
 	count := 0

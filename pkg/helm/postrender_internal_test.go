@@ -60,6 +60,32 @@ data:
 	assert.ErrorIf(t, !strings.Contains(got, "greeting: bonjour"), "patch not applied:\n%s", got)
 }
 
+//nolint:paralleltest // A recovered kustomize panic resets the process-wide OpenAPI schema.
+func TestKustomizePostRenderer_RecoversKustomizePanic(t *testing.T) {
+	pr := newPostRenderer([]helmv2.PostRenderer{{
+		Kustomize: &helmv2.Kustomize{
+			Patches: []kustomize.Patch{{
+				Patch: `- op: add
+  path: /metadata/labels
+  value: {app: demo}`,
+				Target: &kustomize.Selector{Name: "app"},
+			}},
+		},
+	}})
+	assert.FatalIf(t, pr == nil, "%s", "expected non-nil post renderer")
+	out, err := pr.Run(bytes.NewBufferString(
+		"apiVersion: invalid[value,kind:synthetic]\nkind: invalid[value,kind:synthetic]\nmetadata: {name: app}\n",
+	))
+	assert.FatalIf(t, out != nil, "Run output = %q, want nil", out)
+	assert.FatalIf(t, err == nil, "%s", "Run: expected the recovered kustomize panic")
+	assert.Equal(
+		t,
+		err.Error(),
+		"postRenderer: kustomize build: recovered from kustomize build panic: "+
+			"number of previous names, number of previous namespaces, number of previous kinds not equal",
+	)
+}
+
 func TestKustomizePostRenderer_HoldsBuildMutex(t *testing.T) {
 	t.Parallel()
 	pr := newPostRenderer([]helmv2.PostRenderer{{

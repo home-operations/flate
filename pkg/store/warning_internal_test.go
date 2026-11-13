@@ -431,7 +431,7 @@ func TestWarnings_RetiredCredentialOrigin(t *testing.T) {
 			origin.GetObject(source.Named())
 			origin.GetObject(credential.Named())
 			assert.Equal(t, origin.input(credential.Named()).cell(conditionFacet), (*registration)(nil))
-			assert.Equal(t, origin.input(source.Named()).cell(conditionFacet).head, (*registrationHead)(nil))
+			assert.Equal(t, origin.input(source.Named()).cell(conditionFacet), (*registration)(nil))
 			warning := manifest.Warning{
 				Resource: source.Named(), Subject: manifest.DiagnosticFor(source.Named(), source),
 				Category: manifest.WarnSourceCredentialsUnavailable, Count: 1,
@@ -635,7 +635,8 @@ func assertNoWarningSubscriptions(t *testing.T, s *Store) {
 			1+len(sh.cells)+len(sh.conditions)+3*len(sh.artifacts)+len(sh.slots)+len(sh.byName),
 		)
 		heads[0] = &sh.absence
-		for _, cell := range sh.cells {
+		for id := range sh.cells {
+			cell := sh.cells[id]
 			heads = append(heads, cell.links)
 		}
 		for _, record := range sh.conditions {

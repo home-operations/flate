@@ -1,11 +1,8 @@
 package kustomize
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"iter"
 	"log/slog"
@@ -80,10 +77,11 @@ func (c *TreeCache) ApplicationReceipt(
 	evidence EntryEvidence,
 	files []string,
 ) (EntryEvidence, error) {
-	for _, receipt := range evidence.Renders {
-		if frame, ok := receipt.Value().(renderFrame); ok && len(frame.header.Reads.Remotes) != 0 {
-			return EntryEvidence{}, nil
-		}
+	if slices.ContainsFunc(evidence.Renders, func(receipt *manifest.RenderReceipt) bool {
+		frame, ok := receipt.Value().(renderFrame)
+		return ok && len(frame.header.Reads.Remotes) != 0
+	}) {
+		return EntryEvidence{}, nil
 	}
 	inputs := make([]EntryInput, 0, len(evidence.Inputs))
 	{
@@ -120,23 +118,29 @@ func (c *TreeCache) ApplicationReceipt(
 		}
 		reads.recordFile(filepath.Join(source.LocalPath, filepath.FromSlash(file)), data, readErr)
 	}
-	inventory, err := prepareAccepted(evidence.Owner, &renderFrame{}, "", evidence.Records)
-	if err != nil {
-		return EntryEvidence{}, err
-	}
 	slog.Debug("kustomize: entry application captured", "producer", evidence.Owner, "files", len(files))
 	snapshot := entrySnapshot{
 		Key:      prepared.key,
 		Binding:  manifest.Fingerprint(prepared.binding),
 		Producer: evidence.Producer,
+		Owner:    evidence.Owner,
 		Application: entryApplication{
 			Application: evidence.Application,
 			Root:        evidence.Root,
 			Reads:       reads.snapshot(),
 			Inputs:      inputs,
 			Complete:    true,
-			Inventory:   inventory,
 		},
+	}
+	frame, err := sourcecache.NewFrame("kustomize-entry", snapshot, nil)
+	if err != nil || frame == nil {
+		return EntryEvidence{}, err
+	}
+	snapshot.publication, err = frame.PreparePublication(ctx, sourcecache.FramePublicationInput{
+		Owner: evidence.Owner, Content: snapshot, Records: evidence.Records, Complete: true,
+	})
+	if err != nil || snapshot.publication == nil {
+		return EntryEvidence{}, err
 	}
 	return snapshot.evidence(), nil
 }
@@ -144,15 +148,16 @@ func (c *TreeCache) ApplicationReceipt(
 func equalEntryApplication(a, b any) bool {
 	x, ok := a.(entrySnapshot)
 	y, other := b.(entrySnapshot)
-	if !ok || !other || x.Key != y.Key || x.Binding != y.Binding || x.Producer != y.Producer {
+	if !ok || !other || x.publication == nil || y.publication == nil {
 		return false
 	}
 	left, right := x.Application, y.Application
-	return ok && other && left.Complete && right.Complete && left.Root == right.Root &&
-		manifest.ValueEqual(left.Application, right.Application) &&
-		slices.Equal(left.Reads.Files, right.Reads.Files) &&
-		slices.EqualFunc(left.Inputs, right.Inputs, equalEntryInput) &&
-		left.Inventory.equal(&right.Inventory)
+	bound := x.Key == y.Key && x.Binding == y.Binding && x.Producer == y.Producer && x.Owner == y.Owner
+	application := left.Complete && right.Complete && left.Root == right.Root &&
+		manifest.ValueEqual(left.Application, right.Application)
+	inputs := slices.Equal(left.Reads.Files, right.Reads.Files) &&
+		slices.EqualFunc(left.Inputs, right.Inputs, equalEntryInput)
+	return bound && application && inputs && x.publication.Identity() == y.publication.Identity()
 }
 
 // EntryValid qualifies provisional evidence against current resolved input content.
@@ -191,7 +196,17 @@ func (*TreeCache) EntryValid(ctx context.Context, evidence EntryEvidence, st *st
 	return evidence.Receipt != nil && ctx.Err() == nil
 }
 
+type entryApplication struct {
+	Root        manifest.NamedResource `json:"Root"`
+	Application map[string]any         `json:"Application"`
+	Reads       readSetSnapshot        `json:"Reads"`
+	Inputs      []EntryInput           `json:"Inputs"`
+	Complete    bool                   `json:"Complete"`
+}
+
 type entrySnapshot struct {
+	publication *sourcecache.FramePublication
+	Owner       manifest.NamedResource `json:"Owner"`
 	Producer    manifest.NamedResource `json:"Producer"`
 	Key         string                 `json:"Key"`
 	Binding     string                 `json:"Binding"`
@@ -200,7 +215,6 @@ type entrySnapshot struct {
 
 func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (renderRequest, error) {
 	req.Spec = nil
-	req.SubPath = manifest.NormalizeClaimBase(req.SubPath)
 	prepared, err := c.prepareRender(ctx, req)
 	if err != nil {
 		return renderRequest{}, err
@@ -208,7 +222,7 @@ func (c *TreeCache) prepareEntry(ctx context.Context, req *RenderRequest) (rende
 	prepared.key = manifest.Fingerprint(struct {
 		EntryPath string
 		Source    renderBinding
-	}{req.SubPath, prepared.binding})
+	}{manifest.NormalizeClaimBase(req.SubPath), prepared.binding})
 	req.Work.Fingerprint(prepared.key)
 	return prepared, nil
 }
@@ -224,22 +238,18 @@ func (c *TreeCache) RecordEntry(ctx context.Context, receipt *manifest.RenderRec
 		return ctx.Err()
 	}
 	snapshot, ok := receipt.Value().(entrySnapshot)
-	if !ok || !snapshot.Application.Complete || !snapshot.Application.Inventory.Complete ||
-		snapshot.Application.Inputs == nil {
+	complete := ok && snapshot.Application.Complete && snapshot.publication != nil
+	if complete {
+		_, complete = snapshot.publication.Frame().History(snapshot.Owner, snapshot)
+	}
+	if !complete || snapshot.Application.Inputs == nil {
 		return manifest.NewError(manifest.ErrFlux, nil, "incomplete entry qualification evidence")
-	}
-	data, err := json.Marshal(snapshot)
-	if err != nil {
-		return fmt.Errorf("encode entry receipt: %w", err)
-	}
-	if len(data) > frameHeaderLimit {
-		return manifest.NewError(manifest.ErrFlux, nil, "entry receipt exceeds frame limit")
 	}
 	if !reads.Valid() {
 		return nil
 	}
-	return sourcecache.RecordInventory(ctx, c.owner, sourcecache.AcceptedInventory[*bytes.Reader]{
-		Key: snapshot.Key, Acceptance: manifest.Fingerprint(data), Content: bytes.NewReader(data),
+	return sourcecache.RecordInventory(ctx, c.owner, sourcecache.AcceptedInventory[*sourcecache.FramePublication]{
+		Key: snapshot.Key, Acceptance: snapshot.publication.Identity(), Content: snapshot.publication,
 	})
 }
 
@@ -263,18 +273,23 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 	if err != nil {
 		return EntryEvidence{}
 	}
-	data, err := fs.ReadFile(reader, "content")
-	if err != nil {
-		return EntryEvidence{}
-	}
 	var snapshot entrySnapshot
-	if len(data) > frameHeaderLimit || json.Unmarshal(data, &snapshot) != nil || snapshot.Key != prepared.key ||
-		snapshot.Binding != manifest.Fingerprint(prepared.binding) {
+	frame, err := sourcecache.OpenFrame(ctx, "kustomize-entry", reader, &snapshot)
+	if err != nil || snapshot.Key != prepared.key || snapshot.Binding != manifest.Fingerprint(prepared.binding) {
 		return EntryEvidence{}
 	}
 	application := snapshot.Application
-	if !application.Complete || application.Inputs == nil || !application.Inventory.Complete ||
-		application.Inventory.Version != acceptedRenderVersion {
+	if !application.Complete || application.Inputs == nil {
+		return EntryEvidence{}
+	}
+	records, complete := frame.History(snapshot.Owner, snapshot)
+	if !complete {
+		return EntryEvidence{}
+	}
+	snapshot.publication, err = frame.PreparePublication(ctx, sourcecache.FramePublicationInput{
+		Owner: snapshot.Owner, Content: snapshot, Records: records, Complete: true,
+	})
+	if err != nil || snapshot.publication == nil {
 		return EntryEvidence{}
 	}
 	valid, err := application.Reads.localsValid(ctx, req.Source.FS, false)
@@ -286,12 +301,12 @@ func (c *TreeCache) PreviousEntry(ctx context.Context, req RenderRequest) EntryE
 
 func (s *entrySnapshot) evidence() EntryEvidence {
 	application := s.Application
-	records, _ := (renderFrame{accepted: &application.Inventory}).history(application.Inventory.Owner)
+	records, _ := s.publication.Frame().History(s.Owner, s)
 	return EntryEvidence{
 		Producer:    s.Producer,
 		Application: application.Application,
 		Root:        application.Root,
-		Owner:       application.Inventory.Owner,
+		Owner:       s.Owner,
 		Records:     records,
 		Inputs:      application.Inputs,
 		Receipt:     manifest.NewRenderReceipt(*s, equalEntryApplication),

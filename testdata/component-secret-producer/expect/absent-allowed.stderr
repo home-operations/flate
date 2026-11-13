@@ -1,0 +1,3 @@
+
+  ⚠ warnings (1)
+    [UnresolvedSubstitution] substituteFrom Secret "paperless" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values

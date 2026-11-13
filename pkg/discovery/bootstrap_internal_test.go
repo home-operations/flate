@@ -11,6 +11,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -56,7 +58,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	}
 
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
@@ -74,7 +76,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	}
 
 	{
-		count, err := d.resolveEntrySources(t.Context(), false)
+		count, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil || count != 1, "initial evidence resolution = %d, %v", count, err)
 	}
 
@@ -92,7 +94,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 		) != nil, "%v", "source removal retained published evidence")
 
 	{
-		count, err := d.resolveEntrySources(t.Context(), false)
+		count, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil || count != 1, "removed evidence resolution = %d, %v", count, err)
 	}
 
@@ -107,8 +109,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	)
 
 	{
-		count, err := d.resolveEntrySources(
-			t.Context(),
+		count, err := d.resolveTestSources(t.Context(),
 			true,
 		)
 		assert.FatalIf(t, err != nil || count != 0 ||
@@ -121,15 +122,14 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	st.AddObject(child, childDoc)
 
 	{
-		count, err := d.resolveEntrySources(
-			t.Context(),
-			false,
-		)
-		assert.FatalIf(t, err != nil || count != 0 ||
-			st.GetArtifact(
-				id,
-				store.ArtifactContent,
-			) != after, "source republication changed resolved evidence: %d, %v", count, err)
+		count, err := d.resolveTestSources(t.Context(), false)
+		assert.FatalIf(t, err != nil || count != 1, "source republication = %d, %v", count, err)
+		current, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+		assert.FatalIf(t, !ok, "republished source artifact has type %T", st.GetArtifact(id, store.ArtifactContent))
+		assert.FatalIf(t, current == after || !current.SameMaterial(after),
+			"source republication did not retain material in a new wrapper: %+v", current)
+		assert.FatalIf(t, current.Reads == nil || !current.Reads.Valid() || after.Reads.Valid(),
+			"source republication did not renew acquisition evidence: %+v", current)
 	}
 
 	_, doc, attempt := st.GetEmission(id)
@@ -150,7 +150,7 @@ func TestResolveEntrySources_IndexedRoots(t *testing.T) {
 		want             bool
 	}{
 		{name: "git", kind: manifest.KindGitRepository, want: true},
-		{name: "bucket", kind: manifest.KindBucket},
+		{name: "bucket", kind: manifest.KindBucket, want: true},
 		{name: "helm repository", kind: manifest.KindHelmRepository},
 		{name: "oci", kind: manifest.KindOCIRepository},
 		{name: "covered", kind: manifest.KindGitRepository, role: "covered"},
@@ -253,7 +253,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			})
 		}
 		d := Session{cfg: Config{Path: root, Store: st}, loader: l}
-		count, err := d.resolveEntrySources(t.Context(), true)
+		count, err := d.resolveTestSources(t.Context(), true)
 		if err != nil || count != 0 || st.GetObject(src.Named()) != src ||
 			st.GetArtifact(src.Named(), store.ArtifactContent) != nil {
 			t.Fatalf("real source became an alias: count=%d err=%v", count, err)
@@ -265,8 +265,8 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		want                               bool
 	}{
 		{manifest.KindGitRepository, manifest.SourceDomain, "flux-system", "source", "", true},
-		{manifest.KindOCIRepository, manifest.SourceDomain, "other", "source", "", false},
-		{manifest.KindBucket, manifest.SourceDomain, "other", "source", "", false},
+		{manifest.KindOCIRepository, manifest.SourceDomain, "other", "source", "", true},
+		{manifest.KindBucket, manifest.SourceDomain, "other", "source", "", true},
 		{manifest.KindHelmRepository, manifest.SourceDomain, "other", "source", "", false},
 		{manifest.KindExternalArtifact, manifest.SourceDomain, "other", "source", "", false},
 		{manifest.KindGitRepository, "wrong.group", "other", "source", "", false},
@@ -295,6 +295,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		},
 		{
 			name: "artifact reference without path fact",
+			want: true,
 			obj: &manifest.RawObject{
 				APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps",
 				Spec: map[string]any{"sources": []any{map[string]any{"kind": manifest.KindOCIRepository, "name": "source"}}},
@@ -379,7 +380,7 @@ spec:
 	d := Session{cfg: Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st}, loader: l}
 
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
@@ -413,14 +414,16 @@ spec:
 
 	record, ok := l.Index.Lookup(id)
 	if !ok ||
-		l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path) != (testCaseInput.role == "") {
+		selection.Root(
+			rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path),
+		).Admitted != (testCaseInput.role == "") {
 		t.Fatalf(
 			"indexed root admission = %t, record = %+v",
-			l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path),
+			selection.Root(rootAtForTest(l, l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)).Admitted,
 			record,
 		)
 	}
-	count, err := d.resolveEntrySources(t.Context(), true)
+	count, err := d.resolveTestSources(t.Context(), true)
 
 	assert.FatalIf(
 		t,
@@ -480,12 +483,12 @@ func testRunIndexedRootPreparedProjectionNative(
 	)
 
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
 	{
-		err := d.loadManifests(t.Context(), (*testCaseInput.root), false)
+		err := d.loadManifestsTest(t.Context(), (*testCaseInput.root), false)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 
@@ -590,7 +593,7 @@ func testResolveEntrySourcesIdentityCase(t *testing.T, testCaseInput *struct {
 	}
 	st.AddObject(ks)
 	d := Session{cfg: Config{Path: root, Store: st}}
-	count, err := d.resolveEntrySources(t.Context(), true)
+	count, err := d.resolveTestSources(t.Context(), true)
 
 	assert.FatalIf(t, err != nil || (count == 1) != testCaseInput.want, "resolution = %d, %v", count, err)
 
@@ -618,7 +621,7 @@ func testResolveEntrySourcesIdentityCase2(t *testing.T, testCaseInput *struct {
 	)
 	st.AddObject(testCaseInput.obj)
 	d := Session{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
-	count, err := d.resolveEntrySources(t.Context(), true)
+	count, err := d.resolveTestSources(t.Context(), true)
 
 	assert.FatalIf(
 		t,
@@ -681,7 +684,7 @@ func testResolveEntrySourcesIdentityCase3(t *testing.T, testCaseInput *string,
 	d := Session{cfg: cfg}
 
 	{
-		_, err := d.resolveEntrySources(t.Context(), true)
+		_, err := d.resolveTestSources(t.Context(), true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 

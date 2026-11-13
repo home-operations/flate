@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -78,7 +79,7 @@ func TestLoad_WorkCensusLifetime(t *testing.T) {
 	st.SetWorkTree(recorder.Key.Tree, recorder.Scope())
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Selection.Roots = []manifest.NamedResource{{Namespace: "apps"}}
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{{Namespace: "apps"}}})
 	_, err := l.Load(
 		t.Context(),
 		root,

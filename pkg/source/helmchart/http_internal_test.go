@@ -220,7 +220,13 @@ func testFetchHTTPChartSecretReferencesCase1(t *testing.T, tc *struct {
 
 	r := httpRepo("https://charts.example")
 	secret := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "first"}}
-	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret { return secret })
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) store.ReferenceFacts {
+		secretInput := secret
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	})
 	if tc.cert {
 		r.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	} else {
@@ -452,8 +458,10 @@ func TestFetchHTTPChart_BasicAuth(t *testing.T) {
 
 	r := httpRepo(srv.URL)
 	r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
-	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "hunter2"}}
+	f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "hunter2"}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	})
 
 	base := *r
@@ -525,8 +533,10 @@ entries:
 			r := httpRepo(repoSrv.URL)
 			r.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 			r.PassCredentials = tc.passCredentials
-			f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "hunter2"}}
+			f, fInputs := newHTTPFetcherWithSecrets(t, r, func(_, _ string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "hunter2"}}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			})
 
 			{
@@ -625,7 +635,7 @@ func TestHTTPRepositoryGet_ResponseRules(t *testing.T) {
 				})},
 			}
 			var body bytes.Buffer
-			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", &body, nil)
+			_, err := r.get(t.Context(), "https://charts.invalid/chart.tgz", httpDownload{Writer: &body})
 			if status == http.StatusOK {
 				assert.FatalIf(t, err != nil || body.String() != "content",
 					"successful response: body=%q error=%v", body.String(), err)

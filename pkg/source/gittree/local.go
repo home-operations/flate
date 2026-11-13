@@ -2,7 +2,6 @@ package gittree
 
 import (
 	"cmp"
-	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -10,36 +9,12 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
-	"github.com/home-operations/flate/pkg/store"
 )
-
-// AdmitDirectory constructs the direct input artifact at the resolved local root.
-// Synthetic source labels MUST use their already admitted filesystem instead.
-func AdmitDirectory(ctx context.Context, location *gitrepo.Location) (*store.SourceArtifact, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
-	}
-	root := location.ContentRoot
-	if _, err := os.Stat(root); err != nil {
-		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
-	}
-	input := newLocal(root, false, &localPolicy{})
-	input.location = location
-	return &store.SourceArtifact{
-		Kind:               manifest.KindGitRepository,
-		URL:                "file://" + root,
-		LocalPath:          root,
-		LocalRoot:          root,
-		FS:                 input,
-		ContentFingerprint: ContentFingerprint,
-	}, nil
-}
 
 type localView struct {
 	root         string
@@ -197,8 +172,8 @@ func (g *localView) mounted(name string) (string, error) {
 	if !fs.ValidPath(name) {
 		return "", &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrInvalid}
 	}
-	for parent := name; parent != "."; parent = path.Dir(parent) {
-		if path.Base(parent) == gitDirectory {
+	for component := range strings.SplitSeq(name, "/") {
+		if component == gitDirectory {
 			return "", &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 		}
 	}

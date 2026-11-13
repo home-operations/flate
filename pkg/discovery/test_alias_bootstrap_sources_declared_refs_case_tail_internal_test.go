@@ -154,6 +154,7 @@ type testAliasBootstrapSourcesDeclaredRefsCaseTailInputs struct {
 		noStore    bool
 		sparse     bool
 		submodules bool
+		lookupErr  bool
 	}
 	revision  *string
 	side      *string

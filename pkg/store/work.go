@@ -13,7 +13,8 @@ func (s *Store) admissionWorkSize() int {
 	}
 	count := 0
 	for _, sh := range s.shards {
-		for _, cell := range sh.cells {
+		for id := range sh.cells {
+			cell := sh.cells[id]
 			if cell.generation != 0 {
 				count++
 			}
@@ -27,7 +28,8 @@ func (s *Store) appendAdmissionWork(summary manifest.WorkSummary) manifest.WorkS
 		return summary
 	}
 	for _, sh := range s.shards {
-		for id, cell := range sh.cells {
+		for id := range sh.cells {
+			cell := sh.cells[id]
 			if cell.generation == 0 {
 				continue
 			}
@@ -74,8 +76,6 @@ func (s *Store) WorkSnapshot() manifest.WorkSummary {
 	return s.appendAdmissionWork(s.workScope.Snapshot(s.admissionWorkSize())).Normalize()
 }
 
-const sourceReferenceUse = "source"
-
 // BeginExecution borrows optional run-owned counters for an execution.
 func (r *ReadSet) BeginExecution(obj manifest.BaseManifest) {
 	if r.store.workScope == (manifest.WorkScope{}) {
@@ -89,12 +89,12 @@ func (r *ReadSet) BeginExecution(obj manifest.BaseManifest) {
 	}
 	key := manifest.WorkKey{Tree: r.store.workTree, Owner: r.id, Source: manifest.BootstrapSourceID}
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-		if ref.Use == sourceReferenceUse || ref.Use == "chart" {
+		if ref.IsSource() {
 			key.Source = ref.NamedResource
 			break
 		}
 	}
-	if manifest.KindOf(obj).Group == manifest.SourceDomain {
+	if manifest.KindOf(obj).IsSource() {
 		key.Source = r.id
 	}
 	r.work = r.store.workScope.Recorder(&key)

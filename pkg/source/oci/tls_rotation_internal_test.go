@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -183,7 +185,7 @@ func testFetcherResolveTLSSnapshotRotationCase(
 		t.Setenv("no_proxy", "*")
 	}
 	c := cachetest.New(t, (*testCaseInput.root), sourcecache.New)
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
 		testCaseInput.lookups.
 			Add(1)
 		config := fmt.Sprintf(
@@ -191,7 +193,11 @@ func testFetcherResolveTLSSnapshotRotationCase(
 			mustURL(t, (*testCaseInput.srv).URL).Host, testCaseInput.password.
 				Load().(string),
 		)
-		return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config, "ca.crt": (*testCaseInput.ca)}}
+
+		secretInput := &manifest.Secret{
+			StringData: map[string]any{".dockerconfigjson": config, "ca.crt": (*testCaseInput.ca)},
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 	before := testCaseInput.requests.Load()

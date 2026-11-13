@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/opencontainers/go-digest"
@@ -153,7 +155,7 @@ func testControllerRenderedSecretWinsOverRegistryConfigCaseTail(
 		repo.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 		st.AddObject(repo)
 		ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
-			deps := c.ReconcileNode(ctx, repo.Named(), 0).Blocked
+			deps := c.ReconcileNode(ctx, repo.Named(), 0, schedule.Result{}).Blocked
 			assert.ErrorIf(t, len(deps) != 1 ||
 				deps[0] != (manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "creds"}), "blocked dependencies = %v, want Secret ns/creds", deps)
 		})
@@ -174,7 +176,7 @@ func testControllerRenderedSecretWinsOverRegistryConfigCaseTail(
 	for _, repo := range repos {
 		ts.Go(t.Context(), repo.Name, func(ctx context.Context) {
 			{
-				deps := c.ReconcileNode(ctx, repo.Named(), 0).Blocked
+				deps := c.ReconcileNode(ctx, repo.Named(), 0, schedule.Result{}).Blocked
 				assert.ErrorIf(
 					t,
 					len(deps) != 0,

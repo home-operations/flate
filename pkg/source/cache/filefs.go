@@ -51,10 +51,17 @@ func (f fileFS) Open(name string) (fs.File, error) {
 	if err != nil {
 		return nil, &CacheError{err}
 	}
-	return &blobFile{
+	file := &blobFile{
 		ReadCloser: r,
 		FileInfo:   (&tar.Header{Name: f.name, Mode: privateFileMode, Size: f.size}).FileInfo(),
-	}, nil
+	}
+	if positioned, ok := r.(io.ReaderAt); ok {
+		return &struct {
+			*blobFile
+			io.ReaderAt
+		}{file, positioned}, nil
+	}
+	return file, nil
 }
 
 func (f fileFS) ReadFile(name string) ([]byte, error) {
@@ -93,3 +100,7 @@ func AcquisitionIdentity(input any) string {
 		return ""
 	}
 }
+
+type memoryBlob struct{ *bytes.Reader }
+
+func (memoryBlob) Close() error { return nil }

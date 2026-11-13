@@ -13,8 +13,8 @@ import (
 
 	flux "github.com/fluxcd/pkg/sourceignore"
 	"github.com/fluxcd/pkg/sourceignore/gitignore"
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6/plumbing"
 
 	"github.com/home-operations/flate/pkg/source/gittree"
 )

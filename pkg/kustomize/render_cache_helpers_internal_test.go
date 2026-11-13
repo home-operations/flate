@@ -13,7 +13,7 @@ import (
 )
 
 //nolint:gochecknoglobals // Accepted-history fixtures must share the identical immutable render input.
-var acceptedInput = RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec}.Content(nil)
+var acceptedInput = PrepareShape(&RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec}, nil).Content()
 
 func acceptedEmission(
 	tb testing.TB,
@@ -61,8 +61,7 @@ func previousHistory(
 	if !found {
 		return nil, false
 	}
-	content := acceptedInput.(renderContent)
-	content.Dependencies = request.DependencySubstitutions
+	content := acceptedInput
 	return cache.RenderHistory(owner, receipt, content)
 }
 

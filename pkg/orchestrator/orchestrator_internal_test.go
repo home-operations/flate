@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -52,7 +54,7 @@ func TestOrchestrator_DebugSelection(t *testing.T) {
 				o, err := newTestOrchestrator(
 					t,
 					Tree{Path: root},
-					Config{Concurrency: 2, Selection: manifest.Selection{Changed: true}},
+					Config{Concurrency: 2, Selection: selection.Request{Changed: true}},
 				)
 				assert.NoError(t, err)
 				assert.NoError(t, o.prepareBootstrap(t.Context()))
@@ -90,8 +92,7 @@ func TestOrchestrator_DebugSelection(t *testing.T) {
 						slog.New(slog.NewJSONHandler(new(bytes.Buffer), &slog.HandlerOptions{Level: level})),
 					)
 					defer slog.SetDefault(previous)
-					runs, err := RenderTrees(
-						t.Context(),
+					runs, err := renderTreesForTest(t.Context(), t,
 						[]Tree{
 							{
 								ID: manifest.TreeID{
@@ -119,8 +120,7 @@ func TestOrchestrator_DebugSelection(t *testing.T) {
 
 func TestRenderTrees_MissingPath(t *testing.T) {
 	t.Parallel()
-	runs, err := RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{},
 	)
@@ -501,8 +501,7 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
 	rendersDemo := func(t *testing.T, cfg treeConfig) bool {
 		t.Helper()
-		renderedSingleton2, err := RenderTrees(
-			context.Background(),
+		renderedSingleton2, err := renderTreesForTest(context.Background(), t,
 			[]Tree{
 				{
 					RepoRoot:        cfg.RepoRoot,
@@ -728,8 +727,7 @@ func testOrchestratorCommentedOutKSNotReconciledCase(
 		"kubernetes/components/backup/backup.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: backup-cm}\n",
 	)
-	renderedSingleton1, err := RenderTrees(
-		t.Context(),
+	renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				Path: filepath.Join(dir, (*testCaseInput.entry)),

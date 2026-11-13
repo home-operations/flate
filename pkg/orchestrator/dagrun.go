@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/discovery"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -27,8 +28,20 @@ func (d dagDispatcher) BlockTillDone() {
 	d.o.tasks.BlockTillDone()
 }
 
-func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-	execution := d.o.controllers.ReconcileNode(ctx, id, level)
+func (d dagDispatcher) Dispatch(
+	ctx context.Context,
+	id schedule.NodeID,
+	level manifest.DrainLevel,
+	previous schedule.Result,
+) schedule.Result {
+	if previous.Assessment == nil {
+		if probe := *d.o.probeSlot(id); probe != nil && !probe.ProbeConsumed {
+			probe.ProbeConsumed = true
+			previous.Assessment = probe
+			defer probe.Retire()
+		}
+	}
+	execution := d.o.controllers.ReconcileNode(ctx, id, level, previous)
 	if execution == nil {
 		return schedule.Result{}
 	}
@@ -37,6 +50,17 @@ func (d dagDispatcher) Dispatch(ctx context.Context, id schedule.NodeID, level m
 
 func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.NodeID {
 	changed := slices.Collect(d.o.store.Sweep())
+	if quiescent && ctx.Err() == nil && d.o.session != nil && d.o.selection != nil {
+		pending := slices.DeleteFunc(d.o.session.PendingSources(), d.o.includeNode)
+		if err := reconcileConstruction(ctx, pending, d.o.src, d.o.tasks); err != nil {
+			d.o.entryFailure = err
+		}
+		changed = append(changed, slices.Collect(d.o.store.Sweep())...)
+	}
+	if quiescent {
+		d.o.sweepProbes(false)
+		d.o.loader.SweepPreparations()
+	}
 	if !quiescent || len(changed) != 0 || ctx.Err() != nil {
 		return changed
 	}
@@ -77,6 +101,7 @@ func (o *Orchestrator) seedNodes() ([]manifest.NamedResource, error) {
 }
 
 func (o *Orchestrator) runDAG(ctx context.Context) error {
+	o.sweepProbes(false)
 	dispatcher := dagDispatcher{o}
 	sched := schedule.New(dispatcher, dispatcher)
 
@@ -93,6 +118,11 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if o.session != nil {
+		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
+			return phaseErr
+		}
+	}
 	sched.Seed(seeds)
 	err = sched.Run(ctx)
 	o.freezeWork()
@@ -105,7 +135,7 @@ func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
 		return false
 	}
 	info := manifest.KindOf(obj)
-	return o.store.Policy(obj.Named()).Reconcile && (info.Group != manifest.SourceDomain || o.src.Owns(obj.Named()))
+	return o.store.Policy(obj.Named()).Reconcile && (!info.IsSource() || o.src.Owns(obj.Named()))
 }
 
 func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
@@ -117,7 +147,8 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 		}
 		o.admission.AddApplication(o.store, obj)
 		if err := o.visitNodes(obj, false, sched.OnArrival); err != nil {
-			o.store.UpdateFailure(id, err)
+			o.store.SetPreflight(id, err.Error())
+			sched.OnArrival(id, true)
 		}
 	}, false)
 
@@ -146,9 +177,10 @@ func (o *Orchestrator) visitNodes(
 			}
 			return nil
 		}
+		o.selection.Include(id)
 		policy := o.store.Policy(id)
 		eligible := o.schedulable(obj)
-		if o.filter.Enabled() && eligible && !o.includeNode(id) {
+		if (o.selection != nil) && eligible && !o.includeNode(id) {
 			return nil
 		}
 		runnable := eligible && (policy.Root || dependency)
@@ -166,35 +198,24 @@ func (o *Orchestrator) visitNodes(
 }
 
 func (o *Orchestrator) includeNode(id manifest.NamedResource) bool {
-	included := o.filter.ShouldReconcile(id)
-	o.store.SetIncluded(id, included, o.filter.OrdinaryDemand(id))
-	return included
+	return o.selection.Snapshot().Reconcile(id)
 }
 
 func (d dagDispatcher) admitRawRoots(ctx context.Context) bool {
-	var reads *store.ReadSet
-	for id, record := range d.o.index.Files() { //nolint:gocritic // The iterator supplies independent value snapshots.
-		selected := d.o.filter.Membership(id).Selected
-		if selected && record.Path != "" && record.Parent == (manifest.NamedResource{}) &&
-			record.BuilderOwner == (manifest.NamedResource{}) &&
-			d.o.loader.AdmitsRoot(d.o.loader.CatalogObject(id), record.Path) &&
-			d.o.store.GetObject(id) == nil {
-			if reads == nil {
-				reads = &store.ReadSet{}
-				reads.Init(d.o.store, manifest.NamedResource{}, nil)
-			}
-			reads.RequireData(id)
-		}
+	reads := d.o.selection.PendingRoots()
+	if reads == nil {
+		return false
 	}
-	if reads != nil {
-		_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, reads)
-		d.o.store.Retire(reads)
-		if err != nil {
-			d.o.entryFailure = err
-		}
-		return true
+	defer d.o.store.Retire(reads)
+	_, err := d.o.ksc.KeepEmitted(
+		ctx,
+		manifest.NamedResource{},
+		selection.PrepareRequest{Reads: reads, Preparation: &d.o.admissionPreparation},
+	)
+	if err != nil {
+		d.o.entryFailure = err
 	}
-	return false
+	return true
 }
 
 func (o *Orchestrator) admitEntry(ctx context.Context) (bool, error) {
@@ -233,17 +254,8 @@ func (o *Orchestrator) commitEntry(
 	changed := root == nil || root != o.store.GetDeclaration(root.Named())
 	previous := o.entryBinding
 	if changed {
-		incoming := store.Child{}
-		if root != nil {
-			application := manifest.EntryApplication{Source: root.SourceID(), Path: root.Path}
-			incoming = store.Child{Obj: root, Entry: &application}
-		}
-		proposal, err := o.loader.Prepare(ctx, loader.PrepareRequest{Incoming: incoming, Reads: binding.Reads})
-		if err != nil {
-			return false, err
-		}
-		committed, err := o.loader.Commit(ctx, proposal, loader.Execution)
-		if err != nil || !committed || !binding.Reads.Valid() {
+		committed, err := o.publishEntry(ctx, root, binding)
+		if err != nil || !committed {
 			return false, err
 		}
 	}
@@ -256,6 +268,35 @@ func (o *Orchestrator) commitEntry(
 		return true, nil
 	}
 	return true, o.installAdmission(ctx)
+}
+
+func (o *Orchestrator) publishEntry(
+	ctx context.Context,
+	root *manifest.Kustomization,
+	binding *discovery.Binding,
+) (bool, error) {
+	incoming := store.Child{}
+	if root != nil {
+		application := manifest.EntryApplication{Source: root.EffectiveSourceID(), Path: root.Path}
+		incoming = store.Child{Obj: root, Entry: &application}
+	}
+	if o.selection == nil {
+		if incoming.Obj != nil {
+			binding.Reads.Admit(incoming, binding.Source, manifest.NamedResource{})
+		}
+		return binding.Reads.Valid(), nil
+	}
+	options := selection.AdmissionOptions{
+		Request: selection.PrepareRequest{
+			Generation: []store.Child{incoming}, Reads: binding.Reads, Preparation: &o.admissionPreparation,
+		},
+		Stage: selection.Execution,
+	}
+	if binding.Entry != nil {
+		options.EntryHistory.Owner, options.EntryHistory.Records = binding.Entry.Owner, binding.Entry.Records
+	}
+	_, committed, err := o.prepareAdmission(ctx, options)
+	return committed && binding.Reads.Valid(), err
 }
 
 func (o *Orchestrator) visitNodeReferences(

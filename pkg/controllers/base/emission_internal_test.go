@@ -80,7 +80,7 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 		)
 
 		next := &store.Emission{Children: children, Manifests: docs, Failures: failures, Complete: true}
-		c.emit(t.Context(), parent.Named(), next, nil)
+		(&Execution{Controller: c}).emit(t.Context(), parent.Named(), next, nil)
 		children[0] = store.Child{}
 		docs[0].Document = nil
 		assert.FatalIf(
@@ -116,7 +116,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 					sibling.Named(): {File: "sibling.yaml"},
 				},
 			}
-			filterLoader := admissiontest.New(
+			filterLoader, _ := admissiontest.New(
 				t,
 				admissiontest.Config{
 					Changes:   change.NewSet([]string{"parent.yaml"}),
@@ -125,9 +125,9 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 					Root:      "",
 				},
 			)
-			admissiontest.Commit(t, filterLoader, nil)
-			filter := filterLoader.Options.Filter
-			c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
+			admissiontest.Commit(t, filterLoader.Options.Session, nil)
+			filter := filterLoader.Options.Session
+			c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
 			s.SetIncluded(parent.Named(), true, true)
 			docs := []map[string]any{
 				{
@@ -163,7 +163,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				visible, selected := true, true
 				for _, child := range children {
 					visible = visible && s.GetObject(child.Obj.Named()) != nil
-					selected = selected && filter.ShouldReconcile(child.Obj.Named())
+					selected = selected && filter.Snapshot().Reconcile(child.Obj.Named())
 				}
 				arrivals <- observation{id, selected, visible, len(s.Productions(id, index)) > 0}
 			}, false)
@@ -192,7 +192,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 				assert.Equal(t, got.visible, true)
 				assert.Equal(t, got.owned, true)
 			}
-			assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+			assert.Equal(t, filter.Snapshot().Reconcile(sibling.Named()), false)
 			assert.Equal(t, s.GetObject(testutil.KustomizationID("", "child")), nil)
 		})
 	}
@@ -227,7 +227,12 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	_, _, attempt := s.GetEmission(parent.Named())
 	defer attempt.Finish()
 	attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(docs)
-	c.emit(t.Context(), parent.Named(), &attempt, map[manifest.NamedResource]*store.SourceArtifact{target: payload})
+	(&Execution{Controller: c}).emit(
+		t.Context(),
+		parent.Named(),
+		&attempt,
+		map[manifest.NamedResource]*store.SourceArtifact{target: payload},
+	)
 	checkPayload := func() {
 		t.Helper()
 
@@ -253,15 +258,15 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 
 	{
 		got := s.GetObject(child.Named()).(*manifest.Kustomization).DependsOn[0].Name
-		assert.FatalIf(t, got != "dev-config", "admitted dependency = %q, want dev-config", got)
+		assert.FatalIf(t, got != "${PREFIX:-dev-}config", "admitted dependency = %q, want literal dependency", got)
 	}
 
 	attempt.Children, attempt.Complete, attempt.Fingerprint = children, true, manifest.Fingerprint("inputs")
-	c.emit(t.Context(), parent.Named(), &attempt, nil)
+	(&Execution{Controller: c}).emit(t.Context(), parent.Named(), &attempt, nil)
 	checkPayload()
 
-	assert.FatalIf(t, attempt.Children[0].Obj == children[0].Obj ||
-		attempt.Children[0].Obj.(*manifest.Kustomization).DependsOn[0].Name != "dev-config" ||
+	assert.FatalIf(t, attempt.Children[0].Obj != children[0].Obj ||
+		attempt.Children[0].Obj.(*manifest.Kustomization).DependsOn[0].Name != "${PREFIX:-dev-}config" ||
 		attempt.Footprint() == nil, "%v", "completed emission did not return its substituted accepted inventory")
 
 	{
@@ -278,7 +283,7 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	checkPayload()
 	migratedResult3 := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
 	fresh, retained := migratedResult3.Children, migratedResult3.Documents
-	c.emit(
+	(&Execution{Controller: c}).emit(
 		t.Context(),
 		parent.Named(),
 		&store.Emission{
@@ -318,7 +323,7 @@ func TestEmit_SelfCopyIsNotPublished(t *testing.T) {
 
 	assert.FatalIf(t, len(children) != 0, "%v", "self copy admitted")
 
-	c.emit(
+	(&Execution{Controller: c}).emit(
 		t.Context(),
 		parent.Named(),
 		&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(retained), Complete: true},
@@ -360,7 +365,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 			}
 			migratedResult5 := parseChildrenForTest(parent.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
 			children, docs := migratedResult5.Children, migratedResult5.Documents
-			c.emit(
+			(&Execution{Controller: c}).emit(
 				t.Context(),
 				parent.Named(),
 				&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
@@ -368,13 +373,13 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 			)
 			assert.FatalIf(t, s.GetObject(target) != nil, "%s", "runtime declaration has a data writer")
 
-			data := values.NewStoreProvider(s).Data(target)
+			data := values.NewStoreProvider(s).Lookup(target).Data
 			assert.FatalIf(t, data != nil, "%s", "runtime declaration fabricated data")
 		}
-		c.emit(t.Context(), parent.Named(), &store.Emission{Complete: true}, nil)
+		(&Execution{Controller: c}).emit(t.Context(), parent.Named(), &store.Emission{Complete: true}, nil)
 		assert.FatalIf(
 			t,
-			len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s).Data(target) != nil,
+			len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s).Lookup(target).Data != nil,
 			"%s",
 			"omitted declaration retained",
 		)
@@ -439,7 +444,7 @@ func testEmitRuntimeProducerTargetsCase1(t *testing.T, tc *struct {
 		t.Helper()
 		migratedResult6 := parseChildrenForTest(owner, []map[string]any{doc}, manifest.ParseDocOptions{})
 		children, docs := migratedResult6.Children, migratedResult6.Documents
-		c.emit(
+		(&Execution{Controller: c}).emit(
 			t.Context(),
 			owner,
 			&store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true},
@@ -451,7 +456,7 @@ func testEmitRuntimeProducerTargetsCase1(t *testing.T, tc *struct {
 		if got := s.Productions(target, nil); len(got) != 1 || got[0].Declaration.Kind != tc.kind {
 			t.Fatalf("runtime declaration evidence: %v", got)
 		}
-		data := values.NewStoreProvider(s).Data(target)
+		data := values.NewStoreProvider(s).Lookup(target).Data
 		known := false
 		assert.FatalIf(t, (data != nil) != known,
 			"known-key availability=%t want %t", data != nil, known)
@@ -496,7 +501,7 @@ func testEmitRuntimeProducerTargetsCase1Part1(
 		Name = "next"
 	assert.FatalIf(t, len((*s).Productions((*target), nil)) != 1, "%s", "target rename lost new contribution")
 
-	data := values.NewStoreProvider((*s)).Data((*target))
+	data := values.NewStoreProvider((*s)).Lookup((*target)).Data
 	assert.FatalIf(t, data != nil, "%s", "renamed declaration fabricated data")
 }
 
@@ -551,7 +556,7 @@ func testEmitRuntimeProducerDataPrecedenceCase1(t *testing.T, pending *string, a
 			},
 		},
 	}
-	c.emit(
+	(&Execution{Controller: c}).emit(
 		t.Context(),
 		root.Named(),
 		&store.Emission{Children: []store.Child{{Obj: declaration}}, Complete: true},
@@ -566,7 +571,7 @@ func testEmitRuntimeProducerDataPrecedenceCase1(t *testing.T, pending *string, a
 			},
 		)
 	}
-	data := values.NewStoreProvider(s).Data(target)
+	data := values.NewStoreProvider(s).Lookup(target).Data
 	if !(*actual) {
 		assert.FatalIf(t, data != nil, "%s", "declaration fabricated data")
 
@@ -636,8 +641,7 @@ func testEmitRuntimeProducerTargetsCase1Tail(t *testing.T, inputs *testEmitRunti
 	for _, target := range (*inputs.tc).targets {
 		testEmitRuntimeProducerTargetsCase1Part1(t, inputs.s, &target, inputs.supporter)
 	}
-	(*inputs.c).
-		emit(t.Context(), (*inputs.root).Named(), &store.Emission{Complete: true}, nil)
+	(&Execution{Controller: *inputs.c}).emit(t.Context(), (*inputs.root).Named(), &store.Emission{Complete: true}, nil)
 	for _, target := range (*inputs.tc).targets {
 		if got := (*inputs.s).Productions(target, nil); len(got) != 1 || got[0].Owner != (*inputs.supporter).Named() {
 			t.Fatalf("omission withdrew independent support: %v", got)
@@ -645,12 +649,17 @@ func testEmitRuntimeProducerTargetsCase1Tail(t *testing.T, inputs *testEmitRunti
 		target.Name = "next"
 		assert.FatalIf(t, len((*inputs.s).Productions(target, nil)) != 0, "%s", "omission retained cluster-only target")
 	}
-	(*inputs.c).
-		emit(t.Context(), (*inputs.supporter).Named(), &store.Emission{Complete: true}, nil)
+	(&Execution{Controller: *inputs.c}).emit(
+		t.Context(),
+		(*inputs.supporter).Named(),
+		&store.Emission{Complete: true},
+		nil,
+	)
 	for _, target := range (*inputs.tc).targets {
 		assert.FatalIf(
 			t,
-			len((*inputs.s).Productions(target, nil)) != 0 || values.NewStoreProvider((*inputs.s)).Data(target) != nil,
+			len((*inputs.s).Productions(target, nil)) != 0 ||
+				values.NewStoreProvider((*inputs.s)).Lookup(target).Data != nil,
 			"%s",
 			"last supporter withdrawal retained target data",
 		)

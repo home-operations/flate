@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -78,7 +79,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 		st.AddObject(cm)
 	}
 	provider := values.NewStoreProvider(st)
-	prepared, err := Prepare(projected, provider)
+	prepared, err := Prepare(projected, provider, depwait.NewMissingPolicy(nil))
 
 	assert.NoError(t, err)
 
@@ -111,7 +112,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "plain", Namespace: "apps"}
 			ks.PostBuild = tc.postBuild
-			got, prepareErr := Prepare(ks, provider)
+			got, prepareErr := Prepare(ks, provider, depwait.NewMissingPolicy(nil))
 
 			assert.NoError(t, prepareErr)
 
@@ -125,7 +126,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	}
 	bad := original.Clone()
 	bad.PostBuild.Substitute = map[string]string{"z-invalid": "private", "a-invalid": "private"}
-	invalid, err := Prepare(bad, provider)
+	invalid, err := Prepare(bad, provider, depwait.NewMissingPolicy(nil))
 
 	assert.FatalIf(t, invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) ||
 		err.Error() != "invalid substitute variables a-invalid, z-invalid", "invalid keys not classified/sorted: %v", err)
@@ -142,17 +143,15 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	st.AddObject(
 		&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}},
 	)
-	_, err := Prepare(entry, values.NewStoreProvider(st))
+	_, err := Prepare(entry, values.NewStoreProvider(st), depwait.NewMissingPolicy(nil))
 	assert.FatalIf(t, err == nil || strings.Contains(err.Error(), owner.String()) ||
 		strings.Contains(err.Error(), `entry path "clusters/test"`) ||
 		strings.Contains(err.Error(), entry.Named().String()), "substituteFrom repeated its owner: %v", err)
 	entry.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ENABLED": "yes"}}
-	prepared, err := Prepare(entry, nil)
+	prepared, err := Prepare(entry, nil, depwait.NewMissingPolicy(nil))
 	assert.FatalIf(t, err != nil, "%v", err)
 	documents := []manifest.DocOccurrence{{Document: map[string]any{"data": map[string]any{"value": "${MISSING}"}}}}
-	err = Shape(t.Context(),
-
-		prepared, documents, ShapeOptions{Strict: true})
+	err = PrepareShape(&RenderRequest{Spec: prepared}, documents).Apply(t.Context(), ShapeOptions{Strict: true})
 	assert.FatalIf(
 		t,
 		!errors.Is(err, manifest.ErrInvalidSubstituteReference) || strings.Contains(err.Error(), owner.String()) ||

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
 )
@@ -71,8 +73,7 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 		allowed = []string{manifest.KindSecret, manifest.KindConfigMap}
 	}
 	cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingKinds: allowed}
-	runs, err := orchestrator.RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]orchestrator.Tree{
 			{
 				ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
@@ -88,13 +89,12 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 	assert.FatalIf(t, run.Orchestrator == nil || res == nil, "%v", "full-mode fixture did not complete")
 	hr := testutil.HelmReleaseID("apps", "selected")
 	producer := testutil.KustomizationID("flux-system", "producer")
-	wantFailure := tc.broken && !tc.optional
 	requiredFailure := tc.broken && !tc.optional && !tc.absent
 	_, readerFailed := res.Failed[hr]
 	assert.FatalIf(
 		t,
 		(len(outputByParent(res.Manifests)[hr]) == 0) != requiredFailure || readerFailed != requiredFailure ||
-			(len(res.Blocked[hr]) != 0) != requiredFailure,
+			len(res.Blocked[hr]) != 0,
 		"consumer did not render independently: failed=%v blocked=%v",
 		res.Failed,
 		res.Blocked,
@@ -126,11 +126,12 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 	}
 	cli := runCLI(t, args...)
 	stdout, stderr, code := cli.stdout, cli.stderr, cli.code
-	selection, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{run}, runErr,
+	projectedResults0, projectionErrors0 := orchestrator.Select([]orchestrator.Rendered{run}, runErr,
 		[]manifest.NamedResource{{Group: hr.Group, Kind: hr.Kind, Name: hr.Name}}, nil)
+	selection, selectedErr, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 	assert.FatalIf(t, len(selection) != 1, "selection failed: %v", selectedErr)
-	if _, failed := selection[0].Failed[producer]; failed != wantFailure ||
-		(selectedErr != nil) != wantFailure {
+	if _, failed := selection[0].Failed[producer]; failed != requiredFailure ||
+		(selectedErr != nil) != requiredFailure {
 		t.Fatalf(
 			"required owner failure projection violated: failed=%v unrelated=%v error=%v",
 			selection[0].Failed,
@@ -142,7 +143,7 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 		warning := selection[0].Unrelated[warningIndex]
 		assert.FatalIf(
 			t,
-			wantFailure && warning.Resource == producer,
+			requiredFailure && warning.Resource == producer,
 			"required owner became unrelated: %+v",
 			warning,
 		)
@@ -150,21 +151,14 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 
 	assert.FatalIf(
 		t,
-		(code == 1) != wantFailure || strings.Contains(stdout, "selected-rendered") == requiredFailure,
+		(code == 1) != requiredFailure || strings.Contains(stdout, "selected-rendered") == requiredFailure,
 		"authored owner policy violated: %d %s\n%s",
 		code,
 		stdout,
 		stderr,
 	)
 	if !requiredFailure {
-		(*selectedYAML) = cmp.Or((*selectedYAML), stdout)
-		assert.FatalIf(
-			t,
-			stdout != (*selectedYAML),
-			"producer health changed selected YAML: want %s, got %s",
-			(*selectedYAML),
-			stdout,
-		)
+		assertOwnerIndependentYAML(t, selectedYAML, stdout)
 	}
 	assert.FatalIf(
 		t,
@@ -172,14 +166,105 @@ func runNamedScopeFailedDataOwnerName(t *testing.T, tc *struct {
 		"required input failure missing: %s",
 		stderr,
 	)
-	assert.FatalIf(t, tc.chain &&
-		(!strings.Contains(stderr, "producer-chain") || !strings.Contains(stderr, "missing-producer-root")), "producer's transitive root missing: %s", stderr)
+	assertDataOwnerChain(t, tc.chain, stderr)
 	assert.FatalIf(
 		t,
-		tc.broken && !strings.Contains(stderr, "producer"),
-		"producer diagnostic missing: %s",
+		tc.broken && strings.Contains(stderr, "producer") == tc.absent,
+		"producer diagnostic policy violated: %s",
 		stderr,
 	)
+	assert.FatalIf(t, tc.absent && tc.broken && !strings.Contains(stderr, "[OmittedValues]"),
+		"omitted values warning missing: %s", stderr)
+}
+
+//nolint:paralleltest // CLI execution changes process-wide logging.
+func TestRun_DataProducerFailure_ConsumerScope(t *testing.T) {
+	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+		write := func(revision string) string {
+			t.Helper()
+			root := writeNamedScopeFixture(t)
+			appendScopeSpec(t, root, "cluster/ks.yaml",
+				"  postBuild: {substituteFrom: [{kind: "+kind+", name: scope-input}]}\n")
+			testutil.WriteFile(t, root, "cluster/producer.yaml",
+				testutil.KustomizationYAML(
+					"producer",
+					"flux-system",
+					"  path: ./values\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n",
+				))
+			testutil.WriteFile(t, root, "values/kustomization.yaml", "resources: [input.yaml, missing.yaml]\n")
+			testutil.WriteFile(t, root, "values/input.yaml",
+				"apiVersion: objectbucket.io/v1alpha1\nkind: ObjectBucketClaim\n"+
+					"metadata: {name: scope-input, namespace: flux-system}\nspec: {generateBucketName: scope}\n")
+			testutil.WriteFile(t, root, "selected/cm.yaml",
+				"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected, namespace: apps}\n"+
+					"data: {greeting: '${GREETING:=hello}', revision: "+revision+"}\n")
+			return filepath.Join(root, "cluster")
+		}
+		orig, current := write("before"), write("after")
+		for _, tc := range []struct {
+			name string
+			args []string
+			code int
+		}{
+			{name: "full", args: []string{"build", "all"}, code: 1},
+			{name: "narrow", args: []string{"build", "ks", "selected"}},
+			{name: "changed", args: []string{"diff", "ks", "--path-orig", orig}},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				tc.args = append(
+					tc.args,
+					"--path",
+					current,
+					"--cache-dir",
+					t.TempDir(),
+					"--concurrency",
+					"2",
+					"--output",
+					"json",
+				)
+				got := runCLI(t, tc.args...)
+				assert.FatalIf(t, got.code != tc.code, "exit=%d, want %d: %s", got.code, tc.code, got.stderr)
+				assert.FatalIf(t, !strings.Contains(got.stderr, "[UnresolvedSubstitution]"),
+					"consumer did not retain its unknown data warning: %s", got.stderr)
+				assert.Equal(t, strings.Contains(got.stderr, "missing.yaml"), tc.name == "full")
+				want := map[string]any{"greeting": "${GREETING:=hello}", "revision": "after"}
+				if tc.name == "changed" {
+					var result struct {
+						Changes []diff.Change `json:"Changes"`
+					}
+					assert.NoError(t, json.Unmarshal([]byte(got.stdout), &result))
+					assert.Equal(t, len(result.Changes), 1)
+					assert.Diff(t, result.Changes[0].New["data"], any(want))
+					want["revision"] = "before"
+					assert.Diff(t, result.Changes[0].Old["data"], any(want))
+				} else {
+					var documents []map[string]any
+					assert.NoError(t, json.Unmarshal([]byte(got.stdout), &documents))
+					var found bool
+					for _, doc := range documents {
+						if manifest.DocKind(doc) == manifest.KindConfigMap &&
+							manifest.DocMetadata(doc).Name == "selected" {
+							found = true
+							assert.Diff(t, doc["data"], any(want))
+						}
+					}
+					assert.Equal(t, found, true)
+				}
+			})
+		}
+	}
+}
+
+func assertDataOwnerChain(t *testing.T, chain bool, diagnostic string) {
+	t.Helper()
+	assert.FatalIf(t, chain && (!strings.Contains(diagnostic, "producer-chain") ||
+		!strings.Contains(diagnostic, "missing-producer-root")), "producer's transitive root missing: %s", diagnostic)
+}
+
+func assertOwnerIndependentYAML(t *testing.T, selected *string, output string) {
+	t.Helper()
+	*selected = cmp.Or(*selected, output)
+	assert.FatalIf(t, output != *selected, "producer health changed selected YAML: want %s, got %s", *selected, output)
 }
 
 func runNamedScopeSubstituteOwnersName(t *testing.T, tc *struct {
@@ -235,7 +320,7 @@ func runNamedScopeSubstituteOwnersName(t *testing.T, tc *struct {
 		}
 	}
 	flags := commonFlags{path: filepath.Join(root, "cluster"), cacheDir: t.TempDir(), concurrency: 2}
-	runs, runErr := orchestrator.RenderTrees(t.Context(), inputTrees(&flags), buildOrchCfg(&flags))
+	runs, runErr := renderTreesForTest(t.Context(), t, inputTrees(&flags), buildOrchCfg(&flags))
 	assert.FatalIf(t, len(runs) != 1, "missing run: %v", runErr)
 	run := runs[0]
 	res := run.Result
@@ -266,8 +351,8 @@ func runNamedScopeSubstituteOwnersName(t *testing.T, tc *struct {
 	)
 	assert.FatalIf(
 		t,
-		tc.broken && !strings.Contains(stderr, "producer"),
-		"producer failure missing: %s",
+		tc.broken && strings.Contains(stderr, "producer") == tc.secret,
+		"producer failure policy violated: %s",
 		stderr,
 	)
 }

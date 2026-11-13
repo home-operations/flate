@@ -33,8 +33,7 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 			writeCluster(t, headDir, "v2", "same")
 
 			{
-				_, err := RenderTrees(
-					t.Context(),
+				_, err := renderTreesForTest(t.Context(), t,
 					[]Tree{
 						{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: baseDir},
 						{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: headDir},
@@ -55,8 +54,7 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 			)
 
 			{
-				_, localErr := RenderTrees(
-					t.Context(),
+				_, localErr := renderTreesForTest(t.Context(), t,
 					[]Tree{
 						{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}},
 						{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}},
@@ -182,8 +180,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderCase(
 	case "empty":
 		cfg.ExternalChanges = change.NewSet(nil)
 	}
-	renderedTrees7, err := RenderTrees(
-		t.Context(),
+	renderedTrees7, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				RepoRoot:        root,
@@ -293,7 +290,7 @@ func testRenderTreesHeadOnlyCase(t *testing.T, testCaseInput *bool,
 		RepoRoot: headInput.LocalPath,
 		Path:     filepath.Join(headInput.LocalPath, "flux"),
 	}
-	runs, err := RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg)
+	runs, err := renderTreesForTest(t.Context(), t, []Tree{baseTree, headTree}, cfg)
 
 	assert.FatalIf(t, len(runs) != 2, "missing results: %v", err)
 
@@ -316,7 +313,7 @@ func testRenderTreesHeadOnlyCase(t *testing.T, testCaseInput *bool,
 		assert.NoError(t, err)
 		assert.Diff(t, configMapNames(head.Result), map[string]bool{"surviving": true})
 		cfg.HeadOnly = false
-		_, err = RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg)
+		_, err = renderTreesForTest(t.Context(), t, []Tree{baseTree, headTree}, cfg)
 
 		assert.FatalIf(
 			t,
@@ -369,8 +366,7 @@ func testRenderTreesSameDirectoryKeepsFullRenderScanPathsCase(
 		assert.NoError(t, err)
 		cfg.BaseInput, cfg.Input = input, input
 	}
-	renderedTrees8, err := RenderTrees(
-		t.Context(),
+	renderedTrees8, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				RepoRoot:        root,

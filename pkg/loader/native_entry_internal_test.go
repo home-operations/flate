@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -46,13 +47,18 @@ spec: {interval: 1h}
 			)
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Filter = change.NewFilter()
-			l.Options.Selection = manifest.Selection{Changed: true}
+
+			configureSelection(t, l, selection.Request{Changed: true})
 			l.Options.Changes = change.NewSet([]string{file})
 			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+			proposal, err := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Blocked, "entry"), file != "workload/value.yaml")
 		})
@@ -78,16 +84,21 @@ spec: {interval: 1h}
 			}
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Filter = change.NewFilter()
+
 			l.Options.Changes = change.NewSet([]string{tc.file})
-			l.Options.Selection = manifest.Selection{Changed: true}
+			configureSelection(t, l, selection.Request{Changed: true})
 			l.Index = &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					owner.Named(): {File: "entry/owner.yaml", Declaration: owner},
 					child.Named(): {File: "entry/child.yaml", Declaration: child, Parent: owner.Named()},
 				},
 			}
-			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+			proposal, err := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+			)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Selected, child.Named()), true)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), true)
@@ -122,8 +133,8 @@ spec: {path: ./workload}
 			)
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Filter = change.NewFilter()
-			l.Options.Selection = manifest.Selection{Changed: true}
+
+			configureSelection(t, l, selection.Request{Changed: true})
 			l.Options.Changes = change.NewSet([]string{"entry/unreferenced.yaml"})
 			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
@@ -146,7 +157,11 @@ spec: {path: ./workload}
 					)
 				}}}
 			}
-			proposal, err := l.Prepare(t.Context(), PrepareRequest{Incoming: store.Child{Obj: entry}, History: history})
+			proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{
+				Changes:    l.Options.Changes,
+				Generation: []store.Child{{Obj: entry}},
+				History:    history,
+			})
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, entry.Named()), false)
 			assert.Equal(t, slices.Contains(proposal.Blocked, "entry"), false)
@@ -175,7 +190,7 @@ spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRep
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	l := New(st)
 	l.SourceRoot = root
-	l.Options.Filter = change.NewFilter()
+
 	selected := manifest.NamedResource{
 		Group:     manifest.HelmReleaseDomain,
 		Kind:      manifest.KindHelmRelease,
@@ -188,13 +203,18 @@ spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRep
 		Namespace: "apps",
 		Name:      "apps",
 	}
-	l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{selected}}
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{selected}})
 	_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	_, err = l.Load(t.Context(), filepath.Join(root, "workload"), manifest.NamedResource{}, nil)
 	assert.NoError(t, err)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-	proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+	proposal, err := prepareSelection(
+		t.Context(),
+		t,
+		l,
+		selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+	)
 	assert.NoError(t, err)
 	defer proposal.Retire()
 	// Pass 18 index authority admits the authored parent without native preparation.
@@ -241,7 +261,7 @@ spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRep
 			st.SetArtifact(manifest.BootstrapSourceID, input)
 			l := New(st)
 			l.SourceRoot = root
-			l.Options.Filter = change.NewFilter()
+
 			selected := manifest.NamedResource{
 				Group:     manifest.HelmReleaseDomain,
 				Kind:      manifest.KindHelmRelease,
@@ -254,13 +274,18 @@ spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRep
 				Namespace: "apps",
 				Name:      tc.prefix + "apps",
 			}
-			l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{selected}}
+			configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{selected}})
 			_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			_, err = l.Load(t.Context(), filepath.Join(root, "workload"), manifest.NamedResource{}, nil)
 			assert.NoError(t, err)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
-			proposal, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+			proposal, err := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+			)
 			assert.NoError(t, err)
 			defer proposal.Retire()
 			_, authored := l.occurrence(parent)
@@ -301,7 +326,12 @@ spec: {interval: 1m, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRep
 			l.RegisterBuilt(supportedBuiltInputForTest(l, &BuiltInput{
 				Root: filepath.Join(root, "entry"), Owner: native.Named(), Source: manifest.BootstrapSourceID,
 			}), children)
-			next, err := l.Prepare(t.Context(), PrepareRequest{Invocation: true})
+			next, err := prepareSelection(
+				t.Context(),
+				t,
+				l,
+				selection.PrepareRequest{Changes: l.Options.Changes, Invocation: true},
+			)
 			assert.NoError(t, err)
 			defer next.Retire()
 			assert.Equal(t, slices.ContainsFunc(next.Objects, func(child store.Child) bool {

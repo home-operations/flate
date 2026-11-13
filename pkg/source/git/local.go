@@ -7,9 +7,9 @@ import (
 	"io/fs"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -148,12 +148,13 @@ func (r *localResolver) directory(
 	if r.local == nil {
 		work := r.work.Source(repository.Named()).Record(manifest.WorkAcquisition, "")
 		work.Add(&manifest.WorkCounts{Attempts: 1, LocalAcquisitions: 1})
-		input, err := gittree.AdmitDirectory(ctx, r.location)
+		directory, err := gittree.OpenDirectory(ctx, r.location)
 		work.Finish(err)
 		if err != nil {
 			return nil, localError(err)
 		}
-		r.local = input.FS
+		r.local = directory.Artifact().FS
+		_ = directory.Close()
 	}
 	return &store.SourceArtifact{
 		Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: r.root, Revision: hash.String(),

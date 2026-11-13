@@ -70,7 +70,7 @@ func (c *Case) Run(t *testing.T) []Result {
 			previous, writer := slog.Default(), log.Writer()
 			defer func() { slog.SetDefault(previous); log.SetOutput(writer) }()
 			var stdout, stderr bytes.Buffer
-			code := cli.Run(args, &stdout, &stderr)
+			code := cli.Run(args, &stdout, &stderr, cli.RunConfig{GitTransports: c.transport.git})
 			results = append(
 				results,
 				Result{

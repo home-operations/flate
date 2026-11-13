@@ -50,7 +50,7 @@ func TestSources_SelectedRevision(t *testing.T) {
 			var fresh store.ReadSet
 			fresh.Init(st, hr.Named(), nil)
 			defer fresh.Close()
-			loaded, err := client.describeChart(t.Context(), hr, NewSources(&fresh))
+			loaded, err := client.describeChart(t.Context(), hr, NewSources(&fresh).chartInput(hr))
 			assert.NoError(t, err)
 			assert.Equal(t, loaded.artifact.Revision, next.Revision)
 			later := next

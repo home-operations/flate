@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -19,14 +21,19 @@ type Dispatch struct {
 	Tasks         *task.Service
 	Store         *store.Store
 	ID            manifest.NamedResource
-	ReconcileNode func(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution
+	ReconcileNode func(context.Context, manifest.NamedResource, manifest.DrainLevel, schedule.Result) *base.Execution
 }
 
 // Dispatch captures one reconciliation's assessment for the scheduler.
 //
 //nolint:gocritic // Each scheduler retains an independent copy of the fixture dispatch state.
-func (d Dispatch) Dispatch(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-	return schedule.Result{Assessment: d.ReconcileNode(ctx, id, level)}
+func (d Dispatch) Dispatch(
+	ctx context.Context,
+	id schedule.NodeID,
+	level manifest.DrainLevel,
+	previous schedule.Result,
+) schedule.Result {
+	return schedule.Result{Assessment: d.ReconcileNode(ctx, id, level, previous)}
 }
 
 // Sweep delivers pending store publications and returns invalidated executions.
@@ -44,7 +51,7 @@ func Reconcile(ctx context.Context, tb testing.TB, d Dispatch, drain manifest.Dr
 	var terminal bool
 	failures := d.Tasks.Failures()
 	d.Tasks.Go(ctx, "test/"+d.ID.String(), func(ctx context.Context) {
-		assessment := d.ReconcileNode(ctx, d.ID, drain)
+		assessment := d.ReconcileNode(ctx, d.ID, drain, schedule.Result{})
 		terminal = assessment.Outcome() != schedule.Blocked
 		assessment.Close()
 	})
@@ -82,12 +89,12 @@ func NewExecution(c *base.Controller, id manifest.NamedResource) *base.Execution
 
 // Emit installs immutable fixture output without starting a reconciliation.
 func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, next *store.Emission) error {
-	children := next.Children
-	cloned := false
-	if next.Reads.Valid() {
-		var err error
-		cloned, err = keepFixtureChildren(ctx, c, id, next)
-		if err != nil {
+	if len(next.Children) != 0 && next.Reads.Valid() {
+		if _, err := c.KeepEmitted(
+			ctx,
+			id,
+			selection.PrepareRequest{Generation: next.Children, Reads: next.Reads},
+		); err != nil {
 			return err
 		}
 	}
@@ -95,9 +102,6 @@ func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, ne
 		return fmt.Errorf("emit fixture output: %w", err)
 	}
 	c.Store.RecordEmitted(id, next, nil)
-	if cloned && !next.Complete {
-		next.Children = children
-	}
 	if next.Complete {
 		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusPending {
 			message := store.ApplyingStatus(len(next.Manifests))
@@ -107,33 +111,4 @@ func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, ne
 		}
 	}
 	return nil
-}
-
-func keepFixtureChildren(
-	ctx context.Context,
-	c *base.Controller,
-	id manifest.NamedResource,
-	next *store.Emission,
-) (bool, error) {
-	children := next.Children
-	cloned := false
-	childValues := children
-	for i := range childValues {
-		child := childValues[i]
-		if child.Obj == nil || child.Obj.Named() == id {
-			continue
-		}
-		obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
-		if obj != child.Obj {
-			if !cloned {
-				next.Children = slices.Clone(children)
-				cloned = true
-			}
-			next.Children[i].Obj = obj
-		}
-		if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
-			return cloned, err
-		}
-	}
-	return cloned, nil
 }

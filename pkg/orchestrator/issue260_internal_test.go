@@ -19,9 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// fakeOCIFetcher always returns a populated SourceArtifact so we can
-// exercise the change-filter / source-controller interplay without
-// hitting the network. FS exposes the fixed working-tree fixture content.
 type fakeOCIFetcher struct{ localPath string }
 
 func (f fakeOCIFetcher) Fetch(
@@ -48,39 +45,7 @@ func (f fakeOCIFetcher) Fetch(
 	}, nil
 }
 
-// TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime
-// reproduces https://github.com/home-operations/flate/issues/260.
-//
-// Setup:
-//
-//	cluster-apps Kustomization (spec.path: ./kubernetes/apps,
-//	                            targetNamespace: default)
-//	  ↓ renders + emits
-//	homepage-config Kustomization (sourceRef = OCIRepository)
-//	  ↑ sourceRef
-//	OCIRepository (file-loaded under homepage tree)
-//
-// Diff-mode change: only an UNRELATED file changed. The keep set
-// resolves at construction with neither homepage-config nor the
-// OCIRepository in scope — both files sit under homepage's spec.path
-// and homepage isn't directly affected by the change.
-//
-// At runtime, cluster-apps renders ./kubernetes/apps and emits
-// homepage-config. The KS controller's keepEmitted calls
-// Filter.AddEmitted(cluster-apps, homepage-config) and then
-// AddObject(homepage-config). The child KS reconciles — and its
-// sourceRef points at the OCIRepository that was PreGate-skipped
-// at startup with no artifact.
-//
-// Bug: the runtime add was a one-shot add — it didn't walk
-// transitiveDeps, so the OCIRepository never entered the keep set,
-// the source controller never re-fetched it, and homepage-config's
-// resolveSourceRoot surfaced "source ... artifact not found".
-//
-// Fix: addRecursive (called via AddEmitted) now walks transitiveDeps
-// recursively AND KeepEmitted refires
-// source kinds that newly join keep at runtime so their listener sees
-// the updated filter state.
+// A newly admitted emitted consumer MUST admit its source before publication.
 //
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) {
@@ -147,7 +112,7 @@ spec:
 	assert.FatalIf(t, err != nil, "New: %v", err)
 	o.src.Fetchers[manifest.KindOCIRepository] = fakeOCIFetcher{localPath: dir}
 
-	res, err := o.render(t.Context())
+	res, err := o.render(t.Context(), t)
 	if err != nil {
 		t.Logf("Render returned err: %v", err)
 	}

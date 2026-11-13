@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -17,7 +19,7 @@ import (
 type admissionFailure struct{ cause error }
 
 func (admissionFailure) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p admissionFailure) Promote(context.Context, *store.ReadSet, manifest.NamedResource) (bool, error) {
+func (p admissionFailure) Promote(context.Context, selection.PrepareRequest, manifest.NamedResource) (bool, error) {
 	return false, p.cause
 }
 
@@ -39,6 +41,8 @@ func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
 		{"helm_allow_missing", &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "input"}}}, true},
 		{"substitute_optional", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input", Optional: true}}}}, false},
 		{"substitute_secret", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}}}}, false},
+		{"substitute_permitted_secret", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "input"}}}}, true},
+		{"substitute_permitted_configmap", &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}}}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -48,12 +52,14 @@ func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
 			c := New(st, nil)
 			var missingKinds []string
 			if tc.allowMissing {
-				missingKinds = []string{manifest.KindSecret}
+				for ref := range manifest.References(tc.object, manifest.ReferenceRelations) {
+					missingKinds = append(missingKinds, ref.Kind)
+				}
 			}
 			c.Configure(
 				Options{
-					Existence:         admissionFailure{manifest.NewError(manifest.ErrInput, cause, "")},
-					AllowMissingKinds: missingKinds,
+					Existence: admissionFailure{manifest.NewError(manifest.ErrInput, cause, "")},
+					Missing:   depwait.NewMissingPolicy(missingKinds),
 				},
 			)
 			var execution Execution
@@ -99,15 +105,14 @@ func TestAwaitData_AdmissionErrorPreventsResume(t *testing.T) {
 			err := execution.AwaitData(t.Context(), DataWait{
 				Inputs: []depwait.DataDependency{
 					{
-						Kind:         manifest.KindConfigMap,
-						Namespace:    "apps",
-						Name:         "input",
-						Input:        input,
-						Optional:     true,
-						AllowMissing: true,
+						Kind:      manifest.KindConfigMap,
+						Namespace: "apps",
+						Name:      "input",
+						Input:     input,
+						Optional:  true,
 					},
 				},
-				Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { resumed = true; return nil },
+				Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { resumed = true; return nil },
 			}, manifest.DrainForce)
 			assert.Equal(t, errors.Is(err, cause), true)
 			assert.Equal(t, resumed, false)

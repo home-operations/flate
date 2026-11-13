@@ -7,9 +7,9 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -22,9 +22,6 @@ func resolveRefHash(repo *git.Repository, ref *sourcev1.GitRepositoryRef, origin
 	kind, value := reference.Kind, reference.Value
 	switch kind {
 	case commitReference:
-		if err := selected.Validate(); err != nil {
-			return plumbing.ZeroHash, manifest.NewError(manifest.ErrInput, err, "")
-		}
 		hash := plumbing.NewHash(value)
 		commit, err := readCommit(repo, hash)
 		if err != nil {

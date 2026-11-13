@@ -7,10 +7,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/selection"
+
+	"github.com/home-operations/flate/internal/admissiontest"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/depwait"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -35,15 +37,23 @@ func testQualificationDemandPromotion(t *testing.T, timing string) {
 	st.AddObject(producer)
 	st.SetIncluded(producer.Named(), true, false)
 	tasks := task.NewBounded(2)
-	filter := change.NewFilter()
+	l, filter := admissiontest.New(
+		t,
+		admissiontest.Config{
+			Inventory: st,
+			Changes:   change.NewSet(nil),
+			Index: &manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					producer.Named(): {File: "candidate.yaml"},
+				},
+			},
+			Request: selection.Request{Changed: true, Roots: []manifest.NamedResource{producer.Named()}},
+		},
+	)
 	members := []manifest.NamedResource{producer.Named()}
-	_, retry := filter.AddEmitted(change.MembershipUpdate{Needed: members}, 0)
-	assert.Equal(t, retry, false)
-	l := loader.New(st)
-	l.Options.Filter = filter
-	l.Options.Selection = manifest.Selection{Changed: true}
+	admissiontest.Require(t, st, filter, members, true)
 	controller := New(st, tasks)
-	controller.Configure(Options{Filter: filter, Loader: l})
+	controller.Configure(Options{Session: filter, Loader: l})
 	controller.StartLifecycle()
 	t.Cleanup(tasks.BlockTillDone)
 	var calls atomic.Int64
@@ -83,12 +93,19 @@ func testQualificationDemandPromotion(t *testing.T, timing string) {
 		assert.Equal(t, known, false)
 		screened.Retire()
 	}
-	update := change.MembershipUpdate{Ordinary: members}
 	if strings.HasPrefix(timing, "selected ") {
-		update.Selected = members
+		proposal, err := filter.Prepare(
+			t.Context(),
+			selection.PrepareRequest{
+				Changes:    change.NewSet([]string{"candidate.yaml"}),
+				Generation: []store.Child{{Obj: producer}},
+			},
+		)
+		assert.NoError(t, err)
+		admissiontest.Commit(t, filter, proposal)
+	} else {
+		admissiontest.Require(t, st, filter, members, false)
 	}
-	_, retry = filter.AddEmitted(update, filter.Membership(producer.Named()).Revision)
-	assert.Equal(t, retry, false)
 	st.SetIncluded(producer.Named(), true, true)
 	if beforeFinish {
 		close(release)

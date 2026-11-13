@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
 	src "github.com/home-operations/flate/pkg/source"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -57,10 +58,12 @@ func (f *generatedOCIFetcher) Fetch(
 			if err != nil {
 				return nil, err
 			}
-			input, err := gittree.AdmitDirectory(ctx, location)
+			directory, err := gittree.OpenDirectory(ctx, location)
 			if err != nil {
 				return nil, err
 			}
+			defer func() { _ = directory.Close() }()
+			input := directory.Artifact()
 			input.Kind, input.Digest = manifest.KindOCIRepository, "sha256:fixture"
 			return input, nil
 		},
@@ -134,7 +137,7 @@ spec:
 	assert.FatalIf(t, err != nil, "%v", err)
 	f := &generatedOCIFetcher{root: artifact, err: testCaseInput.fetchErr, wantRetry: retry}
 	o.src.Fetchers[manifest.KindOCIRepository] = f
-	res, err := o.render(t.Context())
+	res, err := o.render(t.Context(), t)
 	assert.FatalIf(
 		t,
 		(err == nil) != (testCaseInput.producer && testCaseInput.fetchErr == nil),
@@ -143,7 +146,7 @@ spec:
 	)
 	id := testutil.KustomizationID("flux-system", "consumer")
 	if testCaseInput.fetchErr != nil {
-		o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade)
+		o.ksc.ReconcileNode(t.Context(), id, manifest.DrainCascade, schedule.Result{})
 	}
 	status, _ := o.Store().GetStatus(id)
 	switch {
@@ -181,7 +184,10 @@ spec:
 			Name:      "app",
 		}
 		if f.fetched.Load() || status.Status != store.StatusFailed ||
-			!slices.Contains(status.BlockedBy(), missing) {
+			slices.Contains(
+				status.BlockedBy(),
+				missing,
+			) || !strings.Contains(status.Message, "path is not a directory") {
 			t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
 		}
 		assert.FatalIf(

@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil"
@@ -40,7 +42,7 @@ func testAdmitGraphProjectionEffectiveNamesIncludeNamespaceTransformation(t *tes
 		for i := range occurrences {
 			o := occurrences[i]
 			ids = append(ids, o.Identity)
-			assert.FatalIf(t, o.object.Named() != o.Authored, "%s", "projection mutated an authored object")
+			assert.FatalIf(t, o.Object.Named() != o.Authored, "%s", "projection mutated an authored object")
 		}
 		assert.Diff(
 			t,
@@ -78,9 +80,9 @@ func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
 			l.ensureScopes()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system"}
 			l.Store.AddObject(owner)
-			l.scopes.visits["child.yaml"] = []graphVisit{{
+			setScopeVisitsForTest(l, "child.yaml", []graphVisit{{
 				namespace: "inner", deferMaterialization: tc.deferred, role: tc.role, owner: owner.Named(),
-			}}
+			}})
 			r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.HelmReleaseID("authored", "child")}
 			assert.Diff(t, l.recordNamespaces(new(r), ""), []string{tc.want})
 		})
@@ -125,7 +127,7 @@ func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
 			l.ensureScopes()
 			l.scopes.inactive = true
 			l.scopes.inputs = []scopeInput{{active: false}, {active: true}}
-			l.scopes.visits["child.yaml"] = tc.visits
+			setScopeVisitsForTest(l, "child.yaml", tc.visits)
 			r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.KustomizationID("", "child")}
 			assert.Diff(t, l.recordNamespaces(new(r), ""), tc.want)
 		})
@@ -214,7 +216,9 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 		)
 		assert.FatalIf(
 			t,
-			!l.AdmitsRoot(l.IndexedObject(projected, l.Index.Records[projected]).Obj, file),
+			!selection.Root(
+				rootAtForTest(l, l.IndexedObject(projected, l.Index.Records[projected]).Obj, file),
+			).Admitted,
 			"%s",
 			"projected bootstrap sibling is not admitted",
 		)
@@ -292,10 +296,13 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 			sibling,
 		)
 		assert.FatalIf(t, !ok || l.Store.GetObject(sibling) != nil ||
-			l.AdmitsRoot(
-				l.IndexedObject(sibling, l.Index.Records[sibling]).Obj,
-				filepath.Join(root, "app", "sibling.yaml"),
-			), "%s", "inactive declaration lost evidence or became runnable")
+			selection.Root(
+				rootAtForTest(
+					l,
+					l.IndexedObject(sibling, l.Index.Records[sibling]).Obj,
+					filepath.Join(root, "app", "sibling.yaml"),
+				),
+			).Admitted, "%s", "inactive declaration lost evidence or became runnable")
 	}
 }
 
@@ -308,7 +315,7 @@ func TestRecordNamespaces_IndexedOwner(t *testing.T) {
 			l.ensureScopes()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "system", TargetNamespace: "apps"}
 			occurrence := compactOccurrence(owner, projectedProducerForTest(owner))
-			l.locations = map[manifest.NamedResource]Occurrence{owner.Named(): occurrence}
+			l.locations = map[manifest.NamedResource]authoredOccurrence{owner.Named(): occurrence}
 			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{
 				Authored: owner.Named(),
 				Path:     "/input/flux/owner.yaml",
@@ -324,9 +331,73 @@ func TestRecordNamespaces_IndexedOwner(t *testing.T) {
 				File: "app/source.yaml",
 			}
 			if name == "visit" {
-				l.scopes.visits[record.Path] = []graphVisit{{role: kustomizeinput.Resource}}
+				setScopeVisitsForTest(l, record.Path, []graphVisit{{role: kustomizeinput.Resource}})
 			}
 			assert.Diff(t, l.recordNamespaces(new(record), ""), []string{"apps"})
+		})
+	}
+}
+
+func setScopeVisitsForTest(l *Loader, file string, visits []graphVisit) {
+	delete(l.scopes.visits, file)
+	for i := range visits {
+		visit := visits[i]
+		visit.file = file
+		l.recordScopeVisits(&visit, []graphVisit{visit}, visit.membershipOnly, false)
+	}
+}
+
+func TestProjectAuthoredVisits_PhysicalCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		active     bool
+		membership bool
+		role       kustomizeinput.Role
+		want       bool
+	}{
+		{name: "resource", active: true, role: kustomizeinput.Resource, want: true},
+		{name: "inactive", role: kustomizeinput.Resource},
+		{name: "membership", active: true, membership: true, role: kustomizeinput.Resource},
+		{name: "control", active: true, role: kustomizeinput.File},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := New(store.New())
+			l.SourceRoot = t.TempDir()
+			l.ensureScopes()
+			owner := testutil.KustomizationID("apps", "owner")
+			root := graphVisit{root: l.SourceRoot, dir: "mounted", owner: owner, source: manifest.BootstrapSourceID}
+			file := filepath.Join(l.SourceRoot, "mounted", "input.yaml")
+			origin := filepath.Join(l.SourceRoot, "original", "input.yaml")
+			l.recordScopeVisits(&root, []graphVisit{{
+				file: file, origin: origin, coordinate: "input.yaml", localBase: "mounted",
+				namespace: "apps", role: tc.role,
+			}}, tc.membership, false)
+			l.scopes.contributions[0].active = tc.active
+			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "input"}
+			occurrence := authoredOccurrence{Authored: id, Identity: id, facts: &occurrenceFacts{namespaced: true}}
+			for _, path := range []string{file, origin} {
+				var identities []manifest.NamedResource
+				record := manifest.DiscoveryRecord{Path: path, Authored: id}
+				projected := l.projectAuthoredVisits(
+					&record,
+					&occurrence,
+					"v1",
+					func(o authoredOccurrence, p manifest.Production) {
+						identities = append(identities, o.Identity)
+						assert.Equal(t, p.Owner, owner)
+						assert.Equal(t, p.Source, manifest.BootstrapSourceID)
+						assert.Equal(t, p.Path, path)
+					},
+				)
+				assert.Equal(t, projected, tc.want)
+				var want []manifest.NamedResource
+				if tc.want {
+					want = []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}}
+				}
+				assert.Diff(t, identities, want)
+			}
 		})
 	}
 }

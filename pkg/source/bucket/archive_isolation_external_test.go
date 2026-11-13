@@ -51,8 +51,10 @@ func testFetcherArchiveIsolationAndWarmHitsCase(t *testing.T, attempts *int, bac
 		root = t.TempDir()
 	}
 	c := cachetest.New(t, root, cache.New)
-	fInputs := testInputs{secrets: func(ns, _ string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
+	fInputs := testInputs{secrets: func(ns, _ string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{StringData: map[string]any{"accesskey": ns, "secretkey": "test"}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &bucket.Fetcher{Network: newTestNetwork(t), Cache: c}
 	var wg sync.WaitGroup

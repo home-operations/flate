@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/internal/claimpath"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -48,7 +49,9 @@ func (l *Loader) admit(repoRoot string) {
 			l.visitKustomizationScope(repoRoot, ks, i)
 		}
 		l.visitRootScopes(repoRoot, kss)
-		l.resolveEligibility()
+		for dir := range selection.ReduceStatic(staticScope{loader: l}) {
+			l.documents.read(dir)
+		}
 		if !l.projectAuthored(repoRoot) {
 			l.scopes.complete = true
 			return
@@ -67,8 +70,9 @@ func (l *Loader) anchorRoot(repoRoot, dir string) bool {
 	}
 	var visits []graphVisit
 	owned := false
+	coordinate := dir + "/"
 	for _, claim := range l.scopes.claims {
-		if !strings.HasPrefix(dir+"/", claim.Prefix) {
+		if !strings.HasPrefix(coordinate, claim.Prefix) {
 			continue
 		}
 		if !owned {
@@ -120,19 +124,11 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 			authored2.objects[id], authored2.records[id] = obj, r
 		}
 	}
-	allowed := l.roots
-	for id := range allowed {
-		if !allowed[id].independent {
-			delete(allowed, id)
-		}
-	}
-	if allowed == nil && (len(authored2.objects) != 0 || len(authored2.records) != 0) {
-		allowed = make(map[manifest.NamedResource]rootEvidence, len(authored2.objects))
-	}
+	allowed := &l.roots
+	allowed.retainIndependent()
 	l.allowAuthoredObjects(authored2.records, authored2.objects, allowed, scopes)
 	l.allowAuthoredRecords(authored2.records, authored2.objects, allowed, scopes)
 	l.scopes.candidates, l.candidates = l.candidates, authored2.objects
-	l.roots = allowed
 	return l.applyAuthored(authored2.records, authored2.objects, allowed)
 }
 
@@ -201,7 +197,7 @@ func (l *Loader) retainBuiltDeclarations(state *authoredState) {
 	// Built declarations keep their effective identity until their supplying batch changes.
 	for id := range l.Index.Records {
 		record := l.Index.Records[id]
-		if record.Builder == "" || l.registeredRoot(&record) == "" {
+		if record.Builder == "" || l.registeredRoot(id, &record) == "" {
 			continue
 		}
 		state.records[id] = record
@@ -222,7 +218,7 @@ func (l *Loader) projectAuthoredOccurrence(
 		return false
 	}
 	structured := withAuthoredStructure(input.fact, authored.Obj)
-	publish := func(projected Occurrence, production manifest.Production) {
+	publish := func(projected authoredOccurrence, production manifest.Production) {
 		if state.records[projected.Identity].Builder != "" {
 			return
 		}
@@ -251,41 +247,39 @@ func (l *Loader) projectAuthoredOccurrence(
 
 func (l *Loader) projectAuthoredVisits(
 	record *manifest.DiscoveryRecord,
-	structured *Occurrence,
+	structured *authoredOccurrence,
 	version string,
-	publish func(Occurrence, manifest.Production),
+	publish func(authoredOccurrence, manifest.Production),
 ) bool {
 	projected := false
-	for i := range l.scopes.contributions {
-		contribution := &l.scopes.contributions[i]
+	for _, ref := range l.scopes.visits[record.Path] {
+		contribution := &l.scopes.contributions[ref.contribution]
 		if !contribution.active || contribution.membershipOnly {
 			continue
 		}
-		for j := range contribution.visits {
-			visit := &contribution.visits[j]
-			if visit.role != kustomizeinput.Resource || visit.file != record.Path && visit.origin != record.Path {
-				continue
-			}
-			occurrence := *structured
-			identity, err := l.projectIdentity(occurrence.Authored, visit, version, occurrence.facts.namespaced)
-			if err != nil {
-				// Production finalization reports invalid upstream identity projections.
-				return true
-			}
-			occurrence.Identity = identity
-			occurrence.requiresBuild = visit.requiresBuild && contribution.owner == (manifest.NamedResource{})
-			production := manifest.Production{
-				Owner: contribution.owner, Source: contribution.source,
-				Authored: record.Authored, Path: record.Path, File: record.File,
-			}
-			if production.Owner == (manifest.NamedResource{}) &&
-				(occurrence.requiresBuild || identity.Name != occurrence.Authored.Name) {
-				production.Owner = manifest.NewEntryKustomization(production.Source, contribution.context.dir, manifest.NamedResource{}).
-					Named()
-			}
-			publish(occurrence, production)
-			projected = true
+		visit := &contribution.visits[ref.visit]
+		if visit.role != kustomizeinput.Resource || visit.file != record.Path && visit.origin != record.Path {
+			continue
 		}
+		occurrence := *structured
+		identity, err := l.projectIdentity(occurrence.Authored, visit, version, occurrence.facts.namespaced)
+		if err != nil {
+			// Production finalization reports invalid upstream identity projections.
+			return true
+		}
+		occurrence.Identity = identity
+		occurrence.requiresBuild = visit.requiresBuild && contribution.owner == (manifest.NamedResource{})
+		production := manifest.Production{
+			Owner: contribution.owner, Source: contribution.source,
+			Authored: record.Authored, Path: record.Path, File: record.File,
+		}
+		if production.Owner == (manifest.NamedResource{}) &&
+			(occurrence.requiresBuild || identity.Name != occurrence.Authored.Name) {
+			production.Owner = manifest.NewEntryKustomization(production.Source, contribution.context.dir, manifest.NamedResource{}).
+				Named()
+		}
+		publish(occurrence, production)
+		projected = true
 	}
 	return projected
 }
@@ -321,7 +315,7 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 func (l *Loader) applyAuthored(
 	next map[manifest.NamedResource]manifest.DiscoveryRecord,
 	objects map[manifest.NamedResource]store.Child,
-	allowed map[manifest.NamedResource]rootEvidence,
+	allowed *rootInventory,
 ) bool {
 	var deletes []manifest.NamedResource
 	changed := false
@@ -383,16 +377,13 @@ func (l *Loader) terminalInput(file string) bool {
 		return l.documents.cache[file].terminal
 	}
 	terminal := false
-	{
-		vValues3 := l.scopes.visits[file]
-		for vIndex3 := range vValues3 {
-			v := vValues3[vIndex3]
-			if v.role == kustomizeinput.Resource && v.readable {
-				return false
-			}
-			terminal = terminal || v.role != kustomizeinput.Resource
+	for v := range l.scopes.fileVisits(file) {
+		if v.role == kustomizeinput.Resource && v.readable {
+			return false
 		}
+		terminal = terminal || v.role != kustomizeinput.Resource
 	}
+
 	return terminal
 }
 

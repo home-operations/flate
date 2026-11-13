@@ -12,6 +12,7 @@ import (
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -19,43 +20,54 @@ import (
 // document caches a directory document or parsed file objects by source-view path.
 // Consumers MUST never mutate its objects. Pointer fields precede flags to keep map values inline.
 type document struct {
-	body          *types.Kustomization
-	file          string
-	coverage      manifest.DocumentRole
-	possible      bool
-	objects       []parsedObject
-	decodeErr     error
-	built         []store.Child
-	builtInput    *BuiltInput
-	lookup        map[manifest.NamedResource]store.Child
-	pathInputs    map[manifest.NamedResource]manifest.Data
-	plugins       *[]pluginInputs
-	selected      bool
-	eligible      fileEligibility
-	rootKnown     bool
-	rootAdmitted  bool
-	terminal      bool
-	loaded        bool
-	scanExcluded  bool
-	bootstrap     bool
-	initial       bool
-	traversed     bool
-	adHoc         bool
-	buildExcluded bool
-	incoming      bool
-	edgesKnown    bool
-	pathState     pathState
-	searched      bool
+	deferred         *cachedInput
+	projection       *projectionInputs
+	parsed           *parsedDocument
+	body             *types.Kustomization
+	file             string
+	sourceRoot       string
+	coverage         manifest.DocumentRole
+	possible         bool
+	objects          []parsedObject
+	decodeErr        error
+	built            []store.Child
+	builtInput       *BuiltInput
+	lookup           map[manifest.NamedResource]store.Child
+	pathInputs       map[manifest.NamedResource]manifest.Data
+	plugins          *[]pluginInputs
+	rootApplications map[manifest.NamedResource]rootApplication
+	rootOwners       []selection.RootOwnerFacts
+	rootPeers        [][]manifest.NamedResource
+	selected         bool
+	eligible         selection.RootEligibility
+	rootKnown        bool
+	rootAdmitted     bool
+	rootNative       bool
+	terminal         bool
+	loaded           bool
+	scanExcluded     bool
+	bootstrap        bool
+	initial          bool
+	traversed        bool
+	adHoc            bool
+	buildExcluded    bool
+	incoming         bool
+	edgesKnown       bool
+	pathState        pathState
+	searched         bool
 }
 
 type parsedObject struct {
 	store.Child
 
-	outcome  manifest.DocOccurrence
-	item     int
-	fact     *Occurrence
-	version  string
-	declared string
+	payload *inputPayload
+
+	outcome            manifest.DocOccurrence
+	item               int
+	fact               *authoredOccurrence
+	version            string
+	declared           string
+	substituteDisabled bool
 }
 
 type pathState uint8
@@ -75,16 +87,17 @@ type documentReader struct {
 	projections *manifest.ProducerProjections
 	cache       map[string]document
 	// Views MUST stay shared when discovery copies a reader.
-	views      map[string]fs.FS
-	artifacts  map[string]*store.SourceArtifact
-	parsed     *ParsedInputs
-	compact    bool
-	intent     manifest.DocumentRole
-	coordinate *OccurrenceID
-	regular    bool
-	changed    []string
-	bootstrap  string
-	edgesDirty bool
+	views        map[string]fs.FS
+	artifacts    map[string]*store.SourceArtifact
+	parsed       *ParsedInputs
+	compact      bool
+	recordInputs bool
+	intent       manifest.DocumentRole
+	coordinate   *occurrenceID
+	regular      bool
+	changed      []string
+	bootstrap    string
+	edgesDirty   bool
 }
 
 func (r *documentReader) scanExcluded(file string) bool {
@@ -116,20 +129,27 @@ func mountSource(mounted map[string]*store.SourceArtifact, artifact store.Artifa
 	}
 }
 
-func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.DiscoveryIndex) []string {
+func (r *documentReader) mountSources(
+	s sourceReader,
+	input *store.SourceArtifact,
+	candidates ...*manifest.DiscoveryIndex,
+) []string {
 	mounted := map[string]*store.SourceArtifact{}
 	for info := range manifest.Kinds() {
-		if info.SourceArtifact {
-			for _, obj := range s.ListObjects(info.Group, info.Kind) {
-				mountSource(mounted, s.GetArtifact(obj.Named(), store.ArtifactContent))
-			}
+		if !info.SourceArtifact {
+			continue
+		}
+		for _, obj := range s.ListObjects(info.Group, info.Kind) {
+			mountSource(mounted, s.GetArtifact(obj.Named(), store.ArtifactContent))
 		}
 	}
 	for _, index := range candidates {
-		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
-		for id, record := range index.Records {
-			if id.KindInfo().SourceArtifact && record.File != "" {
+		for id := range index.Records {
+			if id.KindInfo().SourceArtifact && index.Records[id].File != "" {
 				mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
+			}
+			for _, ref := range index.Records[id].Refs {
+				mountSource(mounted, s.GetArtifact(ref, store.ArtifactContent))
 			}
 		}
 	}
@@ -138,13 +158,16 @@ func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.Di
 	if bootstrap, ok := artifact.(*store.SourceArtifact); ok {
 		r.bootstrap = bootstrap.LocalPath
 	}
+	if input != nil {
+		mounted[input.LocalPath] = input
+	}
 	return r.setSources(mounted)
 }
 
 func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []string {
 	var changed []string
 	for root, art := range mounted {
-		if r.artifacts[root] != art {
+		if !r.artifacts[root].SameMaterial(art) {
 			changed = append(changed, root)
 		}
 	}
@@ -167,7 +190,7 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 		r.views = map[string]fs.FS{}
 	}
 	for root, art := range mounted {
-		if r.artifacts[root] == art {
+		if r.artifacts[root].SameMaterial(art) {
 			continue
 		}
 		r.views[root] = art.FS
@@ -199,7 +222,7 @@ func (r *documentReader) invalidateSourceDocuments(changed []string) {
 	}
 }
 
-func (l *Loader) refreshSources() {
+func (l *Loader) refreshSources(input *store.SourceArtifact) {
 	l.documents.projections = l.Options.Projections
 	if l.documents.projections == nil {
 		l.documents.projections = &l.projections
@@ -209,11 +232,12 @@ func (l *Loader) refreshSources() {
 		inputs.compact == l.documents.compact {
 		l.documents.parsed = inputs
 	}
-	changed := l.documents.mountSources(l.Store, l.Index)
+	changed := l.documents.mountSources(l.Store, input, l.Index)
 	if len(changed) == 0 {
 		return
 	}
 	for _, root := range changed {
+		l.roots.removeSource(root)
 		if len(l.Index.Records) != 0 {
 			l.documents.changed = appendUniqueProducer(l.documents.changed, root)
 		}
@@ -232,7 +256,7 @@ func (l *Loader) refreshSources() {
 		scopeValues := previous.sources
 		for scopeIndex := range scopeValues {
 			scope := scopeValues[scopeIndex]
-			if scope.sourceState == l.sourceState(scope.id, scope.repoRoot) {
+			if scope.sourceState.matches(new(l.sourceState(scope.id, scope.repoRoot))) {
 				l.scopes.sources = append(l.scopes.sources, scope)
 			}
 		}
@@ -241,7 +265,7 @@ func (l *Loader) refreshSources() {
 }
 
 func (l *Loader) mountSources() {
-	l.refreshSources()
+	l.refreshSources(nil)
 	for _, root := range l.documents.changed {
 		//nolint:gocritic // Filtered iterator values remain snapshots during record deletion.
 		for id, r := range l.Index.Files() {
@@ -286,17 +310,24 @@ func (r *documentReader) input(file string) fileInput {
 
 func (r *documentReader) mountedRoot(file string) string {
 	dr := *r
+	doc := dr.cache[file]
+	if doc.sourceRoot != "" {
+		return doc.sourceRoot
+	}
 	if len(dr.views) == 0 {
 		return ""
 	}
-	for root := file; ; root = filepath.Dir(root) {
-		if _, exists := dr.views[root]; exists {
-			return root
+	file = filepath.Clean(file)
+	selected := ""
+	for root := range dr.views {
+		if len(root) <= len(selected) || !strings.HasPrefix(file, root) {
+			continue
 		}
-		if root == filepath.Dir(root) {
-			return ""
+		if len(file) == len(root) || root == string(filepath.Separator) || file[len(root)] == filepath.Separator {
+			selected = root
 		}
 	}
+	return selected
 }
 
 type builderDocument struct {
@@ -386,6 +417,7 @@ func normalizeKustomization(k *types.Kustomization) {
 func (r *documentReader) rememberStat(file string, info fs.FileInfo, err error) document {
 	dr := *r
 	cached := dr.cache[file]
+	cached.sourceRoot = new(dr).mountedRoot(file)
 	switch {
 	case err == nil && info.IsDir():
 		cached.pathState = pathDirectory

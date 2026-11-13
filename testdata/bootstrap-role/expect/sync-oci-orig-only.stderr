@@ -1,0 +1,13 @@
+
+  ✗  orig snapshot: OCIRepository  flux-system/flux-system  not found
+         orig snapshot: required by flux-system/cluster
+
+  ⚠ warnings (3)
+    [UnrelatedFailure] orig snapshot: Kustomization flux-system/flux-instance: dependencies failed: OCIRepository.source.toolkit.fluxcd.io/flux-system/flux-system: dependency not found
+      blocked by OCIRepository.source.toolkit.fluxcd.io/flux-system/flux-system
+    [UnrelatedFailure] orig snapshot: Kustomization flux-system/flux-operator: dependencies failed: OCIRepository.source.toolkit.fluxcd.io/flux-system/flux-system: dependency not found
+      blocked by OCIRepository.source.toolkit.fluxcd.io/flux-system/flux-system
+    [UnrelatedFailure] orig snapshot: Kustomization flux-system/kustomize-mutating-webhook: dependencies failed: OCIRepository.source.toolkit.fluxcd.io/flux-system/flux-system: dependency not found
+      blocked by OCIRepository.source.toolkit.fluxcd.io/flux-system/flux-system
+
+  ✗ 1 failed · 1 blocked

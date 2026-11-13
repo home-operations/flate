@@ -1,0 +1,17 @@
+{
+  "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+  "kind": "Kustomization",
+  "metadata": {
+    "name": "unrelated",
+    "namespace": "paperwork"
+  },
+  "spec": {
+    "interval": "1h",
+    "path": "./kubernetes/unrelated",
+    "sourceRef": {
+      "kind": "GitRepository",
+      "name": "flux-system",
+      "namespace": "flux-system"
+    }
+  }
+}

@@ -45,7 +45,7 @@ data: {key: value}
 	unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
 	t.Cleanup(unsub)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
-	first := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	first := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer first.Assessment.Close()
 	assert.FatalIf(
 		t,
@@ -73,7 +73,7 @@ data: {key: value}
 		false,
 	)
 	defer unsubArtifact()
-	second := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	second := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer second.Assessment.Close()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(
@@ -93,7 +93,7 @@ data: {key: value}
 	)
 
 	s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: ""})
-	skipped := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	skipped := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer skipped.Assessment.Close()
 	info, _ := s.GetStatus(rs.Named())
 	after = s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
@@ -155,7 +155,7 @@ data: {key: initial}
 	}
 	s.AddObject(rs)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
-	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -177,8 +177,8 @@ data: {key: initial}
 	var dispatches atomic.Int64
 	dispatch := fixtureDispatcher{
 		store: s,
-		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-			result := d.Dispatch(ctx, id, level)
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel, _ schedule.Result) schedule.Result {
+			result := d.Dispatch(ctx, id, level, schedule.Result{})
 			assert.ErrorIf(
 				t,
 				dispatches.Add(1) == 1 && result.Assessment.Valid(),
@@ -221,7 +221,7 @@ data: {key: initial}
 	reader.Init(s, testutil.KustomizationID("ns", "reader"), nil)
 	defer reader.Retire()
 	reader.GetArtifact(rs.Named(), store.ArtifactContent)
-	settled := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	settled := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer settled.Assessment.Close()
 	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	assert.FatalIf(
@@ -277,7 +277,7 @@ data: {key: fixed}
 	}
 	s.AddObject(rs)
 	d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
-	initial := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
+	initial := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone, schedule.Result{})
 	defer initial.Assessment.Close()
 	assert.FatalIf(
 		t,
@@ -323,9 +323,9 @@ data: {key: fixed}
 			wantUnresolved = false
 		}
 	case "preflight failure":
-		opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
+		s.SetPreflight(rs.Named(), "cycle")
 	case "filter skip":
-		opts.Loader = admissiontest.New(
+		opts.Loader, opts.Session = admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes:   change.NewSet(nil),
@@ -334,8 +334,8 @@ data: {key: fixed}
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, opts.Loader, nil)
-		opts.Filter = opts.Loader.Options.Filter
+		admissiontest.Commit(t, opts.Session, nil)
+
 	case "vanished":
 		s.DeleteObject(rs.Named())
 		s.RecordEmitted(rs.Named(), before, nil)
@@ -439,7 +439,12 @@ func testDAGDispatchResourceSetClassificationCaseTail(
 		}
 		result = scheduler.Results()[(*tailCaseInput.rs).Named()]
 	} else {
-		result = tailCaseInput.d.Dispatch(t.Context(), (*tailCaseInput.rs).Named(), manifest.DrainNone)
+		result = tailCaseInput.d.Dispatch(
+			t.Context(),
+			(*tailCaseInput.rs).Named(),
+			manifest.DrainNone,
+			schedule.Result{},
+		)
 		defer result.Assessment.Close()
 	}
 	assert.FatalIf(
@@ -559,6 +564,7 @@ func testDAGDispatchResourceSetClassificationCase2(
 		t.Context(),
 		child.Named(),
 		manifest.DrainNone,
+		schedule.Result{},
 	)
 	defer result.Assessment.Close()
 	run := result.Assessment.(*base.Execution)

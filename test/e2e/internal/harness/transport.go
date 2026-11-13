@@ -16,13 +16,16 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	"github.com/go-git/go-git/v6/plumbing/protocol"
+	gittransport "github.com/go-git/go-git/v6/plumbing/transport"
+	"github.com/go-git/go-git/v6/plumbing/transport/file"
 
 	"github.com/home-operations/flate/internal/testfixture"
+	sourcegit "github.com/home-operations/flate/pkg/source/git"
 )
 
 type fixtureTransport struct {
+	git       sourcegit.Transports
 	fixture   *testfixture.Fixture
 	responses atomic.Pointer[[]testfixture.Response]
 }
@@ -67,12 +70,17 @@ func (c *fixtureConnection) Read(p []byte) (int, error) {
 
 func serve(t *testing.T, f *testfixture.Fixture) *fixtureTransport {
 	t.Helper()
-	git := server.NewClient(f)
-	for protocol, previous := range client.Protocols {
-		client.InstallProtocol(protocol, git)
-		t.Cleanup(func() { client.InstallProtocol(protocol, previous) })
+	git := file.NewTransport(file.Options{Loader: f})
+	connect := func(ctx context.Context, req sourcegit.TransportRequest) (sourcegit.Connection, error) {
+		return git.Connect(
+			ctx,
+			&gittransport.Request{URL: req.URL, Command: req.Command, Protocol: protocol.Version(req.Protocol)},
+		)
 	}
-	fixture := &fixtureTransport{fixture: f}
+	fixture := &fixtureTransport{fixture: f, git: sourcegit.Transports{}}
+	for _, scheme := range []string{"ssh", "git", "http", "https", "file"} {
+		fixture.git[scheme] = connect
+	}
 	fixture.update(t, nil)
 	old := http.DefaultTransport
 	original, ok := old.(*http.Transport)

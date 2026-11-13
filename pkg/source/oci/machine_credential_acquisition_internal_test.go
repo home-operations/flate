@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -84,8 +86,10 @@ func testFetcherMachineCredentialsCase(t *testing.T, tc *struct {
 		})
 		op := &operation{
 			Fetcher: &Fetcher{Network: newTestNetwork(t)},
-			secrets: func(string, string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{dockerConfigJSONKey: tc.docker}}
+			secrets: func(string, string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{StringData: map[string]any{dockerConfigJSONKey: tc.docker}}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			},
 		}
 		selected, err = op.resolveRegistryConfig(t.Context(), new(repo.RegistryAccess()), "ghcr.io")
@@ -205,13 +209,15 @@ func testFetcherMachineCredentialsAcquisitionCase(
 		ca = testutil.SelfSignedCA(t)
 		repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
 		repo.CertSecretRef = repo.ProxySecretRef
-		inputs.secrets = func(string, string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{
+		inputs.secrets = func(string, string) store.ReferenceFacts {
+			secretInput := &manifest.Secret{StringData: map[string]any{
 				"address":  proxyAddress,
 				"username": "repository-proxy-user",
 				"password": "repository-proxy-password",
 				"ca.crt":   ca,
 			}}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
 	}
 	got, err := fetchtest.Fetch(

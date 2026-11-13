@@ -97,7 +97,7 @@ func testSourceViewInputOriginCase(t *testing.T, testCaseInput *struct {
 		)
 	}
 	reader := documentReader{}
-	reader.mountSources(st)
+	reader.mountSources(st, nil)
 	assert.Equal(t, new(reader).localPath(file), origin)
 	base := "."
 	if testCaseInput.alias {

@@ -153,8 +153,10 @@ func TestTemplate_sFilesFailures(t *testing.T) {
 	assert.NoError(t, os.Symlink("../absent", filepath.Join(root, "link")))
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	admittedDirectory, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	admitted := admittedDirectory.Artifact()
+	assert.NoError(t, admittedDirectory.Close())
 	owner := cachetest.New(t, "", cache.New)
 	var archive bytes.Buffer
 	w := tar.NewWriter(&archive)
@@ -220,7 +222,7 @@ func TestObserveValuesFiles_UnpinnedChanges(t *testing.T) {
 	owner := cachetest.New(t, "", cache.New)
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	assert.Equal(t, d.valuesPin, "")
 	reads := 0
@@ -274,7 +276,7 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	input := d.valuesFS
 	blocked, resume := make(chan struct{}), make(chan struct{})
@@ -336,7 +338,7 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 		}
 		acquired := acquireChartFS(t, cachetest.New(t, "", cache.New), os.DirFS(root))
 		st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquired})
-		d, err := cli.describeChart(t.Context(), hr, cliSources)
+		d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -407,8 +409,10 @@ func testTemplateSourceRootValuesFilesCase(t *testing.T, testCaseInput *testTemp
 	owner := cachetest.New(t, "", cache.New)
 	location, err := gitrepo.Locate(t.Context(), root, root)
 	assert.NoError(t, err)
-	admitted, err := gittree.AdmitDirectory(t.Context(), location)
+	admittedDirectory2, err := gittree.OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	admitted := admittedDirectory2.Artifact()
+	assert.NoError(t, admittedDirectory2.Close())
 	input := admitted.FS
 	if (*testCaseInput.kind) == manifest.KindBucket {
 		input = acquireChartFS(t, owner, os.DirFS(root))
@@ -607,7 +611,7 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	assert.FatalIf(t, d.valuesPin == "", "%s", "fixture has no acquired values pin")
 	if !(*testCaseInput) {
@@ -684,7 +688,7 @@ func testObserveValuesFilesRetryFailuresCase(
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, os.DirFS(root))})
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	d, err := cli.describeChart(t.Context(), hr, cliSources)
+	d, err := cli.describeChart(t.Context(), hr, cliSources.chartInput(hr))
 	assert.NoError(t, err)
 	input := d.valuesFS
 	ctx, cancel := context.WithCancel(t.Context())

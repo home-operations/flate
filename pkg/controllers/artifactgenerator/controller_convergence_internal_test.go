@@ -199,11 +199,17 @@ func (d *convergenceDispatcher) Dispatch(
 	ctx context.Context,
 	id schedule.NodeID,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) schedule.Result {
 	switch id {
 	case d.id:
 		d.work.dispatched.Add(1)
-		assessment := d.generator.ReconcileNode(acquireProbe{Context: ctx, calls: &d.work.acquires}, id, level)
+		assessment := d.generator.ReconcileNode(
+			acquireProbe{Context: ctx, calls: &d.work.acquires},
+			id,
+			level,
+			previous,
+		)
 		return schedule.Result{Assessment: &convergenceAssessment{Execution: assessment, work: d.work}}
 	case d.driver:
 		e := controllertest.NewExecution(d.generator.Controller, id)
@@ -219,9 +225,9 @@ func (d *convergenceDispatcher) Dispatch(
 		return schedule.Result{Assessment: e}
 	default:
 		if d.source.Owns(id) {
-			return schedule.Result{Assessment: d.source.ReconcileNode(ctx, id, level)}
+			return schedule.Result{Assessment: d.source.ReconcileNode(ctx, id, level, previous)}
 		}
-		return schedule.Result{Assessment: d.consumer.ReconcileNode(ctx, id, level)}
+		return schedule.Result{Assessment: d.consumer.ReconcileNode(ctx, id, level, previous)}
 	}
 }
 
@@ -371,7 +377,7 @@ func testArtifactGeneratorAcquireObservationControlCase2(
 	before := testCaseInput.calls.Load()
 	beforeFiles, beforeArchives := (*testCaseInput.observed).opens.Load(), testCaseInput.archiveOpens.Load()
 	tasks.Go((*testCaseInput.probe), "control", func(ctx context.Context) {
-		t.Cleanup(controller.ReconcileNode(ctx, obj.Named(), manifest.DrainNone).Close)
+		t.Cleanup(controller.ReconcileNode(ctx, obj.Named(), manifest.DrainNone, schedule.Result{}).Close)
 	})
 	tasks.BlockTillDone()
 	output := st.GetArtifact(

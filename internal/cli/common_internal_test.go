@@ -14,19 +14,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/selection"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 )
@@ -148,9 +148,11 @@ func TestOutputValue_Validates(t *testing.T) {
 
 func writeBaselineGit(t *testing.T, root string, urls ...string) {
 	t.Helper()
-	{
-		_, err := git.PlainInit(root, false)
-		assert.FatalIf(t, err != nil && !errors.Is(err, git.ErrRepositoryAlreadyExists), "%v", err)
+	_, err := git.PlainOpen(root)
+	if errors.Is(err, git.ErrRepositoryNotExists) {
+		testutil.GitInit(t, root)
+	} else {
+		assert.NoError(t, err)
 	}
 	var cfg strings.Builder
 	for i, url := range urls {
@@ -184,7 +186,7 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 		{name: "no repositories"},
 		{name: "no remotes", currentGit: true, baseline: "empty"},
 		{name: "baseline only", baseline: "different", want: []string{baselineURL}},
-		{name: "optional current open", brokenCurrent: true, baseline: "different", want: []string{baselineURL}},
+		{name: "optional current marker inspection", brokenCurrent: true, baseline: "different", want: []string{baselineURL}},
 		{name: "linked worktree", currentGit: true, baseline: "linked", want: []string{baselineURL}},
 		{name: "nested scan", currentGit: true, baseline: "nested", want: []string{baselineURL}},
 		{name: "sorted remotes", currentGit: true, baseline: "sorted", want: []string{currentURL, baselineURL}},
@@ -199,7 +201,7 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 
 			case tc.brokenCurrent:
 
-				testutil.WriteFile(t, current, ".git", "gitdir: missing\n")
+				assert.NoError(t, os.Symlink(".git", filepath.Join(current, ".git")))
 			}
 			scan := orig
 			switch tc.baseline {
@@ -259,7 +261,7 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	assert.Equal(t, c.pathRoot, "")
 	assert.Equal(t, c.pathOrigRoot, "")
 	assert.Equal(t, c.pathOrigSelfURLs == nil, true)
-	testutil.WriteFile(t, root, ".git/config", "[core]\nrepositoryformatversion = 0\n")
+	testutil.WriteFile(t, root, ".git/config", "[core]\nrepositoryformatversion = 0\n[commit]\ngpgSign = false\n")
 	testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{
 		AllowEmptyCommits: true,
 		Author:            &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)},
@@ -387,7 +389,7 @@ func TestBindCommon_ChartDigestTrackingOverride(t *testing.T) {
 			if !tc.setEnv {
 				assert.NoError(t, os.Unsetenv(key))
 			}
-			root := New("test")
+			root := New("test", RunConfig{})
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
 			var f commonFlags
@@ -453,7 +455,7 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 		assert.Diff(t, location.URLs, []string{url})
 		assert.NoError(t, os.Remove(filepath.Join(location.RepositoryRoot, ".git", "config")))
 	}
-	runs, err := orchestrator.RenderTrees(t.Context(), inputTrees(&c), cfg)
+	runs, err := renderTreesForTest(t.Context(), t, inputTrees(&c), cfg)
 	base, head := runs[0], runs[1]
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("gitops-system", "apps")
@@ -483,9 +485,10 @@ func TestBindCommon_HelmOptions(t *testing.T) {
 		args []string
 		want helm.Options
 	}{
-		{name: "defaults", want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"Secret"}}},
-		{name: "CRD only", args: []string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--enable-dns", "--skip-kinds=CustomResourceDefinition"}, want: helm.Options{KubeVersion: "1.31.2", APIVersions: "fixture.example/v1", EnableDNS: true, SkipTests: true, SkipCRDs: true, SkipKinds: []string{}}},
-		{name: "mixed", args: []string{"--skip-kinds=Secret,CustomResourceDefinition,ConfigMap"}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"Secret", "ConfigMap"}}},
+		{name: "defaults", want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"CustomResourceDefinition", "Secret"}}},
+		{name: "CRD only", args: []string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--enable-dns", "--skip-kinds=CustomResourceDefinition"}, want: helm.Options{KubeVersion: "1.31.2", APIVersions: "fixture.example/v1", EnableDNS: true, SkipTests: true, SkipCRDs: true, SkipKinds: []string{"CustomResourceDefinition"}}},
+		{name: "mixed", args: []string{"--skip-kinds=Secret,CustomResourceDefinition,ConfigMap"}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"ConfigMap", "CustomResourceDefinition", "Secret"}}},
+		{name: "duplicates", args: []string{"--skip-kinds=Secret,CustomResourceDefinition,ConfigMap,Secret,CustomResourceDefinition"}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"ConfigMap", "CustomResourceDefinition", "Secret"}}},
 		{name: "explicit false and empty", args: []string{"--enable-dns=false", "--skip-kinds="}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipKinds: []string{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -503,6 +506,7 @@ func TestBindCommon_HelmOptions(t *testing.T) {
 		})
 	}
 	assert.Equal(t, buildOrchCfg(&commonFlags{}).HelmOptions.SkipTests, true)
+	assert.Diff(t, buildOrchCfg(&commonFlags{}).HelmOptions.SkipKinds, []string(nil))
 }
 
 func TestRunSelected_WarningIdentity(t *testing.T) {
@@ -521,7 +525,7 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	resource.Resource.Name = "other"
 	message.Message = "different"
 	want := []manifest.Warning{base, detail, count, category, resource, message}
-	side := &selection.Selection{
+	side := &selection.Result{
 		Warnings:  []manifest.Warning{base, detail, count, category, resource, message},
 		Unrelated: []manifest.Warning{base},
 		External:  []manifest.Warning{detail},
@@ -542,7 +546,7 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 			},
 			&selectedInvocation{
 				groups: []selectedGroup{
-					{cluster: ".", sides: []*selection.Selection{side, {Warnings: []manifest.Warning{base}}}},
+					{cluster: ".", sides: []*selection.Result{side, {Warnings: []manifest.Warning{base}}}},
 				},
 			},
 			&selectedPayload{},
@@ -568,4 +572,30 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	assert.Diff(t, side.Warnings, before)
 	assert.Diff(t, side.Unrelated, []manifest.Warning{base})
 	assert.Diff(t, side.External, []manifest.Warning{detail})
+}
+
+func TestCommonFlags_Roots(t *testing.T) {
+	t.Parallel()
+	flags := commonFlags{namespace: "apps"}
+	assert.Diff(
+		t,
+		flags.roots(
+			"selected",
+			manifest.KindKustomization,
+			manifest.KindGitRepository,
+			manifest.KindConfigMap,
+			"Unknown",
+		),
+		[]manifest.NamedResource{
+			{
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Namespace: "apps",
+				Name:      "selected",
+			},
+			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "selected"},
+			{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"},
+			{Kind: "Unknown", Namespace: "apps", Name: "selected"},
+		},
+	)
 }

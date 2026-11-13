@@ -9,10 +9,10 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -32,13 +32,13 @@ func TestFailureModel(t *testing.T) {
 	missing, dependent, dual, peer := id("missing"), id("dependent"), id("dual"), id("peer")
 	for _, tc := range []struct {
 		name   string
-		result selection.Selection
+		result selection.Result
 		want   output.Model
 		raw    *orchestrator.Result
 	}{
 		{
 			name: "GroupsCascadeUnderRoots",
-			result: selection.Selection{
+			result: selection.Result{
 				Failed:  failed(root, mid, leaf, dependent),
 				Blocked: map[manifest.NamedResource][]manifest.NamedResource{mid: {root}, leaf: {mid}, dependent: {missing}},
 				Causes:  map[manifest.NamedResource][]manifest.NamedResource{root: {leaf, mid}, missing: {dependent}},
@@ -51,13 +51,13 @@ func TestFailureModel(t *testing.T) {
 		},
 		{
 			name:   "PrimaryOnly",
-			result: selection.Selection{Failed: failed(root), Causes: map[manifest.NamedResource][]manifest.NamedResource{root: nil}},
+			result: selection.Result{Failed: failed(root), Causes: map[manifest.NamedResource][]manifest.NamedResource{root: nil}},
 			want:   output.Model{Primary: []output.Primary{{ID: root, Msg: "root boom"}}},
 		},
 		{name: "Empty"},
 		{
 			name: "BlockedCountsDistinctResources",
-			result: selection.Selection{
+			result: selection.Result{
 				Failed:  failed(root, dual),
 				Blocked: map[manifest.NamedResource][]manifest.NamedResource{dual: {root, missing}},
 				Causes:  map[manifest.NamedResource][]manifest.NamedResource{root: {dual}, missing: {dual}},
@@ -98,14 +98,15 @@ func TestFailureModel(t *testing.T) {
 				}
 				o, err := completedOrchestrator(t)
 				assert.NoError(t, err)
-				selected, err, _ := orchestrator.Select(
+				projectedResults0, projectionErrors0 := orchestrator.Select(
 					[]orchestrator.Rendered{{Orchestrator: o, Result: tc.raw}},
-					&orchestrator.FailuresError{
+					&selection.FailuresError{
 						Message: "raw failures",
 					},
 					[]manifest.NamedResource{testutil.KustomizationID("", "")},
 					nil,
 				)
+				selected, err, _ := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 				assert.FatalIf(t, len(selected) != 1 || err == nil ||
 					!strings.Contains(
 						err.Error(),

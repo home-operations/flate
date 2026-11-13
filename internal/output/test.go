@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -58,7 +59,7 @@ func (o Outcome) decorate() decoration {
 }
 
 // Cases retain their supplied order; blocked cases follow them.
-func (r *TestReport) rosterBlock(names Names, color bool) string {
+func (r *TestReport) rosterBlock(names diff.Names, color bool) string {
 	all := slices.Concat(r.Cases, r.Blocked)
 	kindW := 0
 	for _, c := range all {
@@ -72,7 +73,7 @@ func (r *TestReport) rosterBlock(names Names, color bool) string {
 	return strings.Join(rows, "\n")
 }
 
-func caseRow(c *Case, subject *Subject, kindW int, color bool) string {
+func caseRow(c *Case, subject *diff.Subject, kindW int, color bool) string {
 	style := c.Outcome.decorate()
 
 	var row strings.Builder

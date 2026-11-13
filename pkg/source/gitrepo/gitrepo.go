@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/config"
 )
 
 // Location retains canonical input coordinates and repository metadata for one admission.
@@ -88,9 +88,10 @@ func (l *Location) selectRepository(search string) {
 			break
 		}
 		if selected {
-			repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
-			if err == nil || root == search {
-				l.RepositoryRoot, l.Repository, l.LookupErr = root, repo, err
+			repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{})
+			l.RepositoryRoot, l.Repository, l.LookupErr = root, repo, err
+			if err != nil {
+				l.LookupErr = fmt.Errorf("open repository %q: %w", root, err)
 			}
 			break
 		}

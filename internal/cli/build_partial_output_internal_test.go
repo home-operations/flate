@@ -6,9 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
 //nolint:paralleltest // CLI execution changes process-wide logging.
@@ -40,13 +41,13 @@ func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	writeErr := errors.New("document write failed")
 	writer := &outputFailWriter{remaining: limit, err: writeErr}
 	var errOut bytes.Buffer
-	cmd := New("test")
+	cmd := New("test", RunConfig{})
 	cmd.SetArgs(args)
 	cmd.SetOut(writer)
 	cmd.SetErr(&errOut)
 	got := cmd.ExecuteContext(t.Context())
 	{
-		_, ok := errors.AsType[*orchestrator.FailuresError](got)
+		_, ok := errors.AsType[*selection.FailuresError](got)
 		assert.FatalIf(t, !ok || !errors.Is(got, writeErr), "render or writer error lost: %v", got)
 	}
 	{
@@ -58,7 +59,7 @@ func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 0)
 	writer = &outputFailWriter{remaining: limit, err: writeErr}
 	errOut.Reset()
-	assert.Equal(t, Run(args, writer, &errOut), 1)
+	assert.Equal(t, Run(args, writer, &errOut, RunConfig{}), 1)
 	assert.Equal(t, writer.buf.String(), full[:limit])
 	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
 	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 0)

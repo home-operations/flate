@@ -9,7 +9,7 @@
       "kubernetes/apps/main/flux-system/flux-operator.yaml",
       "kubernetes/apps/utility/flux-system/flux-operator.yaml"
     ],
-    "reductions": "Flatten the common kubernetes/clusters prefix to sibling main/test/utility entries. Retain colliding flux-system/shared identities and repository-relative app paths. Replace charts and applications with one local, identically named ConfigMap whose value identifies the cluster. The root has no Kustomization and no cluster selector. This fixture records desired E4 partition behavior; its named scope test remains skipped until the discovery partition owner repairs root discovery."
+    "reductions": "Flatten the common kubernetes/clusters prefix to sibling main/test/utility entries. Retain colliding flux-system/shared identities and repository-relative app paths. Replace charts and applications with one local, identically named ConfigMap whose value identifies the cluster. The root has no Kustomization and no cluster selector. The root scope test requires independent cluster stores and preserves complete reviewed output for both replays."
   },
   "repositories": [
     {

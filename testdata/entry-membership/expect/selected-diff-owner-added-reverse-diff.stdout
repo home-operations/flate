@@ -10,35 +10,7 @@
       "kind": "ConfigMap",
       "namespace": "apps",
       "name": "root-output",
-      "status": "added",
-      "old": null,
-      "new": {
-        "apiVersion": "v1",
-        "data": {
-          "value": "before"
-        },
-        "kind": "ConfigMap",
-        "metadata": {
-          "name": "root-output",
-          "namespace": "apps"
-        }
-      },
-      "oldChart": "",
-      "newChart": ""
-    },
-    {
-      "parent": {
-        "group": "kustomize.toolkit.fluxcd.io",
-        "kind": "Kustomization",
-        "namespace": "apps",
-        "name": "owner",
-        "path": "app"
-      },
-      "apiVersion": "v1",
-      "kind": "ConfigMap",
-      "namespace": "apps",
-      "name": "root-output",
-      "status": "removed",
+      "status": "changed",
       "old": {
         "apiVersion": "v1",
         "data": {
@@ -54,7 +26,17 @@
           "namespace": "apps"
         }
       },
-      "new": null,
+      "new": {
+        "apiVersion": "v1",
+        "data": {
+          "value": "before"
+        },
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "root-output",
+          "namespace": "apps"
+        }
+      },
       "oldChart": "",
       "newChart": ""
     },

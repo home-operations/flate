@@ -118,10 +118,16 @@ func (r *ReadSet) RequireQualification(id manifest.NamedResource) {
 //
 //nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) CarryWarnings(previous RenderedOutput) {
+	current := r.warnings
 	{
 		warningValues := previous.warnings
 		for warningIndex := range warningValues {
 			warning := warningValues[warningIndex]
+			if slices.ContainsFunc(current, func(fresh manifest.Warning) bool {
+				return fresh.Resource == warning.Resource && fresh.Category == warning.Category
+			}) {
+				continue
+			}
 			r.AddWarning(warning)
 		}
 	}

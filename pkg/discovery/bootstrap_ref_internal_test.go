@@ -12,16 +12,19 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -160,6 +163,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 		commit                                            bool
 		ref                                               *sourcev1.GitRepositoryRef
 		head, fallback, fail, noStore, sparse, submodules bool
+		lookupErr                                         bool
 	}{
 		{name: "no-ref", head: true},
 		{name: "empty-ref", ref: &sourcev1.GitRepositoryRef{}, head: true},
@@ -173,7 +177,13 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 		{name: "conflicting", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0", Branch: "bad branch"}},
 		{name: "missing-tag", ref: &sourcev1.GitRepositoryRef{Tag: "missing"}, fallback: true},
 		{name: "missing-name", ref: &sourcev1.GitRepositoryRef{Name: "refs/pull/9/head"}, fallback: true},
-		{name: "missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, fallback: true},
+		{name: "branch", ref: &sourcev1.GitRepositoryRef{Branch: "master"}, head: true},
+		{name: "missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, head: true},
+		{name: "older-base-head-branch-submodules", base: "v1.0.0", ref: &sourcev1.GitRepositoryRef{Branch: "master"}, submodules: true, fallback: true},
+		{name: "recursive-missing-branch", ref: &sourcev1.GitRepositoryRef{Branch: "missing"}, submodules: true, fallback: true},
+		{name: "invalid-branch", ref: &sourcev1.GitRepositoryRef{Branch: "bad branch"}, fail: true},
+		{name: "branch-lookup-error", ref: &sourcev1.GitRepositoryRef{Branch: "main"}, lookupErr: true, head: true},
+		{name: "no-store-branch", ref: &sourcev1.GitRepositoryRef{Branch: "main"}, noStore: true, head: true},
 		{name: "missing-semver", ref: &sourcev1.GitRepositoryRef{SemVer: ">3.0.0"}, fallback: true},
 		{name: "no-store", ref: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}, noStore: true, fallback: true},
 		{name: "no-store-invalid", ref: &sourcev1.GitRepositoryRef{Commit: "abc"}, noStore: true, fail: true},
@@ -389,7 +399,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 		parentsForTest(result.Index)[childID])
 
 	generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}
-	generatedCM, ok := values.NewStoreProvider(st).Data(generated).(*manifest.ConfigMap)
+	generatedCM, ok := values.NewStoreProvider(st).Lookup(generated).Data.(*manifest.ConfigMap)
 	assert.FatalIf(
 		t,
 		st.GetObject(generated) != nil,
@@ -398,9 +408,9 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 	)
 	assert.FatalIf(t, !ok || generatedCM.Data["value"] != "pinned" ||
 		values.NewStoreProvider(st).
-			Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) !=
+			Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}).Data !=
 			nil, "pinned generators = %v", generatedCM)
-	fileGenerated, ok := values.NewStoreProvider(st).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).(*manifest.ConfigMap)
+	fileGenerated, ok := values.NewStoreProvider(st).Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).Data.(*manifest.ConfigMap)
 	assert.FatalIf(
 		t,
 		!ok || fileGenerated.Data["value"] != "pinned",
@@ -447,6 +457,7 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 		noStore    bool
 		sparse     bool
 		submodules bool
+		lookupErr  bool
 	},
 ) {
 	t.Helper()
@@ -474,7 +485,10 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 		ignore := "apps/excluded.txt\n"
 		repository.Ignore = &ignore
 		owner := cachetest.New(t, "", sourcecache.New)
-		result, err := baseline.AutoResolve(t.Context(), root, testCaseInput.base, owner)
+		result, err := baseline.AutoResolve(
+			t.Context(),
+			baseline.Config{Network: networktest.New(t), Path: root, Base: testCaseInput.base, Cache: owner},
+		)
 		assert.FatalIf(t, err != nil, "%v", err)
 		st.SetArtifact(manifest.BootstrapSourceID, result.BaseInput)
 	}
@@ -484,14 +498,23 @@ func testAliasBootstrapSourcesDeclaredRefsCase(
 	}
 	d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 	{
-		_, err := d.resolveEntrySources(t.Context(), false)
+		_, err := d.resolveTestSources(t.Context(), false)
 		assert.FatalIf(t, err != nil, "%v", err)
+	}
+	if testCaseInput.lookupErr {
+		inputDirectory, err := gittree.OpenDirectory(t.Context(), &gitrepo.Location{
+			ContentRoot: root, LookupErr: errors.New("repository lookup failed"),
+		})
+		assert.NoError(t, err)
+		input := inputDirectory.Artifact()
+		assert.NoError(t, inputDirectory.Close())
+		st.SetArtifact(manifest.BootstrapSourceID, input)
 	}
 	st.AddObject(repository)
 	bootstrap := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	side := bootstrap.LocalPath
 	d.cfg.Path = side
-	aliased, err := d.resolveEntrySources(t.Context(), false)
+	aliased, err := d.resolveTestSources(t.Context(), false)
 	assert.FatalIf(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap ||
 		st.GetObject(
 			repository.Named(),

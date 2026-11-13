@@ -5,6 +5,14 @@
 //		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
 //		Path: "/path/to/repository",
 //	}}, orchestrator.Config{Concurrency: 4})
+//	defer func() {
+//		for _, run := range runs {
+//			run.Result.Close()
+//		}
+//	}()
+//
+// Call Result.Close after the final selection consumer.
+// Result.Close releases reporting references and preserves returned output.
 //
 // Results are sorted by cluster and side. Each completed tree has an independent
 // Store, controller state and result; all trees share the invocation's task budget,

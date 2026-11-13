@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -28,7 +28,7 @@ func TestRun_ClusterReport_KindCollisionInventory(t *testing.T) {
 		Resource: other, Category: "Inventory", Count: 3,
 		Message: "Widget.one.example/ns/opaque stays unchanged", Detail: []string{"Gadget.hidden.example/ns/reference"},
 	}
-	alpha := &selection.Selection{
+	alpha := &selection.Result{
 		Failed: map[manifest.NamedResource]store.StatusInfo{
 			widget: {
 				Status:  store.StatusFailed,
@@ -38,7 +38,7 @@ func TestRun_ClusterReport_KindCollisionInventory(t *testing.T) {
 		},
 		Causes: map[manifest.NamedResource][]manifest.NamedResource{widget: nil, gadget: victims},
 	}
-	omega := &selection.Selection{Warnings: []manifest.Warning{warning}}
+	omega := &selection.Result{Warnings: []manifest.Warning{warning}}
 	var first string
 	for run := range 2 {
 		var stderr bytes.Buffer
@@ -46,8 +46,8 @@ func TestRun_ClusterReport_KindCollisionInventory(t *testing.T) {
 			&selectedRequest{stderr: &stderr, stdout: io.Discard},
 			&selectedInvocation{
 				groups: []selectedGroup{
-					{cluster: "alpha", sides: []*selection.Selection{alpha}},
-					{cluster: "omega", sides: []*selection.Selection{omega}},
+					{cluster: "alpha", sides: []*selection.Result{alpha}},
+					{cluster: "omega", sides: []*selection.Result{omega}},
 				},
 			},
 			&selectedPayload{},

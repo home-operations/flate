@@ -118,14 +118,14 @@ func (r *editWitnessRun) render(t *testing.T) []byte {
 	cacheDir := t.TempDir()
 	cfg := Config{RecordWork: true, Concurrency: 2, CacheDir: cacheDir}
 	if regime == "hot" || regime == "warm-after-edit" {
-		_, err := RenderTrees(t.Context(), []Tree{witnessTree(roots[0], manifest.TreeBase)}, cfg)
+		_, err := renderTreesForTest(t.Context(), t, []Tree{witnessTree(roots[0], manifest.TreeBase)}, cfg)
 		assert.NoError(t, err)
 	}
 	trees := []Tree{witnessTree(roots[0], manifest.TreeBase), witnessTree(roots[1], manifest.TreeHead)}
 	if regime == "hot" {
 		trees[1] = witnessTree(roots[0], manifest.TreeHead)
 	}
-	runs, err := RenderTrees(t.Context(), trees, cfg)
+	runs, err := renderTreesForTest(t.Context(), t, trees, cfg)
 	assert.NoError(t, err)
 	outputs := make([]map[string][]map[string]any, 0, len(runs))
 	var templates uint64
@@ -189,7 +189,7 @@ func (r *editWitnessRun) assertCachedWork(
 	}
 	assertWitnessCacheCounts(
 		t, new(workCounts(run.Result.Work, entry, manifest.WorkCache)), &entryCache,
-		witnessPreparationLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
+		witnessCacheLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
 	)
 
 	return helm.Attempts
@@ -214,8 +214,7 @@ func (tc *editWitnessCase) run(t *testing.T) {
 	roots := [2]string{writeWitness(t, before), writeWitness(t, after)}
 	var full [2]*Result
 	for side, root := range roots {
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{witnessTree(root, manifest.TreeHead)},
 			Config{RecordWork: true, Concurrency: 2},
 		)
@@ -297,7 +296,7 @@ func (r *editWitnessRun) assertCachedOwners(
 		}
 		assertWitnessCacheCounts(
 			t, &cached, &want,
-			witnessPreparationLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
+			witnessCacheLimit(len(witnessWork(r.full[side].Work, manifest.WorkAdmission))),
 		)
 		if want.Attempts != 0 {
 			preparation := workCounts(run.Result.Work, owner, manifest.WorkPreparation)

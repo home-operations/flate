@@ -17,6 +17,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	controllerbase "github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/controllers/helmrelease"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -184,7 +187,7 @@ func TestFinalize_DebugSummary(t *testing.T) {
 		)
 		o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
 		assert.NoError(t, err)
-		_, err = o.render(t.Context())
+		_, err = o.render(t.Context(), t)
 		assert.NoError(t, err)
 		assert.Equal(t, len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease)), 1)
 		projected := testutil.HelmReleaseID("apps", "child")
@@ -217,8 +220,7 @@ func TestFinalize_DebugSummary(t *testing.T) {
 		defer slog.SetDefault(previous)
 		root := t.TempDir()
 		writeCluster(t, root, "one", "two")
-		runs, err := RenderTrees(
-			t.Context(),
+		runs, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					ID: manifest.TreeID{
@@ -273,7 +275,7 @@ func TestFinalize_DispatchPanic(t *testing.T) {
 				tasks,
 				fixtureDispatcher{
 					store: st,
-					dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel) schedule.Result {
+					dispatch: func(context.Context, schedule.NodeID, manifest.DrainLevel, schedule.Result) schedule.Result {
 						panic("dispatch panic")
 					},
 				},
@@ -284,7 +286,11 @@ func TestFinalize_DispatchPanic(t *testing.T) {
 			assert.Equal(t, tasks.Failures(), int64(1))
 			assert.Equal(t, len(s.Results()), 0)
 			assert.Equal(t, t.Context().Err(), nil)
-			o := &Orchestrator{store: st, tasks: tasks}
+			o := &Orchestrator{
+				store: st,
+				tasks: tasks,
+				cfg:   treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
+			}
 			err := o.finalize()
 			assert.FatalIf(
 				t,
@@ -343,7 +349,16 @@ func testReportOwnershipFreshPassesCase(t *testing.T, testCaseInput *struct {
 	records := maps.Clone(index.Records)
 	claims := map[string][]manifest.NamedResource{"startup/": slices.Clone(index.Claims["startup/"])}
 	readers := map[string][]manifest.FileReader{"unrelated.yaml": slices.Clone(index.Readers["unrelated.yaml"])}
-	o := &Orchestrator{store: st, repoRoot: root, index: index, tasks: task.NewBounded(2)}
+	o := &Orchestrator{
+		store:    st,
+		repoRoot: root,
+		index:    index,
+		tasks:    task.NewBounded(2),
+		cfg:      treeConfig{Config: Config{missing: depwait.NewMissingPolicy(nil)}},
+	}
+	o.controllers = controllerbase.Controllers{
+		HelmRelease: helmrelease.New(controllerbase.New(st, o.tasks), nil, o.cfg.HelmOptions),
+	}
 	var previousAll, previousLocal, savedAll, savedLocal []manifest.KSClaim
 	for pass := range 2 {
 		if pass != 0 {

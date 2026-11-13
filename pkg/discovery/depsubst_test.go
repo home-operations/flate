@@ -11,7 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
+func TestRun_DependencyDocumentsImmutable(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.GitInit(t, root)
@@ -50,7 +50,7 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 	)
 	assert.FatalIf(t, err != nil, "%v", err)
 	consumer := testutil.KustomizationID("apps", "consumer")
-	assert.Equal(t, res.DependencySubstitutions.Resolve("${PREFIX:-dev-}config"), "prod-config")
+	assert.Equal(t, st.GetObject(consumer).(*manifest.Kustomization).DependsOn[0].Name, "${PREFIX:-dev-}config")
 	if record, exists := res.Index.Lookup(
 		consumer,
 	); !exists || record.Parent != (manifest.NamedResource{}) ||
@@ -66,7 +66,7 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 	changed := supplier.Clone()
 	changed.PostBuild.Substitute["PREFIX"] = "later-"
 	st.AddObject(changed)
-	assert.Equal(t, res.DependencySubstitutions.Resolve("${PREFIX:-dev-}config"), "prod-config")
+	assert.Equal(t, st.GetObject(consumer).(*manifest.Kustomization).DependsOn[0].Name, "${PREFIX:-dev-}config")
 }
 
 func TestRun_DependsOnPreservesAdmission(t *testing.T) {
@@ -82,13 +82,17 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 		t,
 		root,
 		"app/child.yaml",
-		testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n"),
+		testutil.KustomizationYAML(
+			"child",
+			"apps",
+			"  path: ./leaf\n  dependsOn: [{name: '${PREFIX:-dev-}config', namespace: '${TEAM}'}]\n",
+		),
 	)
 	testutil.WriteFile(
 		t,
 		root,
 		"app/supplier.yaml",
-		testutil.KustomizationYAML("supplier", "apps", "  postBuild: {substitute: {PREFIX: prod-}}\n"),
+		testutil.KustomizationYAML("supplier", "apps", "  postBuild: {substitute: {PREFIX: prod-, TEAM: shared}}\n"),
 	)
 	testutil.WriteFile(
 		t,
@@ -97,7 +101,7 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 		testutil.KustomizationYAML(
 			"active",
 			"apps",
-			"  path: ./other\n  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n",
+			"  path: ./other\n  dependsOn: [{name: '${PREFIX:-dev-}config', namespace: '${TEAM}'}]\n",
 		),
 	)
 	st := store.New()
@@ -107,11 +111,20 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 		"metadata":   map[string]any{"name": "active", "namespace": "apps", "uid": "admitted"},
 		"spec": map[string]any{
 			"path":      "./other",
-			"dependsOn": []any{map[string]any{"name": "${PREFIX:-dev-}config"}},
+			"dependsOn": []any{map[string]any{"name": "${PREFIX:-dev-}config", "namespace": "${TEAM}"}},
+			"postBuild": map[string]any{"substitute": map[string]any{"TEAM": "shared"}},
 		},
 	}, manifest.ParseDocOptions{})
 	activeObject, activeDoc := parsed.Object, parsed.Document
 	assert.FatalIf(t, err != nil, "%v", err)
+	before := manifest.Fingerprint(activeDoc)
+	st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+		if id == activeObject.Named() {
+			got := payload.(*manifest.Kustomization)
+			assert.Equal(t, got.DependsOn[0].Name, "${PREFIX:-dev-}config")
+			assert.Equal(t, got.DependsOn[0].Namespace, "${TEAM}")
+		}
+	}, false)
 	st.AddObject(activeObject, activeDoc)
 	st.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"})
 	result, err := discovery.Run(
@@ -122,20 +135,23 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 	_, doc, emission := st.GetEmission(activeObject.Named())
 	emission.Finish()
 	assert.Equal(t, doc["metadata"].(map[string]any)["uid"], any("admitted"))
+	assert.Equal(t, manifest.Fingerprint(doc), before)
 
 	assert.FatalIf(
 		t,
-		result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "prod-config",
+		st.GetObject(activeObject.Named()).(*manifest.Kustomization).DependsOn[0].Name != "${PREFIX:-dev-}config",
 		"%v",
 		"dependency substitutions were not resolved",
 	)
 	active, ok := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "active"))
 	assert.FatalIf(
 		t,
-		!ok || active.DependsOn[0].Name != "prod-config",
-		"admitted owner dependency was not resolved: %+v",
+		!ok || active.DependsOn[0].Name != "${PREFIX:-dev-}config",
+		"admitted owner dependency changed: %+v",
 		active,
 	)
+	assert.Equal(t, active.DependsOn[0].Namespace, "${TEAM}")
+	assert.Equal(t, activeObject.(*manifest.Kustomization).DependsOn[0].Namespace, "${TEAM}")
 	child := testutil.KustomizationID("apps", "child")
 	{
 		_, indexed := result.Index.Lookup(child)
@@ -192,7 +208,7 @@ func testRunDependsOnPreservesAdmissionInactiveSupplierAndSource(t *testing.T) {
 	}
 	assert.FatalIf(
 		t,
-		result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "dev-config",
+		st.GetObject(active).(*manifest.Kustomization).DependsOn[0].Name != "${PREFIX:-dev-}config",
 		"%v",
 		"inactive declaration supplied active substitution",
 	)

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
@@ -32,7 +34,8 @@ func TestEntryQualification_SharedRouteWithdrawal(t *testing.T) {
 	}
 	l := loader.New(st)
 	l.SourceRoot = root
-	l.Options.Selection.Changed = true
+	configureSelection(t, l, selection.Request{Changed: true})
+	qualifyForTest(t, l, first.Named(), later.Named())
 	t.Cleanup(l.Retire)
 	a := &Admission{input: input, path: filepath.Join(root, "entry"), loader: l, entryDemand: true}
 	selected, binding, err := a.BindEntry(t.Context(), st)

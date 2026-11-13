@@ -31,7 +31,7 @@ func TestRenderTrees_ArtifactInputCurrentSelection(t *testing.T) {
 	for side, value := range []string{"old", "new"} {
 		tree := artifactWorkTree(t, value, manifest.TreeSide(side))
 		trees = append(trees, tree)
-		runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, []Tree{tree}, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		full[side] = runs[0].Result
 		assert.Equal(
@@ -69,6 +69,12 @@ func TestRenderTrees_ArtifactInputCurrentSelection(t *testing.T) {
 			assert.Equal(t, record.Counts.RemoteTransfers, uint64(0))
 			if record.Key.Owner == consumer && record.Key.Phase == manifest.WorkKustomize {
 				assert.Equal(t, record.Key.Source, artifact)
+			}
+			if record.Key.Owner == generator &&
+				(record.Key.Phase == manifest.WorkEvaluation || record.Key.Phase == manifest.WorkAcquisition) {
+				assert.Equal(t, record.Key.Source, manifest.NamedResource{
+					Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "missing",
+				})
 			}
 			if record.Key.Owner == generator && record.Key.Phase == manifest.WorkAcquisition {
 				assert.Equal(t, record.Key.Input, payload.Key)
@@ -128,7 +134,7 @@ func assertArtifactSelection(t *testing.T, trees []Tree, full [2]*Result) {
 	}
 	var first []byte
 	for repeat := range 2 {
-		runs, err := RenderTrees(t.Context(), trees, Config{RecordWork: true, Concurrency: 2})
+		runs, err := renderTreesForTest(t.Context(), t, trees, Config{RecordWork: true, Concurrency: 2})
 		assert.NoError(t, err)
 		outputs := make([][]manifest.DocumentBatch, 0, len(runs))
 		for _, run := range runs {

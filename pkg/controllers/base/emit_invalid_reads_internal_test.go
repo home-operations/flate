@@ -26,13 +26,13 @@ func TestEmit_InvalidReads(t *testing.T) {
 	index := &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
 	}
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
-	c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
+	c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
 	run := newExecution(c, parent.Named())
 	t.Cleanup(run.Close)
 	_, _, next := run.Reads.GetEmission(parent.Named())
@@ -43,11 +43,11 @@ func TestEmit_InvalidReads(t *testing.T) {
 	replacement.Path = "B"
 	s.AddObject(replacement)
 	assert.FatalIf(t, run.Reads.Valid(), "%v", "changed parent left captured reads valid")
-	assert.FatalIf(t, !filter.ShouldReconcile(parent.Named()) || filter.ShouldReconcile(child.Named()) ||
+	assert.FatalIf(t, !filter.Snapshot().Reconcile(parent.Named()) || filter.Snapshot().Reconcile(child.Named()) ||
 		s.GetObject(child.Named()) != nil ||
 		s.HasInventory(parent.Named()), "%v", "invalid emission fixture already selected or published the child")
-	c.emit(t.Context(), parent.Named(), &next, nil)
-	assert.ErrorIf(t, filter.ShouldReconcile(child.Named()), "%v", "invalid reads extended changed-only selection")
+	(&Execution{Controller: c}).emit(t.Context(), parent.Named(), &next, nil)
+	assert.ErrorIf(t, filter.Snapshot().Reconcile(child.Named()), "%v", "invalid reads extended changed-only selection")
 	assert.ErrorIf(
 		t,
 		s.GetObject(child.Named()) != nil || s.GetDeclaration(child.Named()) != nil ||
@@ -67,13 +67,13 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	index := &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}},
 	}
-	filterLoader := admissiontest.New(
+	filterLoader, _ := admissiontest.New(
 		t,
 		admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""},
 	)
-	admissiontest.Commit(t, filterLoader, nil)
-	filter := filterLoader.Options.Filter
-	c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
+	admissiontest.Commit(t, filterLoader.Options.Session, nil)
+	filter := filterLoader.Options.Session
+	c.Configure(Options{Session: filter, Index: index, Loader: filterLoader})
 	run := newExecution(c, parent.Named())
 	_, _, captured := run.Reads.GetEmission(parent.Named())
 	next := &captured
@@ -85,7 +85,7 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	assert.FatalIf(t, run.Reads.Valid(), "%v", "stale input succeeded")
 	assert.FatalIf(
 		t,
-		filter.ShouldReconcile(child.Named()) || s.GetObject(child.Named()) != nil,
+		filter.Snapshot().Reconcile(child.Named()) || s.GetObject(child.Named()) != nil,
 		"%v",
 		"stale input extended selection",
 	)
@@ -99,7 +99,7 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	newExecution(c, parent.Named()).Emit(t.Context(), parent.Named(), fresh, nil)
 	assert.FatalIf(
 		t,
-		!filter.ShouldReconcile(accepted.Named()) || s.GetDeclaration(accepted.Named()) != accepted,
+		!filter.Snapshot().Reconcile(accepted.Named()) || s.GetDeclaration(accepted.Named()) != accepted,
 		"%v",
 		"ordinary replacement did not publish and extend selection",
 	)
@@ -151,7 +151,7 @@ func TestEmit_RejectedAttemptClearsFootprint(t *testing.T) {
 			if caller == "store" {
 				st.RecordEmitted(owner.Named(), &next, nil)
 			} else {
-				controller.emit(t.Context(), owner.Named(), &next, nil)
+				(&Execution{Controller: controller}).emit(t.Context(), owner.Named(), &next, nil)
 			}
 			assert.FatalIf(
 				t,

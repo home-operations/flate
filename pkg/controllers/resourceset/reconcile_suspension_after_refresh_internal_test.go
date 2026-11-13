@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -58,6 +60,7 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 			t.Context(),
 			rs.Named(),
 			manifest.DrainNone,
+			schedule.Result{},
 		).Blocked
 		assert.FatalIf(t, len(blocked) != 1 ||
 			blocked[0] != want, "blocked = %v, want [%s]", blocked, want)

@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -55,8 +57,7 @@ metadata:
 data: {k: v}
 `)
 
-	renderedSingleton3, err := RenderTrees(
-		context.Background(),
+	renderedSingleton3, err := renderTreesForTest(context.Background(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{},
 	)
@@ -75,8 +76,7 @@ data: {k: v}
 	assert.ErrorIf(t, len(res.Orphans) != 0,
 		"expected no orphans; got %v", res.Orphans)
 
-	again, err := RenderTrees(
-		t.Context(),
+	again, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir}},
 		Config{Concurrency: 2},
 	)
@@ -102,15 +102,14 @@ func TestOrchestrator_TypedNullErrors(t *testing.T) {
 				"apps/kustomization.yaml": "resources: [cm.yaml]\n",
 				"apps/cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n",
 			})
-			renderedSingleton1, err := RenderTrees(
-				t.Context(),
+			renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 				[]Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 				Config{CacheDir: t.TempDir(), Concurrency: 2},
 			)
 			assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 			res := renderedSingleton1[0].Result
 			{
-				_, ok := errors.AsType[*FailuresError](err)
+				_, ok := errors.AsType[*selection.FailuresError](err)
 				assert.FatalIf(t, !ok, "render error = %v, want resource failure", err)
 			}
 			assert.FatalIf(t, !strings.Contains(err.Error(), tc.diagnostic), "missing upstream diagnostic: %v", err)
@@ -205,6 +204,7 @@ spec:
 		assert.FatalIf(t, ok, "%v", "fixture ResourceSet must only exist in render output")
 	}
 	res, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil, "Render: %v", err)
 	ksID := testutil.KustomizationID("flux-system", "apps")
 	{
@@ -267,8 +267,7 @@ spec:
 		),
 	)
 
-	renderedSingleton4, err := RenderTrees(
-		context.Background(),
+	renderedSingleton4, err := renderTreesForTest(context.Background(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{
 			RegistryConfig:    registryConfig,
@@ -345,8 +344,7 @@ spec:
     namespace: flux-system
 `)
 
-	renderedSingleton5, err := RenderTrees(
-		context.Background(),
+	renderedSingleton5, err := renderTreesForTest(context.Background(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{
 			RegistryConfig:    registryConfig,
@@ -523,10 +521,10 @@ spec:
 	}
 
 	producerID := testutil.KustomizationID("flux-system", "cluster-vars")
-	f := o.filter
-	assert.FatalIf(t, f == nil, "filter returned nil; ExternalChanges should have activated changed-only mode")
-	assert.FatalIf(t, !f.ShouldReconcile(producerID),
-		"producer %s must be in keep set; keep=%v", producerID, f.KeepNames())
+	f := o.selection
+	assert.FatalIf(t, f == nil, "selection session is nil; ExternalChanges should activate changed-only mode")
+	assert.FatalIf(t, !f.Snapshot().Reconcile(producerID),
+		"producer %s must be in keep set; keep=%v", producerID, selectionNamesForTest(f, o.store, o.index))
 
 	if err := o.run(context.Background()); err != nil {
 		assert.FatalIf(

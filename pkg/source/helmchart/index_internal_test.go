@@ -17,7 +17,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	repo "helm.sh/helm/v4/pkg/repo/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -104,9 +103,11 @@ entries:
 			got, _, gotErr := f.loadIndex(
 				t.Context(),
 				"https://charts.test/index.yaml",
-				func(w io.Writer) (ocispec.Descriptor, error) {
+				func(w io.Writer) (sourcecache.ProducerResult, error) {
 					_, err := io.WriteString(w, tc.data)
-					return ocispec.Descriptor{Digest: digest.FromString(tc.data), Size: int64(len(tc.data))}, err
+					return sourcecache.ProducerResult{
+						Digest: digest.FromString(tc.data), Size: int64(len(tc.data)),
+					}, err
 				},
 				manifest.WorkScope{},
 			)

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -374,16 +376,17 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	for _, fatal := range []error{context.Canceled, errors.New("unattributed panic"), errors.New("output write failed"), cleanupErr, errors.Join(context.Canceled, cleanupErr)} {
 		t.Run(fatal.Error(), func(t *testing.T) {
 			t.Parallel()
-			runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, fatal)
-			selection, selectedErr, remainder := orchestrator.Select(
+			runErr := errors.Join(&selection.FailuresError{Message: "raw reconcile failures"}, fatal)
+			projectedResults0, projectionErrors0 := orchestrator.Select(
 				[]orchestrator.Rendered{{Orchestrator: o, Result: res}},
 				runErr,
 				[]manifest.NamedResource{testutil.KustomizationID("", selected.Name)},
 				nil,
 			)
+			selectedResults, selectedErr, remainder := projectedResults0, projectionErrors0.Selected, projectionErrors0.Remaining
 			assert.FatalIf(
 				t,
-				len(selection) != 1 || len(outputByParent(selection[0].Manifests)[selected.Named()]) != 1,
+				len(selectedResults) != 1 || len(outputByParent(selectedResults[0].Manifests)[selected.Named()]) != 1,
 				"selection failed: %v",
 				selectedErr,
 			)
@@ -391,7 +394,9 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 			got := finishSelected(
 				&selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out},
 				&selectedInvocation{
-					groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}},
+					groups: []selectedGroup{
+						{cluster: ".", sides: selectedResults, err: selectedErr, remainder: remainder},
+					},
 				},
 				&selectedPayload{},
 			)
@@ -436,7 +441,7 @@ func TestRun_NamedScope_WarningWriteErrors(t *testing.T) {
 				args = append(args, "--path-orig", filepath.Join(orig, "cluster"))
 			}
 			want := errors.New("warning write failed")
-			cmd := New("test")
+			cmd := New("test", RunConfig{})
 			cmd.SetContext(t.Context())
 			cmd.SetArgs(args)
 			cmd.SetOut(&bytes.Buffer{})
@@ -626,21 +631,22 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		},
 		Blocked: map[manifest.NamedResource][]manifest.NamedResource{a: {b}, b: {a}},
 	}
-	selection, selectedErr, remainder := orchestrator.Select(
+	projectedResults1, projectionErrors1 := orchestrator.Select(
 		[]orchestrator.Rendered{{Orchestrator: o, Result: res}},
-		&orchestrator.FailuresError{
+		&selection.FailuresError{
 			Message: "raw reconcile failures",
 		},
 		[]manifest.NamedResource{{Group: a.Group, Kind: a.Kind, Name: a.Name}},
 		nil,
 	)
-	assert.FatalIf(t, len(selection) != 1, "selection failed: %v", selectedErr)
+	selectedResults, selectedErr, remainder := projectedResults1, projectionErrors1.Selected, projectionErrors1.Remaining
+	assert.FatalIf(t, len(selectedResults) != 1, "selection failed: %v", selectedErr)
 	var out bytes.Buffer
 	{
 		got := finishSelected(
 			&selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out},
 			&selectedInvocation{
-				groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}},
+				groups: []selectedGroup{{cluster: ".", sides: selectedResults, err: selectedErr, remainder: remainder}},
 			},
 			&selectedPayload{},
 		)

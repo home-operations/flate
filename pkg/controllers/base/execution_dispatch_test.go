@@ -29,9 +29,6 @@ func TestExecution_Dispatch(t *testing.T) {
 	s := store.New()
 	ts := task.NewBounded(0)
 	c := base.New(s, ts)
-	c.Configure(base.Options{PreflightFailure: func(id manifest.NamedResource) (string, bool) {
-		return "synthetic cycle", id.Name == "preflightfail"
-	}})
 	c.StartLifecycle()
 	t.Cleanup(func() { ts.BlockTillDone() })
 
@@ -68,6 +65,7 @@ func TestExecution_Dispatch(t *testing.T) {
 		Namespace: "ns",
 	}
 	s.AddObject(pfHR)
+	s.SetPreflight(pfHR.Named(), "synthetic cycle")
 	dispatch(pfHR.Named())
 	{
 		info, _ := s.GetStatus(pfHR.Named())
@@ -244,9 +242,7 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	fp, _, _ := fingerprintDedupResult9.Fingerprint, fingerprintDedupResult9.Reused, fingerprintDedupResult9Err
 	s.RecordEmitted(id, &store.Emission{Fingerprint: fp, Complete: true}, nil)
-	c.Configure(
-		base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle detected", true }},
-	)
+	s.SetPreflight(id, "cycle detected")
 	fingerprintDedupResult10, fingerprintDedupResult10Err := controllertest.NewExecution(c, id).
 		FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	_, handled, err := fingerprintDedupResult10.Fingerprint, fingerprintDedupResult10.Reused, fingerprintDedupResult10Err
@@ -430,7 +426,7 @@ func testExecutionDispatchCase(t *testing.T, testCaseInput *struct {
 	c := base.New(st, nil)
 	opts := base.Options{}
 	if testCaseInput.filtered {
-		admissionLoader1 := admissiontest.New(
+		admissionLoader1, _ := admissiontest.New(
 			t,
 			admissiontest.Config{
 				Changes: change.NewSet([]string{"other.yaml"}),
@@ -441,11 +437,11 @@ func testExecutionDispatchCase(t *testing.T, testCaseInput *struct {
 				Root:      "",
 			},
 		)
-		admissiontest.Commit(t, admissionLoader1, nil)
-		opts.Filter, opts.Loader = admissionLoader1.Options.Filter, admissionLoader1
+		admissiontest.Commit(t, admissionLoader1.Options.Session, nil)
+		opts.Session, opts.Loader = admissionLoader1.Options.Session, admissionLoader1
 	}
 	if testCaseInput.preflight {
-		opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
+		st.SetPreflight(id, "cycle")
 	}
 	c.Configure(opts)
 	c.StartLifecycle()
@@ -518,7 +514,7 @@ func testExecutionDispatchCase2(t *testing.T, testCaseInput testExecutionDispatc
 							Input:    store.ReferenceFacts{Materializers: []manifest.NamedResource{gate}},
 							Optional: true,
 						}},
-						Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return finish(s, got) },
+						Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return finish(s, got) },
 					}, level)
 				}
 				if level == manifest.DrainNone {

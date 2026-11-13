@@ -10,8 +10,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/home-operations/flate/internal/testutil/networktest"
+	"github.com/home-operations/flate/pkg/selection"
+
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -70,14 +73,13 @@ spec:
 			},
 		)
 	}
-	results, err := RenderTrees(
-		t.Context(),
+	results, err := renderTreesForTest(t.Context(), t,
 		trees,
 		Config{
 			CacheDir:       t.TempDir(),
 			RegistryConfig: registryConfig,
 			Concurrency:    2,
-			Selection:      manifest.Selection{Changed: true},
+			Selection:      selection.Request{Changed: true},
 		},
 	)
 	assert.NoError(t, err)
@@ -208,7 +210,10 @@ spec:
 	cache, err := sourcecache.New(t.Context(), t.TempDir())
 	assert.NoError(t, err)
 	defer cache.Close()
-	inputs, err := baseline.AutoResolve(t.Context(), filepath.Join(root, "entry"), "HEAD", cache)
+	inputs, err := baseline.AutoResolve(
+		t.Context(),
+		baseline.Config{Network: networktest.New(t), Path: filepath.Join(root, "entry"), Base: "HEAD", Cache: cache},
+	)
 	assert.NoError(t, err)
 	trees := []Tree{
 		{
@@ -228,14 +233,13 @@ spec:
 			ExternalChanges: inputs.Changes,
 		},
 	}
-	results, err := RenderTrees(
-		t.Context(),
+	results, err := renderTreesForTest(t.Context(), t,
 		trees,
 		Config{
 			Cache:          cache,
 			RegistryConfig: registryConfig,
 			Concurrency:    2,
-			Selection:      manifest.Selection{Changed: true},
+			Selection:      selection.Request{Changed: true},
 		},
 	)
 	assert.NoError(t, err)

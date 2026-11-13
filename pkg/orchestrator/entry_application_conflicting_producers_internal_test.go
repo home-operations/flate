@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -101,6 +103,7 @@ spec:
 		}, false)
 		defer unsubscribe()
 		result, err := o.collectResult(o.run(t.Context()))
+		t.Cleanup(result.Close)
 		assert.NoError(t, err)
 		assert.Diff(t, published, []string{"./entry", "./elsewhere"})
 		assert.Equal(t, o.entryBinding.Producer, manifest.NamedResource{})
@@ -134,6 +137,7 @@ func (c entryPublicationController) ReconcileNode(
 	ctx context.Context,
 	id manifest.NamedResource,
 	level manifest.DrainLevel,
+	previous schedule.Result,
 ) *base.Execution {
 	if id.Name == "z" {
 		c.tasks.YieldSlot(func() {
@@ -143,7 +147,7 @@ func (c entryPublicationController) ReconcileNode(
 			}
 		})
 	}
-	return c.reconcileController.ReconcileNode(ctx, id, level)
+	return c.reconcileController.ReconcileNode(ctx, id, level, previous)
 }
 
 func assertEntryApplicationConflicts(t *testing.T, result *Result, id, winner manifest.NamedResource) {

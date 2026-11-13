@@ -1,10 +1,12 @@
 package kustomize
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
+	"iter"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	fluxapis "github.com/fluxcd/pkg/apis/kustomize"
 	"oras.land/oras-go/v2/errdef"
@@ -28,6 +31,58 @@ import (
 
 //nolint:gochecknoglobals // Cache fixtures share one immutable manifest identity.
 var demoSpec = &manifest.Kustomization{Name: "demo", Namespace: "flux-system", Path: "./"}
+
+func testEncodeFrame(tb testing.TB, header *renderHeader, output []byte) ([]byte, error) {
+	tb.Helper()
+	frame, err := sourcecache.NewFrame(frameDomain, header, output)
+	if err != nil {
+		return nil, err
+	}
+	if frame == nil {
+		return nil, errors.New("render metadata exceeds optional persistence limit")
+	}
+	publication, err := frame.PreparePublication(tb.Context(), sourcecache.FramePublicationInput{})
+	if err != nil {
+		return nil, err
+	}
+	var wire bytes.Buffer
+	_, err = publication.WriteTo(&wire)
+	return wire.Bytes(), err
+}
+
+func testDecodeFrame(tb testing.TB, wire []byte) (renderFrame, error) {
+	tb.Helper()
+	var frame renderFrame
+	var err error
+	frame.stored, err = sourcecache.OpenFrame(tb.Context(), frameDomain,
+		fstest.MapFS{"content": &fstest.MapFile{Data: wire}}, &frame.header)
+	if err == nil {
+		frame.output, err = frame.stored.Payload(tb.Context())
+	}
+	return frame, err
+}
+
+func testAcceptedFrame(
+	tb testing.TB,
+	owner manifest.NamedResource,
+	frame *renderFrame,
+	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+) ([]byte, error) {
+	tb.Helper()
+	stored, err := sourcecache.NewFrame(frameDomain, frame.header, frame.output)
+	if err != nil {
+		return nil, err
+	}
+	publication, err := stored.PreparePublication(tb.Context(), sourcecache.FramePublicationInput{
+		Owner: owner, Content: acceptedInput, Records: records, Complete: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var wire bytes.Buffer
+	_, err = publication.WriteTo(&wire)
+	return wire.Bytes(), err
+}
 
 func renderPersistenceEligible(tb testing.TB) bool {
 	tb.Helper()
@@ -84,7 +139,7 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 	if err != nil {
 		tb.Fatal(err)
 	}
-	snapFrame, err := decodeFrame(raw)
+	snapFrame, err := testDecodeFrame(tb, raw)
 	snap := snapFrame.header.Reads
 	out := snapFrame.output
 	if err != nil {
@@ -102,11 +157,11 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 	if key.Render == sourcecache.RenderPending && renderPersistenceEligible(tb) {
 		key.Render = sourcecache.RenderAccepted
 	}
-	if frame, err := decodeFrame(raw); err == nil {
+	if frame, err := testDecodeFrame(tb, raw); err == nil {
 		if render, ok := key.Content.(string); ok {
 			frame.header.Key = render
 		}
-		raw, err = encodeFrame(&frame.header, frame.output)
+		raw, err = testEncodeFrame(tb, &frame.header, frame.output)
 		if err != nil {
 			tb.Fatal(err)
 		}
@@ -127,7 +182,7 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 
 func testRenderFrame(tb testing.TB, snap *readSetSnapshot, output []byte) []byte {
 	tb.Helper()
-	frame, err := encodeFrame(&renderHeader{Reads: *snap}, output)
+	frame, err := testEncodeFrame(tb, &renderHeader{Reads: *snap}, output)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -561,9 +616,6 @@ func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 	}
 }
 
-// TestEncodeDecodeFrame_RoundTrip pins the kustomize-specific value codec: the
-// read-set snapshot + rendered output survive framing intact. The frame is the
-// plain bytes handed to the shared Blob owner.
 func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 	t.Parallel()
 	snap := readSetSnapshot{
@@ -574,12 +626,12 @@ func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 	for _, output := range []string{"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n", ""} {
 		t.Run(fmt.Sprintf("output-bytes-%d", len(output)), func(t *testing.T) {
 			t.Parallel()
-			frame, err := encodeFrame(&renderHeader{Reads: snap}, []byte(output))
-			assert.FatalIf(t, err != nil, "encodeFrame: %v", err)
-			gotSnapFrame, err := decodeFrame(frame)
+			frame, err := testEncodeFrame(t, &renderHeader{Reads: snap}, []byte(output))
+			assert.FatalIf(t, err != nil, "new frame: %v", err)
+			gotSnapFrame, err := testDecodeFrame(t, frame)
 			gotSnap := gotSnapFrame.header.Reads
 			gotOut := gotSnapFrame.output
-			assert.FatalIf(t, err != nil, "decodeFrame: %v", err)
+			assert.FatalIf(t, err != nil, "open frame: %v", err)
 			assert.ErrorIf(t, string(gotOut) != output, "output mismatch: want %q, got %q", output, gotOut)
 			assert.ErrorIf(
 				t,
@@ -592,9 +644,6 @@ func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestDecodeFrame_RejectsMalformed pins the bounds checks: a frame shorter than
-// the 4-byte header, or one whose header claims more snapshot bytes than exist,
-// is a decode error (→ a cache miss, never a panic or torn read).
 func TestDecodeFrame_RejectsMalformed(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -608,7 +657,7 @@ func TestDecodeFrame_RejectsMalformed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			{
-				_, err := decodeFrame(tc.frame)
+				_, err := testDecodeFrame(t, tc.frame)
 				assert.FatalIf(t, err == nil, "%s", "malformed frame decoded successfully")
 			}
 		})

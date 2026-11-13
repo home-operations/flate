@@ -3,7 +3,6 @@ package git
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"errors"
 	"io"
 	"io/fs"
@@ -18,12 +17,10 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
-	"github.com/go-git/go-git/v5/plumbing/transport/server"
-	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"github.com/go-git/go-git/v6/plumbing/transport"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -37,65 +34,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-type agentAuthentication struct {
-	transport.Transport
-
-	host, allowed ssh.PublicKey
-	authenticated atomic.Int32
-	afterAuth     func() error
-}
-
-//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
-func (a *agentAuthentication) NewUploadPackSession(
-	endpoint *transport.Endpoint,
-	auth transport.AuthMethod,
-) (transport.UploadPackSession, error) {
-	keys, ok := auth.(*gitssh.PublicKeysCallback)
-	if !ok || keys.User != "git" {
-		return nil, transport.ErrAuthenticationRequired
-	}
-	if err := keys.HostKeyCallback(
-		"fixture:22",
-		&net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 22},
-		a.host,
-	); err != nil {
-		return nil, err
-	}
-	signers, err := keys.Callback()
-	if err != nil {
-		return nil, err
-	}
-	challenge := []byte("flate acquisition fixture")
-	accepted := false
-	for _, signer := range signers {
-		if !bytes.Equal(signer.PublicKey().Marshal(), a.allowed.Marshal()) {
-			continue
-		}
-		signature, err := signer.Sign(rand.Reader, challenge)
-		if err != nil {
-			return nil, err
-		}
-		if err := a.allowed.Verify(challenge, signature); err != nil {
-			return nil, err
-		}
-		accepted = true
-		break
-	}
-	if !accepted {
-		return nil, transport.ErrAuthorizationFailed
-	}
-	a.authenticated.Add(1)
-	if a.afterAuth != nil {
-		if err := a.afterAuth(); err != nil {
-			return nil, err
-		}
-	}
-	local := *endpoint
-	local.Protocol = "file"
-	local.Path = filepath.Join(local.Path, ".git")
-	return a.Transport.NewUploadPackSession(&local, nil)
-}
 
 //nolint:ireturn // The upstream keyring constructor exposes only the agent interface.
 func acquisitionAgent(t *testing.T, identity string) (<-chan struct{}, *atomic.Int32, agent.Agent) {
@@ -173,14 +111,14 @@ func testFetcherAmbientAcquisitionCase(t *testing.T, shape *string,
 	_, host := testSSHIdentity(t)
 	root := t.TempDir()
 	mustInitRepo(t, root)
-	tr := &agentAuthentication{
-		Transport: server.DefaultServer,
-		host:      host.PublicKey(),
-		allowed:   signer.PublicKey(),
+	tr := &testutil.GitSSH{
+		Host:    host,
+		Roots:   []string{root},
+		Allowed: signer.PublicKey(),
 	}
 	if (*shape) == "retry" {
-		tr.afterAuth = func() error {
-			if tr.authenticated.Load() == 1 {
+		tr.AfterAuth = func() error {
+			if tr.Authenticated.Load() == 1 {
 				return &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 			}
 			return nil
@@ -194,23 +132,21 @@ func testFetcherAmbientAcquisitionCase(t *testing.T, shape *string,
 			slog.New(slog.NewTextHandler(&diagnostic, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		)
 		t.Cleanup(func() { slog.SetDefault(previousLogger) })
-		tr.afterAuth = func() error {
-			if tr.authenticated.Load() == 1 {
+		tr.AfterAuth = func() error {
+			if tr.Authenticated.Load() == 1 {
 				return errors.New("diagnostic-canary")
 			}
 			return nil
 		}
 	}
-	previous := client.Protocols["ssh"]
-	client.InstallProtocol("ssh", tr)
-	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
+	address := testutil.LocalGitSSH(t, tr)
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	testutil.WriteFile(
 		t,
 		homeDir,
 		".ssh/known_hosts",
-		knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n",
+		knownhosts.Line([]string{address}, host.PublicKey())+"\n",
 	)
 	var closed <-chan struct{}
 	var opened *atomic.Int32
@@ -234,17 +170,17 @@ func testFetcherAmbientAcquisitionCase(t *testing.T, shape *string,
 		closed, opened, keyring = acquisitionAgent(t, identity)
 	}
 	if (*shape) == "rejected" {
-		tr.allowed = host.PublicKey()
+		tr.Allowed = host.PublicKey()
 	}
 	if (*shape) == "unverified" {
 		testutil.WriteFile(
 			t,
 			homeDir,
 			".ssh/known_hosts",
-			knownhosts.Line([]string{"fixture"}, signer.PublicKey())+"\n",
+			knownhosts.Line([]string{address}, signer.PublicKey())+"\n",
 		)
 	}
-	repo := gitRepoWithSecret("agent", "ssh://git@fixture"+root, "auth")
+	repo := gitRepoWithSecret("agent", "ssh://git@"+address+root, "auth")
 	if (*shape) == "source only" {
 		repo.SecretRef = nil
 	}
@@ -260,11 +196,19 @@ func testFetcherAmbientAcquisitionCase(t *testing.T, shape *string,
 	testFetcherAmbientAcquisitionCaseCompletion(
 		t,
 		&testFetcherAmbientAcquisitionCaseCompletionInputs{
-			repo:       &repo,
-			shape:      &shape,
-			opened:     &opened,
-			closed:     &closed,
-			tr:         &tr,
+			repo:   &repo,
+			shape:  &shape,
+			opened: &opened,
+			closed: &closed,
+			tr:     &tr,
+			transports: func() Transports {
+				if *shape == "rejected" {
+					return Transports{"ssh": func(context.Context, TransportRequest) (Connection, error) {
+						return nil, transport.ErrAuthorizationFailed
+					}}
+				}
+				return nil
+			}(),
 			diagnostic: &diagnostic,
 			root:       &root,
 			keyring:    &keyring,
@@ -278,7 +222,11 @@ func testFetcherAmbientAcquisitionCaseCompletion(
 ) {
 	t.Helper()
 	cacheDir := t.TempDir()
-	f := &Fetcher{Cache: cachetest.New(t, cacheDir, sourcecache.New)}
+	f := &Fetcher{
+		Network:       networktest.New(t),
+		Cache:         cachetest.New(t, cacheDir, sourcecache.New),
+		GitTransports: captures.transports,
+	}
 	reads := (testInputs{}).readSet((*captures.repo))
 	defer reads.Close()
 	policy := sourcecache.Policy{MaxAge: sourcecache.Forever}
@@ -358,14 +306,9 @@ func testFetcherAmbientPreparationCase(t *testing.T, shape *string,
 			StringData: map[string]any{"identity": identity, "known_hosts": "invalid host material"},
 		}
 	}
-	reads := (testInputs{secrets: func(_, name string) *manifest.Secret {
-		if name == "proxy" {
-			return proxy
-		}
-		return auth
-	}}).readSet(repo)
+	reads := (testInputs{secrets: preparationSecrets(auth, proxy)}).readSet(repo)
 	defer reads.Close()
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	artifact, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &sourcecache.Policy{}, nil)
 	if artifact != nil || err == nil || opened.Load() != 0 {
 		t.Fatalf(
@@ -398,21 +341,18 @@ func testFetcherStalledAgentCase(t *testing.T, cause *string,
 	t.Helper()
 	_, key := testSSHIdentity(t)
 	_, host := testSSHIdentity(t)
-	tr := &agentAuthentication{
-		Transport: server.DefaultServer,
-		host:      host.PublicKey(),
-		allowed:   key.PublicKey(),
+	tr := &testutil.GitSSH{
+		Host:    host,
+		Allowed: key.PublicKey(),
 	}
-	previous := client.Protocols["ssh"]
-	client.InstallProtocol("ssh", tr)
-	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
+	address := testutil.LocalGitSSH(t, tr)
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	testutil.WriteFile(
 		t,
 		homeDir,
 		".ssh/known_hosts",
-		knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n",
+		knownhosts.Line([]string{address}, host.PublicKey())+"\n",
 	)
 	t.Chdir(t.TempDir())
 	path := "agent"
@@ -444,7 +384,7 @@ func testFetcherStalledAgentCase(t *testing.T, cause *string,
 	if (*cause) == "cancel" {
 		repo.Timeout.Duration = time.Hour
 	}
-	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 	reads := (testInputs{}).readSet(repo)
 	defer reads.Close()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -557,7 +497,8 @@ type testFetcherAmbientAcquisitionCaseCompletionInputs struct {
 	shape      **string
 	opened     **atomic.Int32
 	closed     *<-chan struct{}
-	tr         **agentAuthentication
+	tr         **testutil.GitSSH
+	transports Transports
 	diagnostic *bytes.Buffer
 	root       *string
 	keyring    *agent.Agent
@@ -596,15 +537,15 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 		assert.Equal(t, (*(*scope.captures).opened).Load(), int32(1))
 	}
 	if (*(*(*scope.captures).shape)) == "fallback" &&
-		((*(*scope.captures).tr).authenticated.Load() != 2 || strings.Contains((*scope.captures).diagnostic.String(), "diagnostic-canary")) {
+		((*(*scope.captures).tr).Authenticated.Load() != 2 || strings.Contains((*scope.captures).diagnostic.String(), "diagnostic-canary")) {
 		t.Fatalf(
 			"fallback diagnostics/selection: calls=%d %s",
-			(*(*scope.captures).tr).authenticated.Load(), (*scope.captures).diagnostic.String(),
+			(*(*scope.captures).tr).Authenticated.Load(), (*scope.captures).diagnostic.String(),
 		)
 	}
 	assert.FatalIf(
 		t,
-		(*(*(*scope.captures).shape)) == "bad ref" && (*(*scope.captures).tr).authenticated.Load() == 0,
+		(*(*(*scope.captures).shape)) == "bad ref" && (*(*scope.captures).tr).Authenticated.Load() == 0,
 		"%s",
 		"bad ref did not reach authenticated acquisition",
 	)
@@ -649,14 +590,14 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 			assert.NoError(t, (*(*scope.captures).keyring).RemoveAll())
 			assert.NoError(t, (*(*scope.captures).keyring).Add(agent.AddedKey{PrivateKey: raw}))
 			(*(*scope.captures).tr).
-				allowed = rotatedSigner.PublicKey()
-			authenticated := (*(*scope.captures).tr).authenticated.Load()
+				Allowed = rotatedSigner.PublicKey()
+			authenticated := (*(*scope.captures).tr).Authenticated.Load()
 			rotated, err := fetchtest.Retry(t.Context(), (*scope.missing).RetryAmbient)
 			assert.NoError(t, err)
 			<-(*(*scope.captures).closed)
 			assert.FatalIf(
 				t,
-				rotated.Key == warm.Key || (*(*scope.captures).tr).authenticated.Load() != authenticated+1 ||
+				rotated.Key == warm.Key || (*(*scope.captures).tr).Authenticated.Load() != authenticated+1 ||
 					(*(*scope.captures).opened).
 						Load() != before+3,
 				"%s",
@@ -664,5 +605,23 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 			)
 		}
 	}
-	t.Logf("authenticated sessions=%d; success=%t", (*(*scope.captures).tr).authenticated.Load(), (*scope.success))
+	t.Logf("authenticated sessions=%d; success=%t", (*(*scope.captures).tr).Authenticated.Load(), (*scope.success))
+}
+
+func preparationSecrets(auth, proxy *manifest.Secret) source.SecretGetter {
+	return func(_, name string) store.ReferenceFacts {
+		if name == "proxy" {
+			secretInput := proxy
+			if secretInput == nil {
+				return store.ReferenceFacts{}
+			}
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+		}
+
+		secretInput := auth
+		if secretInput == nil {
+			return store.ReferenceFacts{}
+		}
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
+	}
 }

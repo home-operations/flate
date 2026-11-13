@@ -18,7 +18,7 @@ func TestRun_CommandContext(t *testing.T) {
 	for _, command := range []string{"build all", "get all", "get hr", "get images", "test all", "diff all", "diff images"} {
 		for _, embedded := range []bool{false, true} {
 			t.Run(command+"/embedded="+strconv.FormatBool(embedded), func(t *testing.T) {
-				root := New("test")
+				root := New("test", RunConfig{})
 				args := strings.Fields(command)
 				if embedded {
 					parent := &cobra.Command{Use: "parent", SilenceUsage: true, SilenceErrors: true}

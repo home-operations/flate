@@ -65,8 +65,7 @@ spec:
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tunnel\ndata:\n  target: \"${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com\"\n",
 	)
 
-	renderedSingleton4, err := RenderTrees(
-		t.Context(),
+	renderedSingleton4, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{},
 	)
@@ -86,9 +85,10 @@ spec:
 	_, err = o.src.Fetchers[manifest.KindGitRepository].Fetch(t.Context(), repo, &reads, &sourcecache.Policy{})
 	if missing, ok := errors.AsType[*source.MissingSecretError](
 		err,
-	); !ok || missing.Detail != "not found" || missing.Secret.Name != "cloudflared-secret" ||
+	); !ok || missing.Detail != "is produced in the cluster with unknown data; supply it with --supply" ||
+		missing.Secret.Name != "cloudflared-secret" ||
 		!reads.Valid() {
-		t.Fatalf("producer-declared credential lost absent-material classification: %v", err)
+		t.Fatalf("producer-declared credential lost its current unavailable cause: %v", err)
 	}
 
 	want := "${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com"
@@ -156,7 +156,7 @@ data:
   known_hosts: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]
 sops: {version: 3.9.0}
 `, identity))
-	rendered, err := RenderTrees(t.Context(),
+	rendered, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 2, CacheDir: t.TempDir(), AllowMissingKinds: []string{manifest.KindSecret}},
 	)

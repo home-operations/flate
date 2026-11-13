@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/pkg/schedule"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -71,6 +73,7 @@ spec:
 		}()
 		assert.NoError(t, o.bootstrap(t.Context()))
 		result, err := o.collectResult(o.run(t.Context()))
+		t.Cleanup(result.Close)
 		assert.NoError(t, err)
 		return result
 	}
@@ -120,6 +123,11 @@ spec:
 		},
 		)
 	}
+	document, err := os.ReadFile(filepath.Join(root, "flux", "settings.yaml"))
+	assert.NoError(t, err)
+	testHistoryInputSides(t, &historyInputSides{
+		root: root, file: "flux/settings.yaml", document: document, consumer: testutil.KustomizationID("apps", "child"),
+	})
 }
 
 type historyLogBuffer struct {
@@ -208,17 +216,21 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 		reads := &store.ReadSet{}
 		reads.Init(o.store, owner, nil)
 		defer reads.Retire()
-		records, narrow := o.controllers.PreviousRender(ctx, o.store.GetObject(owner), reads)
+		preparedHistory212 := o.controllers.PreviousRender(ctx, o.store.GetObject(owner), schedule.Result{})
+		if preparedHistory212.Assessment != nil {
+			defer preparedHistory212.Assessment.Close()
+		}
+		records, narrow := preparedHistory212.Records, preparedHistory212.Complete
 		assert.Equal(t, records == nil, true)
 		assert.Equal(t, narrow, false)
 		assert.NoError(t, ctx.Err())
 		return
 	}
 	o.cfg.ExternalChanges = change.NewSet(nil)
-	err = o.buildChangeFilter(ctx)
+	err = o.prepareInvocation(ctx)
 	assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, len(o.filter.KeepNames()), 0)
+	assert.Equal(t, len(selectionNamesForTest(o.selection, o.store, o.index)), 0)
 	declaration := o.store.GetObject(owner).(*manifest.Kustomization).Clone()
 	declaration.Path = "./different"
 	o.store.AddObject(declaration)
@@ -478,7 +490,7 @@ spec:
 	}
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.NoError(t, fresh.lookupHistory(t.Context()))
-	assert.Equal(t, len(fresh.loader.Options.HistoryOwners[owner]) != 0, true)
+	assert.Equal(t, len(fresh.historyOwners[owner]) != 0, true)
 	assert.NoError(t, fresh.prepareBootstrap(t.Context()))
 	assert.FatalIf(
 		t,
@@ -502,16 +514,18 @@ spec:
 		assert.Equal(t, fresh.store.GetObject(supplied) != nil, true)
 	}
 	fresh.completeBootstrap()
-	assert.NoError(t, fresh.buildChangeFilter(t.Context()))
+	assert.NoError(t, fresh.prepareInvocation(t.Context()))
 	assert.NoError(t, fresh.installAdmission(t.Context()))
-	assert.Equal(t, fresh.filter.ShouldReconcile(child), true)
-	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
+	assert.Equal(t, fresh.admissionPreparation == nil, true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(child), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), true)
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
 	unrelated := testutil.HelmReleaseID("apps", "unrelated")
-	assert.Equal(t, fresh.filter.ShouldReconcile(unrelated), false)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(unrelated), false)
 	result, err := fresh.collectResult(fresh.run(t.Context()))
+	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	docs := outputByParent(result.Manifests)[child]
 	assert.FatalIf(t, len(docs) != 1, "changed generated child output: %v", docs)
@@ -636,7 +650,11 @@ spec:
 	reads := &store.ReadSet{}
 	reads.Init(warm.store, owner, nil)
 	declaration := warm.index.Records[owner].Declaration
-	records, narrow := warm.controllers.PreviousRender(t.Context(), declaration, reads)
+	preparedHistory640 := warm.controllers.PreviousRender(t.Context(), declaration, schedule.Result{})
+	if preparedHistory640.Assessment != nil {
+		defer preparedHistory640.Assessment.Close()
+	}
+	records, narrow := preparedHistory640.Records, preparedHistory640.Complete
 	assert.Equal(t, records == nil, true)
 	assert.Equal(t, narrow, false)
 	if (*testCaseInput) == "helm_values_from" {
@@ -675,9 +693,8 @@ spec:
 				prepared,
 				prepared.Values,
 				helm.RenderOptions{
-					Options:                 warm.hrc.Options,
-					DependencySubstitutions: warm.dependencySubstitutions,
-					Sources:                 helm.NewSources(reads),
+					Options: warm.hrc.Options,
+					Sources: helm.NewSources(reads),
 				},
 			),
 		)
@@ -708,7 +725,11 @@ spec:
 		)
 		assert.Equal(t, info.Status, store.StatusReady)
 	}
-	records, narrow = warm.controllers.PreviousRender(t.Context(), declaration, reads)
+	preparedHistory700 := warm.controllers.PreviousRender(t.Context(), declaration, schedule.Result{})
+	if preparedHistory700.Assessment != nil {
+		defer preparedHistory700.Assessment.Close()
+	}
+	records, narrow = preparedHistory700.Records, preparedHistory700.Complete
 	assert.Equal(t, records != nil, true)
 	assert.Equal(t, narrow, true)
 	if (*testCaseInput) == "helm_values_from" {
@@ -743,13 +764,13 @@ spec:
 		entry.Finish()
 		entryReads.Retire()
 		assert.Equal(t, fresh.store.EmissionOwner(supplied), fresh.entryBinding.Producer)
-		assert.NoError(t, fresh.buildChangeFilter(t.Context()))
+		assert.NoError(t, fresh.prepareInvocation(t.Context()))
 		assert.NoError(t, fresh.installAdmission(t.Context()))
 	} else {
 		assert.NoError(t, fresh.bootstrap(t.Context()))
 	}
-	assert.Equal(t, fresh.filter.ShouldReconcile(owner), (*testCaseInput) != "helm_values_from")
-	assert.Equal(t, fresh.filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")), true)
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(owner), (*testCaseInput) != "helm_values_from")
+	assert.Equal(t, fresh.selection.Snapshot().Reconcile(testutil.KustomizationID("apps", "consumer")), true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 }
 

@@ -218,6 +218,37 @@ func testRunExternalSubstitutionCase1(t *testing.T, tc *struct {
 	}
 }
 
+//nolint:paralleltest // CLI execution changes process-wide logging.
+func TestRun_ProducerBackedSubstitution(t *testing.T) {
+	root := substitutionFixture(t, substitutionReference("Secret", false), "${VALUE}")
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, external.yaml]\n")
+	testutil.WriteFile(t, root, "external.yaml", `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: producer, namespace: apps}
+spec: {target: {name: external}}
+`)
+	for _, allowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("allowed=%t", allowed), func(t *testing.T) {
+			args := []string{
+				"build", "all", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress",
+			}
+			if allowed {
+				args = append(args, "--allow-missing-kinds", "Secret")
+			}
+			result := runCLI(t, args...)
+			assert.Equal(t, result.code, 0)
+			assert.Equal(t, result.stderr, `
+  ⚠ warnings (1)
+    [UnresolvedSubstitution] substituteFrom Secret "external" could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values: is produced in the cluster with unknown data; supply it with --supply
+`)
+			docs, err := testutil.SplitDocs([]byte(result.stdout))
+			assert.NoError(t, err)
+			assert.Equal(t, len(docs), 3)
+			assert.Diff(t, docs[0]["data"], map[string]any{"value": "${VALUE}"})
+		})
+	}
+}
+
 func TestRun_SubstitutionFilesAndDuplicates(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}-${OLD:-gone}")
 	cwd := t.TempDir()
@@ -417,7 +448,8 @@ func TestRun_SuppliedReaderValidation(t *testing.T) {
 
 			assert.FatalIf(
 				t,
-				code != 1 || !strings.Contains(diagnostic, "external") || strings.Contains(diagnostic, "not found"),
+				code != 1 || !strings.Contains(diagnostic, "external") ||
+					strings.Contains(diagnostic, "secret apps/external not found"),
 				"supplied %s was not read by its parser: %s",
 				ref,
 				diagnostic,

@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -102,15 +103,18 @@ spec:
 		testutil.GitCommitAll(t, repo, "after", options)
 		inputs, err = baseline.AutoResolve(
 			t.Context(),
-			root,
-			base.String(),
-			cachetest.New(t, "", sourcecache.New),
+			baseline.Config{
+				Network: networktest.New(t),
+				Path:    root,
+				Base:    base.String(),
+				Cache:   cachetest.New(t, "", sourcecache.New),
+			},
 		)
 	}
 	assert.NoError(t, err)
 	changes := inputs.Changes
 	if (*testCaseInput) == "directory" {
-		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source, manifest.WorkScope{})
+		changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source, change.DetectConfig{})
 		assert.NoError(t, err)
 	}
 	assert.Diff(t, changes.Paths(), []string{"entry/source.yaml"})
@@ -145,7 +149,7 @@ spec:
 		st.AddObject(
 			&manifest.Kustomization{Name: "independent-owner", Namespace: "apps", Path: "./independent"},
 		)
-		result, err := discovery.Run(
+		result, err := runDiscovery(
 			t.Context(),
 			discovery.Config{Input: source, Path: filepath.Join(source.LocalPath, "entry"), Store: st},
 		)
@@ -170,22 +174,22 @@ spec:
 		)
 		ownership := result.Index.OwnersOfFile("entry/source.yaml")
 		owners, ancestors := ownership.Owners, ownership.Ancestors
-		assert.Diff(t, result.Binding, discovery.Binding{})
+		assert.Equal(t, result.Binding, discovery.Binding{})
 		assert.Diff(t, owners, []manifest.NamedResource(nil))
 		assert.Diff(t, ancestors, []manifest.NamedResource(nil))
-		filter := admissiontest.Filter(
+		filter := admissiontest.Decision(
 			t,
 			admissiontest.Config{Changes: changes, Index: result.Index, Inventory: st, Root: ""},
 		)
 		for _, id := range []manifest.NamedResource{input, generator, consumer} {
 			assert.ErrorIf(
 				t,
-				!filter.ShouldReconcile(id),
+				!filter.Reconcile(id),
 				"side %d: changed producer input did not select %s",
 				side,
 				id,
 			)
 		}
-		assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("apps", "unrelated")), false)
+		assert.Equal(t, filter.Reconcile(testutil.KustomizationID("apps", "unrelated")), false)
 	}
 }

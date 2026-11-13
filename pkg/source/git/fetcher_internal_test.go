@@ -11,10 +11,9 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	"github.com/go-git/go-git/v6/plumbing/transport"
 
 	"github.com/home-operations/flate/internal/assert"
 
@@ -22,7 +21,7 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
-	gitlib "github.com/go-git/go-git/v5"
+	gitlib "github.com/go-git/go-git/v6"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -38,7 +37,7 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 	mustInitRepoWithFiles(t, root, map[string]string{"hello.txt": "hello", "docs.tmp": "docs"})
 	commit := mustSetRefToHEAD(t, root, "refs/heads/other")
 	c := cachetest.New(t, "", sourcecache.New)
-	f := &Fetcher{Cache: c}
+	f := &Fetcher{Network: networktest.New(t), Cache: c}
 	base := &manifest.GitRepository{URL: "file://" + root, Reference: &sourcev1.GitRepositoryRef{Commit: commit}}
 	first, err := f.fetch(
 		t.Context(),
@@ -86,36 +85,8 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 	}
 }
 
-type timeoutTransport struct {
-	transport.Transport
-
-	observe func(context.Context)
-}
-
-type timeoutSession struct {
-	transport.UploadPackSession
-
-	observe func(context.Context)
-}
-
-//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
-func (tr timeoutTransport) NewUploadPackSession(
-	*transport.Endpoint,
-	transport.AuthMethod,
-) (transport.UploadPackSession, error) {
-	return timeoutSession{observe: tr.observe}, nil
-}
-
-func (s timeoutSession) AdvertisedReferencesContext(ctx context.Context) (*packp.AdvRefs, error) {
-	s.observe(ctx)
-	return nil, transport.ErrRepositoryNotFound
-}
-
-func (timeoutSession) Close() error { return nil }
-
-//nolint:paralleltest // The test replaces go-git protocol registration and restores it afterward.
-//nolint:paralleltest // The test replaces process-wide go-git protocol registration.
 func TestFetcher_SourceTimeout(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		timeout time.Duration
@@ -125,12 +96,13 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 		{name: "longer", timeout: 180 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			want := tc.timeout
 			if want == 0 {
 				want = time.Minute
 			}
 			calls := 0
-			client.InstallProtocol("timeout", timeoutTransport{observe: func(ctx context.Context) {
+			routes := Transports{"timeout": func(ctx context.Context, _ TransportRequest) (Connection, error) {
 				calls++
 				deadline, ok := ctx.Deadline()
 				remaining := time.Until(deadline)
@@ -142,13 +114,17 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 					remaining,
 					want,
 				)
-			}})
-			t.Cleanup(func() { client.InstallProtocol("timeout", nil) })
+				return nil, transport.ErrRepositoryNotFound
+			}}
 			r := &manifest.GitRepository{URL: "timeout://fixture/repository"}
 			if tc.timeout != 0 {
 				r.Timeout = &metav1.Duration{Duration: tc.timeout}
 			}
-			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+			f := &Fetcher{
+				Network:       networktest.New(t),
+				Cache:         cachetest.New(t, "", sourcecache.New),
+				GitTransports: routes,
+			}
 			_, err := fetchtest.Fetch(t.Context(), f.Fetch, r, (testInputs{}).readSet(r), &sourcecache.Policy{}, nil)
 			assert.FatalIf(
 				t,
@@ -161,11 +137,11 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test replaces go-git protocol registration and restores it afterward.
-//nolint:paralleltest // The test replaces process-wide go-git protocol registration.
 func TestFetcher_AttemptTimeout(t *testing.T) {
+	t.Parallel()
 	for _, reopen := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reopen=%t", reopen), func(t *testing.T) {
+			t.Parallel()
 			testFetcherAttemptTimeoutCase(t, &reopen)
 		},
 		)
@@ -188,7 +164,7 @@ func testFetcherContentIsolationCase(t *testing.T, testCaseInput testFetcherCont
 	t.Helper()
 
 	r := *(*testCaseInput.base)
-	fetcher := &Fetcher{Cache: (*testCaseInput.c)}
+	fetcher := &Fetcher{Network: networktest.New(t), Cache: (*testCaseInput.c)}
 	testCaseInput.tc.
 		change(&r, fetcher)
 	art, err := fetcher.fetch(
@@ -243,7 +219,7 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 		mustInitRepo(t, src)
 		mustSetRefToHEAD(t, src, "refs/heads/other")
 		calls := 0
-		installCommandTransport(t, func(ctx context.Context) error {
+		routes := commandTransports(func(ctx context.Context) error {
 			calls++
 			select {
 			case <-time.After(3 * time.Second):
@@ -253,7 +229,11 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 			}
 		})
 		root := t.TempDir()
-		f := &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+		f := &Fetcher{
+			Network:       networktest.New(t),
+			Cache:         cachetest.New(t, root, sourcecache.New),
+			GitTransports: routes,
+		}
 		r := &manifest.GitRepository{
 			URL:               "commands://" + src,
 			RecurseSubmodules: true,
@@ -278,7 +258,11 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 				assert.NoError(t, closeErr)
 			}
 
-			f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+			f = &Fetcher{
+				Network:       networktest.New(t),
+				Cache:         cachetest.New(t, root, sourcecache.New),
+				GitTransports: routes,
+			}
 		}
 		longer := *r
 		longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
@@ -298,7 +282,7 @@ func testFetcherAttemptTimeoutCase(t *testing.T, reopen *bool,
 			assert.NoError(t, closeErr2)
 		}
 
-		f = &Fetcher{Cache: cachetest.New(t, root, sourcecache.New)}
+		f = &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, root, sourcecache.New), GitTransports: routes}
 		shorter := longer
 		shorter.Timeout = &metav1.Duration{Duration: time.Nanosecond}
 		before := calls

@@ -342,8 +342,10 @@ func TestLoadChart_MutableArchiveInvalidates(t *testing.T) {
 		}
 		location, err := gitrepo.Locate(t.Context(), tc.root, tc.root)
 		assert.NoError(t, err)
-		admitted, err := gittree.AdmitDirectory(t.Context(), location)
+		admittedDirectory, err := gittree.OpenDirectory(t.Context(), location)
 		assert.NoError(t, err)
+		admitted := admittedDirectory.Artifact()
+		assert.NoError(t, admittedDirectory.Close())
 		st.SetArtifact(id, &store.SourceArtifact{LocalRoot: tc.root, LocalPath: ".", FS: admitted.FS})
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		assert.NoError(t, err)
@@ -492,8 +494,10 @@ func testLoadChartArtifactKeyIsolationSharedChartSourceValues(
 		testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
 		location, err := gitrepo.Locate(t.Context(), root, root)
 		assert.NoError(t, err)
-		admitted, err := gittree.AdmitDirectory(t.Context(), location)
+		admittedDirectory2, err := gittree.OpenDirectory(t.Context(), location)
 		assert.NoError(t, err)
+		admitted := admittedDirectory2.Artifact()
+		assert.NoError(t, admittedDirectory2.Close())
 		hr := &manifest.HelmRelease{
 			Name:      "demo",
 			Namespace: "test",

@@ -8,9 +8,12 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -104,7 +107,7 @@ spec:
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
 		l.SourceRoot = root
-		l.Options.Selection.Changed = true
+		configureSelection(t, l, selection.Request{Changed: true})
 		_, err := l.Load(t.Context(), filepath.Join(root, "entry"), manifest.NamedResource{}, nil)
 		assert.NoError(t, err)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
@@ -132,7 +135,11 @@ spec:
 		)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		assert.Equal(t, l.scopes, nil)
-		assert.Diff(t, slices.Collect(l.References(id)), before)
+		assert.Equal(
+			t,
+			cmp.Diff(before, slices.Collect(l.References(id)), cmp.AllowUnexported(manifest.Reference{})),
+			"",
+		)
 		assert.Equal(t, l.CatalogObject(id).Named(), id)
 		_, authored := l.occurrence(id)
 		assert.Equal(t, authored, false)
@@ -187,7 +194,7 @@ spec:
 	}
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.Equal(t, l.scopes, nil)
-	assert.Equal(t, before[0].object.Named().Name, "before")
+	assert.Equal(t, before[0].Object.Named().Name, "before")
 }
 
 func testAdmitLateFallbackCase(t *testing.T, testCaseInput *bool,

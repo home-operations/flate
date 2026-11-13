@@ -1,8 +1,10 @@
 package discovery
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 )
 
@@ -25,14 +27,11 @@ func BenchmarkPlan_RepeatedIdentity(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				entries, err := Plan(b.Context(), Config{Path: root})
-				if err != nil {
-					b.Fatal(err)
-				}
-				if len(entries) != 1 {
-					b.Fatalf("entries: got %d, want 1", len(entries))
-				}
-				if entries[0].Path != root {
-					b.Fatalf("entry: got %+v, want path %q", entries[0], root)
+				assert.NoError(b, err)
+				// The owner ruling restores #1379's multi-entry benchmark assertions.
+				assert.FatalIf(b, len(entries) != 2, "entries: got %d, want 2", len(entries))
+				for i, dir := range []string{"alpha", "omega"} {
+					assert.Equal(b, entries[i].Path, filepath.Join(root, dir))
 				}
 			}
 		})

@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/home-operations/flate/internal/output"
-	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 )
 
 type buildFlags struct {
@@ -19,27 +19,27 @@ func bindBuildFlags(fs *pflag.FlagSet, b *buildFlags) {
 	fs.StringSliceVar(&b.onlyKinds, "only-kinds", nil, "Include only output kinds (comma-separated values)")
 }
 
-func newBuildCmd() *cobra.Command {
-	cmd := buildCmd(&cobra.Command{
+func newBuildCmd(cfg RunConfig) *cobra.Command {
+	cmd := buildCmd(cfg, &cobra.Command{
 		Use:   "build",
 		Short: "Render Flux objects to YAML (defaults to all)",
 		Args:  cobra.NoArgs,
 	}, runnableKinds...)
 	cmd.AddCommand(
-		buildCmd(&cobra.Command{
-			Use:     "ks [name]",
+		buildCmd(cfg, &cobra.Command{
+			Use:     useKustomization,
 			Aliases: []string{kustomizationAlias, kustomizationAliases},
 			Short:   "Render Kustomizations",
 			Args:    cobra.MaximumNArgs(1),
 		}, manifest.KindKustomization),
-		buildCmd(&cobra.Command{
-			Use:     "hr [name]",
+		buildCmd(cfg, &cobra.Command{
+			Use:     useHelmRelease,
 			Aliases: []string{helmReleaseAlias, helmReleaseAliases},
 			Short:   "Render HelmReleases",
 			Args:    cobra.MaximumNArgs(1),
 		}, manifest.KindHelmRelease),
-		buildCmd(&cobra.Command{
-			Use:   "all",
+		buildCmd(cfg, &cobra.Command{
+			Use:   useAll,
 			Short: "Render all Flux producer output",
 			Args:  cobra.NoArgs,
 		}, runnableKinds...),
@@ -47,8 +47,8 @@ func newBuildCmd() *cobra.Command {
 	return cmd
 }
 
-func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
-	c := &commonFlags{}
+func buildCmd(cfg RunConfig, cmd *cobra.Command, kinds ...string) *cobra.Command {
+	c := &commonFlags{gitTransports: cfg.GitTransports}
 	b := &buildFlags{}
 	cmd.RunE = func(cmd *cobra.Command, argv []string) error {
 		if !cmd.Flags().Changed("skip-kinds") {
@@ -77,7 +77,7 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 	return cmd
 }
 
-func collectRendered(res *selection.Selection, b *buildFlags) []map[string]any {
+func collectRendered(res *selection.Result, b *buildFlags) []map[string]any {
 	out := make([]map[string]any, 0, renderedDocumentCount(res))
 	for _, batch := range res.Manifests {
 		out = append(out, emissionDocs(batch.Documents, b)...)
@@ -101,7 +101,7 @@ func compareDocs(a, b map[string]any) int {
 	return manifest.DocIdentity(a).Compare(manifest.DocIdentity(b))
 }
 
-func renderedDocumentCount(res *selection.Selection) int {
+func renderedDocumentCount(res *selection.Result) int {
 	total := 0
 	for _, batch := range res.Manifests {
 		total += len(batch.Documents)

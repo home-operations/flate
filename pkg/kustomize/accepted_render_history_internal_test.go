@@ -3,16 +3,15 @@ package kustomize
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"io"
 	"io/fs"
 	"maps"
 	"os"
+	"slices"
 	"sync/atomic"
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"oras.land/oras-go/v2/errdef"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -20,7 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
 type historyCountingFS struct {
@@ -71,7 +69,12 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 	cacheDir := t.TempDir()
 	cache := newTestTreeCache(t, cacheDir)
 	spec := &manifest.Kustomization{Name: "emitter", Path: "."}
-	req := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
+	req := RenderRequest{
+		Source:    localSource(t, root),
+		Spec:      spec,
+		SubPath:   ".",
+		SkipKinds: []string{manifest.KindCustomResourceDefinition, manifest.KindSecret},
+	}
 	owner := spec.Named()
 	owner.Namespace = "inherited"
 	var absent *TreeCache
@@ -86,9 +89,8 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
-	frame.encoded, err = encodeFrame(&frame.header, frame.output)
+	frame.stored, err = sourcecache.NewFrame(frameDomain, frame.header, frame.output)
 	assert.NoError(t, err)
-	frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
 	original := bytes.Clone(frame.output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
 	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).output, original), true)
@@ -178,6 +180,15 @@ func (h *acceptedHistoryCase) durable(t *testing.T) {
 	assert.Equal(t, complete, true)
 	got := maps.Collect(previous)
 	assert.Diff(t, got, records)
+	equal := req
+	equal.SkipKinds = slices.Clone(equal.SkipKinds)
+	equalPrevious, equalComplete := previousHistory(t.Context(), fresh, &equal, owner)
+	assert.Equal(t, equalComplete, true)
+	assert.Diff(t, maps.Collect(equalPrevious), records)
+	changed := equal
+	changed.SkipKinds = []string{manifest.KindCustomResourceDefinition}
+	_, changedComplete := previousHistory(t.Context(), fresh, &changed, owner)
+	assert.Equal(t, changedComplete, false)
 	_, acceptedReceipt, rawHit := fresh.PreviousRender(t.Context(), req)
 	assert.Equal(t, rawHit, true)
 	{
@@ -248,18 +259,18 @@ func (h *acceptedHistoryCase) requestKey(t *testing.T) {
 	isolated := newTestTreeCache(t, t.TempDir())
 	foreign := frame.header
 	foreign.Key = "foreign"
-	foreignReceipt, err := encodeFrame(&foreign, frame.output)
+	foreignReceipt, err := testEncodeFrame(t, &foreign, frame.output)
 	assert.NoError(t, err)
-	foreignFrame, err := decodeFrame(foreignReceipt)
+	foreignFrame, err := testDecodeFrame(t, foreignReceipt)
 	assert.NoError(t, err)
-	accepted, err := encodeAccepted(owner, &foreignFrame, maps.All(records))
+	accepted, err := testAcceptedFrame(t, owner, &foreignFrame, maps.All(records))
 	assert.NoError(t, err)
 	_, _, _, err = isolated.owner.Blob(
 		t.Context(),
 		key,
 		&sourcecache.Policy{MaxAge: 0},
 		func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-			_, copyErr := io.Copy(w, io.MultiReader(bytes.NewReader(foreignReceipt), bytes.NewReader(accepted)))
+			_, copyErr := io.Copy(w, bytes.NewReader(accepted))
 			return sourcecache.ProducerResult{}, copyErr
 		},
 	)
@@ -342,10 +353,9 @@ func (h *acceptedHistoryCase) incompatiblePolicies(t *testing.T) {
 		name   string
 		mutate func(*RenderRequest)
 	}{
-		{"dependency substitutions", func(r *RenderRequest) {
-			r.DependencySubstitutions = values.NewDependencySubstitutions([]*manifest.Kustomization{{
-				PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "effective-child"}},
-			}})
+		{"effective owner", func(r *RenderRequest) {
+			r.Spec = r.Spec.Clone()
+			r.Spec.Name = "effective-owner"
 		}},
 
 		{"strict", func(r *RenderRequest) { r.StrictSubstitutions = true }},
@@ -417,12 +427,12 @@ func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache)
 	frame, cache, owner, records, req, key := h.frame, h.cache, h.owner, h.records, h.req, h.key
 	remote := frame.header
 	remote.Reads.Remotes = []remoteEntry{{Input: remoteInput{URL: "https://example.invalid/remote"}}}
-	remoteReceipt, err := encodeFrame(&remote, frame.output)
+	remoteFrame, err := sourcecache.NewFrame(frameDomain, remote, frame.output)
 	assert.NoError(t, err)
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
 		Owner: owner,
 		Receipt: manifest.NewRenderReceipt(renderFrame{
-			header: remote, binding: frame.binding, output: frame.output, encoded: remoteReceipt,
+			header: remote, binding: frame.binding, output: frame.output, stored: remoteFrame,
 		}, equalRenderFrame),
 		Records: maps.All(records),
 		Content: acceptedInput,

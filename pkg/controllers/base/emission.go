@@ -3,7 +3,8 @@ package base
 import (
 	"context"
 	"fmt"
-	"slices"
+
+	"github.com/home-operations/flate/pkg/selection"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -40,59 +41,28 @@ func (e *Execution) ParseChildren(
 	return store.ChildDocuments{Children: children, Visible: visible, Failures: failures}
 }
 
-func (c *Controller) admitChildren(
-	ctx context.Context,
-	id manifest.NamedResource,
-	next *store.Emission,
-) ([]store.Child, bool, error) {
-	children := next.Children
-	cloned := false
-	if !next.Reads.Valid() {
-		return children, cloned, nil
-	}
-	childValues2 := next.Children
-	for i := range childValues2 {
-		child := childValues2[i]
-		if child.Obj == nil || child.Obj.Named() == id {
-			continue
-		}
-		obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
-		if obj != child.Obj {
-			if !cloned {
-				next.Children = slices.Clone(children)
-				cloned = true
-			}
-			next.Children[i].Obj = obj
-		}
-		if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
-			return nil, false, err
-		}
-	}
-	return children, cloned, nil
-}
-
-func (c *Controller) emit(
+func (e *Execution) emit(
 	ctx context.Context,
 	id manifest.NamedResource,
 	next *store.Emission,
 	payloads map[manifest.NamedResource]*store.SourceArtifact,
 ) error {
-	children, cloned, err := c.admitChildren(ctx, id, next)
-	if err != nil {
-		return err
+	if len(next.Children) != 0 && next.Reads.Valid() {
+		if _, err := e.KeepEmitted(ctx, id, selection.PrepareRequest{
+			Generation: next.Children, Reads: next.Reads, Preparation: &e.AdmissionPreparation,
+		}); err != nil {
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context: %w", err)
 	}
-	c.Store.RecordEmitted(id, next, payloads)
-	if cloned && !next.Complete {
-		next.Children = children
-	}
+	e.Store.RecordEmitted(id, next, payloads)
 	if next.Complete {
-		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusPending {
+		if info, ok := e.Store.GetStatus(id); ok && info.Status == store.StatusPending {
 			message := store.ApplyingStatus(len(next.Manifests))
 			if info != message {
-				c.Store.UpdateStatus(id, message)
+				e.Store.UpdateStatus(id, message)
 			}
 		}
 	}

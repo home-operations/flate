@@ -63,6 +63,19 @@ func (a *SourceArtifact) WithReads(reads *ReadSet) *SourceArtifact {
 	return &captured
 }
 
+// SameMaterial compares acquisition identity independently of execution registrations.
+func (a *SourceArtifact) SameMaterial(other *SourceArtifact) bool {
+	if a == nil || other == nil {
+		return a == other
+	}
+	return a.Input(
+		ArtifactContent|ArtifactRevision|ArtifactOrigin,
+	) == other.Input(
+		ArtifactContent|ArtifactRevision|ArtifactOrigin,
+	) &&
+		a.mutableMaterial() == other.mutableMaterial()
+}
+
 func (a *SourceArtifact) mutableMaterial() *SourceArtifact {
 	if a == nil || a.Content != "" || a.FS == nil {
 		return nil
@@ -227,10 +240,12 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 		sh.mu.RUnlock()
 		return nil
 	}
-	var view capture
-	sh.captureLocked(id, new(sh.cells[id]), &view)
 	artifact := sh.artifacts[id].effective
 	e, emitted := artifact.(*Emission)
+	var view capture
+	if emitted {
+		sh.captureLocked(id, new(sh.cells[id]), &view)
+	}
 	sh.mu.RUnlock()
 	if emitted && !emissionCurrent(e, new(view)) {
 		return nil
@@ -319,8 +334,8 @@ func artifactValueEqual(prev, next Artifact) bool {
 
 func emissionCurrent(e *Emission, viewValue *capture) bool {
 	view := *viewValue
-	input := view.child
-	binding := view.sourceBinding()
+	input := view.child.input()
+	binding := view.source
 	equal := reconcileInputEqual(e.input, e.inputDoc, input.Doc).equal
 	if !equal || !e.inputHead.binding.equal(&binding) {
 		return false

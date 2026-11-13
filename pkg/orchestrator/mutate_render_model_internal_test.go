@@ -18,8 +18,8 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -199,7 +199,7 @@ func observeRenderModelEntry(w modelWorld, side Rendered, selected bool) error {
 			}
 		}
 	}
-	if selected && !side.filter.ShouldReconcile(id) {
+	if selected && !side.selection.Snapshot().Reconcile(id) {
 		if side.store.GetArtifact(id, store.ArtifactContent) != nil || len(got.documents) != 0 {
 			return errors.New("unselected entry published output")
 		}
@@ -455,7 +455,7 @@ func observeRenderModelSegment(
 		if statementInput.side.store.ReportHidden(id) || !id.KindInfo().Runnable {
 			continue
 		}
-		if (*statementInput.selected) && !statementInput.side.filter.ShouldReconcile(id) {
+		if (*statementInput.selected) && !statementInput.side.selection.Snapshot().Reconcile(id) {
 			if err := checkUnselectedModelArtifact(statementInput.side, id, &key); err != nil {
 				return true, (*statementInput.out), (*statementInput.admitted), err
 			}

@@ -1,7 +1,6 @@
 package artifactgenerator
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -14,97 +13,53 @@ import (
 const (
 	maxPatternLength = 1024
 	maxGlobCommas    = 20
+	maxEntries       = 1000
+	maxResourceName  = 253
 )
-
-type specification struct {
-	CommonMetadata struct {
-		Labels      map[string]string `json:"labels"`
-		Annotations map[string]string `json:"annotations"`
-	} `json:"commonMetadata"`
-	Sources     []source `json:"sources"`
-	PathPattern string   `json:"pathPattern"`
-	Artifacts   []output `json:"artifacts"`
-}
-
-type source struct {
-	Alias     string `json:"alias"`
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	Kind      string `json:"kind"`
-}
-
-type output struct {
-	Name           string      `json:"name"`
-	Revision       string      `json:"revision"`
-	OriginRevision string      `json:"originRevision"`
-	Copy           []operation `json:"copy"`
-}
-
-type operation struct {
-	From     string   `json:"from"`
-	To       string   `json:"to"`
-	Strategy string   `json:"strategy"`
-	Exclude  []string `json:"exclude"`
-}
 
 var (
 	aliasName  = regexp.MustCompile(`^[a-z0-9]([a-z0-9_-]*[a-z0-9])?$`)
 	sourceName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 )
 
-func decodeSpec(raw map[string]any) (specification, error) {
-	var spec specification
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return spec, fmt.Errorf("marshal spec: %w", err)
-	}
-	if err := json.Unmarshal(data, &spec); err != nil {
-		return spec, fmt.Errorf("decode spec: %w", err)
-	}
-	if len(spec.Sources) < 1 || len(spec.Sources) > 1000 || len(spec.Artifacts) < 1 || len(spec.Artifacts) > 1000 ||
-		len(spec.PathPattern) > maxPatternLength {
-		return spec, fmt.Errorf("sources, artifacts or pathPattern outside API bounds")
+func validateSpec(spec *manifest.ArtifactGeneratorSpec) error {
+	sourcesOutsideBounds := len(spec.Sources) < 1 || len(spec.Sources) > maxEntries
+	artifactsOutsideBounds := len(spec.Artifacts) < 1 || len(spec.Artifacts) > maxEntries
+	if sourcesOutsideBounds || artifactsOutsideBounds || len(spec.PathPattern) > maxPatternLength {
+		return fmt.Errorf("sources, artifacts or pathPattern outside API bounds")
 	}
 	aliases := make(map[string]bool, len(spec.Sources))
-	rawSources, ok := raw["sources"].([]any)
-	if !ok {
-		return spec, fmt.Errorf("sources must be a list")
-	}
 	for i := range spec.Sources {
-		if err := validateSource(&spec.Sources[i], rawSources[i], aliases); err != nil {
-			return spec, err
+		if err := validateSource(&spec.Sources[i], aliases); err != nil {
+			return err
 		}
 	}
 	names := map[string]bool{}
 	for i := range spec.Artifacts {
 		if err := validateArtifact(&spec.Artifacts[i], aliases, names); err != nil {
-			return spec, err
+			return err
 		}
 	}
-	return spec, nil
+	return nil
 }
 
-func validateSource(input *source, raw any, aliases map[string]bool) error {
-	fields, _ := raw.(map[string]any)
-	_, explicitNamespace := fields["namespace"]
-	if len(input.Alias) > 63 || !aliasName.MatchString(input.Alias) || aliases[input.Alias] || len(input.Name) > 253 ||
-		!sourceName.MatchString(
-			input.Name,
-		) || explicitNamespace && (len(input.Namespace) > 63 || !sourceName.MatchString(input.Namespace)) {
+func validateSource(input *manifest.ArtifactGeneratorSource, aliases map[string]bool) error {
+	invalidAlias := len(input.Alias) > 63 || !aliasName.MatchString(input.Alias) || aliases[input.Alias]
+	invalidName := len(input.Name) > maxResourceName || !sourceName.MatchString(input.Name)
+	invalidNamespace := input.NamespaceSet && (len(input.Namespace) > 63 || !sourceName.MatchString(input.Namespace))
+	if invalidAlias || invalidName || invalidNamespace {
 		return fmt.Errorf("invalid or duplicate source %q", input.Alias)
 	}
-	if input.Kind != manifest.KindGitRepository && input.Kind != manifest.KindOCIRepository &&
-		input.Kind != manifest.KindBucket &&
-		input.Kind != manifest.KindHelmChart &&
-		input.Kind != manifest.KindExternalArtifact {
+	if !input.Supported() {
 		return fmt.Errorf("unsupported source kind %q", input.Kind)
 	}
 	aliases[input.Alias] = true
 	return nil
 }
 
-func validateArtifact(artifact *output, aliases, names map[string]bool) error {
-	if len(artifact.Name) < 1 || len(artifact.Name) > 253 || names[artifact.Name] || len(artifact.Copy) == 0 {
+func validateArtifact(artifact *manifest.ArtifactGeneratorOutput, aliases, names map[string]bool) error {
+	if len(artifact.Name) < 1 || len(artifact.Name) > maxResourceName || names[artifact.Name] ||
+		len(artifact.Copy) == 0 {
 		return fmt.Errorf("invalid or duplicate artifact %q", artifact.Name)
 	}
 	names[artifact.Name] = true
@@ -125,13 +80,13 @@ func validateArtifact(artifact *output, aliases, names map[string]bool) error {
 	return nil
 }
 
-func validateOperation(op *operation) error {
-	if len(op.From) < 1 || len(op.From) > maxPatternLength || len(op.To) < 1 || len(op.To) > maxPatternLength ||
-		len(op.Exclude) > 100 {
+func validateOperation(op *manifest.ArtifactGeneratorCopy) error {
+	invalidFrom := len(op.From) < 1 || len(op.From) > maxPatternLength
+	invalidTo := len(op.To) < 1 || len(op.To) > maxPatternLength
+	if invalidFrom || invalidTo || len(op.Exclude) > 100 {
 		return fmt.Errorf("copy operation outside API bounds")
 	}
-	sourcePathResult1, sourcePathResult1Err := sourcePath(op.From)
-	if _, _, err := sourcePathResult1.alias, sourcePathResult1.pattern, sourcePathResult1Err; err != nil {
+	if _, err := sourcePath(op.From); err != nil {
 		return err
 	}
 	if _, err := destinationPath(op.To); err != nil {

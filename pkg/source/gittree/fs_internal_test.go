@@ -16,12 +16,14 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/memfs"
+	"github.com/go-git/go-billy/v6/util"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -37,7 +39,12 @@ func admitLocal(t *testing.T, root string) (*store.SourceArtifact, error) {
 	if err != nil {
 		return nil, err
 	}
-	return AdmitDirectory(t.Context(), location)
+	directory, err := OpenDirectory(t.Context(), location)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = directory.Close() }()
+	return directory.Artifact(), nil
 }
 
 func operation(t *testing.T, input fs.FS, mode ViewMode) (*FS, string, error) {
@@ -66,8 +73,7 @@ func craftedCommit(t *testing.T, repo *git.Repository, entry object.TreeEntry) p
 		assert.NoError(t, err)
 	}
 	tree := &object.Tree{Entries: []object.TreeEntry{entry}}
-	encoded := repo.Storer.NewEncodedObject()
-	assert.NoError(t, tree.Encode(encoded))
+	var encoded plumbing.EncodedObject = testutil.GitMalformedTree(t, tree, 0)
 	treeHash, err := repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	commit := &object.Commit{
@@ -102,6 +108,15 @@ func (f *policyReadFS) ReadFile(name string) ([]byte, error) {
 
 func TestNew_EntryPolicy(t *testing.T) {
 	t.Parallel()
+	t.Run("git ignored membership", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitIgnoredMembership(t) })
+	t.Run("git capture observations", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitCaptureObservations(t) })
+	t.Run(
+		"git membership replacements",
+		func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitMembershipReplacements(t) },
+	)
+	t.Run("git rule capture", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitRuleCapture(t) })
+	t.Run("git and flux policy", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitAndFluxPolicy(t) })
+	t.Run("git admission routes", func(t *testing.T) { t.Parallel(); testNewEntryPolicyGitAdmissionRoutes(t) })
 	t.Run("ownership labels", func(t *testing.T) { t.Parallel(); testNewEntryPolicyOwnershipLabels(t) })
 
 	t.Run("warning evidence reuse", func(t *testing.T) { t.Parallel(); testNewEntryPolicyWarningEvidenceReuse(t) })
@@ -263,6 +278,7 @@ func (c *fingerprintJoinerContext) Err() error {
 
 func TestFS_ContentFingerprint(t *testing.T) {
 	t.Parallel()
+	t.Run("git ignored noise", func(t *testing.T) { t.Parallel(); testFSContentFingerprintGitIgnoredNoise(t) })
 	for _, mode := range []string{"equal", "payload", "name", "ignored", "canceled", "error", "read_error", "walk_error", "scan_canceled", "scan_deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -302,6 +318,33 @@ func (f *contentReadBilly) Open(name string) (billy.File, error) {
 
 func TestFS_GitContentEvidence(t *testing.T) {
 	t.Parallel()
+	t.Run("committed membership", func(t *testing.T) { t.Parallel(); testFSGitContentEvidenceCommittedMembership(t) })
+	t.Run("memory worktree", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		worktree, err := memfs.New().Chroot(root)
+		assert.NoError(t, err)
+		assert.NoError(t, util.WriteFile(worktree, "object.yaml", []byte("memory content"), 0o600))
+		input, _, err := New(t.Context(), memfs.New(), plumbing.ZeroHash, ViewOptions{
+			Mode: Source, Worktree: worktree,
+		})
+		assert.NoError(t, err)
+		data, err := input.ReadFile("object.yaml")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "memory content")
+		_, err = ContentFingerprint(t.Context(), input)
+		assert.NoError(t, err)
+		assert.Equal(t, len(input.FileDigests()), 1)
+		assert.NoError(t, util.WriteFile(worktree, ".cache/payload.yaml", []byte("excluded"), 0o600))
+		selected := ExcludeDirectory(
+			&store.SourceArtifact{FS: input, LocalPath: root}, filepath.Join(root, ".cache"),
+		).FS.(*FS)
+		observed, err := selected.FreshInputs(t.Context(), nil, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, len(observed.Files), 1)
+		assert.Equal(t, observed.Files["object.yaml"] != "", true)
+		assert.Equal(t, observed.Files[".cache/payload.yaml"], "")
+	})
 	for _, mode := range []string{"clean", "dirty", "staged", "untracked", "racy", "subtree", "immutable", "sdk", "unreadable_clean", "source_unreadable", "unlocated", "routed", "scoped_local", "scoped_immutable", "direct_immutable"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()

@@ -10,7 +10,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/pkg/store"
+
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -60,12 +63,14 @@ func testFetcherProviderAnonymousCase(t *testing.T, root *string,
 	t.Cleanup(srv.Close)
 	repo := gitRepoWithSecret("public", srv.URL, "ca")
 	repo.Provider = "aws"
-	inputs := testInputs{secrets: func(string, string) *manifest.Secret {
-		return &manifest.Secret{StringData: map[string]any{"ca.crt": certificate2.pem}}
+	inputs := testInputs{secrets: func(string, string) store.ReferenceFacts {
+		secretInput := &manifest.Secret{StringData: map[string]any{"ca.crt": certificate2.pem}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	reads := inputs.readSet(repo)
 	defer reads.Close()
-	f := &Fetcher{Cache: cachetest.New(t, "", cache.New)}
+	f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", cache.New)}
 	_, err := fetchtest.Fetch(t.Context(), f.Fetch, repo, reads, &cache.Policy{}, nil)
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	assert.FatalIf(t, !ok || missing.RetryAmbient == nil, "missing continuation: %v", err)

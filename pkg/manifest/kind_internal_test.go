@@ -155,6 +155,13 @@ func TestKindInfo_Rosters(t *testing.T) {
 			assert.Equal(t, KindOf(tc.obj), tc.want)
 			assert.Equal(t, tc.obj.Named().KindInfo(), tc.want)
 			assert.Equal(t, tc.want.APIVersion(), tc.version)
+			assert.Equal(t, tc.want.IsSource(), tc.want.Group == SourceDomain)
+			assert.Equal(t, GroupForKind(tc.want.Kind), tc.want.Group)
+			assert.Equal(t, referenceGroup(tc.want.Kind, "foreign.example/v1"), "foreign.example")
+			assert.Equal(t, tc.obj.EmissionPolicy().OwnerKeys != ([2]string{}), tc.want.Parent)
+			if !tc.want.Parent {
+				assert.Diff(t, tc.obj.EmissionPolicy(), EmissionPolicy{})
+			}
 			for _, group := range []string{tc.want.Group, "foreign.example"} {
 				version := "v1"
 				if group != "" {
@@ -169,6 +176,10 @@ func TestKindInfo_Rosters(t *testing.T) {
 		})
 	}
 	assert.Equal(t, KindOf(nil), KindInfo{})
+	assert.Equal(t, GroupForKind("Unknown"), "")
+	assert.Equal(t, (NamedResource{Group: SourceDomain, Kind: "Unknown"}).KindInfo().IsSource(), true)
+	assert.Equal(t, KindOf(&RawObject{APIVersion: SourceDomain + "/v1", Kind: "Unknown"}).IsSource(), true)
+	assert.Equal(t, KindOf(nil).IsSource(), false)
 	assert.Equal(t, (NamedResource{Kind: "Unknown"}).KindInfo(), KindInfo{Kind: "Unknown"})
 }
 
@@ -232,6 +243,9 @@ func TestKindInfo_RawIdentity(t *testing.T) {
 		name, kind, apiVersion, group string
 		tracked                       bool
 	}{
+		{"raw_kustomization", KindKustomization, FluxKustomizeDomain + "/v1", FluxKustomizeDomain, false},
+		{"raw_helmrelease", KindHelmRelease, HelmReleaseDomain + "/v2", HelmReleaseDomain, false},
+		{"raw_resourceset", KindResourceSet, FluxOperatorDomain + "/v1", FluxOperatorDomain, false},
 		{"generator", "ArtifactGenerator", "source.extensions.fluxcd.io/v1beta1", "source.extensions.fluxcd.io", true},
 		{"foreign_group", "ArtifactGenerator", "foreign.example/v1", "foreign.example", false},
 		{"group_suffix", "ArtifactGenerator", "source.extensions.fluxcd.io.example/v1", "source.extensions.fluxcd.io.example", false},
@@ -264,6 +278,7 @@ func TestKindInfo_RawIdentity(t *testing.T) {
 			}
 			assert.Equal(t, KindOf(raw), want)
 			assert.Equal(t, raw.Named().Group, tc.group)
+			assert.Diff(t, raw.EmissionPolicy(), EmissionPolicy{})
 			assert.Equal(t, ProducerNeedsCandidates(raw), tc.tracked)
 			targets := ProducerTargets(
 				raw,

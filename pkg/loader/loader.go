@@ -17,7 +17,9 @@ import (
 	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -26,21 +28,20 @@ import (
 )
 
 type options struct {
-	Work manifest.WorkScope
+	Cache *cache.Cache
+	Work  manifest.WorkScope
 	// Projections shares source-free producer facts during paired planning.
 	Projections *manifest.ProducerProjections
-	// HistoryOwners supplies immutable positive owner reach from accepted source paths.
-	HistoryOwners map[manifest.NamedResource][]manifest.SourceEvidence
-	// Selection controls compact retention for restricted requests.
-	Selection manifest.Selection
 	// Changes supplies frozen source-qualified comparison facts.
 	Changes *change.Set
-	// Filter owns committed execution membership.
-	Filter *change.Filter
-	// AllowMissingKinds borrows the values-input absence policy for this invocation.
-	AllowMissingKinds []string
-	RemoteInputs      *source.HTTPInputs
-	RemoteRetry       cache.RetryConfig
+	// ConfiguredInput preserves the caller's bootstrap view; nil is meaningful before admission.
+	ConfiguredInput *store.SourceArtifact
+	// Session supplies the committed execution decision.
+	Session *selection.Session
+	// Missing borrows the immutable missing-input policy for this invocation.
+	Missing      *depwait.MissingPolicy
+	RemoteInputs *source.HTTPInputs
+	RemoteRetry  cache.RetryConfig
 	// ParsedInputs reuses immutable content only from matching admitted source views.
 	ParsedInputs *ParsedInputs
 }
@@ -65,20 +66,25 @@ type Loader struct {
 	InputContent          map[manifest.NamedResource]inputprojection.Projection
 	documents             documentReader
 	facts                 *ParsedInputs
+	snapshot              *ParsedInputs
+	inputCaches           map[string]*inputCache
 	scopes                *scopeConstruction
 	entry                 entryKind
 	nativeEntry           *manifest.Kustomization
 	entryPath             string
 	candidates            map[manifest.NamedResource]store.Child
+	builtRoots            map[manifest.NamedResource]builtRoot
 	admitted              map[manifest.NamedResource]manifest.BaseManifest
-	roots                 map[manifest.NamedResource]rootEvidence
-	locations             map[manifest.NamedResource]Occurrence
-	bindings              atomic.Pointer[map[manifest.NamedResource]admissionSource]
+	roots                 rootInventory
+	scopeRoots            []selection.NativeRootFacts
+	catalog               *Catalog
+	locations             map[manifest.NamedResource]authoredOccurrence
+	bindings              [64]atomic.Pointer[sourceBinding]
 	inputReaders          map[manifest.NamedResource][]manifest.NamedResource
 	inputObjects          map[manifest.NamedResource][]manifest.NamedResource
 	templateProjections   map[manifest.NamedResource]manifest.TemplateProjection
 	projections           manifest.ProducerProjections
-	producerFacts         atomic.Pointer[map[manifest.BaseManifest]producerFact]
+	producerFacts         [64]atomic.Pointer[map[manifest.BaseManifest]producerFact]
 	construction, derived uint64
 	indexDerived          bool
 	frozen                bool
@@ -113,7 +119,7 @@ const (
 func New(s *store.Store) *Loader {
 	return &Loader{
 		work:  s.WorkScope().Traversal(manifest.BootstrapSourceID),
-		Store: s, Options: options{Work: s.WorkScope()},
+		Store: s, Options: options{Work: s.WorkScope(), Missing: depwait.NewMissingPolicy(nil)},
 		Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 		documents: documentReader{cache: map[string]document{}, views: map[string]fs.FS{}},
 	}
@@ -138,10 +144,10 @@ func (l *Loader) Sources(ctx context.Context) iter.Seq2[store.Child, error] {
 	return func(yield func(store.Child, error) bool) {
 		//nolint:gocritic // The iterator supplies filtered value snapshots through its callback.
 		for id, r := range l.Index.Files() {
-			if info := id.KindInfo(); info.Group != manifest.SourceDomain || !info.Discovery {
+			if info := id.KindInfo(); !info.IsSource() || !info.Discovery {
 				continue
 			}
-			if l.documents.cache[r.Path].eligible == fileInactive {
+			if l.documents.cache[r.Path].eligible == selection.RootInactive {
 				continue
 			}
 			if !l.yieldSource(ctx, id, new(r), yield) {
@@ -149,30 +155,6 @@ func (l *Loader) Sources(ctx context.Context) iter.Seq2[store.Child, error] {
 			}
 		}
 	}
-}
-
-// AdmitsRoot applies the source-qualified scope boundary to every indexed document.
-func (l *Loader) AdmitsRoot(obj manifest.BaseManifest, file string) bool {
-	if obj == nil || !manifest.AdmitsRoot(obj) {
-		return false
-	}
-	id := obj.Named()
-	r, ok := l.Index.Lookup(id)
-	if !ok || r.Path != file || file != "" && l.terminalInput(file) {
-		return false
-	}
-	if admitted, known := l.roots[id]; known {
-		return admitted.admitted
-	}
-	if r.Path == "" {
-		native := l.documents.compact && r.Parent.ReportHidden() && r.Parent == r.BuilderOwner
-		return r.Authored == (manifest.NamedResource{}) && (r.Parent == (manifest.NamedResource{}) || native) &&
-			l.candidates[id].Obj != nil
-	}
-	if doc := l.documents.cache[file]; !id.KindInfo().Discovery && doc.rootKnown {
-		return doc.rootAdmitted
-	}
-	return l.rootAdmission(file, r.File, id.KindInfo().Structural).admits(l, id, new(r))
 }
 
 // Kustomizations returns eligible source-qualified owner evidence.
@@ -191,7 +173,7 @@ func (l *Loader) eligibleKustomizations(kss []store.Child) []store.Child {
 
 func (l *Loader) inactiveKustomization(id manifest.NamedResource) bool {
 	r, indexed := l.Index.Lookup(id)
-	return indexed && l.documents.cache[r.Path].eligible == fileInactive
+	return indexed && l.documents.cache[r.Path].eligible == selection.RootInactive
 }
 
 func (l *Loader) kustomizations() []store.Child {
@@ -304,7 +286,8 @@ func (l *Loader) Load(
 		work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 		work.Finish(resultErr)
 	}()
-	l.documents.compact = l.Options.Selection.Changed || len(l.Options.Selection.Roots) != 0
+	l.documents.compact = l.Options.Session != nil
+	l.documents.recordInputs = l.documents.compact && l.Options.Cache != nil && l.Options.Cache.CanPersistRenders()
 	l.mountSources()
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -322,15 +305,22 @@ func (l *Loader) Load(
 		}
 	}
 	l.documents.bootstrap = cmp.Or(l.documents.bootstrap, inputRoot)
+	if err := l.restoreCachedInputs(ctx); err != nil {
+		return 0, err
+	}
 	l.ensureScopes()
-	reader := l.documents
-	purpose := l.constructionPurpose.Load()
-	ordinary := purpose != nil && slices.Contains(*purpose, owner)
-	closure := admissionClosure{loader: l, objects: l.Store}
-	evidence := closure.rootEvidence(owner)
-	ordinary = ordinary || !l.frozen && evidence.independent && evidence.occurrence.Declaration != (OccurrenceID{})
+	reader, view := l.documents, l.physicalView()
+	evidence := view.rootFacts(owner, l, nil)
+	ordinary := !l.frozen && selection.Root(evidence).Independent &&
+		evidence.Occurrence.Declaration != (selection.OccurrenceID{})
+	if purpose := l.constructionPurpose.Load(); purpose != nil {
+		ordinary = ordinary || slices.Contains(*purpose, owner)
+	}
 	switch {
-	case !reader.compact, owner == (manifest.NamedResource{}), l.Options.Filter.OrdinaryDemand(owner), ordinary:
+	case !reader.compact,
+		owner == (manifest.NamedResource{}),
+		l.Options.Session.Snapshot().OrdinaryDemand(owner),
+		ordinary:
 	default:
 		reader.intent = manifest.ApplicationDocuments
 	}
@@ -367,33 +357,34 @@ func (l *Loader) Load(
 }
 
 func (l *Loader) loadRoot(ctx context.Context, root string, w *traversal) bool {
-	if w.documents.compact {
-		factsSource := l.sourceFacts(root)
-		key := loadContext{path: root, ignore: l.IgnoreFile}
-		if facts := factsSource.loads[key]; facts.err != nil && ctx.Err() == nil {
-			w.work, w.err = nil, facts.err
-			return false
+	if w.work != nil && w.work.Key.Source != (manifest.NamedResource{}) {
+		if l.scopes.traversalWork == nil {
+			l.scopes.traversalWork = map[string]*manifest.WorkRecord{}
 		}
-		defer func() {
-			if w.err != nil && ctx.Err() == nil {
-				facts := factsSource.loads[key]
-				facts.err = w.err
-				factsSource.loads[key] = facts
-			}
-		}()
+		l.scopes.traversalWork[new(l.documents).mountedRoot(root)] = l.Options.Work.Traversal(w.work.Key.Source)
 	}
-	l.scopes.complete = false
+	factsSource := l.sourceFacts(root)
+	key := loadContext{path: root, ignore: l.IgnoreFile}
+	if facts, _ := factsSource.load(key); facts.err != nil && ctx.Err() == nil {
+		w.work, w.err = nil, facts.err
+		return false
+	}
+	defer func() {
+		if w.err != nil && ctx.Err() == nil {
+			facts, _ := factsSource.load(key)
+			facts.err = w.err
+			factsSource.loads.values[key] = facts
+		}
+	}()
+	facts, _ := factsSource.load(key)
+	l.scopes.complete = l.scopes.complete && !l.loadChangesScopes(root, &facts, w.documents.intent)
 	ignore, skip, err := l.loadRootIgnore(ctx, root)
 	if skip || err != nil {
 		w.err = err
 		return false
 	}
 	w.ignore = ignore
-	if w.documents.compact {
-		l.loadCompact(ctx, root, w)
-	} else {
-		w.walk(ctx, graphVisit{root: root, file: root}, nil)
-	}
+	l.loadCached(ctx, root, w)
 	return true
 }
 
@@ -489,7 +480,7 @@ func (l *Loader) recordDataFile(ctx context.Context, absPath string, reader *doc
 	return nil
 }
 
-func (l *Loader) recordOccurrence(path string, o *Occurrence) {
+func (l *Loader) recordOccurrence(path string, o *authoredOccurrence) {
 	if o.facts.uncertain || !o.facts.retained && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
 		return
 	}
@@ -497,7 +488,7 @@ func (l *Loader) recordOccurrence(path string, o *Occurrence) {
 		return
 	}
 	if l.locations == nil {
-		l.locations = map[manifest.NamedResource]Occurrence{}
+		l.locations = map[manifest.NamedResource]authoredOccurrence{}
 	}
 	l.locations[o.Identity] = *o
 	r := manifest.DiscoveryRecord{
@@ -549,8 +540,7 @@ func discoveryReference(refValue *manifest.Reference) bool {
 
 	return ref.Use == "valuesFrom" ||
 		ref.Use == "substituteFrom" && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
-		(ref.Use == sourceReferenceUse || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" &&
-			ref.Name != ""
+		ref.IsSource() && ref.Kind != "" && ref.Name != ""
 }
 
 func (l *Loader) fileCoordinate(absPath string) string {
@@ -626,10 +616,6 @@ func (l *Loader) replayFile(ctx context.Context, fileValue *fileAdmission, reade
 	return n, nil
 }
 
-const (
-	sourceReferenceUse = "source"
-)
-
 func (l *Loader) recordLoadedObjects(path string, objs []parsedObject) int {
 	count := 0
 	{
@@ -697,12 +683,12 @@ func (l *Loader) yieldSource(
 	r := *rValue
 	obj := l.IndexedObject(id, r)
 	if r.Builder != "" {
-		obj = l.preparedObject(id)
+		obj, _ = l.PreparedObject(id, nil)
 	}
 	if l.documents.compact {
 		var err error
 		if occurrence, ok := l.occurrence(id); ok && obj.Obj == nil {
-			obj, err = l.exactObject(ctx, new(occurrence), nil)
+			obj, err = l.OccurrenceObject(ctx, new(occurrenceView(&occurrence)), nil)
 		}
 		if err != nil {
 			yield(store.Child{}, err)
@@ -723,15 +709,12 @@ func (l *Loader) yieldSource(
 }
 
 func (l *Loader) yieldVisitedOwners(file string, yield func(manifest.NamedResource) bool) bool {
-	{
-		vValues := l.scopes.visits[file]
-		for vIndex := range vValues {
-			v := vValues[vIndex]
-			if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource && !yield(v.owner) {
-				return false
-			}
+	for v := range l.scopes.fileVisits(file) {
+		if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource && !yield(v.owner) {
+			return false
 		}
 	}
+
 	return true
 }
 
@@ -759,15 +742,16 @@ func (l *Loader) mountDirectory(ctx context.Context, inputRoot string) (bool, er
 	if locateErr != nil {
 		return false, locateErr
 	}
-	input, locateErr := gittree.AdmitDirectory(ctx, location)
+	directory, locateErr := gittree.OpenDirectory(ctx, location)
 	if locateErr != nil {
 		if l.IgnoreFile != "" && errors.Is(locateErr, fs.ErrNotExist) {
 			return true, nil
 		}
 		return false, locateErr
 	}
-	//nolint:errcheck // AdmitDirectory supplies the native filesystem required by the operation view.
-	l.documents.views[inputRoot] = input.FS.(*gittree.FS).OperationView()
+	defer func() { _ = directory.Close() }()
+	//nolint:errcheck // Admission supplies the native filesystem required by the operation view.
+	l.documents.views[inputRoot] = directory.Artifact().FS.(*gittree.FS).OperationView()
 	l.documents.edgesDirty = true
 	return false, nil
 }
@@ -795,13 +779,13 @@ func (l *Loader) loadRootIgnore(ctx context.Context, abs string) (*ignoreSet, bo
 	return ignore, false, nil
 }
 
-func (l *Loader) loadCompact(ctx context.Context, abs string, w *traversal) {
+func (l *Loader) loadCached(ctx context.Context, abs string, w *traversal) {
 	sourceState := l.sourceFacts(abs)
 	key := loadContext{path: abs, ignore: l.IgnoreFile}
-	facts, replay := sourceState.loads[key]
+	facts, replay := sourceState.load(key)
 	if replay && facts.complete {
 		w.work = nil
-		l.replayCompact(ctx, &facts, w)
+		l.replayLoad(ctx, &facts, w)
 		facts.complete = w.proceed(ctx)
 	} else {
 		facts = loadFacts{directories: map[string]loadDirectory{}}
@@ -820,10 +804,10 @@ func (l *Loader) loadCompact(ctx context.Context, abs string, w *traversal) {
 	}
 	facts.coverage = w.documents.intent
 	facts.observed = facts.observed || w.documents.intent != manifest.ApplicationDocuments
-	sourceState.loads[key] = facts
+	sourceState.loads.values[key] = facts
 }
 
-func (l *Loader) replayCompact(ctx context.Context, facts *loadFacts, w *traversal) {
+func (l *Loader) replayLoad(ctx context.Context, facts *loadFacts, w *traversal) {
 	for file, directory := range facts.directories {
 		l.documents.restore(file)
 		doc := l.documents.cache[file]
@@ -878,5 +862,5 @@ func (l *Loader) setEntry(abs, builder string) {
 func (l *Loader) declarationLocated(id manifest.NamedResource, objects admissionReader) bool {
 	record, _ := l.Index.Lookup(id)
 	return record.Path != "" || record.Builder != "" || objects.GetDeclaration(id) != nil ||
-		l.roots[record.Parent].independent
+		selection.Root(l.roots.get(record.Parent).view()).Independent
 }

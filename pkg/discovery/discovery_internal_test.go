@@ -10,13 +10,15 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -27,6 +29,7 @@ import (
 
 func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 	t.Parallel()
+	t.Run("runtime alias and overlapping claims", testDiscardPinnedWorkingTreeFilesPreservesSourcesRuntimeAlias)
 	t.Run(
 		"projected owner",
 		func(t *testing.T) { t.Parallel(); testDiscardPinnedWorkingTreeFilesPreservesSourcesProjectedOwner(t) },
@@ -118,7 +121,7 @@ func packageHistory(
 ) map[manifest.NamedResource]manifest.DiscoveryRecord {
 	t.Helper()
 	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
-	records, complete := trees.RenderHistory(owner, receipt, req.Content(docs))
+	records, complete := trees.RenderHistory(owner, receipt, kustomize.PrepareShape(req, docs).Content())
 	assert.FatalIf(t, !available || !complete || records == nil, "package %q has no complete accepted history",
 		req.SubPath,
 	)
@@ -133,7 +136,7 @@ func preparedRequest(
 	source *store.SourceArtifact,
 ) kustomize.RenderRequest {
 	t.Helper()
-	prepared, err := kustomize.Prepare(ks, nil)
+	prepared, err := kustomize.Prepare(ks, nil, depwait.NewMissingPolicy(nil))
 	assert.NoError(t, err)
 	return kustomize.RenderRequest{
 		Source:              source,
@@ -287,12 +290,15 @@ func testDiscardPinnedWorkingTreeFilesPreservesSourcesCase(
 	}
 	artifact.FS = os.DirFS(artifact.LocalPath)
 	d := Session{
-		cfg: Config{Store: st}, loader: loader.New(st),
-		resolvedSources: map[manifest.NamedResource]entryResolution{other.Named(): {object: other}},
+		cfg:    Config{Store: st},
+		loader: loader.New(st),
+		resolvedSources: &entrySourcePublisher{
+			mutable: map[manifest.NamedResource]entryResolution{other.Named(): {object: other}},
+		},
 	}
 	d.loader.SourceRoot = root
 	if testCaseInput.resolved {
-		d.resolvedSources[repository.Named()] = entryResolution{object: repository}
+		d.resolvedSources.record(repository.Named(), &entryResolution{object: repository})
 	}
 	for _, obj := range []manifest.BaseManifest{repository, other, ks, cm} {
 		st.AddObject(obj)
@@ -412,7 +418,7 @@ func testLoadAtIgnoreFileAndMissingDirectoryMountedSymlink(t *testing.T) {
 		loader: loader.New(st),
 	}
 	{
-		err := d.loadManifests(t.Context(), root, true)
+		err := d.loadManifestsTest(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	id := testutil.KustomizationID("", "child")
@@ -471,7 +477,7 @@ func testLoadAtIgnoreFileAndMissingDirectoryCase(
 		)
 	}
 	total := 0
-	_, err := d.loadAt(t.Context(), target, &total, sourceLoad{})
+	_, err := d.loadAt(t.Context(), target, &total, &sourceLoad{})
 	if (*testCaseInput.scenario) == "missing-ignore" {
 		assert.FatalIf(t, !errors.Is(err, fs.ErrNotExist), "missing explicit ignore error = %v", err)
 	} else {
@@ -717,12 +723,13 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 	)
 	st := store.New()
 	l := loader.New(st)
-	l.Options.Filter = change.NewFilter()
 	consumer := testutil.KustomizationID("apps", "consumer")
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer}})
+	configureSelection(t, l, selection.Request{Roots: []manifest.NamedResource{consumer}})
 	supplier := testutil.KustomizationID("apps", "supplier")
 	unused := testutil.KustomizationID("apps", "unused")
 	data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}
-	_, err := Begin(
+	_, err := beginTest(
 		t.Context(),
 		Config{
 			Path:      filepath.Join(root, "flux"),
@@ -730,7 +737,7 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 			Store:     st,
 			Loader:    l,
 			Trees:     testTrees(t),
-			Selection: manifest.Selection{Roots: []manifest.NamedResource{consumer}},
+			Selection: selection.Request{Roots: []manifest.NamedResource{consumer}},
 		},
 	)
 	assert.NoError(t, err)
@@ -746,18 +753,18 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 		true,
 	)
 	assert.Equal(t, st.GetObject(data), nil)
-	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
-	proposal, err := l.Prepare(t.Context(), loader.PrepareRequest{Invocation: true})
+	assert.Equal(t, len(selectedNames(l)), 0)
+	proposal, err := prepareSelection(t.Context(), t, l, selection.PrepareRequest{Invocation: true})
 	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, supplier), true)
 	assert.Equal(t, slices.Contains(proposal.Ordinary, supplier), true)
 	assert.Equal(t, slices.Contains(proposal.Needed, unused), false)
 	assert.Equal(t, slices.Contains(proposal.Selected, supplier), false)
-	committed, err := l.Commit(t.Context(), proposal, loader.Construction)
+	committed, err := commitSelection(t.Context(), l, proposal, selection.Construction)
 	assert.NoError(t, err)
 	assert.Equal(t, committed, true)
-	assert.Equal(t, len(l.Options.Filter.KeepNames()), 0)
-	assert.Equal(t, l.Options.Filter.OrdinaryDemand(supplier), false)
+	assert.Equal(t, len(selectedNames(l)), 0)
+	assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(supplier), true)
 	assert.Equal(t, st.GetObject(unused), nil)
 	assert.Equal(t, st.GetArtifact(unused, store.ArtifactContent), nil)
 }
@@ -769,7 +776,7 @@ func previousPackageHistory(
 ) kustomize.EntryEvidence {
 	t.Helper()
 	docs, receipt, available := trees.PreviousRender(t.Context(), *req)
-	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, req.Content(docs))
+	records, complete := trees.RenderHistory(req.Spec.Named(), receipt, kustomize.PrepareShape(req, docs).Content())
 	if !available || !complete {
 		return kustomize.EntryEvidence{}
 	}

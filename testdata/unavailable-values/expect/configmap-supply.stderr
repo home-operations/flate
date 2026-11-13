@@ -1,0 +1,6 @@
+
+  ⚠ warnings (2)
+    [SuppliedPrecedence] repository data takes precedence over supplied data
+      ConfigMap/apps/input: empty (@@repo@@/supplied.yaml), ConfigMap/apps/input: plain (@@repo@@/supplied.yaml)
+    [SOPSUnreadable] ConfigMap apps/input: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      encrypted

@@ -122,15 +122,17 @@ func assertSourceValuesReferences(t *testing.T, testCaseInput *struct {
 		assert.Equal(t, refs[0].Gate&GateInputs != 0, form == "resolved")
 	}
 	source := Reference{
-		Group:     testCaseInput.group,
-		Kind:      testCaseInput.kind,
-		Namespace: "effective",
-		Name:      "source",
-		Use:       "source",
-		Content:   true,
+		Group:       testCaseInput.group,
+		Kind:        testCaseInput.kind,
+		Namespace:   "effective",
+		Name:        "source",
+		Use:         "source",
+		bindsSource: true,
+		Content:     true,
 	}
 	if testCaseInput.files {
 		source.Files = files
+		source.readsSourceTree = true
 	}
 	if testCaseInput.chart {
 		source.ChartPath = "./charts/demo"
@@ -154,12 +156,13 @@ func assertSourceValuesReferences(t *testing.T, testCaseInput *struct {
 		want = append(
 			[]Reference{
 				{
-					Group:     SourceDomain,
-					Kind:      KindHelmChart,
-					Namespace: "effective",
-					Name:      "chart",
-					Use:       "chart",
-					Content:   true,
+					Group:       SourceDomain,
+					Kind:        KindHelmChart,
+					Namespace:   "effective",
+					Name:        "chart",
+					Use:         "chart",
+					bindsSource: true,
+					Content:     true,
 				},
 			},
 			want...)

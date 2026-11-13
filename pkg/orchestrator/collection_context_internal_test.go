@@ -70,8 +70,7 @@ spec:
 		Concurrency: 2,
 	}
 	t.Cleanup(cfg.Network.Close)
-	runs, err := RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				ID:       manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead},
@@ -124,8 +123,7 @@ spec:
 				Completed: 1,
 			},
 		)
-		explicit, err := RenderTrees(
-			t.Context(),
+		explicit, err := renderTreesForTest(t.Context(), t,
 			[]Tree{
 				{
 					ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
@@ -143,6 +141,7 @@ spec:
 				run.Result,
 				explicit[0].Result,
 				cmpopts.IgnoreUnexported(
+					Result{},
 					manifest.Kustomization{},
 					manifest.HelmRelease{},
 				),
@@ -245,8 +244,7 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 		)
 	}
 	testutil.WriteFile(t, root, "shared/ready/kustomization.yaml", "resources: []\n")
-	runs, err := RenderTrees(
-		t.Context(),
+	runs, err := renderTreesForTest(t.Context(), t,
 		[]Tree{
 			{
 				ID: manifest.TreeID{

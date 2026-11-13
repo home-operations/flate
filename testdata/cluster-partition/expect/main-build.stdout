@@ -1,0 +1,17 @@
+[
+  {
+    "apiVersion": "v1",
+    "data": {
+      "marker": "main"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "labels": {
+        "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      },
+      "name": "cluster-marker",
+      "namespace": "apps"
+    }
+  }
+]

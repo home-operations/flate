@@ -1,6 +1,7 @@
 package git
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -17,25 +18,28 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
 
-	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
+	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
 
 	"github.com/home-operations/flate/pkg/store"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/format/pktline"
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
-	"github.com/go-git/go-git/v5/plumbing/protocol/packp/capability"
-	"github.com/go-git/go-git/v5/plumbing/transport"
-	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/format/pktline"
+	"github.com/go-git/go-git/v6/plumbing/protocol"
+	"github.com/go-git/go-git/v6/plumbing/protocol/capability"
+	"github.com/go-git/go-git/v6/plumbing/protocol/packp"
+	"github.com/go-git/go-git/v6/plumbing/transport"
+	"github.com/go-git/go-git/v6/utils/ioutil"
 	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -117,7 +121,7 @@ func tlsGitCertificate(t *testing.T) gitCertificate {
 
 func gitHTTPHandler(t *testing.T, root string) http.Handler {
 	t.Helper()
-	ep, err := transport.NewEndpoint(root + "/.git")
+	ep, err := transport.ParseURL(root + "/.git")
 	assert.NoError(t, err)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,57 +129,57 @@ func gitHTTPHandler(t *testing.T, root string) http.Handler {
 	})
 }
 
-func serveGitHTTP(t *testing.T, w http.ResponseWriter, r *http.Request, ep *transport.Endpoint) {
+func serveGitHTTP(t *testing.T, w http.ResponseWriter, r *http.Request, ep *neturl.URL) {
 	t.Helper()
-	session, err := server.DefaultServer.NewUploadPackSession(ep, nil)
-	if err != nil {
-		t.Error(err)
-		http.Error(w, "session", http.StatusInternalServerError)
-		return
-	}
-	defer session.Close()
-	refs, err := session.AdvertisedReferencesContext(r.Context())
+	st, err := transport.DefaultLoader.Load(ep)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	if setErr := refs.Capabilities.Set(capability.Shallow); setErr != nil {
-		t.Error(setErr)
-		return
+	if closer, ok := st.(io.Closer); ok {
+		defer closer.Close()
 	}
-	if setErr2 := refs.Capabilities.Set(capability.AllowReachableSHA1InWant); setErr2 != nil {
-		t.Error(setErr2)
-		return
-	}
-	if r.Method == http.MethodGet {
-		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
-		encoder := pktline.NewEncoder(w)
-		if encodeStringErr := encoder.EncodeString("# service=git-upload-pack\n"); encodeStringErr != nil {
-			t.Error(encodeStringErr)
-			return
-		}
-		if flushErr := encoder.Flush(); flushErr != nil {
-			t.Error(flushErr)
-			return
-		}
-		if encodeErr := refs.Encode(w); encodeErr != nil {
-			t.Error(encodeErr)
+	if r.Method != http.MethodGet {
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+		if err := transport.UploadPack(
+			r.Context(),
+			st,
+			r.Body,
+			ioutil.WriteNopCloser(w),
+			&transport.UploadPackRequest{StatelessRPC: true, SkipDeltaCompression: true},
+		); err != nil {
+			t.Error(err)
 		}
 		return
 	}
-	request := packp.NewUploadPackRequest()
-	if decodeErr := request.Decode(r.Body); decodeErr != nil {
-		t.Error(decodeErr)
-		return
-	}
-	response, err := session.UploadPack(r.Context(), request)
-	if err != nil {
+	var advertisement bytes.Buffer
+	if err := transport.AdvertiseRefs(
+		r.Context(),
+		st,
+		&advertisement,
+		transport.UploadPackService,
+		false,
+		protocol.V0,
+	); err != nil {
 		t.Error(err)
 		return
 	}
-	defer response.Close()
-	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
-	if err := response.Encode(w); err != nil {
+	refs := &packp.AdvRefs{}
+	if err := refs.Decode(&advertisement); err != nil {
+		t.Error(err)
+		return
+	}
+	refs.Capabilities.Set(capability.AllowReachableSHA1InWant)
+	w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+	if _, err := pktline.WriteString(w, "# service=git-upload-pack\n"); err != nil {
+		t.Error(err)
+		return
+	}
+	if err := pktline.WriteFlush(w); err != nil {
+		t.Error(err)
+		return
+	}
+	if err := refs.Encode(w); err != nil {
 		t.Error(err)
 	}
 }
@@ -201,10 +205,14 @@ func TestFetcher_RestrictEgress(t *testing.T) {
 		srv := httptest.NewTLSServer(http.NotFoundHandler())
 		defer srv.Close()
 		ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
-		fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-			return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
+		fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+			secretInput := &manifest.Secret{
+				StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca},
+			}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}}
-		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
+		f := &Fetcher{Network: networktest.New(t), Cache: cachetest.New(t, "", sourcecache.New)}
 		ssrfguard.Restrict(true)
 		defer ssrfguard.Restrict(false)
 		_, err := fetchtest.Fetch(
@@ -257,17 +265,6 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 		},
 		)
 	}
-}
-
-func gitRepoWithSecret(name, url, secretName string) *manifest.GitRepository {
-	repo := &manifest.GitRepository{
-		Name: name, Namespace: "ns",
-		URL: url,
-	}
-	if secretName != "" {
-		repo.SecretRef = &manifest.LocalObjectReference{Name: secretName}
-	}
-	return repo
 }
 
 func TestFetcher_ResolveTLS(t *testing.T) {
@@ -422,8 +419,10 @@ func TestFetcher_ResolveTransport_EndpointValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
-				return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p"}}
+			fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+				secretInput := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p"}}
+
+				return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 			}}
 			f := &Fetcher{}
 			repo := gitRepoWithSecret("g", "http://[::1", tc.secret)
@@ -540,18 +539,18 @@ func testFetcherResolveTransportSecretMaterialCase1(t *testing.T, tc *struct {
 	}
 	assert.NoError(t, err)
 	assert.Equal(t, request.spec, repo)
-	assert.Equal(t, string(request.options.CABundle), (*ca))
+	assert.Equal(t, request.transport.Certificate()[2], (*ca))
 	assert.Equal(t, request.material != nil, true)
 	if tc.wantBearer {
-		auth, ok := request.options.Auth.(*githttp.TokenAuth)
+		auth, ok := request.auth.(*githttp.TokenAuth)
 		assert.FatalIf(t, !ok,
-			"expected token auth; got %T", request.options.Auth)
+			"expected token auth; got %T", request.auth)
 
 		assert.Equal(t, auth.Token, "fixture-token")
 	} else {
-		auth, ok := request.options.Auth.(*githttp.BasicAuth)
+		auth, ok := request.auth.(*githttp.BasicAuth)
 		assert.FatalIf(t, !ok,
-			"expected basic auth; got %T", request.options.Auth)
+			"expected basic auth; got %T", request.auth)
 
 		assert.Equal(t, auth.Username, "u")
 		assert.Equal(t, auth.Password, "p")
@@ -564,7 +563,7 @@ func testFetcherResolveTransportSecretMaterialCase1Part1(
 	t.Helper()
 	assert.Equal(t, inputs.request.spec == nil, true)
 	assert.Equal(t, inputs.request.material == nil, true)
-	assert.Diff(t, inputs.request.options, git.CloneOptions{})
+	assert.Equal(t, reflect.ValueOf(inputs.request.options).IsZero(), true)
 	assert.Equal(t, errors.Is(inputs.err, manifest.ErrInput), (*inputs.tc).wantInput)
 	assert.Equal(t, errors.Is(inputs.err, manifest.ErrFlux), true)
 	assert.Equal(t, errors.Is(inputs.err, manifest.ErrMissingSecret), (*inputs.tc).wantMissing)
@@ -601,13 +600,18 @@ func testFetcherResolveTransportSecretMaterialCase1Part1(
 func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
-	fInputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+	fInputs := testInputs{secrets: func(_, name string) store.ReferenceFacts {
 		if name == "proxy" {
-			return &manifest.Secret{
+			secretInput := &manifest.Secret{
 				StringData: map[string]any{"address": "http://proxy-user:proxy-password@proxy.invalid/%"},
 			}
+
+			return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 		}
-		return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
+
+		secretInput := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
+
+		return store.ReferenceFacts{Data: secretInput, Original: secretInput}
 	}}
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
@@ -756,8 +760,7 @@ type gitCertificate struct {
 type testFetcherResolveTLSTailInputs struct {
 	err *error
 
-	opts *git.
-		CloneOptions
+	material source.TransportMaterial
 
 	tc *gitTLSCase
 }
@@ -766,9 +769,9 @@ func testFetcherResolveTLSTail(t *testing.T, inputs *testFetcherResolveTLSTailIn
 	t.Helper()
 
 	assert.NoError(t, (*inputs.err))
-	assert.Equal(t, string(inputs.opts.CABundle), inputs.tc.wantCA)
-	assert.Equal(t, string(inputs.opts.ClientCert), inputs.tc.wantCRT)
-	assert.Equal(t, string(inputs.opts.ClientKey), inputs.tc.wantKey)
+	assert.Equal(t, inputs.material.Certificate()[2], inputs.tc.wantCA)
+	assert.Equal(t, inputs.material.Certificate()[0], inputs.tc.wantCRT)
+	assert.Equal(t, inputs.material.Certificate()[1], inputs.tc.wantKey)
 }
 
 type testFetcherResolveTransportSecretMaterialCase1Part1Inputs struct {
@@ -803,7 +806,9 @@ func testFetcherResolveTLSCase(t *testing.T, inputs *testFetcherResolveTLSCaseIn
 	assert.NoError(t, keyErr)
 	data["known_hosts"] = "host " + string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
 	sec := &manifest.Secret{Name: "different", Namespace: "elsewhere", StringData: data, Data: inputs.tc.encodedData}
-	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return sec }}
+	fInputs := testInputs{secrets: func(_, _ string) store.ReferenceFacts {
+		return store.ReferenceFacts{Data: sec, Original: sec}
+	}}
 	f := &Fetcher{}
 	url := inputs.tc.url
 	if url == "" {
@@ -816,7 +821,7 @@ func testFetcherResolveTLSCase(t *testing.T, inputs *testFetcherResolveTLSCaseIn
 	)
 	opts := request.options
 	if inputs.tc.wantInput || inputs.tc.wantMissing {
-		assert.Diff(t, opts, git.CloneOptions{})
+		assert.Equal(t, reflect.ValueOf(opts).IsZero(), true)
 		assert.Equal(t, errors.Is(err, manifest.ErrInput), inputs.tc.wantInput)
 		assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 		assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), inputs.tc.wantMissing)
@@ -841,5 +846,8 @@ func testFetcherResolveTLSCase(t *testing.T, inputs *testFetcherResolveTLSCaseIn
 		}
 		return
 	}
-	testFetcherResolveTLSTail(t, &testFetcherResolveTLSTailInputs{err: &err, opts: &opts, tc: inputs.tc})
+	testFetcherResolveTLSTail(
+		t,
+		&testFetcherResolveTLSTailInputs{err: &err, material: request.transport, tc: inputs.tc},
+	)
 }

@@ -6,16 +6,18 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/source/gitrepo"
 )
 
 // benchRepo seeds a source repo with n blobs (a 90/10 small/large mix —
@@ -25,6 +27,8 @@ import (
 // same packfile-backed read path as a production source fetch (a loose
 // PlainInit repo would shadow the pack with unpacked objects and
 // understate the read cost).
+//
+//nolint:gocritic // The benchmark MUST retain the repository owner with its packed commit.
 func benchRepo(b *testing.B, n int) (*git.Repository, plumbing.Hash) {
 	b.Helper()
 	src := b.TempDir()
@@ -53,7 +57,7 @@ func benchRepo(b *testing.B, n int) (*git.Repository, plumbing.Hash) {
 	})
 
 	clone := b.TempDir()
-	cloned, err := git.PlainClone(clone, false, &git.CloneOptions{URL: src})
+	cloned, err := git.PlainClone(clone, &git.CloneOptions{URL: src})
 	assert.FatalIf(b, err != nil, "PlainClone: %v", err)
 	head, err := cloned.Head()
 	assert.FatalIf(b, err != nil, "Head: %v", err)
@@ -66,7 +70,12 @@ func BenchmarkView_Packed(b *testing.B) {
 	wt, err := repo.Worktree()
 	assert.NoError(b, err)
 
-	current, _, err := New(b.Context(), backing, plumbing.ZeroHash, ViewOptions{Mode: Direct, Worktree: wt.Filesystem})
+	current, _, err := New(
+		b.Context(),
+		backing,
+		plumbing.ZeroHash,
+		ViewOptions{Mode: Direct, Worktree: wt.Filesystem()},
+	)
 	assert.NoError(b, err)
 
 	for _, name := range []string{"Source", "LazyBase", "SelectedBody", "ReadAll"} {
@@ -118,4 +127,32 @@ func benchReadAll(b *testing.B, input *FS) {
 		return closeErr
 	})
 	assert.NoError(b, err)
+}
+
+func BenchmarkFreshInputs_FileSize(b *testing.B) {
+	for _, size := range []int{1 << 10, 128 << 10, 8 << 20} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			root := b.TempDir()
+			data := make([]byte, size)
+			for i := range data {
+				data[i] = byte((i*131 + i/251) % 253)
+			}
+			testutil.WriteFile(b, root, "file", string(data))
+			location, err := gitrepo.Locate(b.Context(), root, root)
+			assert.NoError(b, err)
+			directory, err := OpenDirectory(b.Context(), location)
+			assert.NoError(b, err)
+			input := directory.Artifact()
+			assert.NoError(b, directory.Close())
+			selected := input.FS.(*FS)
+			kinds := map[string]fs.FileMode{"file": 0}
+			requested := []string{"file"}
+			b.ReportAllocs()
+			b.SetBytes(int64(size))
+			for b.Loop() {
+				_, err := selected.FreshInputs(b.Context(), requested, kinds)
+				assert.NoError(b, err)
+			}
+		})
+	}
 }

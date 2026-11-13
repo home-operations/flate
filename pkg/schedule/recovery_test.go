@@ -84,6 +84,7 @@ func (d *registeredDispatcher) Dispatch(
 	ctx context.Context,
 	id schedule.NodeID,
 	level manifest.DrainLevel,
+	_ schedule.Result,
 ) schedule.Result {
 	e := controllertest.NewExecution(d.controller, id)
 	e.Dispatch[*manifest.Kustomization](

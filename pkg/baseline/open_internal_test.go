@@ -5,20 +5,27 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/plumbing/object"
+
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/networktest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -64,7 +71,15 @@ func TestAutoResolve_SubmoduleWarningAttribution(t *testing.T) {
 	pin, err = repo.Storer.SetEncodedObject(encoded)
 	assert.NoError(t, err)
 	setRef(t, repo, plumbing.NewBranchReferenceName("base-with-module"), pin)
-	result, err := AutoResolve(t.Context(), root, "base-with-module", cachetest.New(t, "", sourcecache.New))
+	result, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    root,
+			Base:    "base-with-module",
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
 	assert.NoError(t, err)
 	warnings := result.BaseInput.Warnings
 	if len(warnings) != 1 || warnings[0].Category != manifest.WarnSkippedSubmodule ||
@@ -102,7 +117,15 @@ func TestAutoResolve_SparseGitMemory(t *testing.T) {
 			}
 			fixture := testutil.NewSparseGit(t, size.files, size.bytes)
 			owner := cachetest.New(t, "", sourcecache.New)
-			res, err := AutoResolve(t.Context(), filepath.Join(fixture.Root, "flux"), fixture.Base.String(), owner)
+			res, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    filepath.Join(fixture.Root, "flux"),
+					Base:    fixture.Base.String(),
+					Cache:   owner,
+				},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, res.Changes.Paths(), []string{"app/input.yaml"})
 
@@ -139,7 +162,15 @@ func TestAutoResolve_SparseGitMemory(t *testing.T) {
 				&git.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test"}},
 			)
 			assert.NoError(t, err)
-			grown, err := AutoResolve(t.Context(), filepath.Join(fixture.Root, "flux"), fixture.Base.String(), owner)
+			grown, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    filepath.Join(fixture.Root, "flux"),
+					Base:    fixture.Base.String(),
+					Cache:   owner,
+				},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, grown.Changes.Paths(), []string{"app/input.yaml", "disjoint/growth.txt"})
 			t.Logf(
@@ -168,9 +199,12 @@ func TestAutoResolve_SparseHistoricalBodyUnavailable(t *testing.T) {
 	assert.NoError(t, os.Remove(filepath.Join(fixture.Root, ".git", "objects", oid[:2], oid[2:])))
 	res, err := AutoResolve(
 		t.Context(),
-		filepath.Join(fixture.Root, "flux"),
-		fixture.Base.String(),
-		cachetest.New(t, "", sourcecache.New),
+		Config{
+			Network: networktest.New(t),
+			Path:    filepath.Join(fixture.Root, "flux"),
+			Base:    fixture.Base.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
 	)
 	assert.NoError(t, err)
 	assert.Diff(t, res.Changes.Paths(), []string{"app/input.yaml"})
@@ -202,8 +236,10 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			fixture := testutil.NewSparseGit(t, size.files, size.bytes)
 			location, err := gitrepo.Locate(t.Context(), fixture.Root, "")
 			assert.NoError(t, err)
-			input, err := admitLocation(t.Context(), location, manifest.WorkScope{})
+			directory, err := admitLocation(t.Context(), location, manifest.WorkScope{})
 			assert.NoError(t, err)
+			t.Cleanup(func() { _ = directory.Close() })
+			input := directory.Artifact()
 			reads := &testutil.GitReads{LargeHash: fixture.Large}
 			observed := *fixture.Repo
 			observed.Storer = &testutil.CountingStorer{Storer: fixture.Repo.Storer, Reads: reads}
@@ -224,11 +260,11 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			}
 			reads.Reset()
 			s := selection{
-				repo:    &observed,
-				base:    &resolution{Repo: &observed, Hash: fixture.Base},
-				current: input.FS.(*gittree.FS),
+				repo:     &observed,
+				base:     &resolution{Repo: &observed, Hash: fixture.Base},
+				worktree: comparisonWorktree(t, input.FS.(*gittree.FS)), current: input.FS.(*gittree.FS),
 			}
-			baseTree, entries, err := s.baseEntries(t.Context())
+			entries, comparison, err := s.baseEntries(t.Context())
 			assert.NoError(t, err)
 			if reads.Metadata.Load() == 0 || reads.Bodies.Load() != 0 {
 				t.Fatal("metadata traversal opened a blob Reader")
@@ -240,7 +276,7 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 				reads.Large.Load(),
 			)
 			reads.Reset()
-			candidates, warnings, err := s.candidates(t.Context(), baseTree, entries)
+			candidates, warnings, err := s.candidates(t.Context(), entries, comparison)
 			assert.NoError(t, err)
 			assert.Equal(t, len(warnings), 0)
 			assert.Diff(t, candidates, map[string]bool{"app/input.yaml": false})
@@ -253,8 +289,7 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			)
 			reads.Reset()
 			assert.NoError(t, s.acquireBodies(t.Context(), entries, candidates))
-			paths, err := s.compareCandidates(t.Context(), candidates, entries)
-			assert.NoError(t, err)
+			paths := slices.Sorted(maps.Keys(candidates))
 			assert.Diff(t, paths, []string{"app/input.yaml"})
 			assert.Equal(t, reads.Bodies.Load(), int64(0))
 			t.Logf(
@@ -264,8 +299,18 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 				reads.Large.Load(),
 			)
 			reads.Reset()
-			paths, err = s.compareCandidates(t.Context(), map[string]bool{"app/input.yaml": true}, entries)
+			base, _, err := gittree.New(
+				t.Context(),
+				fixture.Repo.Storer.(*filesystem.Storage).Filesystem(),
+				fixture.Base,
+				gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS, Changes: paths},
+			)
 			assert.NoError(t, err)
+			before := &sparseReadFS{FS: base, reads: reads, entries: entries}
+			delta, err := change.Detect(t.Context(), &store.SourceArtifact{FS: before}, input,
+				change.DetectConfig{Candidates: map[string]bool{"app/input.yaml": true}})
+			assert.NoError(t, err)
+			paths = delta.Paths()
 			assert.Diff(t, paths, []string{"app/input.yaml"})
 			assert.Equal(t, reads.Bodies.Load(), int64(1))
 			assert.Equal(t, reads.Large.Load(), int64(0))
@@ -277,4 +322,146 @@ func TestSelection_SparseGitBodies(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestAutoResolve_CheckoutInventory(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"unchanged_symlink", "ignored_file", "tracked_match", "unignored_file", "submodule_file"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			initRepoWithFile(t, root, "input.yaml", "before")
+			repo := openHelper(t, root)
+			worktree, err := repo.Worktree()
+			assert.NoError(t, err)
+			var want []string
+			switch kind {
+			case "unchanged_symlink":
+				assert.NoError(t, os.Symlink("input.yaml", filepath.Join(root, "link.yaml")))
+				_, err = worktree.Add("link.yaml")
+				assert.NoError(t, err)
+			case "ignored_file":
+				testutil.WriteFile(t, root, ".gitignore", "ignored/\n")
+				_, err = worktree.Add(".gitignore")
+				assert.NoError(t, err)
+				testutil.WriteFile(t, root, "ignored/input.yaml", "new")
+			case "tracked_match":
+				testutil.WriteFile(t, root, ".gitignore", "input.yaml\n")
+				_, err = worktree.Add(".gitignore")
+				assert.NoError(t, err)
+			case "unignored_file":
+				want = []string{"notes.txt"}
+			case "submodule_file":
+				testutil.WriteFile(t, root, ".gitignore", "module/\n")
+				_, err = worktree.Add(".gitignore")
+				assert.NoError(t, err)
+				module := filepath.Join(root, "module")
+				assert.NoError(t, os.Mkdir(module, 0o755))
+				hash := initRepoWithFile(t, module, "input.yaml", "new")
+				testutil.WriteFile(
+					t,
+					root,
+					".gitmodules",
+					"[submodule \"module\"]\n\tpath = module\n\turl = ./module\n",
+				)
+				_, err = worktree.Add(".gitmodules")
+				assert.NoError(t, err)
+				index, indexErr := repo.Storer.Index()
+				assert.NoError(t, indexErr)
+				index.Entries = append(
+					index.Entries,
+					&gitindex.Entry{Name: "module", Hash: hash, Mode: filemode.Submodule},
+				)
+				assert.NoError(t, repo.Storer.SetIndex(index))
+				want = []string{"module/input.yaml"}
+			}
+			pin, err := worktree.Commit(
+				"checkout inventory",
+				&git.CommitOptions{
+					AllowEmptyCommits: true,
+					Author:            &object.Signature{Name: "test", Email: "test@example.invalid"},
+				},
+			)
+			assert.NoError(t, err)
+			if kind == "tracked_match" {
+				testutil.WriteFile(t, root, "input.yaml", "modified tracked file")
+				want = []string{"input.yaml"}
+			}
+			if kind == "unignored_file" {
+				testutil.WriteFile(t, root, "notes.txt", "untracked input")
+			}
+			result, err := AutoResolve(
+				t.Context(),
+				Config{
+					Network: networktest.New(t),
+					Path:    root,
+					Base:    pin.String(),
+					Cache:   cachetest.New(t, "", sourcecache.New),
+				},
+			)
+			assert.NoError(t, err)
+			assert.Diff(t, result.Changes.Paths(), want)
+		})
+	}
+}
+
+func TestAutoResolve_IgnoredHistoricalRemoval(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	for _, name := range []string{"historical.ignored", "tracked.ignored"} {
+		testutil.WriteFile(t, root, name, "identical historical bytes")
+	}
+	base := testutil.GitCommitAll(t, repo, "historical inputs", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@e"},
+	})
+	worktree, err := repo.Worktree()
+	assert.NoError(t, err)
+	_, err = worktree.Remove("historical.ignored")
+	assert.NoError(t, err)
+	testutil.WriteFile(t, root, ".gitignore", "*.ignored\n")
+	head := testutil.GitCommitAll(t, repo, "remove historical input", &git.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@e"},
+	})
+	assert.Equal(t, base != head, true)
+	testutil.WriteFile(t, root, "historical.ignored", "identical historical bytes")
+	result, err := AutoResolve(
+		t.Context(),
+		Config{
+			Network: networktest.New(t),
+			Path:    root,
+			Base:    base.String(),
+			Cache:   cachetest.New(t, "", sourcecache.New),
+		},
+	)
+	assert.NoError(t, err)
+	data, err := fs.ReadFile(result.BaseInput.FS, "historical.ignored")
+	assert.NoError(t, err)
+	assert.Equal(t, string(data), "identical historical bytes")
+	_, err = fs.ReadFile(result.Source.FS, "historical.ignored")
+	assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+	for _, input := range []*store.SourceArtifact{result.BaseInput, result.Source} {
+		data, readErr := fs.ReadFile(input.FS, "tracked.ignored")
+		assert.NoError(t, readErr)
+		assert.Equal(t, string(data), "identical historical bytes")
+	}
+	assert.Diff(t, result.Changes.Paths(), []string{"historical.ignored"})
+}
+
+type sparseReadFS struct {
+	*gittree.FS
+
+	reads   *testutil.GitReads
+	entries map[string]object.TreeEntry
+}
+
+func (f *sparseReadFS) Open(name string) (fs.File, error) {
+	file, err := f.FS.Open(name)
+	if err == nil {
+		f.reads.Bodies.Add(1)
+		if f.entries[name].Hash == f.reads.LargeHash {
+			f.reads.Large.Add(1)
+		}
+	}
+	return file, err
 }

@@ -1,76 +1,84 @@
 package loader
 
 import (
+	"cmp"
 	"iter"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-type fileEligibility uint8
-
-const (
-	fileUnknown fileEligibility = iota
-	fileInactive
-	fileEligible
-	fileIndependent
-)
+type rootQuery struct {
+	loader   *Loader
+	objects  admissionReader
+	covering *rootOwnerInventory
+}
 
 type rootAdmission struct {
-	denied bool
-	owners []manifest.NamedResource
+	owners []selection.RootOwnerFacts
 	peers  [][]manifest.NamedResource
 }
 
 type rootEvidence struct {
-	occurrence  Occurrence
-	admitted    bool
-	independent bool
+	identity          manifest.NamedResource
+	occurrence        authoredOccurrence
+	current           *authoredOccurrence
+	record            selection.RootRecord
+	scope             selection.RootScopeFacts
+	initialScope      *selection.RootScopeFacts
+	initialOccurrence *selection.OccurrenceFacts
+	packageRoot       bool
 }
 
-func (a rootAdmission) evidence(l *Loader, id manifest.NamedResource, record *manifest.DiscoveryRecord) rootEvidence {
-	if record.Builder != "" && l.registeredRoot(record) != "" {
-		return l.roots[id]
+func (e *rootEvidence) currentOccurrence() *authoredOccurrence {
+	if e.current != nil {
+		return e.current
 	}
-	doc := l.documents.cache[record.Path]
-	admitted := doc.eligible != fileInactive && a.admits(l, id, record)
-	if doc.eligible != fileInactive && id.KindInfo().Discovery && l.entry != entryKustomize &&
-		doc.loaded &&
-		!doc.bootstrap {
-		admitted = true
-	}
-	evidence := rootEvidence{occurrence: l.initialOccurrence(id, record), admitted: admitted}
-	if !doc.initial {
-		if previous := l.roots[id]; previous.independent {
-			evidence.occurrence, evidence.independent = previous.occurrence, true
-		}
-		return evidence
-	}
-	evidence.independent = a.independent(l, id, record)
-	return evidence
+	return &e.occurrence
 }
 
-func (l *Loader) initialOccurrence(id manifest.NamedResource, record *manifest.DiscoveryRecord) Occurrence {
+func (e *rootEvidence) view() selection.RootEvidence {
+	if e == nil {
+		return selection.RootEvidence{}
+	}
+	return selection.RootEvidence{
+		Identity: e.identity, Record: e.record, Occurrence: occurrenceView(e.currentOccurrence()),
+		Scope: e.scope, InitialScope: e.initialScope, InitialOccurrence: e.initialOccurrence,
+	}
+}
+
+func (l *Loader) initialOccurrence(id manifest.NamedResource, record *manifest.DiscoveryRecord) authoredOccurrence {
 	occurrence, _ := l.occurrence(id)
-	if _, located := l.catalogOccurrence(id); located {
+	origin := new(l.documents).localPath(record.Path)
+	if located, known := l.catalogOccurrence(id); known &&
+		filepath.Join(located.Declaration.Source, filepath.FromSlash(located.Declaration.File)) == origin {
 		return occurrence
 	}
-	if occurrence.Declaration != (OccurrenceID{}) {
+	if occurrence.Declaration != (occurrenceID{}) &&
+		filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File)) == origin {
 		return occurrence
 	}
+	occurrence = authoredOccurrence{}
 	doc := l.documents.cache[record.Path]
 	for i := range doc.objects {
 		child := &doc.objects[i]
+		if child.fact != nil && child.fact.Authored == record.Authored {
+			occurrence = *child.fact
+			occurrence.Identity = id
+			return occurrence
+		}
 		if child.Obj == nil || child.Obj.Named() != record.Authored {
 			continue
 		}
 		source := l.documents.mountedRoot(record.Path)
 		file, _ := filepath.Rel(source, record.Path)
 		occurrence = compactOccurrence(child.Obj, manifest.TemplateProjection{})
-		occurrence.Declaration = OccurrenceID{
+		occurrence.Declaration = occurrenceID{
 			Source: source, File: filepath.ToSlash(file), Document: child.outcome.Ordinal, item: child.item,
 		}
 		occurrence.Identity, occurrence.Authored, occurrence.object = id, record.Authored, child.Obj
@@ -79,130 +87,142 @@ func (l *Loader) initialOccurrence(id manifest.NamedResource, record *manifest.D
 	return occurrence
 }
 
-func (a rootAdmission) independent(l *Loader, id manifest.NamedResource, record *manifest.DiscoveryRecord) bool {
-	if !a.admits(l, id, record) {
-		for _, owner := range a.owners {
-			peer, indexed := l.Index.Lookup(owner)
-			if !l.selfClaim(owner, record.Authored) && (!indexed || l.documents.cache[peer.Path].initial) {
-				return false
-			}
-		}
-	}
-	if l.entry != entryKustomize || l.documents.cache[record.Path].bootstrap {
-		return !l.nativeOperand(record.Path)
-	}
-	object := l.CatalogObject(id)
-	app, valid := manifest.ApplicationFor(object)
-	if !valid {
-		return false
-	}
-	location := SourceView(l.Store, app.Source, l.SourceRoot)
-	input, _ := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	source, _ := l.Store.GetArtifact(app.Source, store.ArtifactContent).(*store.SourceArtifact)
-	target := filepath.Join(location.Path, manifest.NormalizeClaimBase(app.Path))
-	return !l.nativeOperand(record.Path) && !id.KindInfo().Structural || !location.Pinned && !location.External &&
-		sameOriginPath(input, source, l.entryPath, target)
-}
-
 func (l *Loader) nativeOperand(file string) bool {
-	for i := range l.scopes.contributions {
-		contribution := &l.scopes.contributions[i]
+	if l.scopes == nil {
+		return l.documents.cache[file].rootNative
+	}
+	for _, ref := range l.scopes.visits[file] {
+		contribution := &l.scopes.contributions[ref.contribution]
 		if contribution.membershipOnly || contribution.owner != (manifest.NamedResource{}) ||
 			l.documents.cache[filepath.Join(contribution.context.root, contribution.context.dir)].body == nil {
 			continue
 		}
-		for j := range contribution.visits {
-			visit := &contribution.visits[j]
-			if visit.role == kustomizeinput.Resource &&
-				(visit.file == file || visit.origin != "" && visit.origin == file) {
-				return true
-			}
+		visit := &contribution.visits[ref.visit]
+		if visit.role == kustomizeinput.Resource &&
+			(visit.file == file || visit.origin != "" && visit.origin == file) {
+			return true
 		}
 	}
 	return false
 }
 
-// AdmitsEntry MUST use current independent bootstrap evidence.
-func (l *Loader) AdmitsEntry(id manifest.NamedResource) bool {
-	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
-		return true
-	}
-	evidence := l.roots[id]
-	return evidence.independent && evidence.occurrence.Declaration != (OccurrenceID{})
-}
-
 // EntryRoots MUST use captured admission evidence without I/O or publication.
-func (l *Loader) EntryRoots(published iter.Seq[manifest.BaseManifest], reads *store.ReadSet) []Occurrence {
-	var roots []Occurrence
+func (l *Loader) EntryRoots(
+	published iter.Seq[manifest.BaseManifest],
+	reads *store.ReadSet,
+) []selection.OccurrenceFacts {
+	var roots []selection.OccurrenceFacts
 	var objects admissionReader = l.Store
 	if reads != nil {
 		objects = reads
 	}
-	closure := admissionClosure{loader: l, objects: objects}
-	seen := map[manifest.NamedResource]bool{}
-	add := func(id manifest.NamedResource) {
-		if seen[id] {
+	query := rootQuery{loader: l, objects: objects}
+	seen := map[rootCoordinate]bool{}
+	queried := map[manifest.NamedResource]bool{}
+	add := func(id manifest.NamedResource, original *rootEvidence) {
+		if original == nil && queried[id] {
 			return
 		}
-		seen[id] = true
-		if occurrence, valid := l.entryRoot(id, &closure); valid {
-			roots = append(roots, occurrence)
+		if original == nil {
+			queried[id] = true
 		}
+		occurrence, available := query.entryRoot(id, original)
+		if !available {
+			return
+		}
+		coordinate := rootCoordinate{declaration: physicalOccurrence(&occurrence).Declaration, identity: id}
+		if seen[coordinate] {
+			return
+		}
+		seen[coordinate] = true
+		roots = append(roots, occurrence)
 	}
-	for id := range l.roots {
-		add(id)
+	for id := range l.roots.identities {
+		add(id, nil)
+	}
+	for coordinate, evidence := range l.roots.occurrences {
+		if l.roots.identities[coordinate.identity] == evidence || coordinate.declaration == (occurrenceID{}) {
+			continue
+		}
+		add(coordinate.identity, evidence)
 	}
 	if published != nil {
 		for object := range published {
-			add(object.Named())
+			add(object.Named(), nil)
 		}
 	}
-	slices.SortFunc(roots, func(a, b Occurrence) int { return a.Identity.Compare(b.Identity) })
+	slices.SortFunc(roots, func(a, b selection.OccurrenceFacts) int {
+		return cmp.Or(
+			a.Identity.Compare(b.Identity),
+			strings.Compare(a.Declaration.Source, b.Declaration.Source),
+			strings.Compare(
+				a.Declaration.File,
+				b.Declaration.File,
+			),
+			cmp.Compare(a.Declaration.Document, b.Declaration.Document),
+			cmp.Compare(a.Declaration.Item, b.Declaration.Item),
+		)
+	})
 	if l.nativeEntry != nil {
-		add(l.nativeEntry.Named())
+		add(l.nativeEntry.Named(), nil)
+	}
+	// The complete query MUST be discarded if any captured dependency changes.
+	if !reads.Valid() {
+		return nil
 	}
 	return roots
 }
 
-func (l *Loader) entryRoot(id manifest.NamedResource, closure *admissionClosure) (Occurrence, bool) {
+func (q *rootQuery) entryRoot(
+	id manifest.NamedResource,
+	original *rootEvidence,
+) (selection.OccurrenceFacts, bool) {
+	l, objects := q.loader, q.objects
+	view := l.physicalView()
+	evidence := view.rootFacts(id, l, nil)
+	if original != nil {
+		evidence.Scope, evidence.Occurrence = original.scope, occurrenceView(original.currentOccurrence())
+		evidence.InitialScope, evidence.InitialOccurrence = original.initialScope, original.initialOccurrence
+	}
 	if l.nativeEntry != nil && l.nativeEntry.Named() == id {
-		return Occurrence{
-			Identity: id,
-			object:   l.nativeEntry,
-		}, closure.objects.SourceAdmission(
-			id,
-			manifest.BootstrapSourceID,
-		)
+		evidence.Occurrence = selection.OccurrenceFacts{Identity: id, Object: l.nativeEntry, Catalog: l.nativeEntry}
 	}
-	evidence := closure.rootEvidence(id)
-	object := closure.objects.GetDeclaration(id)
-	_, policy := closure.objects.Lookup(id)
-	if l.AdmitsEntry(id) && object != nil {
-		evidence = l.roots[id]
-		evidence.admitted = true
+	classification := evidence
+	classification.Captured = false
+	occurrence := selection.Root(classification).Occurrence
+	var object manifest.BaseManifest
+	if !evidence.Scope.NativeEntry {
+		object = objects.GetDeclaration(id)
 	}
-	if !evidence.independent || !evidence.admitted ||
-		evidence.occurrence.Declaration == (OccurrenceID{}) && !closure.role(id).needed &&
-			policy.Origin != manifest.SuppliedDeclaration {
-		return Occurrence{}, false
+	if object == nil {
+		object = occurrence.Object
 	}
-	if object == nil && evidence.occurrence.Declaration != (OccurrenceID{}) {
-		object = evidence.occurrence.object
-		if object == nil && evidence.occurrence.facts != nil {
-			object = evidence.occurrence.facts.catalog
+	if object == nil {
+		object = occurrence.Catalog
+	}
+	if !l.entryRootAvailable(id, object, objects) {
+		return selection.OccurrenceFacts{}, false
+	}
+	rootSupport(&evidence, objects, l.Index, &l.roots.currentOnly, l.SourceRoot)
+	evidence.Needed = l.Options.Session.Snapshot().Reconcile(id)
+	if selection.Root(evidence).NeedsOwnerSupport {
+		var owners *rootOwnerInventory
+		if evidence.Record.Path != "" {
+			owners = q.coveringFacts()
 		}
+		captureRootOwners(&evidence, objects, l.Index, owners)
 	}
-	if !l.entryRootAvailable(id, object, closure.objects) {
-		return Occurrence{}, false
+	result := selection.Root(evidence)
+	if !result.Entry {
+		return selection.OccurrenceFacts{}, false
 	}
-	occurrence, _ := l.occurrence(id)
-	occurrence.Declaration, occurrence.Identity = evidence.occurrence.Declaration, id
+	occurrence = result.Occurrence
+	occurrence.Identity = id
 	if occurrence.Authored == (manifest.NamedResource{}) {
-		record, _ := l.Index.Lookup(id)
-		occurrence.Authored = record.Authored
+		occurrence.Authored = evidence.Record.Authored
 	}
-	if occurrence.object == nil {
-		occurrence.object = object
+	if occurrence.Object == nil {
+		occurrence.Object = object
 	}
 	return occurrence, true
 }
@@ -220,10 +240,7 @@ func (l *Loader) entryRootAvailable(
 			return false
 		}
 	}
-	_, producer := object.(interface {
-		EmissionPolicy() manifest.EmissionPolicy
-	})
-	if producer || application {
+	if manifest.KindOf(object).Parent || application {
 		return true
 	}
 	output, _ := objects.GetArtifact(id, store.ArtifactContent).(*store.Emission)
@@ -231,31 +248,47 @@ func (l *Loader) entryRootAvailable(
 }
 
 func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdmission {
-	eligible := l.documents.cache[file].eligible
-	scope := rootAdmission{denied: eligible == fileInactive}
-	if scope.denied {
-		return scope
-	}
+	scope := rootAdmission{}
 	l.fileOwners(file, coordinate, func(owner manifest.NamedResource) bool {
-		scope.owners = appendUniqueProducer(scope.owners, owner)
+		if slices.ContainsFunc(
+			scope.owners,
+			func(existing selection.RootOwnerFacts) bool { return existing.Identity == owner },
+		) {
+			return true
+		}
+		record, indexed := l.Index.Lookup(owner)
+		scope.owners = append(scope.owners, selection.RootOwnerFacts{
+			Identity: owner,
+			Path:     record.Path,
+			Indexed:  indexed,
+			Initial:  l.documents.cache[record.Path].initial,
+		})
 		return true
 	})
-	if !structural {
-		return scope
-	}
-	for _, group := range l.Index.Claims {
-		if !l.documents.cache[file].bootstrap || slices.ContainsFunc(group, func(owner manifest.NamedResource) bool {
-			record, _ := l.Index.Lookup(owner)
-			return record.Path == file
-		}) {
-			scope.peers = append(scope.peers, group)
+	if structural && len(scope.owners) != 0 {
+		for _, group := range l.Index.Claims {
+			if !slices.ContainsFunc(group, func(peer manifest.NamedResource) bool {
+				return slices.ContainsFunc(
+					scope.owners,
+					func(owner selection.RootOwnerFacts) bool { return owner.Identity == peer },
+				)
+			}) {
+				continue
+			}
+			if !l.documents.cache[file].bootstrap ||
+				slices.ContainsFunc(group, func(owner manifest.NamedResource) bool {
+					record, _ := l.Index.Lookup(owner)
+					return record.Path == file
+				}) {
+				scope.peers = append(scope.peers, group)
+			}
 		}
 	}
 	return scope
 }
 
 func (l *Loader) fileOwners(file, coordinate string, yield func(manifest.NamedResource) bool) {
-	if l.documents.cache[file].eligible == fileInactive {
+	if l.documents.cache[file].eligible == selection.RootInactive {
 		return
 	}
 	if origin := new(l.documents).localPath(file); origin != file {
@@ -266,7 +299,7 @@ func (l *Loader) fileOwners(file, coordinate string, yield func(manifest.NamedRe
 			return
 		}
 	}
-	if coordinate == "" || l.documents.cache[file].eligible == fileIndependent {
+	if coordinate == "" || l.documents.cache[file].eligible == selection.RootIndependent {
 		return
 	}
 	if len(l.Index.Claims) != 0 {
@@ -282,37 +315,184 @@ func (l *Loader) fileOwners(file, coordinate string, yield func(manifest.NamedRe
 	}
 }
 
-func (a rootAdmission) admits(l *Loader, id manifest.NamedResource, recordValue *manifest.DiscoveryRecord) bool {
-	record := *recordValue
-
-	if a.denied {
+func (q *rootQuery) admitsRoot(obj manifest.BaseManifest, file string) bool {
+	if obj == nil {
 		return false
 	}
-	var peers [][]manifest.NamedResource
-	if id.KindInfo().Structural {
-		for _, group := range a.peers {
-			if slices.ContainsFunc(
-				group,
-				func(peer manifest.NamedResource) bool { return l.selfClaim(peer, record.Authored) },
-			) {
-				peers = append(peers, group)
+	record, indexed := q.loader.Index.Lookup(obj.Named())
+	if !indexed || record.Path != file {
+		return false
+	}
+
+	objects := q.objects
+	if objects == nil {
+		objects = q.loader.Store
+	}
+	view := q.loader.physicalView()
+	evidence := view.rootFacts(obj.Named(), q.loader, obj)
+	if q.objects == nil && !q.loader.frozen {
+		return selection.Root(evidence).Admitted
+	}
+	rootSupport(&evidence, objects, q.loader.Index, &q.loader.roots.currentOnly, q.loader.SourceRoot)
+	evidence.Supplied = false
+	if selection.Root(evidence).NeedsOwnerSupport {
+		var owners *rootOwnerInventory
+		if evidence.Record.Path != "" {
+			owners = q.coveringFacts()
+		}
+		captureRootOwners(&evidence, objects, q.loader.Index, owners)
+	}
+	if reads, ok := objects.(*store.ReadSet); ok {
+		evidence.Stale = !reads.Valid()
+	}
+	return selection.Root(evidence).Admitted
+}
+
+func (q *rootQuery) coveringFacts() *rootOwnerInventory {
+	if q.covering == nil {
+		objects := q.objects
+		if objects == nil {
+			objects = q.loader.Store
+		}
+		q.covering = rootCoveringFacts(objects, q.loader.Index)
+	}
+	return q.covering
+}
+
+func (l *Loader) classifyPackages(packages []PackageEvidence) {
+	if l.roots.occurrences == nil {
+		l.roots.occurrences = map[rootCoordinate]*rootEvidence{}
+		l.roots.identities = map[manifest.NamedResource]*rootEvidence{}
+	}
+	owners := l.packageOwners(packages)
+	paths := make([]string, len(packages))
+	eligible := make([]bool, len(packages))
+	runnable := make([]bool, len(packages))
+	for i := range packages {
+		p := &packages[i]
+		paths[i] = p.Path
+		builder := l.documents.cache[filepath.Join(l.SourceRoot, p.Path)].file
+		for index := range p.Occurrences {
+			occurrence := &p.Occurrences[index]
+			file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
+			active := l.documents.cache[file].eligible != selection.RootInactive
+			_, _, application := occurrence.SourcePath()
+			eligible[i] = eligible[i] || active
+			runnable[i] = runnable[i] || active && (occurrence.Identity.KindInfo().Runnable || application)
+		}
+		if builder != "" {
+			eligible[i] = l.documents.cache[builder].eligible != selection.RootInactive
+		}
+	}
+	for i := range packages {
+		p := &packages[i]
+		native := l.documents.cache[filepath.Join(l.SourceRoot, p.Path)].body != nil
+		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, p.Path, manifest.NamedResource{}).Named()
+		scope := selection.RootScopeFacts{
+			NamespaceEligible: true,
+			PackageKnown:      true,
+			PackageRoot:       true,
+			PackagePaths:      paths,
+			PackageOwners:     owners,
+			PackageIndex:      i,
+			PackageEligible:   eligible[i],
+			PackageRunnable:   runnable[i],
+		}
+		coordinate := rootCoordinate{identity: id, context: p.Path}
+		l.roots.replace(&coordinate, &rootEvidence{
+			packageRoot: true,
+			identity:    id,
+			scope:       scope,
+		})
+		for index := range p.Occurrences {
+			occurrence := &p.Occurrences[index]
+			coordinate := rootCoordinate{
+				declaration: physicalOccurrence(occurrence).Declaration,
+				identity:    occurrence.Identity,
+				context:     p.Path,
+			}
+			file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
+			record := manifest.DiscoveryRecord{Authored: occurrence.Authored, Path: file, File: l.fileCoordinate(file)}
+			view := l.physicalView()
+			evidence := view.rootScope(l, &rootScopeInput{
+				identity: occurrence.Identity, record: record,
+				admission: l.rootAdmission(file, record.File, occurrence.Identity.KindInfo().Structural),
+			})
+			evidence.occurrence = physicalOccurrence(occurrence)
+			evidence.current = nil
+			evidence.scope.PackageKnown, evidence.scope.PackagePaths = true, paths
+			evidence.scope.PackageOwners, evidence.scope.PackageIndex = owners, i
+			evidence.scope.PackageEligible, evidence.scope.NativePackage = eligible[i], native
+			l.roots.replace(&coordinate, &evidence)
+		}
+		p.Independent = selection.Root(selection.RootEvidence{Identity: id, Scope: scope}).Admitted
+	}
+}
+
+func (l *Loader) packageOwners(packages []PackageEvidence) [][]int {
+	owners := make([][]int, len(packages))
+	paths := make([]string, len(packages))
+	targets := make(map[string]int, len(packages))
+	for i := range packages {
+		paths[i] = filepath.Join(l.SourceRoot, filepath.FromSlash(packages[i].Path))
+		targets[paths[i]] = i
+	}
+	claims := map[string][]int{}
+	for i := range packages {
+		p := &packages[i]
+		doc := l.documents.cache[paths[i]]
+		if l.documents.cache[doc.file].eligible == selection.RootInactive {
+			continue
+		}
+		if doc.body != nil {
+			l.addNativePackageOwners(p.Path, i, targets, owners)
+		}
+		for _, claim := range l.packageClaims(p.Occurrences) {
+			claims[claim] = append(claims[claim], i)
+		}
+	}
+	for target, dir := range paths {
+		for {
+			owners[target] = append(owners[target], claims[dir]...)
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+		owners[target] = slices.DeleteFunc(owners[target], func(owner int) bool { return owner == target })
+		slices.Sort(owners[target])
+		owners[target] = slices.Compact(owners[target])
+	}
+	return owners
+}
+
+func (l *Loader) packageClaims(occurrences []selection.OccurrenceFacts) []string {
+	var claims []string
+	for i := range occurrences {
+		source, path, application := occurrences[i].SourcePath()
+		file := filepath.Join(occurrences[i].Declaration.Source, filepath.FromSlash(occurrences[i].Declaration.File))
+		if !application || l.documents.cache[file].eligible == selection.RootInactive {
+			continue
+		}
+		location := SourceView(l.Store, source, l.SourceRoot)
+		declared := l.Index.IsFileIndexed(source) || l.Store.GetObject(source) != nil ||
+			l.Store.GetArtifact(source, store.ArtifactContent) != nil
+		if !location.Pinned && (!location.External || !declared) {
+			claims = append(claims, filepath.Join(location.Path, manifest.NormalizeClaimBase(path)))
+		}
+	}
+	return claims
+}
+
+func (l *Loader) addNativePackageOwners(path string, owner int, targets map[string]int, owners [][]int) {
+	visits := l.scopeWalk(new(graphVisit{root: l.SourceRoot, dir: path, role: kustomizeinput.Resource}))
+	for visitIndex := range visits {
+		visit := &visits[visitIndex]
+		for _, file := range [2]string{visit.file, filepath.Dir(visit.file)} {
+			if target, known := targets[file]; known && target != owner {
+				owners[target] = append(owners[target], owner)
 			}
 		}
 	}
-	for _, owner := range a.owners {
-		if owner == id || l.selfClaim(owner, record.Authored) {
-			continue
-		}
-		peer, _ := l.Index.Lookup(owner)
-		if l.documents.cache[record.Path].bootstrap && peer.Path != record.Path {
-			return false
-		}
-		if !slices.ContainsFunc(
-			peers,
-			func(group []manifest.NamedResource) bool { return slices.Contains(group, owner) },
-		) {
-			return false
-		}
-	}
-	return true
 }

@@ -18,7 +18,6 @@ import (
 func TestOrchestrator_TransformerTargetNamespace(t *testing.T) {
 	dir := t.TempDir()
 
-	// Shared builtin NamespaceTransformer (kubernetes/transformers/).
 	testutil.WriteFile(t, dir, "transformers/kustomization.yaml", "resources:\n  - ./transformer.yaml\n")
 	testutil.WriteFile(t, dir, "transformers/transformer.yaml", `apiVersion: builtin
 kind: NamespaceTransformer
@@ -35,8 +34,6 @@ fieldSpecs:
     create: true
 `)
 
-	// Namespace overlay: pulls in the transformer subtree whose
-	// `namespace:` directive feeds the NamespaceTransformer.
 	testutil.WriteFile(t, dir, "apps/myapp/kustomization.yaml", `resources:
   - ./namespace.yaml
   - ./myapp/ks.yaml
@@ -53,9 +50,7 @@ resources:
   - ../../../transformers
 `)
 
-	// Leaf Flux KS — no targetNamespace in the file; it is supplied by
-	// the overlay's transformer. No other KS covers its path, so flate
-	// has no structural parent to gate its first render on.
+	// Namespace prediction MUST qualify a leaf with no structural parent before its first render.
 	testutil.WriteFile(
 		t,
 		dir,
@@ -67,24 +62,24 @@ resources:
 		),
 	)
 	testutil.WriteFile(t, dir, "apps/myapp/myapp/app/kustomization.yaml", "resources:\n  - ./helmrelease.yaml\n")
-	// Namespace-less, suspended HR — suspend keeps the controller from
-	// reaching for a chart, so the test asserts the rendered namespace
-	// without needing a live Helm source.
 	testutil.WriteFile(t, dir, "apps/myapp/myapp/app/helmrelease.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: myapp
 spec:
-  suspend: true
-  chartRef:
-    kind: OCIRepository
-    name: myapp
+  interval: 1h
+  chart:
+    spec:
+      chart: ./charts/myapp
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)
+	testutil.WriteFile(t, dir, "charts/myapp/Chart.yaml", "apiVersion: v2\nname: myapp\nversion: 1.0.0\n")
+	testutil.WriteFile(t, dir, "charts/myapp/templates/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-output}\n")
 
-	renderedSingleton1, err := RenderTrees(
-		t.Context(),
+	renderedSingleton1, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
-		Config{Concurrency: 4},
+		Config{Concurrency: 4, RecordWork: true},
 	)
 	assert.FatalIf(t, len(renderedSingleton1) != 1, "missing render: %v", err)
 	o := renderedSingleton1[0].Orchestrator
@@ -109,6 +104,8 @@ spec:
 
 	// The empty-namespace phantom must never reach the store.
 	phantom := testutil.HelmReleaseID("", "myapp")
+	assert.Equal(t, workCounts(res.Work, phantom, manifest.WorkHelm), manifest.WorkCounts{})
+	assert.Equal(t, workCounts(res.Work, namespaced, manifest.WorkHelm), manifest.WorkCounts{Attempts: 1, Completed: 1})
 	{
 		obj := o.store.GetObject(phantom)
 		assert.ErrorIf(t, obj != nil, "empty-namespace HelmRelease phantom present in store: %v", phantom)
@@ -140,8 +137,7 @@ spec:
 		),
 	)
 	path := dir + "/cluster"
-	renderedSingleton2, err := RenderTrees(
-		t.Context(),
+	renderedSingleton2, err := renderTreesForTest(t.Context(), t,
 		[]Tree{{Path: path, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
 		Config{Concurrency: 4},
 	)
@@ -264,22 +260,25 @@ spec:
 			), "projected consumer %s: indexed=%t record=%+v", id, ok, record)
 	}
 	other := testutil.KustomizationID("other", "myapp")
+
+	res, err := o.collectResult(o.run(t.Context()))
+	t.Cleanup(res.Close)
+	assert.FatalIf(t, err != nil || len(res.Failed) != 0,
+		"changed-only Render: %v; failures=%v", err, res.Failed)
+
 	t.Logf(
 		"dirty=%s ShouldReconcile(%s)=%t keep=%v",
 		dirty,
 		other,
-		o.filter.ShouldReconcile(other),
-		o.filter.KeepNames(),
+		o.selection.Snapshot().Reconcile(other),
+		selectionNamesForTest(o.selection, o.store, o.index),
 	)
 	assert.ErrorIf(
 		t,
-		!o.filter.Enabled() || !o.filter.ShouldReconcile(other),
+		o.selection == nil || !o.selection.Snapshot().Reconcile(other),
 		"second-source change did not select %s",
 		other,
 	)
-	res, err := o.collectResult(o.run(t.Context()))
-	assert.FatalIf(t, err != nil || len(res.Failed) != 0,
-		"changed-only Render: %v; failures=%v", err, res.Failed)
 
 	docs := outputByParent(res.Manifests)[other]
 	assert.FatalIf(

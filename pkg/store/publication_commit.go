@@ -75,7 +75,7 @@ func (s *Store) commitReplacement(
 			}
 		}
 	}
-	independent := declarationIndependent(s.index.Load(), id)
+	independent := rawDeclarationAuthority(s.index.Load(), id, false)
 	ps := s.shardFor(id)
 	s.lockAll()
 	slot := ps.slots[id]
@@ -125,7 +125,7 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 			changed = changed.add(
 				target.NamedResource,
 				direct,
-				declarationIndependent(s.index.Load(), target.NamedResource),
+				rawDeclarationAuthority(s.index.Load(), target.NamedResource, false),
 			)
 		}
 	}
@@ -146,7 +146,7 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 							old.child.Obj,
 							entry.child.Obj,
 							[2]map[string]any{old.child.Doc, entry.child.Doc},
-							ownershipLabel,
+							manifest.IsOwnershipLabel,
 						) ||
 					!old.binding.equal(&entry.binding) ||
 					!slices.Equal(old.child.Productions, entry.child.Productions) ||
@@ -315,7 +315,7 @@ func (s *Store) retireBootstrapMembersLocked(proposal *Emission, region *objectR
 			if supported && cell.static != nil && !cell.rooted && !cell.retired {
 				position, _ := region.position(target)
 				if region.states[position].supportsProducer && cell.bound() &&
-					semanticEqual(Child{Obj: cell.static, Doc: cell.document}, entry.child) {
+					reconcileEqual(Child{Obj: cell.static, Doc: cell.document, Warnings: cell.warnings}, entry.child) {
 					if cell.links == nil {
 						cell.links = sh.newHeadLocked(cell.generation)
 					}
@@ -429,4 +429,36 @@ func (s *Store) appendReplacementArtifactLocked(
 		publications = append(publications, objectPublication{event: event, force: true})
 	}
 	return publications
+}
+
+func (s *Store) commitObjectUpdate(
+	sh *shard,
+	id manifest.NamedResource,
+	update *objectUpdate,
+	index *manifest.DiscoveryIndex,
+) publicationResult {
+	u := *update
+	sh.mu.Lock()
+	if !u.reads.Valid() || u.binding != nil && !u.binding.sourceCurrent() ||
+		u.support != nil && !u.support.productionCurrent() {
+		sh.mu.Unlock()
+		return publicationRejected
+	}
+	current := sh.cells[id]
+	if s.index.Load() != index || current.publication != u.cell.publication || current.generation != u.cell.generation {
+		sh.mu.Unlock()
+		return publicationRetry
+	}
+	if u.cell.hidden || !u.cell.rooted && (len(sh.members[id]) > 0 || sh.slots[id] != nil) {
+		sh.mu.Unlock()
+		if s.addAnchor(new(u), index) {
+			return publicationAccepted
+		}
+		return publicationRetry
+	}
+	u.cell.authority = current.authority
+	dispatch := s.admitLocked(sh, id, &u)
+	sh.mu.Unlock()
+	dispatch.run()
+	return publicationAccepted
 }

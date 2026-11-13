@@ -5,15 +5,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
 
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/filesystem"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/filesystem"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -68,8 +69,10 @@ func testFSGitContentEvidenceCase(t *testing.T, mode *string,
 	reader := &contentReadBilly{Filesystem: osfs.New(root)}
 	location.Repository, err = git.Open(repo.Storer, reader)
 	assert.NoError(t, err)
-	input, err := AdmitDirectory(t.Context(), location)
+	inputDirectory, err := OpenDirectory(t.Context(), location)
 	assert.NoError(t, err)
+	input := inputDirectory.Artifact()
+	assert.NoError(t, inputDirectory.Close())
 	objects := &contentReadBilly{Filesystem: repo.Storer.(*filesystem.Storage).Filesystem(), all: true}
 	if (*mode) == "immutable" || (*mode) == "scoped_immutable" ||
 		(*mode) == "direct_immutable" {
@@ -150,19 +153,33 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 			t.Skipf("filesystem cannot enforce unreadable file: %v", readFileErr3)
 		}
 	}
+	if (*(*captures.mode)) == "routed" {
+		observed, observeErr := selected.FreshInputs(
+			t.Context(),
+			[]string{(*captures.name)},
+			map[string]fs.FileMode{(*captures.name): 0},
+		)
+		assert.NoError(t, observeErr)
+		assert.Equal(
+			t,
+			observed.Files[(*captures.name)],
+			manifest.Fingerprint(testutil.GitBlobHash(t, []byte((*captures.want)))),
+		)
+		assert.Equal(t, (*captures.objects).reads.Load(), int64(0))
+	}
 	assert.Equal(t, selected.FileDigests() == nil, true)
 	_, (*captures.err) = ContentFingerprint(t.Context(), selected)
 	assert.NoError(t, (*captures.err))
 	assert.Equal(
 		t,
 		selected.FileDigests()[(*captures.name)],
-		manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte((*captures.want)))),
+		manifest.Fingerprint(testutil.GitBlobHash(t, []byte((*captures.want)))),
 	)
 	if (*(*captures.mode)) == "untracked" {
 		assert.Equal(
 			t,
 			selected.FileDigests()["dir/new"],
-			manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("untracked"))),
+			manifest.Fingerprint(testutil.GitBlobHash(t, []byte("untracked"))),
 		)
 	}
 	if (*(*captures.mode)) != "subtree" {
@@ -174,6 +191,21 @@ func testFSGitContentEvidenceCaseCompletion(t *testing.T, captures *testFSGitCon
 	_, (*captures.err) = ContentFingerprint(t.Context(), selected)
 	assert.NoError(t, (*captures.err))
 	assert.Equal(t, (*captures.reader).reads.Load(), reads)
+	if (*(*captures.mode)) == "immutable" || (*(*captures.mode)) == "direct_immutable" {
+		var group sync.WaitGroup
+		for _, requested := range [][]string{nil, {(*captures.name)}} {
+			group.Go(func() {
+				observed, err := selected.FreshInputs(t.Context(), requested, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, observed.Files[(*captures.name)], selected.FileDigests()[(*captures.name)])
+				assert.Equal(t, observed.Types["dir"].IsDir(), true)
+				kind, present := observed.Types[(*captures.name)]
+				assert.Equal(t, present && kind.IsRegular(), true)
+			})
+		}
+		group.Wait()
+		assert.Equal(t, (*captures.objects).reads.Load(), int64(0))
+	}
 }
 
 type testFSGitContentEvidenceCaseCompletionInputs struct {

@@ -51,6 +51,9 @@ func (k KindInfo) APIVersion() string {
 	return ""
 }
 
+// IsSource preserves source-group membership for unknown identities.
+func (k KindInfo) IsSource() bool { return k.Group == SourceDomain }
+
 type kindEntry struct {
 	KindInfo
 
@@ -182,6 +185,11 @@ func referenceGroup(kind, apiVersion string) string {
 		gv, _ := schema.ParseGroupVersion(apiVersion)
 		return gv.Group
 	}
+	return GroupForKind(kind)
+}
+
+// GroupForKind uses the canonical registry group when no API version supplies one.
+func GroupForKind(kind string) string {
 	if i, ok := kindIndex[kind]; ok {
 		return kindTable[i].Group
 	}

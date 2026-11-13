@@ -47,8 +47,8 @@ func TestFilter_ReverseContentInputs(t *testing.T) {
 					root:      "",
 				},
 			)
-			assert.Equal(t, f.ShouldReconcile(tc.dep), true)
-			assert.Equal(t, f.ShouldReconcile(tc.obj.Named()), !tc.inactive)
+			assert.Equal(t, f.Reconcile(tc.dep), true)
+			assert.Equal(t, f.Reconcile(tc.obj.Named()), !tc.inactive)
 		})
 	}
 }
@@ -131,7 +131,7 @@ func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 		t,
 		admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: idx, inventory: objects, root: ""},
 	)
-	if !f.ShouldReconcile(producer.Named()) || f.ShouldReconcile(other.Named()) || f.ShouldReconcile(otherTarget) {
+	if !f.Reconcile(producer.Named()) || f.Reconcile(other.Named()) || f.Reconcile(otherTarget) {
 		t.Fatalf("production closure: %v", f.KeepNames())
 	}
 	assert.Diff(t, f.productionOwners(target), []manifest.NamedResource{producer.Named()})
@@ -139,7 +139,7 @@ func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 	f.AddEmitted(producer.Named(), new(store.Child{Obj: sentinel}), objects)
 	assert.FatalIf(
 		t,
-		f.ShouldReconcile(sentinel.Named()),
+		f.Reconcile(sentinel.Named()),
 		"%s",
 		"dependency-only materializer included unrelated output",
 	)
@@ -147,7 +147,7 @@ func TestFilter_ArtifactMaterializerDependencyOnly(t *testing.T) {
 	f.AddEmitted(consumer.Named(), new(store.Child{Obj: child}), objects)
 	assert.FatalIf(
 		t,
-		!f.ShouldReconcile(child.Named()) || !f.ShouldReconcile(producer.Named()),
+		!f.Reconcile(child.Named()) || !f.Reconcile(producer.Named()),
 		"%s",
 		"runtime content dependency lost its producer",
 	)
@@ -213,8 +213,8 @@ func TestFilter_DeclarationSourceChange(t *testing.T) {
 					root:      "",
 				},
 			)
-			assert.Equal(t, filter.ShouldReconcile(consumer.Named()), tc.want)
-			assert.Equal(t, filter.ShouldReconcile(owner.Named()), tc.want)
+			assert.Equal(t, filter.Reconcile(consumer.Named()), tc.want)
+			assert.Equal(t, filter.Reconcile(owner.Named()), tc.want)
 		})
 	}
 }
@@ -392,11 +392,11 @@ func testFilterProducerInputClosureCase(t *testing.T, testCaseInput *struct {
 			root:      "",
 		},
 	)
-	assert.Equal(t, filter.ShouldReconcile(consumer), testCaseInput.want)
-	assert.Equal(t, filter.ShouldReconcile(leaf), testCaseInput.want)
-	assert.Equal(t, filter.ShouldReconcile(unrelated), false)
-	assert.Equal(t, filter.ShouldReconcile(declaration), !testCaseInput.ownerOnly)
+	assert.Equal(t, filter.Reconcile(consumer), testCaseInput.want)
+	assert.Equal(t, filter.Reconcile(leaf), testCaseInput.want)
+	assert.Equal(t, filter.Reconcile(unrelated), false)
+	assert.Equal(t, filter.Reconcile(declaration), !testCaseInput.ownerOnly)
 	if testCaseInput.projected {
-		assert.Equal(t, filter.ShouldReconcile(production.Authored), false)
+		assert.Equal(t, filter.Reconcile(production.Authored), false)
 	}
 }

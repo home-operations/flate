@@ -1,0 +1,11 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+  interval: 1m
+  chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}
+  valuesFrom:
+    - {kind: Secret, name: input, valuesKey: encrypted, targetPath: encrypted}
+    - {kind: Secret, name: input, valuesKey: plain, targetPath: plain}
+    - {kind: Secret, name: input, valuesKey: empty, targetPath: empty}
+    - {kind: Secret, name: absent, valuesKey: value, targetPath: absent}

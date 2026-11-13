@@ -5,18 +5,19 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/selection"
+
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
 
 type indexedOrderingDeps map[manifest.NamedResource]bool
 
 func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { return i[id] }
-func (indexedOrderingDeps) Promote(context.Context, *store.ReadSet, manifest.NamedResource) (bool, error) {
+func (indexedOrderingDeps) Promote(context.Context, selection.PrepareRequest, manifest.NamedResource) (bool, error) {
 	return false, nil
 }
 
@@ -41,7 +42,8 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 	for itemIndex := range inputs {
 		input := inputs[itemIndex]
 
-		if !input.AllowMissing && !input.Input.Private && !input.Input.Generated &&
+		allowed := c.Missing.Admission(new(input.Reference), new(input.Input)) == selection.OptionalInput
+		if !allowed && !input.Input.Private && !input.Input.Generated &&
 			!slices.Contains(input.Input.Materializers, obj.Named()) {
 			deps = append(deps, input.DependencyRef)
 		}
@@ -50,7 +52,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 		context.TODO(),
 		DataWait{
 			Inputs: inputs,
-			Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil },
+			Resume: func(context.Context, manifest.DrainLevel, []depwait.DataDependency) error { return nil },
 		},
 		manifest.DrainNone,
 	)

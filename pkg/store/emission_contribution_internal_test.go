@@ -25,8 +25,10 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 	childWithLabels := func(owner string) Child {
 		t.Helper()
 		labels := map[string]any{}
-		for _, key := range []string{"kustomize.toolkit.fluxcd.io/name", "kustomize.toolkit.fluxcd.io/namespace", "helm.toolkit.fluxcd.io/name", "helm.toolkit.fluxcd.io/namespace"} {
-			labels[key] = owner
+		for _, producer := range []manifest.BaseManifest{&manifest.Kustomization{}, &manifest.HelmRelease{}, &manifest.ResourceSet{}} {
+			for _, key := range producer.EmissionPolicy().OwnerKeys {
+				labels[key] = owner
+			}
 		}
 		doc := map[string]any{
 			"apiVersion": manifest.FluxKustomizeDomain + "/v1",
@@ -40,6 +42,8 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 		return Child{Obj: obj, Doc: authoritative}
 	}
 	a, b := childWithLabels("p"), childWithLabels("q")
+	assert.Equal(t, semanticEqual(a, b), true)
+	assert.Equal(t, semanticObjectsEqual(Child{Obj: a.Obj}, Child{Obj: b.Obj}), true)
 	first := sourceBinding{
 		source: manifest.NamedResource{
 			Group:     manifest.SourceDomain,
@@ -91,6 +95,10 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 	}
 	changed := childWithLabels("q")
 	changed.Doc["metadata"].(map[string]any)["labels"].(map[string]any)["semantic"] = "different"
+	assert.Equal(t, semanticEqual(a, changed), false)
+	changedObject, err := manifest.ParseDoc(changed.Doc, manifest.ParseDocOptions{})
+	assert.NoError(t, err)
+	assert.Equal(t, semanticObjectsEqual(Child{Obj: a.Obj}, Child{Obj: changedObject.Object}), false)
 	s.RecordEmitted(q, &Emission{Children: []Child{changed}, Complete: true}, nil)
 	{
 		warnings := s.Warnings()

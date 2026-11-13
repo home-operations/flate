@@ -32,7 +32,7 @@ func (l *Loader) ReferenceFacts(id manifest.NamedResource,
 }
 
 func (l *Loader) resolvePaths(ctx context.Context) error {
-	p := pathResolution{loader: l}
+	p := substitutionResolution{loader: l}
 
 	//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 	for id, record := range l.Index.Records {
@@ -108,7 +108,7 @@ func (l *Loader) hydratePathInput(ctx context.Context, inputID manifest.NamedRes
 	cached := l.documents.cache[file]
 	data := cached.pathInputs[inputID]
 	if data == nil {
-		child, err := l.exactObject(ctx, new(occurrence), nil)
+		child, err := l.OccurrenceObject(ctx, new(occurrenceView(&occurrence)), nil)
 		if ctx.Err() != nil {
 			return false
 		}
@@ -217,8 +217,15 @@ func (l *Loader) packageProjectionKnown(location string, known bool) bool {
 	return known
 }
 
+type projectionInputs struct {
+	payload    *inputPayload
+	Names      map[string]struct{}
+	Known      bool
+	NamesKnown bool
+}
+
 type projectionRead struct {
-	documents   []manifest.DocOccurrence
+	inputs      *projectionInputs
 	known, stop bool
 }
 
@@ -226,21 +233,40 @@ func (l *Loader) projectionFile(
 	ctx context.Context,
 	input *store.SourceArtifact,
 	file string,
-	known bool,
+	active bool,
 ) (projectionRead, error) {
 	if err := ctx.Err(); err != nil {
 		return projectionRead{}, err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
 	location := filepath.Join(input.LocalPath, filepath.FromSlash(file))
-	known = l.packageProjectionKnown(location, known)
-	raw, err := fs.ReadFile(input.FS, file)
-	if err != nil {
-		//nolint:nilerr // Read failures invalidate projection proof and stop only the current source.
-		return projectionRead{stop: true}, nil
+	known := l.packageProjectionKnown(location, true)
+	mounted := l.documents.artifacts[input.LocalPath]
+	shared := mounted != nil && parsedInputIdentity(mounted) == parsedInputIdentity(input) &&
+		mounted.Input(
+			store.ArtifactContent|store.ArtifactRevision,
+		) == input.Input(
+			store.ArtifactContent|store.ArtifactRevision,
+		)
+	var retained *projectionInputs
+	if shared {
+		l.documents.restore(location)
+		retained = l.documents.cache[location].projection
+		if retained != nil && (!active || retained.NamesKnown) {
+			return projectionRead{inputs: retained, known: known && retained.Known}, nil
+		}
 	}
-	docs, decoded := projectionDocuments(raw)
-	known = known && decoded
-	return projectionRead{documents: docs, known: known, stop: false}, nil
+	projection, err := retained.readProjection(ctx, input, file, active, shared && l.documents.recordInputs)
+	if err != nil || projection.stop {
+		return projection, err
+	}
+	inputs := projection.inputs
+
+	if shared {
+		doc := l.documents.cache[location]
+		doc.projection = inputs
+		l.documents.cache[location] = doc
+	}
+	return projectionRead{inputs: inputs, known: known && inputs.Known}, nil
 }
 
 type projectionNames struct {
@@ -253,15 +279,15 @@ func (l *Loader) projectionNames(
 	child, prepared *manifest.Kustomization,
 	roots map[manifest.NamedResource][]string,
 ) (projectionNames, error) {
-	known := true
-	var documents []manifest.DocOccurrence
+	active := values.SubstitutionActive(prepared)
 	declared, err := child.RenderDocument()
-	if err != nil || child.NamePrefix != "" || child.NameSuffix != "" || len(child.Images) != 0 {
-		known = false
-	}
+	known := err == nil && child.NamePrefix == "" && child.NameSuffix == "" && len(child.Images) == 0
 	declared, decoded := projectionPatches(declared)
 	known = known && decoded
-	documents = append(documents, manifest.DocOccurrence{Document: map[string]any{"input": declared}})
+	names := projectionSubstitutionNames(
+		[]manifest.DocOccurrence{{Document: map[string]any{"input": declared}}},
+		active,
+	)
 	for source, files := range roots {
 		known = known && len(files) != 0
 		input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
@@ -270,21 +296,18 @@ func (l *Loader) projectionNames(
 			break
 		}
 		for _, file := range files {
-			projection, err := l.projectionFile(ctx, input, file, known)
+			projection, err := l.projectionFile(ctx, input, file, active)
 			if err != nil {
 				return projectionNames{}, err
 			}
-			known = projection.known
+			known = known && projection.known
 			if projection.stop {
 				break
 			}
-			documents = append(documents, projection.documents...)
+			names = mergeProjectionNames(names, projection.inputs, active)
 		}
 	}
 	known = known && len(roots) != 0
-	active := len(prepared.PostBuild.Substitute) != 0 ||
-		prepared.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
-	names := values.SubstitutionNames(documents, active)
 	return projectionNames{names: names, active: active, known: known}, nil
 }
 
@@ -356,49 +379,116 @@ func (l *Loader) pathCatalog(
 	return parent, true
 }
 
-func (l *Loader) projectPathRoots(
-	child, parent *manifest.Kustomization,
-	record *manifest.DiscoveryRecord,
-	provider *values.StoreProvider,
-) bool {
-	owner := record.Parent
-	path, known := values.ResolveStaticPath(child.Path, parent, provider)
-	source := child.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
-	}
-	if known {
-		if path == child.Path {
-			return false
-		}
-		projected := *child
-		projected.Path = path
-		record.ContentRoots = map[manifest.NamedResource][]string{
-			source: slices.Collect(manifest.RenderRoots(&projected)),
-		}
-	} else {
-		source = parent.SourceID()
-		if source.Name == "" || source.Kind == "" {
-			source = manifest.BootstrapSourceID
-		}
-		record.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
-		producer := l.Index.Records[owner]
-		producer.StaticOutput = false
-		producer.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
-		l.Index.Records[owner] = producer
-	}
-	return true
-}
-
-type pathResolution struct {
+type substitutionResolution struct {
 	loader      *Loader
 	projections map[manifest.NamedResource]inputprojection.Projection
 	provider    *values.StoreProvider
 	hydrated    map[manifest.NamedResource]bool
 	catalogs    map[manifest.NamedResource]*manifest.Kustomization
+	resolving   map[manifest.NamedResource]bool
 }
 
-func (p *pathResolution) projectSubstitutions(
+func (p *substitutionResolution) resolveIdentity(
+	ctx context.Context,
+	owner manifest.NamedResource,
+	id *manifest.NamedResource,
+) bool {
+	for _, field := range []*string{&id.Name, &id.Namespace} {
+		if !manifest.HasEnvsubstReference(*field) {
+			continue
+		}
+		resolved, known := p.resolveValue(ctx, owner, *field)
+		if !known || manifest.HasEnvsubstReference(resolved) {
+			return false
+		}
+		*field = resolved
+	}
+	return id.Name != ""
+}
+
+func (p *substitutionResolution) resolveValue(
+	ctx context.Context,
+	owner manifest.NamedResource,
+	value string,
+) (string, bool) {
+	if p.resolving[owner] {
+		return value, false
+	}
+	l := p.loader
+	parent, known := l.pathCatalog(owner, &p.catalogs)
+	if !known {
+		return value, false
+	}
+	if p.resolving == nil {
+		p.resolving = map[manifest.NamedResource]bool{}
+	}
+	p.resolving[owner] = true
+	defer delete(p.resolving, owner)
+	parent, known = p.inheritValues(ctx, owner, parent, value)
+	if !known || !l.hydratePathReferences(ctx, parent, &p.hydrated) {
+		return value, false
+	}
+	if p.provider == nil {
+		p.provider = values.NewStoreProvider(l)
+	}
+	return values.ResolveStaticValue(value, parent, p.provider, l.Options.Missing)
+}
+
+func (p *substitutionResolution) inheritValues(
+	ctx context.Context,
+	owner manifest.NamedResource,
+	parent *manifest.Kustomization,
+	value string,
+) (*manifest.Kustomization, bool) {
+	record, _ := p.loader.Index.Lookup(owner)
+	if parent.PostBuild == nil || record.Parent == (manifest.NamedResource{}) || record.Parent == owner ||
+		parent.Labels[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue ||
+		parent.Annotations[manifest.SubstituteAnnotationKey] == kustomizev1.DisabledValue {
+		return parent, true
+	}
+	var projected *manifest.Kustomization
+	resolve := func(value string) (string, bool) {
+		resolved, complete := p.resolveValue(ctx, record.Parent, value)
+		if complete && projected == nil {
+			projected = parent.Clone()
+		}
+		return resolved, complete
+	}
+	for i, ref := range parent.PostBuild.SubstituteFrom {
+		if !manifest.HasEnvsubstReference(ref.Name) {
+			continue
+		}
+		resolved, complete := resolve(ref.Name)
+		if !complete {
+			return parent, false
+		}
+		projected.PostBuild.SubstituteFrom[i].Name = resolved
+	}
+	var names map[string]struct{}
+	for key, inline := range parent.PostBuild.Substitute {
+		if !manifest.HasEnvsubstReference(inline) {
+			continue
+		}
+		if names == nil {
+			names = values.SubstitutionNames([]byte(value))
+		}
+		if _, used := names[key]; !used {
+			continue
+		}
+		resolved, complete := resolve(inline)
+		if !complete {
+			return parent, false
+		}
+		projected.PostBuild.Substitute[key] = resolved
+	}
+	if projected != nil {
+		p.catalogs[owner] = projected
+		return projected, true
+	}
+	return parent, true
+}
+
+func (p *substitutionResolution) projectSubstitutions(
 	ctx context.Context,
 	id manifest.NamedResource,
 	child *manifest.Kustomization,
@@ -415,7 +505,7 @@ func (p *pathResolution) projectSubstitutions(
 	}
 	bindings := l.pathBindings(child, p.provider)
 	prepared := child.Clone()
-	if err := values.ExpandPostBuildSubstituteReference(prepared, p.provider); err != nil {
+	if err := values.ExpandPostBuildSubstituteReference(prepared, p.provider, l.Options.Missing); err != nil {
 		bindings.known = false
 	}
 	roots := record.ContentRoots
@@ -442,7 +532,7 @@ func (p *pathResolution) projectSubstitutions(
 	return nil
 }
 
-func (p *pathResolution) resolveInheritedPath(
+func (p *substitutionResolution) resolveInheritedPath(
 	ctx context.Context,
 	id manifest.NamedResource,
 	child *manifest.Kustomization,
@@ -462,28 +552,37 @@ func (p *pathResolution) resolveInheritedPath(
 	if owner == (manifest.NamedResource{}) || owner == id {
 		return nil
 	}
-	var parent *manifest.Kustomization
-	{
-		var ok bool
-		parent, ok = l.pathCatalog(owner, &p.catalogs)
-		if !ok {
+	path, known := p.resolveValue(ctx, owner, child.Path)
+	if err := ctx.Err(); err != nil {
+		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
+	}
+	parent, found := l.pathCatalog(owner, &p.catalogs)
+	if !found {
+		return nil
+	}
+	source := child.EffectiveSourceID()
+	if known {
+		if path == child.Path {
 			return nil
 		}
-	}
-	if !l.hydratePathReferences(ctx, parent, &p.hydrated) {
-		return ctx.Err() //nolint:wrapcheck // Cancellation preserves the caller context error identity.
-	}
-	if p.provider == nil {
-		p.provider = values.NewStoreProvider(l)
-	}
-	if !l.projectPathRoots(child, parent, &record, p.provider) {
-		return nil
+		projected := *child
+		projected.Path = path
+		record.ContentRoots = map[manifest.NamedResource][]string{
+			source: slices.Collect(manifest.RenderRoots(&projected)),
+		}
+	} else {
+		source = parent.EffectiveSourceID()
+		record.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
+		producer := l.Index.Records[owner]
+		producer.StaticOutput = false
+		producer.ContentRoots = map[manifest.NamedResource][]string{source: {""}}
+		l.Index.Records[owner] = producer
 	}
 	l.Index.Records[id] = record
 	return nil
 }
 
-func (p *pathResolution) resolveRecord(
+func (p *substitutionResolution) resolveRecord(
 	ctx context.Context,
 	id manifest.NamedResource,
 	recordValue *manifest.DiscoveryRecord,
@@ -508,4 +607,84 @@ func (p *pathResolution) resolveRecord(
 		return err
 	}
 	return nil
+}
+
+//nolint:revive // Context and independent projection policies remain explicit without a one-caller options type.
+func (p *projectionInputs) readProjection(
+	ctx context.Context,
+	input *store.SourceArtifact,
+	file string,
+	active, record bool,
+) (projectionRead, error) {
+	if p != nil && p.payload != nil {
+		data, err := p.payload.read(ctx)
+		if err != nil {
+			return projectionRead{}, err
+		}
+		docs, err := manifest.DecodeRender(data)
+		if err != nil {
+			return projectionRead{}, err
+		}
+		inputs := &projectionInputs{
+			payload:    p.payload,
+			Names:      projectionSubstitutionNames(docs, active),
+			Known:      p.Known,
+			NamesKnown: active,
+		}
+		return projectionRead{inputs: inputs, known: p.Known}, nil
+	}
+	raw, err := fs.ReadFile(input.FS, file)
+	if err != nil {
+		//nolint:nilerr // Read failures invalidate projection proof and stop only the current source.
+		return projectionRead{stop: true}, nil
+	}
+	docs, decoded := projectionDocuments(raw)
+	var payload *inputPayload
+	if record {
+		data, encodeErr := manifest.EncodeRender(docs)
+		if encodeErr != nil {
+			return projectionRead{}, encodeErr
+		}
+		payload = &inputPayload{data: data}
+	}
+	inputs := &projectionInputs{
+		payload:    payload,
+		Names:      projectionSubstitutionNames(docs, active),
+		Known:      decoded,
+		NamesKnown: active,
+	}
+	return projectionRead{inputs: inputs, known: decoded}, nil
+}
+
+func mergeProjectionNames(names map[string]struct{}, inputs *projectionInputs, active bool) map[string]struct{} {
+	if !active {
+		return names
+	}
+	input := inputs.Names
+	if input == nil {
+		return nil
+	}
+	if names != nil {
+		maps.Copy(names, input)
+	}
+	return names
+}
+
+func projectionSubstitutionNames(docs []manifest.DocOccurrence, active bool) map[string]struct{} {
+	names := map[string]struct{}{}
+	for i := range docs {
+		data, err := values.SubstitutionDocument(docs[i], active)
+		if err != nil {
+			return nil
+		}
+		if data == nil {
+			continue
+		}
+		current := values.SubstitutionNames(data)
+		if current == nil {
+			return nil
+		}
+		maps.Copy(names, current)
+	}
+	return names
 }

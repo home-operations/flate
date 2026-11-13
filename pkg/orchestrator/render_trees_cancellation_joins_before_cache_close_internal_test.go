@@ -388,7 +388,7 @@ func testRenderDeclarationOnlyExcludesUnrelatedWorkCase(
 	}
 	assert.Equal(t, admitted[ids[0]].Load(), int64(1))
 	assert.Equal(t, admitted[ids[1]].Load(), int64(1))
-	result, err := o.collectResult(runErr)
+	result, err := o.collectResult(t.Context(), runErr)
 	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	var interval any

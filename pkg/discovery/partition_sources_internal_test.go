@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -114,6 +115,7 @@ func TestPlan_SourceOccurrenceIsolation(t *testing.T) {
 
 func TestPartitionRoots_SourceScope(t *testing.T) {
 	t.Parallel()
+
 	for _, tt := range []struct {
 		name                    string
 		changed                 bool
@@ -209,4 +211,111 @@ func assertSourceScopeMarkers(t *testing.T, roots []entryRoot, local bool) {
 		}
 	}
 	assert.Equal(t, leftMarker, local)
+}
+
+func TestPartitionRoots_SourceConstruction(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"left/kustomization.yaml": {Data: []byte("resources: [deferred.yaml, raw.yaml, owner.yaml, source.yaml]\n")},
+		"left/deferred.yaml": {Data: []byte(testutil.KustomizationYAML("deferred", "apps",
+			"  path: ./workload/right\n  sourceRef: {kind: GitRepository, name: raw}\n"))},
+		"left/raw.yaml": {
+			Data: []byte(
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: raw, namespace: apps}\nspec: {url: https://example.invalid/left}\n",
+			),
+		},
+		"left/owner.yaml": {Data: []byte(testutil.KustomizationYAML("left", "apps",
+			"  path: ./workload/left\n  sourceRef: {kind: GitRepository, name: cluster}\n"))},
+		"left/source.yaml": {
+			Data: []byte(
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://example.invalid/left}\n",
+			),
+		},
+		"right/kustomization.yaml": {Data: []byte("resources: [owner.yaml, source.yaml]\n")},
+		"right/owner.yaml": {Data: []byte(testutil.KustomizationYAML("right", "apps",
+			"  path: ./workload/right\n  sourceRef: {kind: GitRepository, name: cluster}\n"))},
+		"right/source.yaml": {
+			Data: []byte(
+				"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://external.invalid/right, ref: {branch: right}}\n",
+			),
+		},
+		"workload/left/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+		"workload/left/cm.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: left-marker}\n"),
+		},
+		"workload/right/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+		"workload/right/cm.yaml": {
+			Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: right-marker}\n"),
+		},
+	}
+	st := store.New()
+	d, err := Begin(t.Context(), Config{
+		Path: root, Input: &store.SourceArtifact{LocalPath: root, FS: files}, Store: st,
+		SelfURLs: []string{"https://example.invalid/left"},
+	})
+	assert.NoError(t, err)
+	t.Cleanup(d.Close)
+	assert.NoError(t, constructTestSources(t.Context(), d))
+	d.loader.SourceRoot = root
+	_, err = d.loader.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	occurrences, err := d.loader.Occurrences(t.Context(), filepath.Join(root, "left"), "")
+	assert.NoError(t, err)
+	var seeds []selection.OccurrenceFacts
+	for _, name := range []string{"deferred", "raw", "left", "cluster"} {
+		for _, occurrence := range occurrences {
+			if occurrence.Identity.Name == name {
+				occurrence.RequiresBuild = name == "deferred" || name == "raw"
+				seeds = append(seeds, occurrence)
+			}
+		}
+	}
+	assert.Equal(t, len(seeds), 4)
+	external, err := d.loader.Occurrences(t.Context(), filepath.Join(root, "right"), "")
+	assert.NoError(t, err)
+	planner := &entryPlanner{
+		session: d, inputs: map[string]*store.SourceArtifact{root: d.cfg.Input},
+		coordinates: map[selection.OccurrenceID]bool{}, seen: map[occurrenceKey]bool{},
+		roots: []entryRoot{{Path: "left", seeds: seeds}, {Path: "right", seeds: external}},
+	}
+	d.planner = planner
+	_, err = d.partitionRoots(t.Context())
+	assert.Equal(t, errors.Is(err, errPendingSources), true)
+	assert.Equal(t, d.planner == planner, true)
+	assert.Equal(t, planner.head, 2)
+	assert.Equal(t, len(planner.roots[0].Occurrences), 2)
+	assert.Equal(t, planner.roots[0].Occurrences[0].Declaration, seeds[0].Declaration)
+	assert.Equal(t, planner.roots[0].Occurrences[1].Declaration, seeds[1].Declaration)
+	raw := seeds[1].Identity
+	visit := partitionVisit{occurrence: &seeds[2], scope: &planner.scope}
+	material, err := planner.source(t.Context(), &planner.roots[0], &visit, &manifest.Reference{NamedResource: raw})
+	assert.NoError(t, err)
+	assert.Equal(t, material == nil, true)
+	_, acquired := d.resolvedSources.snapshot()[raw]
+	assert.Equal(t, acquired, false)
+	assert.Equal(t, st.GetArtifact(raw, store.ArtifactContent), nil)
+	assert.Diff(t, d.PendingSources(), []manifest.NamedResource{seeds[3].Identity})
+	assert.Equal(t, st.GetArtifact(seeds[3].Identity, store.ArtifactContent), nil)
+	assert.NoError(t, constructTestSources(t.Context(), d))
+	assert.Equal(t, st.GetArtifact(seeds[3].Identity, store.ArtifactContent) != nil, true)
+	roots, err := d.partitionRoots(t.Context())
+	assert.NoError(t, err)
+	assert.Equal(t, len(roots), 2)
+	for i, candidate := range roots {
+		counts := map[selection.OccurrenceID]int{}
+		for _, occurrence := range candidate.Occurrences {
+			counts[occurrence.Declaration]++
+		}
+		for _, count := range counts {
+			assert.Equal(t, count, 1)
+		}
+		for _, seed := range [][]selection.OccurrenceFacts{seeds, external}[i] {
+			assert.Equal(t, counts[seed.Declaration], 1)
+		}
+		assertSourceScopeMarkers(t, []entryRoot{candidate}, candidate.Path == "left")
+	}
+	_, acquired = d.resolvedSources.snapshot()[raw]
+	assert.Equal(t, acquired, false)
+	assert.Equal(t, st.GetArtifact(raw, store.ArtifactContent), nil)
 }

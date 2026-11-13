@@ -64,6 +64,7 @@ type parsedObject struct {
 
 	outcome            manifest.DocOccurrence
 	item               int
+	collection         bool
 	fact               *authoredOccurrence
 	version            string
 	declared           string
@@ -91,6 +92,7 @@ type documentReader struct {
 	artifacts    map[string]*store.SourceArtifact
 	parsed       *ParsedInputs
 	compact      bool
+	eager        bool
 	recordInputs bool
 	intent       manifest.DocumentRole
 	coordinate   *occurrenceID

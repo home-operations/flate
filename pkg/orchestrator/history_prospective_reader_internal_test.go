@@ -72,7 +72,7 @@ spec:
 			assert.NoError(t, o.cache.Close())
 		}()
 		assert.NoError(t, o.bootstrap(t.Context()))
-		result, err := o.collectResult(o.run(t.Context()))
+		result, err := o.collectResult(t.Context(), o.run(t.Context()))
 		t.Cleanup(result.Close)
 		assert.NoError(t, err)
 		return result
@@ -524,7 +524,7 @@ spec:
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
 	unrelated := testutil.HelmReleaseID("apps", "unrelated")
 	assert.Equal(t, fresh.selection.Snapshot().Reconcile(unrelated), false)
-	result, err := fresh.collectResult(fresh.run(t.Context()))
+	result, err := fresh.collectResult(t.Context(), fresh.run(t.Context()))
 	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	docs := outputByParent(result.Manifests)[child]

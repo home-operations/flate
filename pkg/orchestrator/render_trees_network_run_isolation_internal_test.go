@@ -264,7 +264,7 @@ data: {greeting: {{ .Values.greeting | quote }}}
 			owner := testutil.KustomizationID("flux-system", "demo")
 			assert.Equal(t, o.store.GetObject(release) == nil, true)
 			assert.Equal(t, o.selection.Snapshot().Reconcile(owner), true)
-			result, err := o.collectResult(o.run(t.Context()))
+			result, err := o.collectResult(t.Context(), o.run(t.Context()))
 			t.Cleanup(result.Close)
 
 			assert.FatalIf(t, err != nil, "%v", err)

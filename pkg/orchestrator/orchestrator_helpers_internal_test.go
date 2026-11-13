@@ -191,7 +191,7 @@ func (o *Orchestrator) bootstrap(ctx context.Context) error {
 	if err := o.prepareInvocation(ctx); err != nil {
 		return err
 	}
-	if (o.selection != nil) && len(o.admission.EntryProducers()) == 0 {
+	if !o.selection.Snapshot().Output(manifest.NamedResource{}) && len(o.admission.EntryProducers()) == 0 {
 		if _, _, err := o.prepareAdmission(ctx, selection.AdmissionOptions{
 			Request: selection.PrepareRequest{Invocation: true, Preparation: &o.admissionPreparation},
 			Stage:   selection.Execution,
@@ -199,7 +199,7 @@ func (o *Orchestrator) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
-	if o.selection != nil {
+	if !o.selection.Snapshot().Output(manifest.NamedResource{}) {
 		return o.finishInitialAdmission(ctx)
 	}
 	return nil
@@ -211,7 +211,7 @@ func (o *Orchestrator) render(ctx context.Context, tb testing.TB) (*Result, erro
 	if err := o.bootstrap(ctx); err != nil {
 		return nil, err
 	}
-	result, err := o.collectResult(o.run(ctx))
+	result, err := o.collectResult(ctx, o.run(ctx))
 	tb.Cleanup(result.Close)
 	return result, err
 }

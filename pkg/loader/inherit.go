@@ -242,12 +242,7 @@ func (l *Loader) projectAuthoredOccurrence(
 		}
 		state.records[projected.Identity] = next
 		l.publishAuthoredLocation(&projected)
-		l.publishAuthoredObject(state.objects, projected.Identity, authored.Obj, record)
-		if !l.documents.compact {
-			child := state.objects[projected.Identity]
-			child.Doc, child.Warnings = authored.Doc, authored.Warnings
-			state.objects[projected.Identity] = child
-		}
+		l.publishAuthoredObject(state.objects, projected.Identity, authored, record)
 	}
 	projected := l.projectAuthoredVisits(record, &structured, input.version, publish)
 	if !projected {
@@ -264,7 +259,11 @@ func (l *Loader) projectAuthoredVisits(
 	version string,
 	publish func(authoredOccurrence, manifest.Production),
 ) bool {
-	projected := false
+	projected, owned := false, false
+	l.fileOwners(record.Path, record.File, func(manifest.NamedResource) bool {
+		owned = true
+		return false
+	})
 	for _, ref := range l.scopes.visits[record.Path] {
 		contribution := &l.scopes.contributions[ref.contribution]
 		if !contribution.active || contribution.membershipOnly {
@@ -286,13 +285,14 @@ func (l *Loader) projectAuthoredVisits(
 			projected = true
 			continue
 		}
-		occurrence.requiresBuild = visit.requiresBuild && contribution.owner == (manifest.NamedResource{})
+		occurrence.requiresBuild = occurrence.requiresBuild || contribution.applies && visit.requiresBuild
 		production := manifest.Production{
 			Owner: contribution.owner, Source: contribution.source,
 			Authored: record.Authored, Path: record.Path, File: record.File,
 		}
 		projectOccurrenceProduction(&occurrence, &production)
 		if production.Owner == (manifest.NamedResource{}) &&
+			!owned &&
 			(occurrence.requiresBuild || identity.Name != occurrence.Authored.Name) {
 			production.Owner = manifest.NewEntryKustomization(production.Source, contribution.context.dir, manifest.NamedResource{}).
 				Named()
@@ -310,6 +310,9 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 			childValues := doc.objects
 			for childIndex := range childValues {
 				child := childValues[childIndex]
+				if child.fact != nil && child.fact.Authored == id && child.fact.object != nil {
+					return store.Child{Obj: child.fact.object, Doc: child.Doc, Warnings: child.Warnings}
+				}
 				if child.fact != nil && child.fact.Authored == id && child.fact.facts.structural != nil {
 					return store.Child{Obj: child.fact.facts.structural}
 				}

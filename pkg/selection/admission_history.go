@@ -74,7 +74,7 @@ func (s *Session) refreshHistory(
 }
 
 func (c *admissionClosure) requestHistory(id manifest.NamedResource) {
-	if !id.KindInfo().Render {
+	if c.session.Snapshot().Output(manifest.NamedResource{}) || !id.KindInfo().Render {
 		return
 	}
 	object := c.object(id)

@@ -546,7 +546,7 @@ func testDAGSuspensionAfterRefreshCase(t *testing.T, testCaseInput testDAGSuspen
 		false,
 	)
 	t.Cleanup(unsubArrivals)
-	res, err := o.collectResult(o.run(t.Context()))
+	res, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 || o.tasks.Failures() != 0,
 

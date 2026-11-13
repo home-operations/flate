@@ -620,8 +620,18 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 		return
 	}
 	r.GetArtifact(source, ArtifactContent)
+	index := r.store.index.Load()
+	record, _ := index.Lookup(child.Obj.Named())
+	prepared := preparedDeclaration(&record, child.Obj) && !rawDeclarationAuthority(index, child.Obj.Named(), true)
+	if prepared {
+		owner = record.Parent
+	}
 	var support *Input
 	if owner != (manifest.NamedResource{}) && owner != child.Obj.Named() {
+		if prepared {
+			r.GetDeclaration(owner)
+			r.bindAuthority(r.input(owner), objectFacet, objectFacet)
+		}
 		support = r.bindAuthority(r.input(owner), producerFacet, producerFacet)
 	}
 	update := objectUpdate{
@@ -637,11 +647,14 @@ func (r *ReadSet) Admit(child Child, source, owner manifest.NamedResource) {
 		if input.Ref.NamedResource == (manifest.NamedResource{Group: id.Group, Kind: id.Kind}) {
 			update.collection = input.cell(bucketFacet)
 		}
-		if input.Ref.NamedResource == (manifest.NamedResource{}) {
-			if details := input.details.Load(); details != nil && details.inventory != nil {
-				update.inventory = &details.inventory[kindShardIndex(id.Kind)]
-			}
+		if input.Ref.NamedResource != (manifest.NamedResource{}) {
+			continue
 		}
+		details := input.details.Load()
+		if details == nil || details.inventory == nil {
+			continue
+		}
+		update.inventory = &details.inventory[kindShardIndex(id.Kind)]
 	}
 	r.store.addObject(&update)
 }

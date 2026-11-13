@@ -237,7 +237,7 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 		"helm_releases", hrCount,
 		"failed", len(failed),
 		"work", &o.work)
-	if (o.selection != nil) && ksCount == 0 && hrCount == 0 {
+	if !o.selection.Snapshot().Output(manifest.NamedResource{}) && ksCount == 0 && hrCount == 0 {
 		if o.entryBinding.Producer != (manifest.NamedResource{}) {
 			return
 		}

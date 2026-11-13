@@ -261,7 +261,7 @@ spec:
 	}
 	other := testutil.KustomizationID("other", "myapp")
 
-	res, err := o.collectResult(o.run(t.Context()))
+	res, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(res.Close)
 	assert.FatalIf(t, err != nil || len(res.Failed) != 0,
 		"changed-only Render: %v; failures=%v", err, res.Failed)

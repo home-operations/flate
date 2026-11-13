@@ -120,3 +120,41 @@ metadata:
 		})
 	}
 }
+
+func TestPreparePendingProducer_ReferencedSubstitutionSupport(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [child.yaml]\n")
+	testutil.WriteFile(t, root, "child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./${TARGET}\n"))
+	st := store.New()
+	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	st.SetArtifact(manifest.BootstrapSourceID, source)
+	owner := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "."}
+	owner.PostBuild = &kustomizev1.PostBuild{
+		SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}},
+	}
+	st.AddObject(owner)
+	l := loader.New(st)
+	defer l.Close()
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+	assert.NoError(t, err)
+	d := Session{cfg: Config{Store: st, Trees: testTrees(t)}, loader: l}
+	defer d.Close()
+	for _, target := range []string{"one", "two"} {
+		st.AddObject(&manifest.ConfigMap{
+			Name: "settings", Namespace: "apps", Data: map[string]any{"TARGET": target},
+		})
+		if previous := d.prepared[owner.Named()]; previous != nil {
+			assert.Equal(t, previous.support.Valid(), false)
+		}
+		prepared, prepareErr := d.preparePendingProducer(t.Context(), owner, nil)
+		assert.NoError(t, prepareErr)
+		assert.Equal(t, prepared, true)
+		frame := d.prepared[owner.Named()]
+		assert.FatalIf(t, frame == nil || len(frame.children) != 1, "prepared frame = %+v", frame)
+		assert.Equal(t, frame.children[0].Obj.(*manifest.Kustomization).Path, "./"+target)
+		assert.Equal(t, frame.support.Valid(), true)
+		assert.Equal(t, owner.PostBuild.Substitute == nil, true)
+	}
+}

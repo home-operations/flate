@@ -1,0 +1,6 @@
+
+  ✓  Kustomization  flux-system/child
+  ✓  Kustomization  flux-system/first
+  ✓  Kustomization  flux-system/second
+
+  ✓ 3 passed   <DUR>

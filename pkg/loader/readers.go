@@ -200,8 +200,10 @@ func (rf *readerFinalizer) collect(ctx context.Context,
 		return nil
 	}
 	rf.visited[id] = struct{}{}
-	if occurrence, ok := rf.loader.locations[id]; ok {
-		return rf.collectOccurrence(ctx, &occurrence, consumer, materialize)
+	if rf.loader.documents.compact && !rf.loader.documents.eager {
+		if occurrence, ok := rf.loader.locations[id]; ok {
+			return rf.collectOccurrence(ctx, &occurrence, consumer, materialize)
+		}
 	}
 	for ref := range manifest.References(rf.object(id), manifest.ReferenceRelations) {
 		if err := rf.observe(ctx, new(ref), consumer, materialize); err != nil {
@@ -359,7 +361,8 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted)
 		})
 	})
-	if rf.loader.documents.compact && selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
+	if rf.loader.documents.compact && !rf.loader.documents.eager &&
+		selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
 		{
 			pValues := r.Productions
 			for pIndex := range pValues {
@@ -380,11 +383,11 @@ func (rf *readerFinalizer) compactOrigins(id manifest.NamedResource, r *manifest
 
 func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
 	kind := id.KindInfo()
-	if !rf.loader.documents.compact && r.Builder == "" {
+	if (!rf.loader.documents.compact || rf.loader.documents.eager) && r.Builder == "" {
 		r.Declaration = rf.loader.IndexedObject(id, *r).Obj
 	}
 	r.StaticOutput = kind.Structural || len(rf.loader.templateProjections[id].Targets) != 0
-	if r.Builder == "" && len(rf.loader.locations) != 0 {
+	if r.Builder == "" && !rf.loader.documents.eager && len(rf.loader.locations) != 0 {
 		if occurrence, known := rf.loader.catalogOccurrence(id); known {
 			r.StaticOutput = !occurrence.facts.opaque(rf.loader.templateProjections[id].Targets)
 		}
@@ -394,7 +397,8 @@ func (rf *readerFinalizer) setRecordOutput(id manifest.NamedResource, r *manifes
 
 func (rf *readerFinalizer) setRecordParent(id manifest.NamedResource, r *manifest.DiscoveryRecord) {
 	kind := id.KindInfo()
-	if rf.loader.documents.compact && kind.Parent && !selection.Root(rf.loader.roots.get(id).view()).Independent &&
+	compactParent := rf.loader.documents.compact && !rf.loader.documents.eager && kind.Parent
+	if compactParent && !selection.Root(rf.loader.roots.get(id).view()).Independent &&
 		r.Parent == (manifest.NamedResource{}) &&
 		!selection.Root(rf.loader.RootEvidence(id, nil, true)).Admitted {
 		var owner manifest.NamedResource

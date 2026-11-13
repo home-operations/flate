@@ -18,7 +18,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 	if err := ctx.Err(); err != nil {
 		return err //nolint:wrapcheck // Cancellation preserves the caller context error identity.
 	}
-	l.documents.compact = l.Options.Session != nil
+	l.configureDocuments()
 	if l.documents.compact && l.frozen {
 		return nil
 	}

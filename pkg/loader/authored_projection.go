@@ -7,12 +7,17 @@ import (
 
 func (l *Loader) publishAuthoredLocation(projected *authoredOccurrence) {
 	previous, known := l.locations[projected.Identity]
+	// Preparation requirements MUST only grow until the supplying source is replaced.
+	projected.requiresBuild = projected.requiresBuild || previous.requiresBuild
 	sameCensus := known && previous.facts != nil && previous.facts.census != nil &&
 		previous.facts.census == projected.facts.census
 	equivalent := sameCensus && sameOccurrenceProjection(&previous, projected) &&
 		projected.facts.catalog.ProjectionCompatible(previous.facts.catalog)
 	if known && (previous.facts == projected.facts || equivalent) {
 		projected.facts, projected.object = previous.facts, previous.object
+	}
+	if projected.object != nil && projected.object.Named().Namespace != projected.Identity.Namespace {
+		projected.object = projected.object.WithNamespace(projected.Identity.Namespace)
 	}
 	if projected.facts.catalog.Named() != projected.Identity {
 		facts := *projected.facts
@@ -35,12 +40,12 @@ func (l *Loader) publishAuthoredLocation(projected *authoredOccurrence) {
 func (l *Loader) publishAuthoredObject(
 	objects map[manifest.NamedResource]store.Child,
 	identity manifest.NamedResource,
-	authored manifest.BaseManifest,
+	authored *store.Child,
 	recordArg *manifest.DiscoveryRecord,
 ) {
 	r := *recordArg
 
-	if authored == nil {
+	if authored.Obj == nil {
 		if previous := l.candidates[identity]; previous.Obj != nil {
 			if current, ok := l.Index.Lookup(identity); ok && current.Path == r.Path && current.Authored == r.Authored {
 				objects[identity] = previous
@@ -49,16 +54,17 @@ func (l *Loader) publishAuthoredObject(
 		return
 	}
 	{
-		object := authored
-		if previous := l.candidates[identity]; previous.Obj != nil && object.ProjectionCompatible(previous.Obj) {
-			object = previous.Obj
-		}
+		object := authored.Obj
 		if object.Named().Name != identity.Name {
 			object = manifest.CatalogObject(object, identity)
 		} else if object.Named().Namespace != identity.Namespace {
 			object = object.WithNamespace(identity.Namespace)
 		}
-		objects[identity] = store.Child{Obj: object}
+		if previous := l.candidates[identity]; previous.Obj != nil && manifest.Equal(object, previous.Obj) &&
+			object.ProjectionCompatible(previous.Obj) {
+			object = previous.Obj
+		}
+		objects[identity] = store.Child{Obj: object, Doc: authored.Doc, Warnings: authored.Warnings}
 	}
 }
 

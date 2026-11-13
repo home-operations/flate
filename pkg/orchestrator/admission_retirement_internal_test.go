@@ -65,7 +65,7 @@ func testRenderInvocationAdmissionReclaimsRetiredCaptures(t *testing.T, phase st
 	assert.Equal(t, declaration.Value() == nil, true)
 	assert.Equal(t, captured.Value() == nil, true)
 	assert.Equal(t, o.admissionPreparation == nil, true)
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	assert.NoError(t, err)
 	t.Cleanup(result.Close)
 	owner := testutil.KustomizationID("apps", "owner")

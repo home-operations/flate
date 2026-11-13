@@ -323,7 +323,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		if err := o.beginDiscovery(ctx, &config); err != nil {
 			return err
 		}
-		if o.selection != nil {
+		if !o.selection.Snapshot().Output(manifest.NamedResource{}) {
 			return nil
 		}
 	}
@@ -339,7 +339,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
-	if o.selection == nil {
+	if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 		o.session = nil
 	}
 	o.discoveryResult = res
@@ -372,7 +372,7 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
 			return phaseErr
 		}
-		if o.selection == nil {
+		if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 			break
 		}
 		ready, loadErr := o.session.Load(ctx)

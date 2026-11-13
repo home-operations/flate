@@ -6,18 +6,20 @@ import (
 	"log/slog"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
 // PromoteOrphans MUST run after index finalization.
 func (l *Loader) PromoteOrphans(ctx context.Context) error {
-	var reads store.ReadSet
-	reads.Init(l.Store, manifest.NamedResource{}, nil)
-	defer reads.Retire()
-	query := rootQuery{loader: l, objects: &reads}
+	query := rootQuery{loader: l}
 	//nolint:gocritic // The iterator supplies independent immutable record snapshots.
 	for id, record := range l.Index.Files() {
+		var reads store.ReadSet
+		reads.Init(l.Store, manifest.NamedResource{}, nil)
+		query.objects = &reads
 		promoted, err := query.promote(ctx, id, &record, &reads)
+		reads.Retire()
 		if err != nil {
 			return err
 		}
@@ -63,7 +65,11 @@ func (q *rootQuery) promote(
 			warning.Resource = child.Obj.Named()
 			l.Store.AddWarning(warning)
 		}
-		reads.Admit(child, child.SourceSupport, manifest.NamedResource{})
+		source := child.SourceSupport
+		if sibling.Builder == "" && !selection.Root(l.roots.get(child.Obj.Named()).view()).Independent {
+			child.SourceSupport = manifest.NamedResource{}
+		}
+		reads.Admit(child, source, manifest.NamedResource{})
 	}
 	return reads.Valid() && l.Store.GetObject(id) != nil, nil
 }

@@ -130,7 +130,8 @@ spec:
 
 	full := []Rendered{render(trees[:1])[0], render(trees[1:])[0]}
 	for _, run := range full {
-		assert.Equal(t, (run.selection != nil), false)
+		assert.Equal(t, run.selection != nil, true)
+		assert.Equal(t, run.selection.Snapshot().Output(manifest.NamedResource{}), true)
 	}
 	testRenderTreesChangedOnlyAndDiffSelectorRelabelTail(
 		t,

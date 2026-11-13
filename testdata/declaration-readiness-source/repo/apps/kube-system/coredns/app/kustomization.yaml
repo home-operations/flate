@@ -1,0 +1,5 @@
+namespace: kube-system
+resources: [source.yaml, release.yaml]
+configMapGenerator:
+- name: values
+  literals: [value=fixture]

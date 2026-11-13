@@ -223,7 +223,7 @@ func (r *renderInvocation) discoverTrees(ctx context.Context) {
 			r.results[i].Orchestrator = o
 			if failure := o.discover(ctx); failure != nil {
 				result := o.failureResult()
-				if (o.selection != nil) && o.session == nil {
+				if !o.selection.Snapshot().Output(manifest.NamedResource{}) && o.session == nil {
 					result.Warnings = tree.Input.Warnings
 				}
 				r.results[i].Result = result
@@ -245,7 +245,7 @@ func (r *renderInvocation) stopFailedDiscovery() error {
 			err = errors.Join(err, result.Err)
 			continue
 		}
-		if (o.selection != nil) && o.session == nil {
+		if !o.selection.Snapshot().Output(manifest.NamedResource{}) && o.session == nil {
 			err = errors.Join(err, result.Err)
 		}
 		o.stop()
@@ -442,7 +442,7 @@ func (r *renderInvocation) completeDiscovery(ctx context.Context) {
 func (r *renderInvocation) qualifyDeclarations(ctx context.Context) error {
 	for i := range r.results {
 		o := r.results[i].Orchestrator
-		if o == nil || o.selection == nil {
+		if o == nil || o.selection.Snapshot().Output(manifest.NamedResource{}) {
 			continue
 		}
 		other, j, found := r.opposite(i)
@@ -577,7 +577,7 @@ func (o *Orchestrator) bindDeclaredReaders(ctx context.Context, other *Orchestra
 func (r *renderInvocation) installAdmission(ctx context.Context) {
 	for i := range r.results {
 		o := r.results[i].Orchestrator
-		if o == nil || o.selection == nil {
+		if o == nil || o.selection.Snapshot().Output(manifest.NamedResource{}) {
 			continue
 		}
 		r.wg.Go(func() {
@@ -615,7 +615,7 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 		}
 		r.wg.Go(func() {
 			defer o.stop()
-			if o.selection == nil {
+			if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 				o.completeBootstrap()
 				if failure := o.prepareInvocation(ctx); failure != nil {
 					r.results[i].Orchestrator = nil
@@ -624,7 +624,7 @@ func (r *renderInvocation) renderTrees(ctx context.Context) {
 					return
 				}
 			}
-			result, failure := o.collectResult(o.run(ctx))
+			result, failure := o.collectResult(ctx, o.run(ctx))
 			r.results[i].Result = result
 			if failure != nil {
 				r.results[i].Err = &treeError{id: r.results[i].ID, err: failure, attributed: len(r.results) > 1}

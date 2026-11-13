@@ -197,51 +197,7 @@ func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, 
 
 func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) error {
 	w := e.dependencyWaiter()
-	var blocked []manifest.NamedResource
-	var failed *manifest.DependencyFailedError
-	var cause error
-	var causeID manifest.NamedResource
-	for dep := range e.Reads.Gates() {
-		w.Materializer = dep.Materializer
-		cl := w.Classify(ctx, dep.DependencyRef, level)
-		if cl.Err != nil {
-			if cause == nil || dep.Compare(causeID) < 0 {
-				cause, causeID = cl.Err, dep.NamedResource
-			}
-			continue
-		}
-		switch cl.Kind {
-		case schedule.Terminal:
-		case schedule.DependencyFailed:
-			if failed == nil {
-				failed = &manifest.DependencyFailedError{
-					Parent:  e.Reads.ID(),
-					Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
-					Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
-				}
-			}
-			failed.Failed = append(failed.Failed, dep.NamedResource)
-			reason := cl.DiagnosticReason(dep.NamedResource)
-			if prior, exists := failed.Reasons[dep.NamedResource]; !exists || reason.Compare(prior) < 0 {
-				failed.Reasons[dep.NamedResource] = reason
-			}
-		case schedule.Blocked:
-			blocked = append(blocked, dep.NamedResource)
-		}
-	}
-	if len(blocked) > 0 {
-		slices.SortFunc(blocked, manifest.NamedResource.Compare)
-		return &depwait.ErrBlocked{Deps: slices.Compact(blocked)}
-	}
-	if cause != nil {
-		return cause
-	}
-	if failed != nil {
-		slices.SortFunc(failed.Failed, manifest.NamedResource.Compare)
-		failed.Failed = slices.Compact(failed.Failed)
-		return failed
-	}
-	return nil
+	return w.Assess(ctx, &e.Reads, level)
 }
 
 // Settle classifies retained unresolved gates without rendering again.
@@ -370,7 +326,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 	obj, ok := e.Reads.Get[T](id)
 	e.declaration = obj
 	policy := e.Reads.Policy(id)
-	if ok && e.selection != nil {
+	if ok && !e.selection.Snapshot().Output(manifest.NamedResource{}) {
 		if _, err := e.KeepEmitted(
 			ctx,
 			manifest.NamedResource{},

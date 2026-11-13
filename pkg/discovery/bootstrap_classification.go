@@ -2,7 +2,11 @@ package discovery
 
 import (
 	"cmp"
+	"net/url"
 	"slices"
+	"strings"
+
+	"github.com/go-git/go-git/v6/plumbing/transport"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -243,4 +247,35 @@ func (a *Admission) loaderIndex() *manifest.DiscoveryIndex {
 		return a.loader.Index
 	}
 	return nil
+}
+
+func normalizeGitURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	endpoint, err := transport.ParseURL(raw)
+	if err != nil {
+		return ""
+	}
+	switch strings.ToLower(endpoint.Scheme) {
+	case "http", "https", "ssh", "git":
+	default:
+		return ""
+	}
+	host, remotePath := strings.Trim(endpoint.Host, "[]"), endpoint.Path
+	if strings.Contains(raw, "://") {
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		host, remotePath = parsed.Hostname(), parsed.Path
+	}
+	if host == "" || strings.ContainsAny(host, "/\\") || remotePath == "" {
+		return ""
+	}
+	remotePath = strings.TrimSuffix(remotePath, "/")
+	remotePath = strings.TrimSuffix(remotePath, ".git")
+	remotePath = strings.TrimPrefix(remotePath, "/")
+	if remotePath == "" {
+		return ""
+	}
+	return strings.ToLower(host + "/" + remotePath)
 }

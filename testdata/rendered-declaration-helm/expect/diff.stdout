@@ -1,0 +1,11 @@
+
+spec.values.v  (helm.toolkit.fluxcd.io/v2/HelmRelease/default/demo)
+  ± value change
+    - 1
+    + 2
+
+data.v  (v1/ConfigMap/default/demo)
+  ± value change
+    - 1
+    + 2
+

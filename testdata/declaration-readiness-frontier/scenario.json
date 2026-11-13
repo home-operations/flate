@@ -1,0 +1,333 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "d5f77eac528960264c8706e735a5e0cb90e8d46c",
+    "paths": [
+      "m00nwtchr/homelab-cluster",
+      "ionfury/homelab"
+    ],
+    "reductions": "Synthetic inputs retain the blocked publication boundary and a readable peer after native entry failure."
+  },
+  "repositories": [
+    {
+      "name": "baseline",
+      "directory": "emitted"
+    },
+    {
+      "name": "repo",
+      "directory": "native"
+    }
+  ],
+  "commits": [],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "frontier-emitted",
+      "description": "Blocked publication limits diagnostic membership without hiding readable peers.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/emitted-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@baseline@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/emitted-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ],
+      "directory": "@@baseline@@"
+    },
+    {
+      "name": "frontier-native",
+      "description": "Blocked publication limits diagnostic membership without hiding readable peers.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/native-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/native-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ],
+      "directory": "@@repo@@"
+    }
+  ],
+  "files": [
+    {
+      "path": "emitted/component/kustomization.yaml",
+      "cases": [
+        "frontier-emitted"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "emitted/component/secret.yaml",
+      "cases": [
+        "frontier-emitted"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "emitted/flux/rs.yaml",
+      "cases": [
+        "frontier-emitted"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "emitted/leaf/cm.yaml",
+      "cases": [
+        "frontier-emitted"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "emitted/leaf/kustomization.yaml",
+      "cases": [
+        "frontier-emitted"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "emitted/work/cm.yaml",
+      "cases": [
+        "frontier-emitted"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "emitted/work/kustomization.yaml",
+      "cases": [
+        "frontier-emitted"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "emitted/work/nested.yaml",
+      "cases": [
+        "frontier-emitted"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/emitted-build.stderr",
+      "cases": [
+        "frontier-emitted",
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/emitted-test.stdout",
+      "cases": [
+        "frontier-emitted",
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "frontier-emitted",
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "frontier-emitted",
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/native-build.stderr",
+      "cases": [
+        "frontier-emitted",
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/native-test.stdout",
+      "cases": [
+        "frontier-emitted",
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/empty/kustomization.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/flux/ks.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/flux/kustomization.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output.",
+      "package": "failure"
+    },
+    {
+      "path": "native/flux/platform.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/flux/rs.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/flux/velero.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/platform/children.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/platform/kustomization.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/work/cm.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/work/kustomization.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "Synthetic declaration or independently authored complete expected output."
+    },
+    {
+      "path": "native/empty/namespace.yaml",
+      "cases": [
+        "frontier-native"
+      ],
+      "purpose": "A passing peer emits an unselected Namespace while blocked descendants emit no ConfigMap."
+    }
+  ]
+}

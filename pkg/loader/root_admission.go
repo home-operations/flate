@@ -57,7 +57,7 @@ func (l *Loader) initialOccurrence(id manifest.NamedResource, record *manifest.D
 	origin := new(l.documents).localPath(record.Path)
 	if located, known := l.catalogOccurrence(id); known &&
 		filepath.Join(located.Declaration.Source, filepath.FromSlash(located.Declaration.File)) == origin {
-		return occurrence
+		return located
 	}
 	if occurrence.Declaration != (occurrenceID{}) &&
 		filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File)) == origin {
@@ -331,7 +331,7 @@ func (q *rootQuery) admitsRoot(obj manifest.BaseManifest, file string) bool {
 	view := q.loader.physicalView()
 	evidence := view.rootFacts(obj.Named(), q.loader, obj)
 	if q.objects == nil && !q.loader.frozen {
-		return selection.Root(evidence).Admitted
+		return q.loader.admitsDeclaration(&evidence)
 	}
 	rootSupport(&evidence, objects, q.loader.Index, &q.loader.roots.currentOnly, q.loader.SourceRoot)
 	evidence.Supplied = false
@@ -345,7 +345,7 @@ func (q *rootQuery) admitsRoot(obj manifest.BaseManifest, file string) bool {
 	if reads, ok := objects.(*store.ReadSet); ok {
 		evidence.Stale = !reads.Valid()
 	}
-	return selection.Root(evidence).Admitted
+	return q.loader.admitsDeclaration(&evidence)
 }
 
 func (q *rootQuery) coveringFacts() *rootOwnerInventory {
@@ -495,4 +495,14 @@ func (l *Loader) addNativePackageOwners(path string, owner int, targets map[stri
 			}
 		}
 	}
+}
+
+func (l *Loader) admitsDeclaration(evidence *selection.RootEvidence) bool {
+	root := selection.Root(*evidence)
+	scope := &evidence.Scope
+	nativePrediction := l.documents.compact && l.documents.eager && scope.EntryKustomize && scope.NativeOperand
+	nativeApplication := !scope.Application || scope.ApplicationSource == manifest.BootstrapSourceID
+	pending := !l.frozen || nativeApplication
+	waiting := nativePrediction && pending && !scope.Prepared && !root.Independent
+	return root.Admitted && !waiting
 }

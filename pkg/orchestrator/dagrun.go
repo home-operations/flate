@@ -280,7 +280,7 @@ func (o *Orchestrator) publishEntry(
 		application := manifest.EntryApplication{Source: root.EffectiveSourceID(), Path: root.Path}
 		incoming = store.Child{Obj: root, Entry: &application}
 	}
-	if o.selection == nil {
+	if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 		if incoming.Obj != nil {
 			binding.Reads.Admit(incoming, binding.Source, manifest.NamedResource{})
 		}

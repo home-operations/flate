@@ -48,7 +48,7 @@ func testSuppliedApplierReadiness(t *testing.T) {
 	if _, exists := o.depGraph.outEdges[supplied]; exists {
 		t.Fatal("supplied applier entered event-driven producer graph")
 	}
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(result.Close)
 	if err == nil {
 		t.Fatal("supplied declaration manufactured readiness")

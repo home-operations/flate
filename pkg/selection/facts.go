@@ -1,6 +1,8 @@
 package selection
 
 import (
+	"iter"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -187,4 +189,25 @@ type RootEvidence struct {
 	PreparedRoot      string
 	BuiltChild        store.Child
 	BuiltCurrent      bool
+}
+
+//nolint:gocritic // The iterator MUST capture an immutable occurrence snapshot.
+func (o OccurrenceFacts) references() iter.Seq[manifest.Reference] {
+	return func(yield func(manifest.Reference) bool) {
+		if o.Witness == nil && !o.CatalogKnown && o.Refs == nil {
+			if o.Object != nil {
+				manifest.References(o.Object, manifest.ReferenceRelations)(yield)
+			}
+			return
+		}
+		for i := range o.Refs {
+			ref := o.Refs[i]
+			if ref.NamespaceDefault {
+				ref.Namespace = o.Identity.Namespace
+			}
+			if !yield(ref) {
+				return
+			}
+		}
+	}
 }

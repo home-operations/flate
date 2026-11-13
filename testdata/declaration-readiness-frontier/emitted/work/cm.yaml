@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: rendered, namespace: default}
+data: {value: child-ran}

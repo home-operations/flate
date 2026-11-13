@@ -33,6 +33,7 @@ const (
 
 // Result MUST retain the selected evidence, including readable siblings of encrypted keys.
 type Result struct {
+	warnings []manifest.Warning
 	state    State
 	id       manifest.NamedResource
 	use      string
@@ -44,7 +45,14 @@ type Result struct {
 
 // Classify MUST resolve effective readable keys before interpreting unavailable evidence.
 func Classify(ref *manifest.Reference, input *store.ReferenceFacts) (Result, error) {
-	result := Result{id: ref.NamedResource, use: ref.Use, optional: ref.Optional, data: input.Data, key: ref.Key}
+	result := Result{
+		warnings: input.Warnings,
+		id:       ref.NamedResource,
+		use:      ref.Use,
+		optional: ref.Optional,
+		data:     input.Data,
+		key:      ref.Key,
+	}
 	if !ref.NamedResource.KindInfo().Data {
 		return result, manifest.NewError(
 			manifest.ErrInvalidValuesReference,
@@ -78,11 +86,24 @@ func Classify(ref *manifest.Reference, input *store.ReferenceFacts) (Result, err
 			result.state = Encrypted
 		}
 	}
-	if result.state == Encrypted {
-		return result, nil
+	state := unresolvedState(input, ref.Key, result.state)
+	if state == Absent && result.state == Encrypted {
+		result.data = nil
 	}
-	result.state = unresolvedState(input, ref.Key)
+	result.state = state
 	return result, nil
+}
+
+// ReportWarnings publishes classified evidence only through its consuming assessment.
+func (r *Result) ReportWarnings(reads *store.ReadSet) {
+	if r.state == Absent {
+		return
+	}
+	for i := range r.warnings {
+		warning := r.warnings[i]
+		warning.Resource = r.id
+		reads.AddWarning(warning)
+	}
 }
 
 // State MUST be nonzero before a caller treats the result as classified.
@@ -191,7 +212,14 @@ func unreadableWarning(warning *manifest.Warning, data manifest.Data, requested 
 
 const substitutionUse = "substituteFrom"
 
-func unresolvedState(input *store.ReferenceFacts, key string) State {
+func unresolvedState(input *store.ReferenceFacts, key string, state State) State {
+	if state == Encrypted {
+		private := input.Private && input.Prepared && !input.Accepted
+		if private && (input.Data == nil || !input.Data.HasKeys()) {
+			return Absent
+		}
+		return state
+	}
 	if key == "" && input.Data != nil {
 		return Readable
 	}

@@ -102,7 +102,7 @@ spec:
 			}
 		}, false)
 		defer unsubscribe()
-		result, err := o.collectResult(o.run(t.Context()))
+		result, err := o.collectResult(t.Context(), o.run(t.Context()))
 		t.Cleanup(result.Close)
 		assert.NoError(t, err)
 		assert.Diff(t, published, []string{"./entry", "./elsewhere"})

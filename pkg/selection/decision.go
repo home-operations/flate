@@ -20,10 +20,11 @@ const decisionBuckets = 64
 
 // Decision MUST remain immutable after publication, including every borrowed bucket.
 type Decision struct {
-	seed      maphash.Seed
-	buckets   [decisionBuckets]map[manifest.NamedResource]uint8
-	revision  uint64
-	execution bool
+	seed         maphash.Seed
+	buckets      [decisionBuckets]map[manifest.NamedResource]uint8
+	revision     uint64
+	execution    bool
+	unrestricted bool
 }
 
 func (d *Decision) roles(id manifest.NamedResource) uint8 {
@@ -35,22 +36,22 @@ func (d *Decision) roles(id manifest.NamedResource) uint8 {
 
 // Reconcile admits every identity when the decision is nil.
 func (d *Decision) Reconcile(id manifest.NamedResource) bool {
-	return d.roles(id)&needed != 0
+	return d == nil || d.unrestricted || d.roles(id)&needed != 0
 }
 
 // Output includes every identity when the decision is nil.
 func (d *Decision) Output(id manifest.NamedResource) bool {
-	return d.roles(id)&selected != 0
+	return d == nil || d.unrestricted || d.roles(id)&selected != 0
 }
 
 // Changed treats unrestricted execution as changed.
 func (d *Decision) Changed(id manifest.NamedResource) bool {
-	return d.roles(id)&dirty != 0
+	return d == nil || d.unrestricted || d.roles(id)&dirty != 0
 }
 
 // OrdinaryDemand permits ordinary execution when the decision is nil.
 func (d *Decision) OrdinaryDemand(id manifest.NamedResource) bool {
-	return d.roles(id)&ordinary != 0
+	return d == nil || d.unrestricted || d.roles(id)&ordinary != 0
 }
 
 // Ordering preserves missing external dependency validation without admitting excluded inventory.
@@ -59,7 +60,7 @@ func (d *Decision) Ordering(id manifest.NamedResource, present, indexed bool) bo
 }
 
 func (d *Decision) namespaces() map[string]struct{} {
-	if d == nil {
+	if !d.restricted() {
 		return nil
 	}
 	var result map[string]struct{}

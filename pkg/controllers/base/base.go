@@ -82,7 +82,7 @@ func (c *Controller) KeepEmitted(
 	parent manifest.NamedResource,
 	request selection.PrepareRequest,
 ) (bool, error) {
-	if c.selection == nil {
+	if c.selection.Snapshot().Output(manifest.NamedResource{}) {
 		return true, nil
 	}
 	if c.loader == nil {

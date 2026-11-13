@@ -53,7 +53,7 @@ type Snapshot struct {
 	Absent           bool
 }
 
-func (d *Decision) restricted() bool { return d != nil }
+func (d *Decision) restricted() bool { return d != nil && !d.unrestricted }
 
 // CollectEmissions applies committed membership without mutating the captured emission facts.
 func (s *Snapshot) CollectEmissions() {

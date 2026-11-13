@@ -24,6 +24,9 @@ func (c *admissionClosure) walk(
 			return err //nolint:wrapcheck // Admission cancellation preserves the original context error identity.
 		}
 		id := c.queue[cursor]
+		if c.decision.unrestricted && (c.incoming(id).Obj != nil || c.objects.GetDeclaration(id) != nil) {
+			continue
+		}
 		if err := c.walkObject(id, materializers); err != nil {
 			return err
 		}
@@ -32,10 +35,9 @@ func (c *admissionClosure) walk(
 }
 
 type completeHydrateState struct {
-	independent bool
-	id          *manifest.NamedResource
-	record      *manifest.DiscoveryRecord
-	obj         *manifest.BaseManifest
+	id     *manifest.NamedResource
+	record *manifest.DiscoveryRecord
+	obj    *manifest.BaseManifest
 }
 
 //nolint:ireturn // Hydration MUST retain each concrete manifest type behind the common contract.
@@ -51,13 +53,7 @@ func (c *admissionClosure) completeHydrate(
 		(*scope.obj) = child.Obj
 		return (*scope.obj), nil
 	}
-	var occurrence OccurrenceFacts
-	var ok bool
-	if scope.independent && !c.context.NativeEntry {
-		occurrence, ok = c.catalogOccurrence(*scope.id)
-	} else {
-		occurrence, ok = c.occurrence(*scope.id)
-	}
+	occurrence, ok := c.occurrence(*scope.id)
 	if !ok {
 		return (*scope.obj), nil
 	}
@@ -518,7 +514,7 @@ func (c *admissionClosure) hydrateDeclaration(
 	if c.incoming(id).Obj != nil || c.children[id].Obj != nil {
 		return obj, nil
 	}
-	if current, policy := c.objects.Lookup(id); current != nil &&
+	if _, policy := c.objects.Lookup(id); c.objects.GetDeclaration(id) != nil &&
 		(policy.Root || policy.Origin == manifest.SuppliedDeclaration && !c.rootEvidence(id).Admitted) {
 		return obj, nil
 	}
@@ -527,14 +523,15 @@ func (c *admissionClosure) hydrateDeclaration(
 		owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(path), manifest.NamedResource{}).
 			Named()
 		status, _ := c.objects.GetStatus(owner)
-		if status.Outcome() != store.OutcomeFailed && (c.role(owner).needed || !c.session.request.Changed) {
+		if c.decision.Output(manifest.NamedResource{}) ||
+			status.Outcome() != store.OutcomeFailed && (c.role(owner).needed || !c.session.request.Changed) {
 			return obj, nil
 		}
 	}
+	if evidence.built && c.hydrateBuilt(id, &evidence.child) {
+		return evidence.child.Obj, nil
+	}
 	if evidence.built {
-		if c.hydrateBuilt(id, &evidence.child) {
-			return evidence.child.Obj, nil
-		}
 		return obj, nil
 	}
 	record := c.record(id)
@@ -546,7 +543,7 @@ func (c *admissionClosure) hydrateDeclaration(
 	}
 	var hydrated manifest.BaseManifest
 	return c.completeHydrate(
-		&completeHydrateState{id: &id, record: &record, obj: &hydrated, independent: evidence.independent},
+		&completeHydrateState{id: &id, record: &record, obj: &hydrated},
 	)
 }
 

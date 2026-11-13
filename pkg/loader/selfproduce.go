@@ -72,8 +72,9 @@ func (l *Loader) buildProductions(
 
 	for _, dir := range l.unreachedGeneratorRoots(repoRoot, remaining) {
 		root := graphVisit{root: repoRoot, dir: dir}
-		walks := l.visitScope(new(root), false)
-		if err := declarations.recordStandalone(ctx, b, record, walks); err != nil {
+		l.visitScope(new(root), false)
+		contribution := &l.scopes.contributions[len(l.scopes.contributions)-1]
+		if err := declarations.recordStandalone(ctx, b, record, contribution); err != nil {
 			return err
 		}
 	}
@@ -108,7 +109,7 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 				record.Productions = append(record.Productions, p)
 			}
 			l.Index.Records[id] = record
-			if l.documents.compact {
+			if l.documents.compact && !l.Options.Session.Snapshot().Output(manifest.NamedResource{}) {
 				continue
 			}
 			child, err := r.materialize(ctx, &l.Options)

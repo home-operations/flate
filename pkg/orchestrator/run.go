@@ -10,6 +10,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -39,7 +40,10 @@ func (e *orchestratorExistence) Promote(
 	if e.o.preparation != nil {
 		return e.promotePrepared(ctx, request, id)
 	}
-	if e.o.selection != nil {
+	if !e.o.selection.Snapshot().Output(manifest.NamedResource{}) {
+		if _, known := e.DiscoveryIndex.Lookup(id); !known && e.o.store.GetObject(id) == nil {
+			return e.promoteAdmission(ctx, request, id)
+		}
 		return e.promoteSelected(ctx, &request, id)
 	}
 	if object := e.o.store.GetObject(id); object != nil {
@@ -80,10 +84,6 @@ func (e *orchestratorExistence) promoteFull(
 	id manifest.NamedResource,
 ) (bool, error) {
 	reads := request.Reads
-	addWarning := e.o.store.AddWarning
-	if reads != nil {
-		addWarning = reads.AddWarning
-	}
 	if reads == nil {
 		reads = &store.ReadSet{}
 		reads.Init(e.o.store, id, nil)
@@ -104,11 +104,7 @@ func (e *orchestratorExistence) promoteFull(
 			if !reads.Valid() {
 				return false, nil
 			}
-			for i := range child.Warnings {
-				warning := child.Warnings[i]
-				warning.Resource = child.Obj.Named()
-				addWarning(warning)
-			}
+
 			reads.Admit(child, child.SourceSupport, production.Owner)
 		}
 		if e.o.store.GetObject(id) != nil {
@@ -164,7 +160,7 @@ func (e *orchestratorExistence) promoteAdmission(
 
 func (o *Orchestrator) run(ctx context.Context) error {
 	o.cfg.work.Scope().Reserve(len(o.index.Records))
-	if o.selection == nil {
+	if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 		o.configureControllers()
 	}
 	// Cycle failures MUST publish before scheduler admission of emitted objects.
@@ -206,7 +202,7 @@ func (o *Orchestrator) configureControllers() {
 	o.agc.Configure(common)
 }
 
-func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
+func (o *Orchestrator) collectResult(ctx context.Context, runErr error) (*Result, error) {
 	var warnings []manifest.Warning
 	if o.admission != nil {
 		warnings = o.admission.Warnings()
@@ -227,9 +223,24 @@ func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 	o.index = selection.ProjectIndex(o.index, o.selection.Snapshot())
 	o.store.SetDiscoveryIndex(o.index)
 	maps.Copy(res.Failed, failed)
+	snapshot := selection.Snapshot{
+		Store:    o.store,
+		Index:    o.index,
+		Facts:    res.catalog,
+		Decision: o.selection.Snapshot(),
+		Failed:   failed,
+		Entry:    selection.EntryIdentity{Producer: o.entryBinding.Producer, Key: o.entryBinding.Key},
+	}
+	for id, references := range snapshot.Predictions() {
+		var reads store.ReadSet
+		reads.Init(o.store, id, nil)
+		waiter := depwait.Waiter{Store: &reads, Parent: id, Missing: o.cfg.missing}
+		if err := waiter.Prediction(ctx, &reads, references); err != nil {
+			res.Failed[id] = store.FailureStatus(err)
+		}
+		reads.Retire()
+	}
 	maps.Copy(res.Orphans, o.orphans)
-	// Tag the derived (dependency-blocked) failures so a consumer can collapse
-	// the cascade under its root cause. A failure with no blockers is primary.
 	for id, info := range res.Failed {
 		if info.IsDependencyFailure() {
 			res.Blocked[id] = info.BlockedBy()

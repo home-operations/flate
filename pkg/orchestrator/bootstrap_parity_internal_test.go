@@ -62,7 +62,7 @@ spec:
 	fetcher := &generatedOCIFetcher{err: errors.New("declared self source attempted remote acquisition")}
 	o.src.Fetchers[manifest.KindGitRepository] = fetcher
 	assert.NoError(t, o.bootstrap(t.Context()))
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(result.Close)
 	assert.Equal(t, fetcher.calls.Load(), int64(0))
 	assert.NoError(t, err)

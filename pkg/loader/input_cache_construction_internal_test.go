@@ -98,6 +98,12 @@ func TestInputCache_CurrentConstructionMatchesCold(t *testing.T) {
 				}
 				got, ok := restored.Occurrence(id)
 				assert.Equal(t, ok, true)
+				assert.Equal(t, got.RequiresBuild, want.RequiresBuild)
+				wantOccurrence, wantKnown := cold.catalogOccurrence(id)
+				gotOccurrence, gotKnown := restored.catalogOccurrence(id)
+				assert.Equal(t, wantKnown, true)
+				assert.Equal(t, gotKnown, true)
+				assert.Equal(t, gotOccurrence.facts.collection, wantOccurrence.facts.collection)
 				wantChild, wantErr := cold.OccurrenceObject(t.Context(), &want, nil)
 				gotChild, gotErr := restored.OccurrenceObject(t.Context(), &got, nil)
 				assert.NoError(t, wantErr)

@@ -75,7 +75,7 @@ func TestRender_RootSecretOverridesDeclaredOutput(t *testing.T) {
 		record,
 	)
 
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(result.Close)
 	assert.NoError(t, err)
 	assert.Equal(t, substitutionValue(t, result, testutil.KustomizationID("apps", "consumer")), "repository")

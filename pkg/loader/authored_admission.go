@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/selection"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -16,7 +15,9 @@ func (l *Loader) applyAdmittedObjects(
 ) bool {
 	changed := false
 	for _, id := range slices.SortedFunc(maps.Keys(l.admitted), manifest.NamedResource.Compare) {
-		if _, survives := next[id]; !survives || !selection.Root(allowed.get(id).view()).Admitted {
+		evidence := allowed.get(id).view()
+		if record, survives := next[id]; !survives || !l.admitsDeclaration(&evidence) ||
+			l.locations[id].requiresBuild && record.Builder == "" {
 			if l.Store.GetObject(id) == l.admitted[id] && l.Store.GetArtifact(id, store.ArtifactContent) == nil {
 				l.Store.DeleteObject(id)
 				changed = true
@@ -30,8 +31,10 @@ func (l *Loader) applyAdmittedObjects(
 	for _, id := range slices.SortedFunc(maps.Keys(objects), manifest.NamedResource.Compare) {
 		child := objects[id]
 		obj := child.Obj
-		if !selection.Root(allowed.get(id).view()).Admitted || !manifest.KindOf(obj).Discovery ||
-			l.documents.compact && next[id].Path != "" {
+		evidence := allowed.get(id).view()
+		deferred := l.documents.compact && next[id].Path != "" &&
+			(!l.documents.eager || l.locations[id].requiresBuild)
+		if !l.admitsDeclaration(&evidence) || !manifest.KindOf(obj).Discovery || deferred {
 			continue
 		}
 		changed = l.publishAdmittedObject(&child) || changed

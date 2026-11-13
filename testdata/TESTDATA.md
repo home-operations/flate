@@ -1611,3 +1611,56 @@ Components use consumers within the same materialized repository when repositori
 The fixture uses no network service and disables persistent caching.
 Expected output follows the declared ConfigMap and its Flux ownership labels.
 Expected diagnostics follow the missing target identity and the report formatter.
+
+## Parent-rendered declarations
+
+`rendered-declaration-path` retains issue #1537: a parent patch supplies the child path.
+Both diff commands show the ConfigMap change, and the Kustomization test reports three passes.
+
+`rendered-declaration-identity` retains issue #1540: a parent supplies the child namespace.
+The comment-only change produces an empty diff and terminates.
+
+`rendered-declaration-site` retains issue #1541: two sites patch one shared child.
+The site-b entry renders only its tree and reports the changed ConfigMap.
+
+Each scenario includes a control with the transformation in the raw declaration.
+The tests compare complete stdout, stderr, and exit codes against authored expectations.
+They compare the witness and control, then repeat both sequences with empty caches.
+
+`rendered-declaration-helm` retains the #1539 local chart witness against main after #1542. It covers HelmRelease and full commands across the parent resource boundary.
+
+`rendered-declaration-helm/witness` cover the commands described above.
+
+`rendered-declaration-identity/witness`, `rendered-declaration-identity/control` cover the commands described above.
+
+`rendered-declaration-path/witness`, `rendered-declaration-path/control` cover the commands described above.
+
+`rendered-declaration-site/witness`, `rendered-declaration-site/control` cover the commands described above.
+
+`declaration-readiness-secret/`, `declaration-readiness-prediction/`, and `declaration-readiness-source/` retains main's data and diagnostic results for prepared and predicted declarations.
+The secret cases use a synthetic encrypted component under a ResourceSet-emitted Kustomization.
+The prediction cases keep a ResourceSet diagnostic after its native entry fails.
+Both shapes run with and without missing-Secret permission.
+The source case reduces jfroy with a namespace transformer and a parent that requires preparation.
+It keeps the blocked coredns row without fetching or rendering its child.
+Every case compares complete build and test output twice with fresh caches and two workers.
+
+| Case | Behavior |
+| --- | --- |
+| `declaration-readiness-secret/secret` | Private unreadable Secret blocks its consumer without a warning. |
+| `declaration-readiness-secret/secret-allowed` | Secret permission retains encrypted warnings and rendered output. |
+| `declaration-readiness-prediction/prediction` | Failed entry retains its predicted ResourceSet blocker. |
+| `declaration-readiness-prediction/prediction-allowed` | Secret permission retains the required ConfigMap blocker. |
+| `declaration-readiness-source/source` | Blocked source retains its diagnostic row without child output. |
+
+`declaration-readiness-secret/secret-supplied` retains encrypted input authority from an explicit supply.
+
+`declaration-readiness-frontier/` limits diagnostic membership at blocked publication boundaries.
+The emitted case excludes children of an unpublished Kustomization.
+The native case retains a passing peer after entry failure and excludes the blocked parent's children.
+Both cases compare complete test and build output twice with fresh caches and two workers.
+
+| Case | Behavior |
+| --- | --- |
+| `declaration-readiness-frontier/frontier-emitted` | A blocked emitted Kustomization does not admit its predicted children. |
+| `declaration-readiness-frontier/frontier-native` | A failed native entry retains its passing peer and direct blockers. |

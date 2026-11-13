@@ -174,7 +174,8 @@ func TestCompleteBootstrap_Cancellation(t *testing.T) {
 	o.cfg.ExternalChanges = change.NewSet([]string{"flux/emitter.yaml"})
 	err = o.prepareInvocation(ctx)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, len(selectionNamesForTest(o.selection, o.store, o.index)) == 0, true)
+	assert.Equal(t, o.selection != nil, true)
+	assert.Equal(t, o.selection.Snapshot().Output(manifest.NamedResource{}), true)
 	for range o.store.Sweep() {
 		t.Fatal("canceled preparation left probe registrations")
 	}
@@ -290,7 +291,7 @@ func testRenderEntryOwnerDependsOnSiblingCase(
 			"deferred substitution published the effective sibling during discovery",
 		)
 	}
-	result, err := o.collectResult(o.run(t.Context()))
+	result, err := o.collectResult(t.Context(), o.run(t.Context()))
 	t.Cleanup(result.Close)
 	if (*testCaseInput) == "cycle" {
 		assert.FatalIf(t, err == nil, "%v", "authored cycle rendered successfully")

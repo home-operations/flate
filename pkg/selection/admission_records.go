@@ -260,6 +260,13 @@ func (c *admissionClosure) declarationUnchanged(id, owner manifest.NamedResource
 	if c.context.SideKnown && record.Authored != id {
 		return false
 	}
+	if c.context.SideKnown && record.Builder != "" {
+		stable := true
+		c.checkDeclarationReferences(owner, &stable)
+		if !stable {
+			return false
+		}
+	}
 	return (record.BuilderOwner == (manifest.NamedResource{}) || owner == record.BuilderOwner) &&
 		record.File != record.Builder &&
 		record.Declaration != nil &&
@@ -662,18 +669,19 @@ func (c *admissionClosure) classifyAuthoredDeclaration(
 	occurrence, located := c.occurrence(id)
 	root := c.rootEvidence(id)
 	acquire := c.states[id].requested && c.bootstrapPrerequisite(id)
-	if root.Owner != (manifest.NamedResource{}) && !acquire {
+	eagerAuthored := c.decision.Output(manifest.NamedResource{}) && root.Admitted &&
+		located && !root.Owner.ReportHidden()
+	if root.Owner != (manifest.NamedResource{}) && !acquire && !eagerAuthored {
 		evidence.owner = root.Owner
 		return
 	}
-	if root.Occurrence.Declaration == (OccurrenceID{}) {
+	if !located || root.Occurrence.Declaration == (OccurrenceID{}) {
 		return
 	}
 	if root.Admitted || acquire {
 		evidence.owner = manifest.NamedResource{}
 	}
-	if !located ||
-		evidence.owner != (manifest.NamedResource{}) && !evidence.owner.ReportHidden() && evidence.owner != id {
+	if evidence.owner != (manifest.NamedResource{}) && !evidence.owner.ReportHidden() && evidence.owner != id {
 		return
 	}
 	input, _ := c.hydrationSource(id, occurrence.Declaration.Source)

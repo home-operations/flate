@@ -1,0 +1,376 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "ef748ebcd095bf273670c7fa41cba4f5ba532142",
+    "paths": [
+      "issue-1540"
+    ],
+    "reductions": "Retain the reported local tree. Controls write the parent transformation into the authored child."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    },
+    {
+      "name": "baseline",
+      "directory": "baseline"
+    },
+    {
+      "name": "control",
+      "directory": "control"
+    },
+    {
+      "name": "controlbaseline",
+      "directory": "controlbaseline"
+    }
+  ],
+  "commits": [],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "witness",
+      "description": "Parent-rendered declaration identity.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff-all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--path-orig",
+              "@@baseline@@/site-a"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "control",
+      "description": "Parent-rendered declaration identity.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "diff-all",
+          "invoke": {
+            "argv": [
+              "diff",
+              "all",
+              "--path",
+              "@@repo@@/../control/site-a",
+              "--cache-dir",
+              "@@cache@@",
+              "--no-progress",
+              "--concurrency",
+              "2",
+              "--path-orig",
+              "@@repo@@/../controlbaseline/site-a"
+            ],
+            "cache": {},
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "baseline/joint/file.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "baseline/layer/common/first.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "baseline/layer/common/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "baseline/layer/common/second.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "baseline/layer/site-a/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "baseline/payload/one/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "baseline/payload/two/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "baseline/site-a/sync.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "control/joint/file.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "control/layer/common/first.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "control/layer/common/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "control/layer/common/second.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "control/layer/site-a/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "control/payload/one/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "control/payload/two/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "control/site-a/sync.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "controlbaseline/joint/file.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "controlbaseline/layer/common/first.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "controlbaseline/layer/common/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "controlbaseline/layer/common/second.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "controlbaseline/layer/site-a/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "controlbaseline/payload/one/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "controlbaseline/payload/two/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "controlbaseline/site-a/sync.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "repo/joint/file.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "repo/layer/common/first.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "repo/layer/common/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "repo/layer/common/second.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "repo/layer/site-a/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "repo/payload/one/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "repo/payload/two/kustomization.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    },
+    {
+      "path": "repo/site-a/sync.yaml",
+      "cases": [
+        "witness",
+        "control"
+      ],
+      "purpose": "Reported tree, raw control, or independently authored complete expected output."
+    }
+  ]
+}

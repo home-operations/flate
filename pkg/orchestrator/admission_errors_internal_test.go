@@ -147,7 +147,7 @@ func TestRender_AdmissionErrorPrecedesOptionalPolicy(t *testing.T) {
 				assert.Equal(t, errors.Is(err, cause), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				execution.Close()
-				result, err := o.collectResult(o.run(t.Context()))
+				result, err := o.collectResult(t.Context(), o.run(t.Context()))
 				t.Cleanup(result.Close)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				status, _ := o.store.GetStatus(consumer)

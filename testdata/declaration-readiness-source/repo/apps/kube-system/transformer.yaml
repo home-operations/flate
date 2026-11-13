@@ -1,0 +1,12 @@
+apiVersion: builtin
+kind: NamespaceTransformer
+metadata: {name: apply-ns, namespace: kube-system}
+unsetOnly: false
+fieldSpecs:
+- path: metadata/name
+  kind: Namespace
+  create: true
+- path: spec/targetNamespace
+  group: kustomize.toolkit.fluxcd.io
+  kind: Kustomization
+  create: true

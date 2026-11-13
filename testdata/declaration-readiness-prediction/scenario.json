@@ -1,0 +1,231 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "ad21386f54e437d139a3f670a5603aef25edfa39",
+    "paths": [
+      "m00nwtchr/homelab-cluster",
+      "ionfury/homelab",
+      "jfroy/flatops"
+    ],
+    "reductions": "Retain private encrypted component data, failed native entry, and blocked coredns source. Inputs contain synthetic values only."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [],
+  "overlays": [],
+  "cases": [
+    {
+      "name": "prediction",
+      "description": "Prepared data and diagnostic-only declarations retain main output.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/prediction-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/prediction-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "prediction-allowed",
+      "description": "Prepared data and diagnostic-only declarations retain main output.",
+      "setup": [],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/prediction-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--cache-dir",
+              "@@cache@@",
+              "--concurrency",
+              "2",
+              "--no-progress",
+              "--only-kinds",
+              "ConfigMap",
+              "--allow-missing-kinds",
+              "Secret"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/empty.stdout",
+              "stderr": "expect/prediction-build.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/empty.stdout",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/prediction-build.stderr",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "expect/prediction-test.stdout",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/flux/ks.yaml",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/flux/kustomization.yaml",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output.",
+      "package": "failure"
+    },
+    {
+      "path": "repo/flux/platform.yaml",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/flux/rs.yaml",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/work/cm.yaml",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    },
+    {
+      "path": "repo/work/kustomization.yaml",
+      "cases": [
+        "prediction",
+        "prediction-allowed"
+      ],
+      "purpose": "Reduced declaration or independently authored complete expected output."
+    }
+  ]
+}

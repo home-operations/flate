@@ -39,7 +39,7 @@ func (o *Orchestrator) prepareInvocation(ctx context.Context) error {
 			},
 		)
 	}
-	if o.selection == nil {
+	if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 		prepared = true
 		return nil
 	}
@@ -185,7 +185,7 @@ func (o *Orchestrator) appendHistoryQuery(
 }
 
 func (o *Orchestrator) installAdmission(ctx context.Context) error {
-	if o.selection == nil && len(o.admission.EntryProducers()) == 0 {
+	if o.selection.Snapshot().Output(manifest.NamedResource{}) && len(o.admission.EntryProducers()) == 0 {
 		return nil
 	}
 	o.loader.Options.Changes = o.cfg.ExternalChanges
@@ -193,7 +193,7 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if o.selection == nil {
+	if o.selection.Snapshot().Output(manifest.NamedResource{}) {
 		if binding.Reads != nil {
 			_, err = o.commitEntry(ctx, root, &binding)
 		}

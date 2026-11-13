@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/selection"
@@ -23,6 +26,11 @@ import (
 func TestRenderTrees_FrameHistoryDiffSides(t *testing.T) {
 	t.Parallel()
 	roots := frameHistoryDiffRoots(t)
+	testFrameHistoryDiffSides(t, roots)
+}
+
+func testFrameHistoryDiffSides(t *testing.T, roots [2]string) {
+	t.Helper()
 	for _, direction := range []struct {
 		name   string
 		roots  [2]string
@@ -246,7 +254,8 @@ func observeFrameHistoryDiffSide(t *testing.T, run *Rendered, changed, reused bo
 	assert.FatalIf(t, !indexed, "unchanged producer is absent from the discovery index")
 	assert.Equal(t, run.Store().GetObject(sibling) == nil, changed)
 	assert.Equal(t, len(outputByParent(run.Result.Manifests)[sibling]) == 0, changed)
-	assert.Equal(t, run.selection != nil, changed)
+	assert.Equal(t, run.selection != nil, true)
+	assert.Equal(t, run.selection.Snapshot().Output(manifest.NamedResource{}), !changed)
 	if changed {
 		assert.ErrorIf(
 			t,
@@ -287,4 +296,68 @@ func observeFrameHistoryDiffSide(t *testing.T, run *Rendered, changed, reused bo
 		assert.Equal(t, configMapNames(run.Result)["cfg-a"], false)
 	}
 	return side
+}
+
+//nolint:tparallel // Source replacement follows the completed parallel comparisons.
+func TestRenderTrees_IndexedFrameHistoryDiffSides(t *testing.T) {
+	t.Parallel()
+	roots := frameHistoryDiffRoots(t)
+	replacements := make([]func(), 0, len(roots))
+	for _, root := range roots {
+		file := filepath.Join(root, "apps", "app-a", "cm.yaml")
+		body, err := os.ReadFile(file)
+		assert.NoError(t, err)
+		testutil.WriteFile(
+			t,
+			root,
+			"apps/app-a/cm.yaml",
+			strings.ReplaceAll(string(body), "./consumer", "./must-not-render"),
+		)
+		testutil.WriteFile(t, root, "apps/app-a/kustomization.yaml", `resources: [cm.yaml]
+patches:
+- target: {kind: Kustomization}
+  patch: |
+    - op: replace
+      path: /spec/path
+      value: ./consumer
+`)
+		st := store.New()
+		input := &store.SourceArtifact{LocalPath: root, Content: "transformed", FS: os.DirFS(root)}
+		st.SetArtifact(manifest.BootstrapSourceID, input)
+		l := loader.New(st)
+		l.SourceRoot = root
+		l.Options.Session, err = selection.New(st, l, selection.Request{Changed: true})
+		assert.NoError(t, err)
+		_, err = l.Load(t.Context(), filepath.Join(root, "apps", "app-a"), manifest.NamedResource{}, nil)
+		assert.NoError(t, err)
+		l.Admit(root)
+		id := testutil.KustomizationID("", "consumer-a")
+		occurrence, known := l.Occurrence(id)
+		assert.Equal(t, known, true)
+		assert.Equal(t, occurrence.RequiresBuild, true)
+		assert.Equal(t, st.GetDeclaration(id) == nil, true)
+		l.Admit(root)
+		again, known := l.Occurrence(id)
+		assert.Equal(t, known, true)
+		assert.Equal(t, again.RequiresBuild, true)
+		assert.Equal(t, st.GetDeclaration(id) == nil, true)
+		replacements = append(replacements, func() {
+			testutil.WriteFile(t, root, "apps/app-a/cm.yaml", string(body))
+			testutil.WriteFile(t, root, "apps/app-a/kustomization.yaml", "resources: [cm.yaml]\n")
+			replacement := *input
+			replacement.Content = "untransformed"
+			st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+			_, loadErr := l.Load(t.Context(), filepath.Join(root, "apps", "app-a"), manifest.NamedResource{}, nil)
+			assert.NoError(t, loadErr)
+			l.Admit(root)
+			current, exists := l.Occurrence(id)
+			assert.Equal(t, exists, true)
+			assert.Equal(t, current.RequiresBuild, false)
+			l.Retire()
+		})
+	}
+	t.Run("comparison", func(t *testing.T) { testFrameHistoryDiffSides(t, roots) })
+	for _, replace := range replacements {
+		replace()
+	}
 }

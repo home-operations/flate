@@ -208,7 +208,7 @@ func TestAdmission_DeclarationMoveChanges(t *testing.T) {
 						Namespace: "apps",
 						Name:      "chart",
 					}
-					occurrence, ok := l.occurrence(id)
+					occurrence, ok := l.catalogOccurrence(id)
 					assert.Equal(t, ok, true)
 					input := l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 					child, err := l.OccurrenceObject(t.Context(), new(occurrenceView(&occurrence)), input)

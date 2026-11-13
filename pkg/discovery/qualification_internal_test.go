@@ -39,9 +39,9 @@ func TestEntryQualification_NativePrerequisites(t *testing.T) {
 	}}
 	st := store.New()
 	d := newDiscoverer(&Config{Input: input, Path: filepath.Join(root, "entry"), Store: st, Trees: testTrees(t)})
-	_, err := d.resolveEntrySources(t.Context(), false)
+	_, err := d.resolveTestSources(t.Context(), false)
 	assert.NoError(t, err)
-	assert.NoError(t, d.loadManifests(t.Context(), root, true))
+	assert.NoError(t, d.loadManifestsTest(t.Context(), root, true))
 	assert.Equal(t, d.binding.Producer.ReportHidden(), true)
 	owner := d.loader.CatalogObject(testutil.KustomizationID("apps", "owner"))
 	assert.FatalIf(t, owner == nil, "owner construction declaration missing")
@@ -198,7 +198,7 @@ func TestEntryQualification_PreparationReuse(t *testing.T) {
 	)
 	d := newDiscoverer(&fixture.cfg)
 	t.Cleanup(d.Close)
-	assert.NoError(t, d.loadManifests(t.Context(), fixture.cfg.Input.LocalPath, false))
+	assert.NoError(t, d.loadManifestsTest(t.Context(), fixture.cfg.Input.LocalPath, false))
 	q := d.admission().qualification
 	commit := func() {
 		var reads store.ReadSet

@@ -660,9 +660,11 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 	}
 	st.AddObject(pinned)
 	objects := make([]manifest.BaseManifest, 0, 6)
-	want := []string{
+	want := make([]string, 0, 5)
+	want = append(
+		want,
 		(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}).String(),
-	}
+	)
 	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
 		sourceID := manifest.NamedResource{
 			Group:     manifest.SourceDomain,
@@ -670,9 +672,7 @@ func testRunAliasesURLMatchedInTreeGitRepositoryCase(
 			Namespace: "other",
 			Name:      "missing",
 		}
-		if kind == manifest.KindGitRepository {
-			want = append(want, sourceID.String())
-		}
+		want = append(want, sourceID.String())
 		for _, name := range []string{"one", "two"} {
 			objects = append(
 				objects,

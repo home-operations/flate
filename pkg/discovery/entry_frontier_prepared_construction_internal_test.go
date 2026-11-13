@@ -99,7 +99,7 @@ func TestEntryFrontier_ParentDependencyNamespace(t *testing.T) {
 			f.cfg.Input.FS.(fstest.MapFS)["parent/applier.yaml"] = &fstest.MapFile{Data: []byte(body)}
 			d := newDiscoverer(&f.cfg)
 			d.loader.SourceRoot = f.cfg.Input.LocalPath
-			assert.NoError(t, d.loadManifests(t.Context(), f.cfg.Input.LocalPath, false))
+			assert.NoError(t, d.loadManifestsTest(t.Context(), f.cfg.Input.LocalPath, false))
 			assertConstructionHasNoOutput(t, f.cfg.Store, parent)
 			assert.NoError(t, d.prepareProducer(t.Context(), parent, f.cfg.Input, nil))
 			prepared := d.prepared[parent.Named()]
@@ -225,7 +225,7 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 	t.Helper()
 	d := newDiscoverer(&f.cfg)
 	d.loader.SourceRoot = f.cfg.Input.LocalPath
-	assert.NoError(t, d.loadManifests(t.Context(), f.cfg.Input.LocalPath, false))
+	assert.NoError(t, d.loadManifestsTest(t.Context(), f.cfg.Input.LocalPath, false))
 	f.assertSubstitutions(t)
 	assert.Equal(t, f.cfg.Store.GetObject(testutil.KustomizationID("apps", "applier")), nil)
 	assertConstructionHasNoOutput(t, f.cfg.Store, f.parent)
@@ -301,7 +301,7 @@ func (f *preparedConstructionFixture) stages(t *testing.T) {
 		assert.Equal(t, slices.Contains(proposal.Needed, testutil.KustomizationID("shared", "prod-config")), true)
 		assert.Equal(t, slices.Contains(proposal.Needed, testutil.KustomizationID("apps", "unpatched")), false)
 	}
-	assert.NoError(t, d.loadManifests(t.Context(), f.cfg.Input.LocalPath, true))
+	assert.NoError(t, d.loadManifestsTest(t.Context(), f.cfg.Input.LocalPath, true))
 	assert.FatalIf(
 		t,
 		d.binding.Producer == (manifest.NamedResource{}),

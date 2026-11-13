@@ -1,0 +1,5 @@
+configMapGenerator:
+  - name: absent-sync
+    literals: [producer=absent]
+generatorOptions:
+  disableNameSuffixHash: true

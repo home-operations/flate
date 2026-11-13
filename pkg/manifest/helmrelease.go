@@ -492,6 +492,7 @@ func (h *HelmRelease) chartReferences(yield func(Reference) bool) bool {
 				Content:          true,
 				Files:            files,
 				ChartPath:        chartPath,
+				readsSourceTree:  chartPath != "" && backing.UsesSourceValuesFiles(),
 				Gate:             stage,
 				Artifact:         artifact,
 				ChartSource:      artifact,

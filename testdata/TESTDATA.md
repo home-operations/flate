@@ -51,6 +51,27 @@ The expected diff follows the local chart and its image values.
 `component-secret-producer/renamed-producer` and `component-secret-producer/renamed-producer-reverse` retain those errors after a target rename.
 These cases include reversed diff sides and shallow history.
 
+`bootstrap-role/gitrepository`, `bootstrap-role/ocirepository`, and `bootstrap-role/bucket` cover issue #1529 in build, diff, and test.
+`bootstrap-role/chart-only` covers a packaged-chart reference.
+The chart-only case keeps an undeclared packaged chart unavailable.
+`bootstrap-role/sync-oci` reduces the reported xunholy FluxInstance topology to one projected OCI source and four consumers.
+The source is `flux-system/flux-system`, and the entry is `kubernetes/clusters/cluster-00`.
+The artifact paths, including `./apps/overlays/cluster-00`, do not exist at the repository root.
+An unavailable ResourceSet projects the FluxInstance.
+The producer requires the absent FluxInstance CRD, a Kubernetes resource type definition.
+Discovery retains the projected source without publishing its declaration.
+No independent OCI declaration replaces the projection.
+The source stays unavailable offline, and its consumers stay blocked.
+The case covers full test, full build, changed-only build, and forward diff.
+`bootstrap-role/sync-oci-reverse` reverses the same explicit Git revisions.
+`bootstrap-role/sync-oci-added` and `bootstrap-role/sync-oci-removed` retain the producer and its consumers on only one side.
+`bootstrap-role/sync-oci-direct` declares the FluxInstance directly and retains the same four unavailable-source consumers.
+It covers full test, full build, changed-only build, and forward diff without an independent OCI declaration.
+`bootstrap-role/sync-oci-direct-reverse` compares the same explicit revisions in reverse.
+Each invocation starts with an empty isolated cache and two workers.
+Two runs use fresh caches and two workers.
+
+
 `gitignored-working-tree/ignored-working-tree` keeps ignored untracked desktop files and Flux declarations out of local Git inputs.
 Two replays compare complete full-selection, changed-only, and diff output with fresh caches and two workers.
 

@@ -98,6 +98,9 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache) *Controlle
 func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
 	c.Discovery = opts.Discovery
+	if c.Discovery != nil && c.Discovery.Binding.Failure != nil {
+		c.Store.UpdateFailure(c.Discovery.Binding.Producer, c.Discovery.Binding.Failure)
+	}
 	c.retry = retry
 	c.strictSubstitutions = opts.StrictSubstitutions
 	c.restricted = opts.Session != nil

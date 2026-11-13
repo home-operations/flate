@@ -63,6 +63,19 @@ func (a *SourceArtifact) WithReads(reads *ReadSet) *SourceArtifact {
 	return &captured
 }
 
+// SameMaterial compares acquisition identity independently of execution registrations.
+func (a *SourceArtifact) SameMaterial(other *SourceArtifact) bool {
+	if a == nil || other == nil {
+		return a == other
+	}
+	return a.Input(
+		ArtifactContent|ArtifactRevision|ArtifactOrigin,
+	) == other.Input(
+		ArtifactContent|ArtifactRevision|ArtifactOrigin,
+	) &&
+		a.mutableMaterial() == other.mutableMaterial()
+}
+
 func (a *SourceArtifact) mutableMaterial() *SourceArtifact {
 	if a == nil || a.Content != "" || a.FS == nil {
 		return nil

@@ -124,12 +124,13 @@ func (h *HelmChartSource) references(yield func(Reference) bool) {
 			"",
 			h.Namespace,
 		),
-		bindsSource: true,
-		Use:         sourceKey,
-		Content:     h.SourceRef.Name != "",
-		Files:       files,
-		ChartPath:   chartPath,
-		Gate:        gate,
+		bindsSource:     true,
+		Use:             sourceKey,
+		Content:         h.SourceRef.Name != "",
+		Files:           files,
+		ChartPath:       chartPath,
+		readsSourceTree: chartPath != "" && chart.UsesSourceValuesFiles(),
+		Gate:            gate,
 	})
 }
 

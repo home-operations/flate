@@ -97,9 +97,9 @@ func testPlanParsedInputHandoffCase1(t *testing.T, entries *[]Entry, input **sto
 				"matching input did not borrow its parsed evidence",
 			)
 
-			_, err := d.resolveEntrySources(t.Context(), false)
+			_, err := d.resolveTestSources(t.Context(), false)
 			assert.NoError(t, err)
-			assert.NoError(t, d.loadManifests(t.Context(), (*root), false))
+			assert.NoError(t, d.loadManifestsTest(t.Context(), (*root), false))
 			owner := d.loader.CatalogObject(manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "owner"}).(*manifest.Kustomization)
 			side := strings.Split(owner.Path, "/")[1]
 			// The owner ruling restores #1379's owner-path and sibling-isolation expectations.

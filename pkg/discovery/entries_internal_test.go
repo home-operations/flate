@@ -105,7 +105,7 @@ spec:
 		assert.NoError(t, failures[i])
 		assert.Equal(t, len(entries[i]), 1)
 		entry := entries[i][0]
-		session, err := Begin(
+		session, err := beginTest(
 			t.Context(),
 			Config{
 				Entry:     &entry,
@@ -342,7 +342,7 @@ func TestPlan_OrdinarySupplierCensusReuse(t *testing.T) {
 	cfg.Loader = loader.New(cfg.Store)
 	configureSelection(t, cfg.Loader, cfg.Selection)
 	cfg.Entry = &entries[0]
-	session, err := Begin(t.Context(), cfg)
+	session, err := beginTest(t.Context(), cfg)
 	assert.NoError(t, err)
 	assert.Equal(t, reads.Load(), before)
 	assert.NoError(t, session.refreshDeclarations(t.Context(), root))

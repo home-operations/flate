@@ -1,0 +1,1214 @@
+{
+  "source": {
+    "repository": "home-operations/flate",
+    "revision": "d4724e69d311acbe9b08393174b52e82185938dd",
+    "paths": [
+      "pkg/discovery/bootstrap.go"
+    ],
+    "reductions": "Minimal equivalent of issue #1529: an undeclared bootstrap source and ConfigMap hello. GitRepository, OCIRepository, and Bucket use the same Kustomization. The sync-oci cases reduce xunholy/k8s-gitops@2f2e6edc730457a3f45d7a73aad536afc683b5eb: the chart sync values become a FluxInstance inside an unavailable ResourceSet, and four consumers keep artifact-relative paths absent from the repository root. The sync-oci-direct cases declare the same FluxInstance directly and retain the unavailable source through the complete CLI lifecycle."
+  },
+  "repositories": [
+    {
+      "name": "repo",
+      "directory": "repo"
+    }
+  ],
+  "commits": [
+    {
+      "repository": "repo",
+      "name": "gitrepository",
+      "overlay": "gitrepository",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "ocirepository",
+      "overlay": "ocirepository",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "bucket",
+      "overlay": "bucket",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "chart-only",
+      "overlay": "chart-only",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "sync-oci-base",
+      "overlay": "sync-oci-base",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": []
+    },
+    {
+      "repository": "repo",
+      "name": "sync-oci-head",
+      "overlay": "sync-oci-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "sync-oci-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sync-oci-absent",
+      "overlay": "sync-oci-absent",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "sync-oci-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sync-oci-direct-base",
+      "overlay": "sync-oci-direct",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "sync-oci-base"
+      ]
+    },
+    {
+      "repository": "repo",
+      "name": "sync-oci-direct-head",
+      "overlay": "sync-oci-head",
+      "author": "fixture",
+      "email": "fixture@example.test",
+      "time": "2000-01-01T00:00:00Z",
+      "parents": [
+        "sync-oci-direct-base"
+      ]
+    }
+  ],
+  "overlays": [
+    {
+      "name": "changed",
+      "directory": "overlays/changed"
+    },
+    {
+      "name": "gitrepository",
+      "directory": "overlays/gitrepository"
+    },
+    {
+      "name": "ocirepository",
+      "directory": "overlays/ocirepository"
+    },
+    {
+      "name": "bucket",
+      "directory": "overlays/bucket"
+    },
+    {
+      "name": "chart-only",
+      "directory": "overlays/chart-only"
+    },
+    {
+      "name": "sync-oci-base",
+      "directory": "overlays/sync-oci-base"
+    },
+    {
+      "name": "sync-oci-head",
+      "directory": "overlays/sync-oci-head"
+    },
+    {
+      "name": "sync-oci-absent",
+      "directory": "overlays/sync-oci-absent",
+      "operations": [
+        {
+          "delete": "repo/kubernetes/clusters/cluster-00/flux.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/clusters/cluster-00/cluster.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/clusters/cluster-00/flux-instance.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/clusters/cluster-00/flux-operator.yaml"
+        },
+        {
+          "delete": "repo/kubernetes/clusters/cluster-00/kustomize-mutating-webhook.yaml"
+        }
+      ]
+    },
+    {
+      "name": "sync-oci-direct",
+      "directory": "overlays/sync-oci-direct"
+    }
+  ],
+  "cases": [
+    {
+      "name": "gitrepository",
+      "description": "An undeclared GitRepository Kustomization source renders hello through build, diff, and test.",
+      "setup": [
+        {
+          "commit": "gitrepository"
+        },
+        {
+          "overlay": "changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/gitrepository-build.stdout",
+              "stderr": "expect/gitrepository-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:gitrepository@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/gitrepository-diff.stdout",
+              "stderr": "expect/gitrepository-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/gitrepository-test.stdout",
+              "stderr": "expect/gitrepository-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ocirepository",
+      "description": "An undeclared OCIRepository Kustomization source renders hello through build, diff, and test.",
+      "setup": [
+        {
+          "commit": "ocirepository"
+        },
+        {
+          "overlay": "changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/ocirepository-build.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:ocirepository@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/ocirepository-diff.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/ocirepository-test.stdout",
+              "stderr": "expect/empty.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "bucket",
+      "description": "An undeclared Bucket Kustomization source renders hello through build, diff, and test.",
+      "setup": [
+        {
+          "commit": "bucket"
+        },
+        {
+          "overlay": "changed"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/bucket-build.stdout",
+              "stderr": "expect/bucket-build.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:bucket@@",
+              "-o",
+              "diff"
+            ],
+            "expect": {
+              "stdout": "expect/bucket-diff.stdout",
+              "stderr": "expect/bucket-diff.stderr",
+              "code": 0
+            }
+          }
+        },
+        {
+          "id": "test",
+          "invoke": {
+            "argv": [
+              "test",
+              "ks",
+              "root",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/bucket-test.stdout",
+              "stderr": "expect/bucket-test.stderr",
+              "code": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "chart-only",
+      "description": "The app-template chart-only identity stays missing.",
+      "setup": [
+        {
+          "commit": "chart-only"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "build",
+          "invoke": {
+            "argv": [
+              "build",
+              "all",
+              "--path",
+              "@@repo@@/flux",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "expect": {
+              "stdout": "expect/empty.stderr",
+              "stderr": "expect/chart-only.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-oci",
+      "description": "An OCI sync keeps its produced authority with an artifact root absent from the working tree.",
+      "setup": [
+        {
+          "commit": "sync-oci-head"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-test.stdout",
+              "stderr": "expect/sync-oci-test.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "full-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "changed-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:sync-oci-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:sync-oci-base@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-oci-reverse",
+      "description": "The reversed OCI sync comparison keeps the source unavailable.",
+      "setup": [
+        {
+          "commit": "sync-oci-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:sync-oci-head@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-oci-added",
+      "description": "The current side alone contains the OCI sync producer and its consumers.",
+      "setup": [
+        {
+          "commit": "sync-oci-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "producer-added",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:sync-oci-absent@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-current-only.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-oci-removed",
+      "description": "The original side alone contains the OCI sync producer and its consumers.",
+      "setup": [
+        {
+          "commit": "sync-oci-absent"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "producer-removed",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:sync-oci-base@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-orig-only.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-oci-direct",
+      "description": "A directly declared FluxInstance keeps its OCI sync unavailable across test, build, changed-only build, and forward diff.",
+      "setup": [
+        {
+          "commit": "sync-oci-direct-head"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "full-test",
+          "invoke": {
+            "argv": [
+              "test",
+              "all",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-direct-test.stdout",
+              "stderr": "expect/sync-oci-test.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "full-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "changed-build",
+          "invoke": {
+            "argv": [
+              "build",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:sync-oci-direct-base@@"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-changed.stderr",
+              "code": 1
+            }
+          }
+        },
+        {
+          "id": "forward-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:sync-oci-direct-base@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sync-oci-direct-reverse",
+      "description": "The reverse comparison retains the directly declared FluxInstance OCI source authority.",
+      "setup": [
+        {
+          "commit": "sync-oci-direct-base"
+        }
+      ],
+      "env": {},
+      "cache": {
+        "repeat": "reset"
+      },
+      "steps": [
+        {
+          "id": "reverse-diff",
+          "invoke": {
+            "argv": [
+              "diff",
+              "ks",
+              "cluster",
+              "--path",
+              "@@repo@@/kubernetes/clusters/cluster-00",
+              "--concurrency=2",
+              "--no-progress",
+              "--log-level",
+              "error",
+              "--base",
+              "@@commit:sync-oci-direct-head@@",
+              "-o",
+              "diff"
+            ],
+            "cache": {
+              "reset": true
+            },
+            "expect": {
+              "stdout": "expect/sync-oci-empty.stdout",
+              "stderr": "expect/sync-oci-diff.stderr",
+              "code": 1
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "path": "expect/bucket-build.stdout",
+      "cases": [
+        "bucket"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/bucket-diff.stdout",
+      "cases": [
+        "bucket"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/bucket-test.stdout",
+      "cases": [
+        "bucket"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/chart-only.stderr",
+      "cases": [
+        "chart-only"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/empty.stderr",
+      "cases": [
+        "gitrepository",
+        "ocirepository",
+        "bucket",
+        "chart-only"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/gitrepository-build.stdout",
+      "cases": [
+        "gitrepository"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/gitrepository-diff.stdout",
+      "cases": [
+        "gitrepository"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/gitrepository-test.stdout",
+      "cases": [
+        "gitrepository"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/ocirepository-build.stdout",
+      "cases": [
+        "ocirepository"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/ocirepository-diff.stdout",
+      "cases": [
+        "ocirepository"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "expect/ocirepository-test.stdout",
+      "cases": [
+        "ocirepository"
+      ],
+      "purpose": "Complete expected CLI output."
+    },
+    {
+      "path": "overlays/bucket/repo/flux/root.yaml",
+      "cases": [
+        "bucket"
+      ],
+      "purpose": "Local payload and source-reference fixture."
+    },
+    {
+      "path": "overlays/changed/repo/payload/hello.yaml",
+      "cases": [
+        "gitrepository",
+        "ocirepository",
+        "bucket"
+      ],
+      "purpose": "Change the hello value after the base commit."
+    },
+    {
+      "path": "overlays/chart-only/repo/flux/chart.yaml",
+      "cases": [
+        "chart-only"
+      ],
+      "purpose": "Local payload and source-reference fixture."
+    },
+    {
+      "path": "overlays/gitrepository/repo/flux/root.yaml",
+      "cases": [
+        "gitrepository"
+      ],
+      "purpose": "Local payload and source-reference fixture."
+    },
+    {
+      "path": "overlays/ocirepository/repo/flux/root.yaml",
+      "cases": [
+        "ocirepository"
+      ],
+      "purpose": "Local payload and source-reference fixture."
+    },
+    {
+      "path": "repo/payload/hello.yaml",
+      "cases": [
+        "gitrepository",
+        "ocirepository",
+        "bucket",
+        "chart-only"
+      ],
+      "purpose": "Local payload and source-reference fixture."
+    },
+    {
+      "path": "repo/payload/kustomization.yaml",
+      "cases": [
+        "gitrepository",
+        "ocirepository",
+        "bucket",
+        "chart-only"
+      ],
+      "purpose": "Local payload and source-reference fixture."
+    },
+    {
+      "path": "expect/gitrepository-build.stderr",
+      "cases": [
+        "gitrepository"
+      ],
+      "purpose": "Expected alias warning under ruling 5."
+    },
+    {
+      "path": "expect/gitrepository-test.stderr",
+      "cases": [
+        "gitrepository"
+      ],
+      "purpose": "Expected alias warning under ruling 5."
+    },
+    {
+      "path": "expect/gitrepository-diff.stderr",
+      "cases": [
+        "gitrepository"
+      ],
+      "purpose": "Expected alias warning under ruling 5."
+    },
+    {
+      "path": "expect/bucket-build.stderr",
+      "cases": [
+        "bucket"
+      ],
+      "purpose": "Expected alias warning under ruling 5."
+    },
+    {
+      "path": "expect/bucket-test.stderr",
+      "cases": [
+        "bucket"
+      ],
+      "purpose": "Expected alias warning under ruling 5."
+    },
+    {
+      "path": "expect/bucket-diff.stderr",
+      "cases": [
+        "bucket"
+      ],
+      "purpose": "Expected alias warning under ruling 5."
+    },
+    {
+      "path": "expect/sync-oci-changed.stderr",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "expect/sync-oci-current-only.stderr",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "expect/sync-oci-diff.stderr",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "expect/sync-oci-empty.stdout",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "expect/sync-oci-orig-only.stderr",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "expect/sync-oci-test.stderr",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "expect/sync-oci-test.stdout",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "overlays/sync-oci-absent/repo/kubernetes/clusters/cluster-00/kustomization.yaml",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed"
+      ],
+      "purpose": "Keep the package nonempty with a static ConfigMap and no sync producer or consumer."
+    },
+    {
+      "path": "overlays/sync-oci-base/repo/kubernetes/clusters/cluster-00/cluster.yaml",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "overlays/sync-oci-base/repo/kubernetes/clusters/cluster-00/flux-instance.yaml",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "overlays/sync-oci-base/repo/kubernetes/clusters/cluster-00/flux-operator.yaml",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "overlays/sync-oci-base/repo/kubernetes/clusters/cluster-00/flux.yaml",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "overlays/sync-oci-base/repo/kubernetes/clusters/cluster-00/kustomize-mutating-webhook.yaml",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "overlays/sync-oci-head/repo/kubernetes/clusters/cluster-00/cluster.yaml",
+      "cases": [
+        "sync-oci",
+        "sync-oci-reverse",
+        "sync-oci-added",
+        "sync-oci-removed",
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Offline OCI sync authority and complete CLI expectations."
+    },
+    {
+      "path": "overlays/sync-oci-direct/repo/kubernetes/clusters/cluster-00/flux.yaml",
+      "cases": [
+        "sync-oci-direct",
+        "sync-oci-direct-reverse"
+      ],
+      "purpose": "Declare the FluxInstance directly without a ResourceSet or an independent OCI source."
+    },
+    {
+      "path": "expect/sync-oci-direct-test.stdout",
+      "cases": [
+        "sync-oci-direct"
+      ],
+      "purpose": "Expect four blocked consumers for the direct FluxInstance OCI sync."
+    }
+  ]
+}

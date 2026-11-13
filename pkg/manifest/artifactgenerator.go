@@ -181,15 +181,16 @@ func (r *RawObject) references(yield func(Reference) bool) {
 		)
 		if !yield(
 			Reference{
-				NamedResource:  id,
-				Use:            "artifact",
-				bindsSource:    true,
-				Position:       i,
-				Content:        true,
-				Gate:           GateArtifacts,
-				Artifact:       true,
-				ArtifactOnly:   true,
-				ArtifactStages: GateArtifacts,
+				NamedResource:   id,
+				Use:             "artifact",
+				readsSourceTree: true,
+				bindsSource:     true,
+				Position:        i,
+				Content:         true,
+				Gate:            GateArtifacts,
+				Artifact:        true,
+				ArtifactOnly:    true,
+				ArtifactStages:  GateArtifacts,
 			},
 		) {
 			return

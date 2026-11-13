@@ -184,7 +184,10 @@ spec:
 			Name:      "app",
 		}
 		if f.fetched.Load() || status.Status != store.StatusFailed ||
-			!slices.Contains(status.BlockedBy(), missing) {
+			slices.Contains(
+				status.BlockedBy(),
+				missing,
+			) || !strings.Contains(status.Message, "path is not a directory") {
 			t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
 		}
 		assert.FatalIf(

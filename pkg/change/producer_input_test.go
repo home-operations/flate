@@ -145,7 +145,7 @@ spec:
 		st.AddObject(
 			&manifest.Kustomization{Name: "independent-owner", Namespace: "apps", Path: "./independent"},
 		)
-		result, err := discovery.Run(
+		result, err := runDiscovery(
 			t.Context(),
 			discovery.Config{Input: source, Path: filepath.Join(source.LocalPath, "entry"), Store: st},
 		)

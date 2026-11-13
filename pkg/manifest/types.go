@@ -185,8 +185,9 @@ type Reference struct {
 	// NamespaceDefault records a namespace inherited from the consumer.
 	NamespaceDefault bool
 	// Acquisition leaves unknown input proof to the source acquisition policy.
-	Acquisition bool
-	bindsSource bool
+	Acquisition     bool
+	bindsSource     bool
+	readsSourceTree bool
 }
 
 // Clone owns the mutable containers borrowed by a reference.
@@ -221,6 +222,13 @@ func (r Reference) IsSource() bool {
 //nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) BindsSource() bool {
 	return r.bindsSource
+}
+
+// ReadsSourceTree permits bootstrap aliases for references that read files inside a source tree.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
+func (r Reference) ReadsSourceTree() bool {
+	return r.readsSourceTree
 }
 
 // AffectedInput includes source relations even when they carry no content edge.

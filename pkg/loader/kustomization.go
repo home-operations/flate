@@ -136,16 +136,20 @@ func (r *documentReader) mountSources(
 ) []string {
 	mounted := map[string]*store.SourceArtifact{}
 	for info := range manifest.Kinds() {
-		if info.SourceArtifact {
-			for _, obj := range s.ListObjects(info.Group, info.Kind) {
-				mountSource(mounted, s.GetArtifact(obj.Named(), store.ArtifactContent))
-			}
+		if !info.SourceArtifact {
+			continue
+		}
+		for _, obj := range s.ListObjects(info.Group, info.Kind) {
+			mountSource(mounted, s.GetArtifact(obj.Named(), store.ArtifactContent))
 		}
 	}
 	for _, index := range candidates {
 		for id := range index.Records {
 			if id.KindInfo().SourceArtifact && index.Records[id].File != "" {
 				mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
+			}
+			for _, ref := range index.Records[id].Refs {
+				mountSource(mounted, s.GetArtifact(ref, store.ArtifactContent))
 			}
 		}
 	}
@@ -163,7 +167,7 @@ func (r *documentReader) mountSources(
 func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []string {
 	var changed []string
 	for root, art := range mounted {
-		if r.artifacts[root] != art {
+		if !r.artifacts[root].SameMaterial(art) {
 			changed = append(changed, root)
 		}
 	}
@@ -186,7 +190,7 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 		r.views = map[string]fs.FS{}
 	}
 	for root, art := range mounted {
-		if r.artifacts[root] == art {
+		if r.artifacts[root].SameMaterial(art) {
 			continue
 		}
 		r.views[root] = art.FS
@@ -252,7 +256,7 @@ func (l *Loader) refreshSources(input *store.SourceArtifact) {
 		scopeValues := previous.sources
 		for scopeIndex := range scopeValues {
 			scope := scopeValues[scopeIndex]
-			if scope.sourceState == l.sourceState(scope.id, scope.repoRoot) {
+			if scope.sourceState.matches(new(l.sourceState(scope.id, scope.repoRoot))) {
 				l.scopes.sources = append(l.scopes.sources, scope)
 			}
 		}

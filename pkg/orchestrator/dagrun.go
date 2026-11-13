@@ -50,6 +50,13 @@ func (d dagDispatcher) Dispatch(
 
 func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.NodeID {
 	changed := slices.Collect(d.o.store.Sweep())
+	if quiescent && ctx.Err() == nil && d.o.session != nil && d.o.selection != nil {
+		pending := slices.DeleteFunc(d.o.session.PendingSources(), d.o.includeNode)
+		if err := reconcileConstruction(ctx, pending, d.o.src, d.o.tasks); err != nil {
+			d.o.entryFailure = err
+		}
+		changed = append(changed, slices.Collect(d.o.store.Sweep())...)
+	}
 	if quiescent {
 		d.o.sweepProbes(false)
 		d.o.loader.SweepPreparations()
@@ -111,6 +118,11 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if o.session != nil {
+		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
+			return phaseErr
+		}
+	}
 	sched.Seed(seeds)
 	err = sched.Run(ctx)
 	o.freezeWork()
@@ -135,7 +147,8 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 		}
 		o.admission.AddApplication(o.store, obj)
 		if err := o.visitNodes(obj, false, sched.OnArrival); err != nil {
-			o.store.UpdateFailure(id, err)
+			o.store.SetPreflight(id, err.Error())
+			sched.OnArrival(id, true)
 		}
 	}, false)
 

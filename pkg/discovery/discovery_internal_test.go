@@ -418,7 +418,7 @@ func testLoadAtIgnoreFileAndMissingDirectoryMountedSymlink(t *testing.T) {
 		loader: loader.New(st),
 	}
 	{
-		err := d.loadManifests(t.Context(), root, true)
+		err := d.loadManifestsTest(t.Context(), root, true)
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 	id := testutil.KustomizationID("", "child")
@@ -729,7 +729,7 @@ func TestBegin_OrdinarySupplierCensus(t *testing.T) {
 	supplier := testutil.KustomizationID("apps", "supplier")
 	unused := testutil.KustomizationID("apps", "unused")
 	data := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}
-	_, err := Begin(
+	_, err := beginTest(
 		t.Context(),
 		Config{
 			Path:      filepath.Join(root, "flux"),

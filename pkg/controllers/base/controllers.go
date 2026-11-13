@@ -3,6 +3,10 @@ package base
 import (
 	"context"
 	"iter"
+	"maps"
+	"slices"
+
+	"github.com/home-operations/flate/pkg/store"
 
 	"github.com/home-operations/flate/pkg/schedule"
 
@@ -11,6 +15,7 @@ import (
 
 type nodeController interface {
 	Owns(manifest.NamedResource) bool
+	CompleteOrphan(manifest.NamedResource, string) bool
 	ReconcileNode(context.Context, manifest.NamedResource, manifest.DrainLevel, schedule.Result) *Execution
 	PreviousRender(
 		context.Context,
@@ -72,4 +77,24 @@ func (c *Controllers) owner(id manifest.NamedResource) nodeController {
 		}
 	}
 	return nil
+}
+
+// CompleteOrphans MUST run only after all reconcile bodies drain.
+// Each owning controller retires its failure after the final ownership assessment.
+func (c *Controllers) CompleteOrphans(orphans map[manifest.NamedResource]string, message string) {
+	for _, id := range slices.SortedFunc(maps.Keys(orphans), manifest.NamedResource.Compare) {
+		owner := c.owner(id)
+		if owner == nil || !owner.CompleteOrphan(id, message) {
+			delete(orphans, id)
+		}
+	}
+}
+
+// CompleteOrphan MUST run after task drain for an object owned by this controller.
+func (c *Controller) CompleteOrphan(id manifest.NamedResource, message string) bool {
+	if info, _ := c.Store.GetStatus(id); info.Status != store.StatusFailed {
+		return false
+	}
+	c.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: message})
+	return true
 }

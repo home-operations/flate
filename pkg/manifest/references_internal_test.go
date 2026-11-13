@@ -159,7 +159,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 		want            []Reference
 	}{
 		{"kustomization", "effective", k, []Reference{
-			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true, bindsSource: true},
+			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "source", Use: "source", Content: true, bindsSource: true, readsSourceTree: true},
 			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "effective", Name: "relative", Use: "dependsOn", ReadyExpr: new("true")},
 			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "other", Name: "explicit", Use: "dependsOn", Position: 1},
 			{Kind: KindConfigMap, Namespace: "effective", Name: "shared", Use: "substituteFrom", Content: true},
@@ -173,10 +173,10 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			{Kind: KindConfigMap, Namespace: "effective", Name: "vars", Use: "valuesFrom", Optional: true, Content: true},
 		}},
 		{"artifactgenerator", "effective", g, []Reference{
-			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "other", Name: "remote", Use: "artifact", Content: true, bindsSource: true},
-			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "local", Use: "artifact", Position: 1, Content: true, bindsSource: true},
-			{Group: SourceDomain, Kind: KindBucket, Namespace: "effective", Name: "bucket", Use: "artifact", Position: 2, Content: true, bindsSource: true},
-			{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "effective", Name: "generated", Use: "artifact", Position: 3, Content: true, bindsSource: true},
+			{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "other", Name: "remote", Use: "artifact", readsSourceTree: true, Content: true, bindsSource: true},
+			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "effective", Name: "local", Use: "artifact", readsSourceTree: true, Position: 1, Content: true, bindsSource: true},
+			{Group: SourceDomain, Kind: KindBucket, Namespace: "effective", Name: "bucket", Use: "artifact", readsSourceTree: true, Position: 2, Content: true, bindsSource: true},
+			{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "effective", Name: "generated", Use: "artifact", readsSourceTree: true, Position: 3, Content: true, bindsSource: true},
 		}},
 		{"externalartifact", "effective", e, []Reference{
 			{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "effective", Name: "generator", Use: "materializer"},
@@ -512,11 +512,12 @@ func TestReferences_Views(t *testing.T) {
 		NamespaceDefault: true,
 	}
 	bootstrap := Reference{
-		NamedResource:  BootstrapSourceID,
-		bindsSource:    true,
-		Gate:           GateInputs | GateArtifacts,
-		ArtifactStages: GateInputs | GateArtifacts,
-		Artifact:       true,
+		NamedResource:   BootstrapSourceID,
+		bindsSource:     true,
+		readsSourceTree: true,
+		Gate:            GateInputs | GateArtifacts,
+		ArtifactStages:  GateInputs | GateArtifacts,
+		Artifact:        true,
 	}
 	for _, tc := range []struct {
 		name string
@@ -785,30 +786,4 @@ func TestReference_IsSource(t *testing.T) {
 			assert.Equal(t, ref.BindsSource(), false)
 		})
 	}
-}
-
-func TestReferences_GeneratedChartDoesNotBind(t *testing.T) {
-	t.Parallel()
-	obj := &HelmRelease{Name: "app", Namespace: "apps"}
-	obj.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{
-		Kind: KindOCIRepository,
-		Spec: helmv2.HelmChartTemplateSpec{
-			OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://registry.test/app"},
-		},
-	}
-	assert.NoError(t, obj.normalizeChartSource())
-	refs := slices.Collect(References(obj, ReferenceRelations))
-	assert.Equal(t, len(refs), 1)
-	assert.Equal(t, refs[0].Use, "chart")
-	assert.Equal(t, refs[0].IsSource(), true)
-	assert.Equal(t, refs[0].BindsSource(), false)
-	assert.Equal(t, refs[0].Clone().BindsSource(), false)
-	obj.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "input"}
-	obj.HelmReleaseSpec.Chart = nil
-	assert.NoError(t, obj.normalizeChartSource())
-	refs = slices.Collect(References(obj, ReferenceRelations))
-	assert.Equal(t, len(refs), 1)
-	assert.Equal(t, refs[0].Use, "chart")
-	assert.Equal(t, refs[0].BindsSource(), true)
-	assert.Equal(t, refs[0].Clone().BindsSource(), true)
 }

@@ -48,7 +48,7 @@ func TestAdvance_UnreadableInputReachesFixpoint(t *testing.T) {
 	l := loader.New(st)
 	configureSelection(t, l, selection.Request{Changed: true})
 	l.Options.Changes = change.NewSet([]string{"flux/consumer.yaml"})
-	session, err := Begin(
+	session, err := beginTest(
 		t.Context(),
 		Config{
 			Path:      filepath.Join(root, "flux"),

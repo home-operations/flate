@@ -68,6 +68,7 @@ type countedNodeController struct {
 }
 
 type reconcileController interface {
+	CompleteOrphan(manifest.NamedResource, string) bool
 	Owns(manifest.NamedResource) bool
 	ReconcileNode(context.Context, manifest.NamedResource, manifest.DrainLevel, schedule.Result) *base.Execution
 	PreviousRender(

@@ -317,23 +317,29 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipKinds,
 	}
 	o.cfg.entry = nil
-	var res *discovery.Result
-	var err error
-	if o.selection != nil {
-		if o.session == nil {
-			return o.beginDiscovery(ctx, &config)
+	if o.session == nil {
+		if err := o.beginDiscovery(ctx, &config); err != nil {
+			return err
 		}
-		res, err = o.session.Freeze(ctx)
-	} else {
-		res, err = discovery.Run(ctx, config)
+		if o.selection != nil {
+			return nil
+		}
 	}
-
+	res, err := o.constructDiscovery(ctx)
 	if err != nil {
 		return err
 	}
-	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Bootstrap admission publishes a source artifact.
+
+	_, o.cfg.Input, err = res.Admission.Resolve(ctx, manifest.BootstrapSourceID, nil, nil)
+	if err != nil {
+		return err
+	}
+
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
+	if o.selection == nil {
+		o.session = nil
+	}
 	o.discoveryResult = res
 	o.index = res.Index
 	o.entryBinding = res.Binding
@@ -359,19 +365,33 @@ func (o *Orchestrator) beginDiscovery(ctx context.Context, config *discovery.Con
 		return err
 	}
 	o.admission = o.session.Admission()
-	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact) //nolint:errcheck // Bootstrap admission publishes a source artifact.
+	o.src.Configure(sourcectrl.FetchOptions{Admission: o.admission}, o.cfg.SourceRetry)
+	for {
+		if phaseErr := reconcileConstruction(ctx, o.session.PendingSources(), o.src, o.tasks); phaseErr != nil {
+			return phaseErr
+		}
+		if o.selection == nil {
+			break
+		}
+		ready, loadErr := o.session.Load(ctx)
+		if loadErr != nil {
+			return loadErr
+		}
+		if ready {
+			break
+		}
+	}
+	_, o.cfg.Input, err = o.admission.Resolve(ctx, manifest.BootstrapSourceID, nil, nil)
+	if err != nil {
+		return err
+	}
+
 	o.cfg.RepoRoot, o.repoRoot, o.index = o.cfg.Input.LocalPath, o.cfg.Input.LocalPath, o.loader.Index
 	return nil
 }
 
 func (o *Orchestrator) completeBootstrap() {
 	o.failDependsOnCycles()
-	if o.loader != nil && o.entryBinding.Failure != nil {
-		o.store.UpdateStatus(
-			o.entryBinding.Producer,
-			store.StatusInfo{Status: store.StatusFailed, Message: o.entryBinding.Failure.Error()},
-		)
-	}
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	o.rsc.Inputs = ociFetcher
 	o.rsc.Retry = o.cfg.SourceRetry

@@ -48,6 +48,11 @@ type sourceState struct {
 	repoRoot string
 }
 
+func (s *sourceState) matches(other *sourceState) bool {
+	return s.id == other.id && s.object == other.object && s.repoRoot == other.repoRoot &&
+		s.artifact.SameMaterial(other.artifact)
+}
+
 type sourceScope struct {
 	sourceState
 
@@ -65,7 +70,7 @@ func (l *Loader) scopeSource(stateArg *sourceState) int {
 	state := *stateArg
 
 	for i := range l.scopes.sources {
-		if l.scopes.sources[i].sourceState == state {
+		if l.scopes.sources[i].sourceState.matches(&state) {
 			return i
 		}
 	}
@@ -190,7 +195,7 @@ func (l *Loader) scopesMatch(kss []store.Child, repoRoot string) bool {
 		view := l.scopes.sources[input.source]
 		ref := view.id
 		if i == 0 || ref != previous {
-			if l.sourceState(ref, repoRoot) != view.sourceState {
+			if !view.sourceState.matches(new(l.sourceState(ref, repoRoot))) {
 				return false
 			}
 			previous = ref

@@ -180,7 +180,18 @@ func (a *Admission) readApplication(
 	resolved := a.applicationSource(st, reads, &application)
 	if resolved.artifact == nil {
 		var err error
-		resolved, err = a.resolve(ctx, application.Source, resolved.object, reads.WorkScope())
+		resolved, err = a.resolve(
+			ctx,
+			application.Source,
+			&sourceRequest{
+				object:    resolved.object,
+				reference: sourceReference(evidence.object, application.Source),
+				reads:     reads,
+				work:      reads.WorkScope(),
+				entry:     a.appliesEntry(&application),
+				projected: application.Declaration != nil && resolved.object == application.Declaration,
+			},
+		)
 		if err != nil {
 			return false, err
 		}

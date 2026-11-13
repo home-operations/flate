@@ -44,7 +44,7 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			case "lookup":
 				assert.Equal(t, os.Symlink(".git", filepath.Join(root, ".git")), nil)
 			}
-			_, err := d.resolveEntrySources(t.Context(), false)
+			_, err := d.resolveTestSources(t.Context(), false)
 			assert.Equal(t, len(d.remotes), 0)
 			assert.Equal(t, err, nil)
 			assert.Equal(
@@ -210,7 +210,7 @@ func testSeedBootstrapSourceExplicitURLsOverrideGitConfigCase(
 			"[remote \"origin\"]\nurl = https://github.com/replaced/repo.git\n",
 		)
 	}
-	_, err := d.resolveEntrySources(t.Context(), false)
+	_, err := d.resolveTestSources(t.Context(), false)
 	assert.Equal(t, err, nil)
 	assert.Equal(
 		t,

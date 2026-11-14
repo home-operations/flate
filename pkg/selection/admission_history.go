@@ -217,9 +217,13 @@ func (c *admissionClosure) resolveHistoricalRecord(owner manifest.NamedResource,
 		for _, root := range roots {
 			base, ok, _ := c.resolveRoot(source, root)
 			if !ok {
-				c.replace[owner] = false
+				// Unavailable external content MUST NOT invalidate complete declaration history.
+				if !c.boundSource(source).External || !c.producerPending(source) {
+					c.replace[owner] = false
+				}
 				base = root
 				if strings.Contains(root, "/../") || strings.HasSuffix(root, "/..") {
+					c.replace[owner] = false
 					base = "."
 				}
 			}

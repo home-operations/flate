@@ -48,6 +48,7 @@ func TestEvaluate(t *testing.T) {
 		invalid    bool
 	}{
 		{"unknown_alias", []manifest.ArtifactGeneratorCopy{{From: "@absent/file", To: "@artifact/file"}}, true},
+		{"bare_alias", []manifest.ArtifactGeneratorCopy{{From: "@repo", To: "@artifact/"}}, true},
 		{"destination_prefix", []manifest.ArtifactGeneratorCopy{{From: "@repo/app/file", To: "file"}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -606,6 +606,11 @@ func (c *admissionClosure) declarationEvidence(id manifest.NamedResource) declar
 		evidence.accepted = c.acceptedDeclaration(id, evidence.owner, object)
 	}
 
+	if evidence.child.Obj == nil && record.Declaration != nil &&
+		c.acceptedDeclaration(id, evidence.owner, record.Declaration) {
+		evidence.child.Obj = record.Declaration
+		evidence.accepted, evidence.authored = true, true
+	}
 	if record.Builder == "" {
 		if evidence.child.Obj == nil {
 			c.classifyAuthoredDeclaration(id, &evidence)

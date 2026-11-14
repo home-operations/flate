@@ -539,3 +539,107 @@ func projectionApplicationChild(t *testing.T, source manifest.NamedResource, mod
 	assert.NoError(t, err)
 	return Child{Obj: object, Doc: document}
 }
+
+//nolint:gocognit // One lifecycle table MUST keep the same captured-production assertions across terminal transitions.
+func TestStore_UnpublishedDeclarationProduction(t *testing.T) {
+	t.Parallel()
+	for _, terminal := range []string{"pending", "raw owner", "self declaration", "owner output", "ancestor withdrawal", "owner deleted"} {
+		t.Run(terminal, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			source := projectionSource(t, s, "source")
+			entry := &manifest.Kustomization{
+				Name:      "entry",
+				Namespace: "apps",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind:      source.Kind,
+					Name:      source.Name,
+					Namespace: source.Namespace,
+				},
+			}
+			parent := ownerID("parent")
+			declaration := manifest.NamedResource{
+				Group:     "source.extensions.fluxcd.io",
+				Kind:      "ArtifactGenerator",
+				Name:      "generator",
+				Namespace: "apps",
+			}
+			target := (&manifest.ExternalArtifact{Name: "bundle", Namespace: "apps"}).Named()
+			production := manifest.Production{
+				Owner:       parent,
+				Declaration: declaration,
+				Authored:    declaration,
+				Source:      source,
+				File:        "generator.yaml",
+			}
+			if terminal == "raw owner" {
+				production.Declaration = manifest.NamedResource{}
+			}
+			if terminal == "self declaration" {
+				production.Declaration = target
+			}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				entry.Named(): {Productions: []manifest.Production{{Owner: entry.Named(), Source: source}}},
+				parent: {
+					Productions: []manifest.Production{{Owner: entry.Named(), Source: source, File: "parent.yaml"}},
+				},
+				declaration: {Productions: []manifest.Production{production}},
+				target:      {Productions: []manifest.Production{production}},
+			}}
+			if terminal == "self declaration" {
+				delete(index.Records, declaration)
+			}
+			s.SetDiscoveryIndex(index)
+			s.AddObject(entry)
+			assert.Equal(t, s.coverage[parent].slot.visible.Load(), false)
+			pending := terminal != "raw owner" && terminal != "self declaration"
+			assert.Equal(t, s.coverage[parent].slot.hidden.Load(), !pending)
+			want := []manifest.Production{}
+			if pending {
+				want = []manifest.Production{production}
+			}
+			assert.Equal(t, s.GetObject(parent), manifest.BaseManifest(nil))
+			assert.Diff(t, s.Productions(target, nil), want)
+			var reads ReadSet
+			reads.Init(s, ownerID("consumer"), nil)
+			defer reads.Close()
+			assert.Diff(t, reads.Productions(target, nil), want)
+			if terminal == "pending" || !pending {
+				return
+			}
+			owner := parent
+			if terminal == "ancestor withdrawal" {
+				owner = entry.Named()
+			}
+			if terminal == "owner deleted" {
+				projectionOwner(s, "parent", source)
+				s.DeleteObject(parent)
+				successor := entry.Clone()
+				successor.Path = "next"
+				s.AddObject(successor)
+				assert.Equal(t, s.coverage[parent].slot.hidden.Load(), true)
+			} else {
+				if terminal == "owner output" {
+					projectionOwner(s, "parent", source)
+				}
+				_, _, attempt := s.GetEmission(owner)
+				defer attempt.Finish()
+				attempt.Complete = true
+				s.RecordEmitted(owner, &attempt, nil)
+			}
+			assert.Equal(t, reads.Valid(), false)
+			assert.Equal(t, len(s.Productions(target, nil)), 0)
+			if terminal == "ancestor withdrawal" {
+				var withdrawn ReadSet
+				withdrawn.Init(s, ownerID("consumer"), nil)
+				defer withdrawn.Close()
+				assert.Equal(t, len(withdrawn.Productions(target, nil)), 0)
+				assert.Equal(t, withdrawn.Valid(), true)
+				assert.Equal(t, s.DeleteObject(entry.Named()), true)
+				assert.Equal(t, withdrawn.Valid(), true)
+				assert.Equal(t, len(s.Productions(target, nil)), 0)
+				assert.Equal(t, len(withdrawn.Productions(target, nil)), 0)
+			}
+		})
+	}
+}

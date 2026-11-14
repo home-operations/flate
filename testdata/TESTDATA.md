@@ -531,6 +531,13 @@ Both sequence replays start with empty caches.
 | `artifact-reach/artifact-generator--emitted-changed-only-diff` | Changed-only `build all` and both directions of `diff all`: a component emits the generator. Its changed copy input reaches the consumer and excludes the unrelated workload. | Each invocation shares the default cache. Replays retain caches. |
 | `artifact-reach/artifact-generator--input-source-changed-only` | Full builds resolve both pinned inputs. Changed-only builds and both diff directions cover independent directory baselines and committed baselines. | Each invocation shares the default cache. Replays retain caches. |
 | `artifact-reach/artifact-generator--input-source-changed-only-reverse-committed` | `diff all`: the before checkout owns both commits and compares with the after commit. | The default cache survives both replays. |
+| `artifact-reach/artifact-generator--copied-input` | Copied payload edit: full build, both diff commands, committed reverse inputs, and cache invalidation. | Each sequence runs twice at concurrency 2 and retains the cache. |
+| `artifact-reach/artifact-generator--copied-whole-source` | One `@git/` copy without a pattern: full build and both diff commands in both directions. Directory comparisons use a shallow baseline. Committed comparisons retain both revisions. | Each sequence runs twice at concurrency 2. The first build resets the cache. Later commands reuse it before and after the payload reset. |
+| `artifact-reach/artifact-generator--copied-whole-source-reverse-committed` | Both diff commands compare the whole-source before checkout against the after commit. | Two sequences retain the cache at concurrency 2. |
+| `artifact-reach/artifact-generator--copied-renamed-destination` | Renamed artifact destination: both diffs retain the copied input relationship. | Each sequence runs twice at concurrency 2 and retains the cache. |
+| `artifact-reach/artifact-generator--copied-unrelated-path` | Unrelated same-named Git path: both diffs stay empty. | Each sequence runs twice at concurrency 2 and retains the cache. |
+| `artifact-reach/artifact-generator--copied-consumer-edit` | Consumer-only label edit: both sides execute the required generator. | Each sequence runs twice at concurrency 2 and retains the cache. |
+| `artifact-reach/artifact-generator--copied-reverse-committed` | Reverse diff uses the committed after input from the before checkout. | Two replays retain the cache at concurrency 2. |
 | `artifact-convergence/artifact-generator--consumed-input-convergence` | `build all`: entry patches replace the raw generator input and UID. The final consumer and ExternalArtifact appear once with the current metadata. | Two invocations share the default cache. Replays retain caches. |
 
 These scenarios are authored reductions of `xunholy/k8s-gitops` revision `2f2e6edc730457a3f45d7a73aad536afc683b5eb`.
@@ -552,6 +559,10 @@ Every U6 sequence runs twice with concurrency 2.
 The pinned-input case keeps separate Git stores for directory comparisons and selects both historical commits through the declared fixture transport.
 Its committed reverse diff uses a separate declared checkout in the repository that owns both historical commits.
 The emitted-generator case keeps a declared shallow boundary on the baseline repository.
+The whole-source cases derive dedicated before, after, and baseline commits from the copied-input history.
+Both repository declarations copy `@git/` to `@artifact/` once, without `pathPattern`, and retain the `./payload/one` consumer.
+Their directory baseline marks `copied-baseline` as shallow history.
+The reviewed copied-input expectations also describe the whole-source results because the consumer path, payload values, and ownership labels stay identical.
 The package tests under `pkg/controllers/artifactgenerator` retain parser, archive, partial publication, and synchronized convergence proofs.
 U6 removes both ArtifactGenerator files from the migration allowlist.
 The shared CLI and fixture helpers remain for the unmigrated U1 through U5 and U7 consumers until U9 removes their last callers.

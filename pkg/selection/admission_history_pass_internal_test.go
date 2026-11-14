@@ -1,8 +1,10 @@
 package selection
 
 import (
+	"encoding/json"
 	"iter"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -95,4 +97,102 @@ func TestAdmission_HistoryProductionPass(t *testing.T) {
 	assert.Equal(t, len(c.historyProductions), 0)
 	assert.Equal(t, c.replace[owner], false)
 	assert.Diff(t, c.productions(child), want)
+}
+
+func TestAdmission_HistoryContentAvailability(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		external    bool
+		declaration bool
+		content     bool
+		root        string
+		complete    bool
+		resolved    string
+	}{
+		{name: "unpublished source", external: true, root: "payload", complete: true, resolved: "payload"},
+		{name: "declared source without content", external: true, declaration: true, root: "payload", complete: true, resolved: "payload"},
+		{name: "readable source unresolved", external: true, declaration: true, content: true, root: "payload", resolved: "payload"},
+		{name: "local source unresolved", root: "payload", resolved: "payload"},
+		{name: "unresolved parent traversal", external: true, root: "payload/../other", resolved: "."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			source := &manifest.ExternalArtifact{Name: "bundle", Namespace: "apps"}
+			if tc.declaration {
+				st.AddObject(source)
+			}
+			if tc.content {
+				st.SetArtifact(source.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
+			}
+			facts := &solverFacts{store: st, sources: map[manifest.NamedResource]SourceFacts{
+				source.Named(): {External: tc.external},
+			}}
+			c := solverClosure(t, st, facts)
+			owner := testutil.KustomizationID("apps", "owner")
+			c.replace = map[manifest.NamedResource]bool{owner: true}
+			c.proposal.preparation = &Preparation{}
+			defer c.proposal.preparation.Retire()
+			record := manifest.DiscoveryRecord{ContentRoots: map[manifest.NamedResource][]string{
+				source.Named(): {tc.root},
+			}}
+			c.resolveHistoricalRecord(owner, &record)
+			assert.Equal(t, len(c.proposal.demands), 1)
+			c.proposal.preparation.acceptAcquired([]Acquisition{{Demand: c.proposal.demands[0]}})
+			c.proposal.demands = nil
+			record.ContentRoots[source.Named()] = []string{tc.root}
+			c.replace[owner] = true
+			c.resolveHistoricalRecord(owner, &record)
+			assert.Equal(t, len(c.proposal.demands), 0)
+			assert.Equal(t, c.replace[owner], tc.complete)
+			assert.Diff(t, record.ContentRoots, map[manifest.NamedResource][]string{source.Named(): {tc.resolved}})
+		})
+	}
+}
+
+func TestAdmission_HistoricalDeclarationEvidence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		complete bool
+		changed  bool
+		accepted bool
+	}{
+		{name: "matching complete history", complete: true, accepted: true},
+		{name: "incomplete history"},
+		{name: "different declaration", complete: true, changed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			application := `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"child","namespace":"apps"},"spec":{"path":"leaf"}}`
+			var document map[string]any
+			assert.NoError(t, json.Unmarshal([]byte(application), &document))
+			parsed, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			child := parsed.Object.(*manifest.Kustomization)
+			if tc.changed {
+				child = child.Clone()
+				child.Path = "other"
+			}
+			owner := testutil.KustomizationID("apps", "owner")
+			st := store.New()
+			facts := &solverFacts{store: st, index: manifest.DiscoveryIndex{
+				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {
+					Declaration: child, Parent: owner, Builder: "native",
+				}},
+			}}
+			c := solverClosure(t, st, facts)
+			c.accepted = map[manifest.NamedResource]map[manifest.NamedResource]manifest.DiscoveryRecord{
+				owner: {child.Named(): {Application: application}},
+			}
+			c.replace = map[manifest.NamedResource]bool{owner: tc.complete}
+			evidence := c.declarationEvidence(child.Named())
+			assert.Equal(t, evidence.accepted, tc.accepted)
+			assert.Equal(t, evidence.authored, tc.accepted)
+			assert.Equal(t, evidence.known(), tc.accepted)
+			assert.Equal(t, evidence.child.Obj == child, tc.accepted)
+			assert.Equal(t, st.GetDeclaration(child.Named()), manifest.BaseManifest(nil))
+		})
+	}
 }

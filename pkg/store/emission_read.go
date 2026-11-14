@@ -533,6 +533,7 @@ func (s *Store) addDiscoveryCoverage(
 				c = &contributor{binding: sourceBinding{source: p.Source}}
 				coverage[p.Owner] = c
 			}
+			c.declaredOutputs = c.declaredOutputs || p.Declaration != (manifest.NamedResource{}) && p.Declaration != id
 			// Each identity is visited once, so repeated owner evidence can only match the tail.
 			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
 				c.records = append(c.records, *record)

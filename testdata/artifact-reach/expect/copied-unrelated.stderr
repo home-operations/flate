@@ -1,0 +1,4 @@
+
+  ⚠ warnings (2)
+    [ExternalSource] orig snapshot: Kustomization flux-system/consumer: external source ExternalArtifact.source.toolkit.fluxcd.io/flux-system/bundle-a is outside the local tree; not rendered
+    [ExternalSource] current snapshot: Kustomization flux-system/consumer: external source ExternalArtifact.source.toolkit.fluxcd.io/flux-system/bundle-a is outside the local tree; not rendered

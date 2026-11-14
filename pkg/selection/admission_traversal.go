@@ -549,7 +549,7 @@ func (c *admissionClosure) hydrateDeclaration(
 
 func (c *admissionClosure) hydrateBuilt(id manifest.NamedResource, child *store.Child) bool {
 	role := c.role(id)
-	preparation := role.needed && role.ordinary && !role.selected && id.KindInfo().Structural
+	preparation := role.needed && role.ordinary && !role.selected && id.KindInfo().Runnable
 	if !Root(*c.capturedRoot(id)).InitialIndependent && !c.states[id].requested &&
 		!preparation &&
 		(role.ordinary || !role.needed) {

@@ -127,7 +127,12 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 				map[string]any{},
 				map[string]any{"alias": "repo", "kind": KindGitRepository, "name": "repo"},
 			},
-			"artifacts": []any{map[string]any{"name": "literal", "copy": []any{map[string]any{"exclude": 1}}}},
+			"artifacts": []any{
+				map[string]any{
+					"name": "literal",
+					"copy": []any{map[string]any{"from": "@repo/payload/one/**", "exclude": 1}},
+				},
+			},
 		},
 	}
 	before := Fingerprint(raw)
@@ -142,6 +147,10 @@ func TestArtifactGeneratorSpec_DeclarationPositions(t *testing.T) {
 		NamedResource{Group: SourceDomain, Kind: KindGitRepository, Namespace: "apps", Name: "repo"},
 	)
 	assert.Equal(t, refs[1].BindsSource(), true)
+	assert.Diff(t, refs[0].Files, []string(nil))
+	assert.Diff(t, refs[1].Files, []string{"payload/one"})
+	assert.Equal(t, refs[1].Subtree, true)
+	assert.Equal(t, refs[1].NamespaceDefault, true)
 	targets := ProducerTargets(raw)
 	assert.Equal(t, len(targets), 1)
 	assert.Equal(t, targets[0].Name, "literal")

@@ -270,7 +270,7 @@ func sourceView(
 	if object != nil {
 		return SourceLocation{Path: repoRoot, Pinned: false, External: true}
 	}
-	return SourceLocation{Path: repoRoot, Pinned: false, External: ref.CanBindLocal()}
+	return SourceLocation{Path: repoRoot, Pinned: false, External: ref.KindInfo().SourceArtifact}
 }
 
 // Input aliases map source-relative readers and claims to their physical origin.

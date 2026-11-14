@@ -507,11 +507,19 @@ func (rf *readerFinalizer) observeFiles(
 	visitValue *graphVisit,
 ) {
 	v := *visitValue
+	var input sourcePathView
+	if ref.Subtree {
+		art, _ := rf.loader.Store.GetArtifact(ref.NamedResource, store.ArtifactContent).(*store.SourceArtifact)
+		if art == nil || art.FS == nil {
+			return
+		}
+		input.FS = art.FS
+	}
 	for _, name := range ref.Files {
 		clean := path.Clean(name)
 		if ref.Subtree {
 			var valid bool
-			clean, valid = resolveRoot(rf.loader.Store, ref.NamedResource, cmp.Or(name, "."))
+			clean, valid = input.resolve(cmp.Or(name, "."))
 			if !valid {
 				continue
 			}

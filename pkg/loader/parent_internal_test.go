@@ -235,19 +235,12 @@ func TestBuildParentIndex_IndexedChildrenWithoutStoreObjects(t *testing.T) {
 	}
 }
 
-// TestClaims_DropsExternalSourced pins issue #752
-// (lunevans/talos-cluster): a Kustomization sourced from a genuine external repo
-// (an in-tree GitRepository with no working-tree artifact) must not claim
-// local-tree path prefixes, even with a wide spec.path like ./kubernetes —
-// otherwise it becomes the false structural parent of the whole cluster and its
-// skip cascades. A bootstrap-sourced KS and an aliased (working-tree) source
-// keep their claims.
+// External sources MUST retain reporting ownership without claiming bootstrap files.
 func TestClaims_DropsExternalSourced(t *testing.T) {
 	t.Parallel()
-	repoRoot := "/repo" // no on-disk component reads will resolve; that's fine
+	repoRoot := "/repo"
 	s := store.New()
 
-	// Bootstrap-sourced root (sourceRef == BootstrapSourceID) — kept.
 	bootstrap := &manifest.Kustomization{
 		Name:      "cluster-apps",
 		Namespace: "flux-system",
@@ -258,8 +251,6 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 		},
 		Path: "./kubernetes/apps",
 	}
-	// Self/aliased source: an in-tree GitRepository with a working-tree artifact
-	// (URL-matched by discovery) — kept.
 	aliasedKS := &manifest.Kustomization{
 		Name:      "self-apps",
 		Namespace: "flux-system",
@@ -270,8 +261,6 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 		},
 		Path: "./kubernetes/self",
 	}
-	// External source: an in-tree GitRepository with NO working-tree artifact,
-	// claiming the WIDE ./kubernetes — must be dropped.
 	external := &manifest.Kustomization{
 		Name:      "side-sync",
 		Namespace: "flux-system",
@@ -287,7 +276,6 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	s.AddObject(external)
 	s.AddObject(&manifest.GitRepository{Name: "home-kubernetes", Namespace: "flux-system"})
 	s.AddObject(&manifest.GitRepository{Name: "side-repo", Namespace: "flux-system"})
-	// home-kubernetes is aliased to the working tree (LocalPath == repoRoot).
 	s.SetArtifact(
 		manifest.NamedResource{
 			Group:     "source.toolkit.fluxcd.io",
@@ -332,6 +320,23 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 		assert.FatalIf(t, !ok ||
 			parent != external.Named(), "final reporting must retain external-source ownership: parent=%v, found=%t", parent, ok)
 	}
+	generated := *external
+	generated.Name, generated.Path = "generated-consumer", "./renamed-artifact"
+	generated.SourceRef.Kind, generated.SourceRef.Name = manifest.KindExternalArtifact, "generated"
+	s.AddObject(&generated)
+	l := loaderFixture(s, nil)
+	for _, declared := range []bool{false, true} {
+		if declared {
+			s.AddObject(&manifest.ExternalArtifact{Name: "generated", Namespace: "flux-system"})
+		}
+		for _, claim := range l.Claims(repoRoot) {
+			assert.ErrorIf(t, claim.ID == generated.Named(), "unavailable artifact claimed bootstrap files: %v", claim)
+		}
+		parent, found := manifest.StrictParent(Claims(s, repoRoot, []*manifest.Kustomization{&generated}),
+			"renamed-artifact/child.yaml", manifest.NamedResource{}, nil)
+		assert.Equal(t, found, true)
+		assert.Equal(t, parent, generated.Named())
+	}
 }
 
 func TestSourceView_LocalRoot(t *testing.T) {
@@ -344,7 +349,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 		{manifest.KindOCIRepository, manifest.SourceDomain, true},
 		{manifest.KindBucket, manifest.SourceDomain, true},
 		{manifest.KindHelmRepository, manifest.SourceDomain, false},
-		{manifest.KindExternalArtifact, manifest.SourceDomain, false},
+		{manifest.KindExternalArtifact, manifest.SourceDomain, true},
 		{manifest.KindGitRepository, "wrong.group", false},
 	} {
 		t.Run("absent/"+tc.group+"/"+tc.kind, func(t *testing.T) {
@@ -369,6 +374,40 @@ func TestSourceView_LocalRoot(t *testing.T) {
 				pinned,
 				external,
 			)
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		ref  manifest.NamedResource
+	}{
+		{name: "empty reference"},
+		{name: "bootstrap reference", ref: manifest.BootstrapSourceID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, SourceView(store.New(), tc.ref, "/repo"), SourceLocation{Path: "/repo"})
+		})
+	}
+	for _, tc := range []struct {
+		name                 string
+		declared, unreadable bool
+	}{
+		{name: "undeclared content unavailable"},
+		{name: "undeclared content unreadable", unreadable: true},
+		{name: "declared content unavailable", declared: true},
+		{name: "declared content unreadable", declared: true, unreadable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			source := &manifest.ExternalArtifact{Name: "generated", Namespace: "flux-system"}
+			if tc.declared {
+				st.AddObject(source)
+			}
+			if tc.unreadable {
+				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: "/repo", LocalRoot: "/repo"})
+			}
+			assert.Equal(t, SourceView(st, source.Named(), "/repo"), SourceLocation{Path: "/repo", External: true})
 		})
 	}
 	for _, tc := range []struct {

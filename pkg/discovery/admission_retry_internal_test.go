@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"io/fs"
 	"iter"
 	"path/filepath"
 	"slices"
@@ -12,11 +13,17 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/artifactgenerator"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/selection"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 type retryAdmissionFacts struct {
@@ -516,6 +523,199 @@ func TestAdmit_AcceptedChildWarningsSurvivePublication(t *testing.T) {
 				assert.Diff(t, st.Warnings(), want)
 			}
 			assert.Equal(t, st.GetObject(id), manifest.BaseManifest(supplied))
+		})
+	}
+}
+
+func TestAdvance_GeneratedSourceProducerAdmission(t *testing.T) {
+	t.Parallel()
+	for _, declared := range []bool{false, true} {
+		name := "missing artifact declaration"
+		if declared {
+			name = "declaration without content"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: "factory"}
+			target := (&manifest.ExternalArtifact{Name: "bundle", Namespace: "flux-system"}).Named()
+			generator := manifest.NamedResource{
+				Group:     "source.extensions.fluxcd.io",
+				Kind:      "ArtifactGenerator",
+				Name:      "generator",
+				Namespace: "flux-system",
+			}
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system", Path: "payload"}
+			consumer.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: target.Kind, Name: target.Name}
+			input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{
+				"entry/kustomization.yaml":   {Data: []byte("resources: []\n")},
+				"factory/kustomization.yaml": {Data: []byte("resources: [generator.yaml, sibling.yaml]\n")},
+				"factory/generator.yaml": {
+					Data: []byte(
+						"apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: flux-system}\nspec:\n  sources:\n  - {alias: git, kind: GitRepository, name: flux-system}\n  artifacts:\n  - name: bundle\n    copy:\n    - {from: '@git/payload/**', to: '@artifact/payload/'}\n",
+					),
+				},
+				"factory/sibling.yaml": {
+					Data: []byte(
+						"apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: sibling, namespace: flux-system}\nspec: {interval: 1m, path: other, sourceRef: {kind: GitRepository, name: flux-system}}\n",
+					),
+				},
+				"payload/kustomization.yaml": {Data: []byte("resources: []\n")},
+			}}
+			bootstrap, _ := manifest.BootstrapSourceID.BindLocal(root)
+			st.AddObject(bootstrap)
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			st.AddObject(parent)
+			st.AddObject(consumer)
+			l := loader.New(st)
+			l.SourceRoot = root
+			l.Options.Changes = change.NewSet([]string{"consumer.yaml"})
+			configureSelection(
+				t,
+				l,
+				selection.Request{Changed: true, Roots: []manifest.NamedResource{consumer.Named()}},
+			)
+			_, err := l.Load(t.Context(), root, manifest.NamedResource{}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			assert.Equal(t, l.IsFileIndexed(generator), true)
+			assert.Equal(t, st.GetDeclaration(generator), manifest.BaseManifest(nil))
+			production := manifest.Production{
+				Owner:       parent.Named(),
+				Declaration: generator,
+				Authored:    generator,
+				Source:      manifest.BootstrapSourceID,
+				Path:        filepath.Join(root, "factory", "generator.yaml"),
+				File:        "factory/generator.yaml",
+			}
+			l.Index.Records[target] = manifest.DiscoveryRecord{Productions: []manifest.Production{production}}
+			record := l.Index.Records[parent.Named()]
+			record.Builder = "entry"
+			l.Index.Records[parent.Named()] = record
+			facts := &retryAdmissionFacts{
+				Loader: l,
+				children: map[manifest.NamedResource]store.Child{
+					parent.Named(): {Obj: parent, SourceSupport: manifest.BootstrapSourceID},
+				},
+			}
+			l.Options.Session, err = selection.New(
+				st,
+				facts,
+				selection.Request{Changed: true, Roots: []manifest.NamedResource{consumer.Named()}},
+			)
+			assert.NoError(t, err)
+			if declared {
+				st.AddObject(&manifest.ExternalArtifact{Name: target.Name, Namespace: target.Namespace})
+			}
+			cacheOwner := cachetest.New(t, "", cache.New)
+			trees := kustomize.NewTreeCache(cacheOwner, nil, nil)
+			t.Cleanup(trees.Close)
+			d := newDiscoverer(
+				&Config{
+					Input:     input,
+					Path:      filepath.Join(root, "entry"),
+					Store:     st,
+					Loader:    l,
+					Cache:     cacheOwner,
+					Trees:     trees,
+					Selection: selection.Request{Changed: true},
+				},
+			)
+			defer d.Close()
+			var preparation *selection.Preparation
+			defer func() { preparation.Retire() }()
+			var required store.ReadSet
+			required.Init(st, consumer.Named(), nil)
+			defer required.Retire()
+			required.Require(manifest.DependencyRef{NamedResource: target, Artifact: true})
+			request := selection.PrepareRequest{
+				Missing:     l.Options.Missing,
+				Reads:       &required,
+				Preparation: &preparation,
+				Changes:     l.Options.Changes,
+			}
+			accepted, committed, err := l.Options.Session.Admit(
+				t.Context(),
+				selection.AdmissionOptions{Request: request, Stage: selection.Construction},
+			)
+			assert.NoError(t, err)
+			assert.Equal(t, committed, true)
+			snapshot := l.Options.Session.Snapshot()
+			frontier, err := l.Options.Session.RefreshProducers(t.Context(), &accepted, request)
+			assert.NoError(t, err)
+			demands := slices.Collect(frontier.Demands())
+			assert.Equal(t, l.Options.Session.Snapshot() == snapshot, true)
+			assert.Equal(t, slices.ContainsFunc(demands, func(demand selection.Demand) bool {
+				return demand.Identity == parent.Named() && manifest.KindOf(demand.Witness).Structural
+			}), true)
+			for _, demand := range append(slices.Clone(accepted.Demands), demands...) {
+				assert.Equal(t, demand.Identity == generator, false)
+			}
+			frontier.Retire()
+			advanced, err := d.advanceTest(t.Context(), &accepted)
+			assert.NoError(t, err)
+			assert.Equal(t, advanced, true)
+			frame := d.prepared[parent.Named()]
+			assert.FatalIf(t, frame == nil, "physical parent demand did not prepare its package")
+			assert.Equal(t, frame.registered, true)
+			assert.Equal(
+				t,
+				slices.ContainsFunc(
+					frame.children,
+					func(child store.Child) bool { return child.Obj.Named() == generator },
+				),
+				true,
+			)
+			assert.Equal(t, st.GetArtifact(target, store.ArtifactContent), store.Artifact(nil))
+			next, committed, err := l.Options.Session.Admit(
+				t.Context(),
+				selection.AdmissionOptions{Request: d.request, Previous: &accepted, Stage: selection.Construction},
+			)
+			assert.NoError(t, err)
+			assert.Equal(t, committed, true)
+			assert.Equal(t, slices.Contains(next.Needed, generator), true)
+			assert.Equal(t, slices.Contains(next.Ordinary, generator), true)
+			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(generator), true)
+			assert.Equal(t, l.Options.Session.Snapshot().OrdinaryDemand(generator), true)
+			assert.Equal(t, st.GetDeclaration(generator) != nil, true)
+			runtime, err := l.Options.Session.RefreshProducers(t.Context(), &next, next.Request)
+			assert.NoError(t, err)
+			assert.Equal(t, len(slices.Collect(runtime.Demands())), 0)
+			assert.Equal(t, len(runtime.Needed), 0)
+			assert.Equal(t, len(runtime.Ordinary), 0)
+			runtime.Retire()
+
+			sibling := manifest.NamedResource{
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Name:      "sibling",
+				Namespace: "flux-system",
+			}
+			assert.Equal(t, l.Options.Session.Snapshot().Output(sibling), false)
+			assert.Equal(t, l.Options.Session.Snapshot().Reconcile(sibling), false)
+			assert.Equal(t, st.GetArtifact(target, store.ArtifactContent), store.Artifact(nil))
+			st.RecordEmitted(parent.Named(), &store.Emission{Complete: true, Children: frame.children}, nil)
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
+			tasks := task.NewBounded(2)
+			controller := artifactgenerator.New(st, tasks, cacheOwner)
+			tasks.Go(t.Context(), "ordinary generator", func(ctx context.Context) {
+				assessment := controller.ReconcileNode(ctx, generator, manifest.DrainNone, schedule.Result{})
+				t.Cleanup(assessment.Close)
+				assert.Equal(t, assessment.Outcome(), schedule.Terminal)
+			})
+			tasks.BlockTillDone()
+			assert.Equal(t, tasks.Failures(), 0)
+			artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
+			assert.FatalIf(t, !ok || artifact.FS == nil, "ordinary generator did not publish readable source content")
+			data, err := fs.ReadFile(artifact.FS, "payload/kustomization.yaml")
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), "resources: []\n")
+			supplied, err := l.Options.Session.RefreshProducers(t.Context(), &next, next.Request)
+			assert.NoError(t, err)
+			assert.Equal(t, len(slices.Collect(supplied.Demands())), 0)
+			assert.Equal(t, len(supplied.Needed), 0)
+			supplied.Retire()
 		})
 	}
 }

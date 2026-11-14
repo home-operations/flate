@@ -1,6 +1,7 @@
 package kustomize
 
 import (
+	"bytes"
 	"context"
 	"maps"
 	"testing"
@@ -143,6 +144,77 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	assert.Equal(t, cache.PreviousEntry(t.Context(), request).Application == nil, true)
 	cell.Retire()
 	assert.Equal(t, cell.complete || cell.source != nil || cell.spec != nil || cell.lower != nil, false)
+}
+
+func TestPreviousEntry_SourceBinding(t *testing.T) {
+	t.Parallel()
+	for _, lifetime := range []string{"retained", "transferred"} {
+		t.Run(lifetime, func(t *testing.T) {
+			t.Parallel()
+			root := testutil.WriteTree(t, map[string]string{"generator.yaml": "unchanged application input"})
+			renderer := newTestTreeCache(t, t.TempDir())
+			if !renderer.owner.CanPersistRenders() {
+				t.Skip("entry receipt requires a clean VCS-stamped build")
+			}
+			var preparation, successor Preparation
+			t.Cleanup(preparation.Retire)
+			t.Cleanup(successor.Retire)
+			source := localSource(t, root)
+			source.Content, source.Revision, source.URL = "equal-entry-content", "same-revision", "https://example.test/before"
+			request := RenderRequest{Source: source, SubPath: ".", Preparation: &preparation}
+			before, err := renderer.prepareRender(t.Context(), &request)
+			assert.NoError(t, err)
+			entryBefore, err := renderer.prepareEntry(t.Context(), &request)
+			assert.NoError(t, err)
+			owner := manifest.NamedResource{Kind: manifest.KindKustomization, Name: "producer"}
+			evidence := EntryEvidence{
+				Producer: owner, Owner: owner, Root: owner, Records: emptyRenderInventory,
+				Application: map[string]any{"kind": "Kustomization"},
+			}
+			first, err := renderer.ApplicationReceipt(t.Context(), request, evidence, []string{"generator.yaml"})
+			assert.NoError(t, err)
+			assert.NoError(t, renderer.RecordEntry(t.Context(), first.Receipt, nil))
+			assert.Equal(t, renderer.PreviousEntry(t.Context(), request).Producer, owner)
+			prior := first.Receipt.Value().(entrySnapshot)
+			var priorWire bytes.Buffer
+			_, err = prior.publication.WriteTo(&priorWire)
+			assert.NoError(t, err)
+			if lifetime == "transferred" {
+				assert.Equal(t, successor.Take(&preparation, renderer, &request), true)
+				assert.Equal(t, preparation.complete || preparation.source != nil, false)
+				request.Preparation = &successor
+			}
+			replacement := *source
+			replacement.URL = "https://example.test/after"
+			request.Source = &replacement
+			after, err := renderer.prepareRender(t.Context(), &request)
+			assert.NoError(t, err)
+			assert.Equal(t, after.key, before.key)
+			assert.Equal(t, after.binding.URL, replacement.URL)
+			assert.Equal(t, after.binding.Revision, source.Revision)
+			entryAfter, err := renderer.prepareEntry(t.Context(), &request)
+			assert.NoError(t, err)
+			assert.Equal(t, entryAfter.key == entryBefore.key, false)
+			assert.Equal(t, renderer.PreviousEntry(t.Context(), request).Receipt == nil, true)
+			current, err := renderer.ApplicationReceipt(t.Context(), request, evidence, []string{"generator.yaml"})
+			assert.NoError(t, err)
+			assert.NoError(t, renderer.RecordEntry(t.Context(), current.Receipt, nil))
+			accepted := renderer.PreviousEntry(t.Context(), request)
+			assert.Equal(t, accepted.Producer, owner)
+			assert.Diff(t, accepted.Application, evidence.Application)
+			snapshot := accepted.Receipt.Value().(entrySnapshot)
+			assert.Equal(t, snapshot.Key, entryAfter.key)
+			assert.Equal(t, snapshot.Binding, manifest.Fingerprint(after.binding))
+			unchanged := first.Receipt.Value().(entrySnapshot)
+			assert.Equal(t, unchanged.Key, entryBefore.key)
+			assert.Equal(t, unchanged.Binding, manifest.Fingerprint(before.binding))
+			var unchangedWire bytes.Buffer
+			_, err = unchanged.publication.WriteTo(&unchangedWire)
+			assert.NoError(t, err)
+			assert.Equal(t, bytes.Equal(unchangedWire.Bytes(), priorWire.Bytes()), true)
+			assert.Equal(t, source.URL, before.binding.URL)
+		})
+	}
 }
 
 func TestEntryApplication_RequiresCompleteFrame(t *testing.T) {

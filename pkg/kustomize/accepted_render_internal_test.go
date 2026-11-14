@@ -116,6 +116,88 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			}
 		})
 	}
+	for _, field := range []string{"revision", "url"} {
+		t.Run("reuse_"+field, func(t *testing.T) {
+			t.Parallel()
+			testPreviousRenderSourceBindingReuse(t, &req, field)
+		})
+	}
+}
+
+func testPreviousRenderSourceBindingReuse(t *testing.T, req *RenderRequest, field string) {
+	t.Helper()
+	owner := req.Spec.Named()
+	for _, lifetime := range []string{"retained", "transferred"} {
+		t.Run(lifetime, func(t *testing.T) {
+			t.Parallel()
+			renderer := newTestTreeCache(t, t.TempDir())
+			var preparation, successor Preparation
+			t.Cleanup(preparation.Retire)
+			t.Cleanup(successor.Retire)
+			var work manifest.WorkRecorder
+			work.Init(&manifest.WorkKey{Owner: owner}, manifest.WorkScope{})
+			source := *req.Source
+			source.Content, source.Revision, source.URL = "equal-tree-content", "before", "https://example.test/before"
+			current := *req
+			current.Source, current.Preparation, current.Work = &source, &preparation, work.Scope().RenderWork()
+			docs, receipt, err := Render(t.Context(), renderer, current, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			output, err := manifest.EncodeRender(docs)
+			assert.NoError(t, err)
+			prior := receipt.Value().(renderFrame)
+			priorOutput := bytes.Clone(prior.output)
+			binding, key := preparation.binding, preparation.key
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+				Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: acceptedInput,
+			}))
+			_, complete := previousHistory(t.Context(), renderer, &current, owner)
+			assert.Equal(t, complete, true)
+			if lifetime == "transferred" {
+				assert.Equal(t, successor.Take(&preparation, renderer, &current), true)
+				assert.Equal(t, preparation.complete || preparation.source != nil, false)
+				current.Preparation = &successor
+			}
+			replacement := source
+			if field == "revision" {
+				replacement.Revision = "after"
+			} else {
+				replacement.URL = "https://example.test/after"
+			}
+			current.Source = &replacement
+			_, complete = previousHistory(t.Context(), renderer, &current, owner)
+			assert.Equal(t, complete, false)
+			changed, rebound, err := Render(t.Context(), renderer, current, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			encoded, err := manifest.EncodeRender(changed)
+			assert.NoError(t, err)
+			assert.Equal(t, bytes.Equal(encoded, output), true)
+			frame := rebound.Value().(renderFrame)
+			assert.Equal(t, bytes.Equal(frame.output, priorOutput), true)
+			assert.Equal(t, frame.binding.Revision, replacement.Revision)
+			assert.Equal(t, frame.binding.URL, replacement.URL)
+			assert.Equal(t, current.Preparation.key, key)
+			assert.Equal(t, current.Preparation.source, &replacement)
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+				Owner: owner, Receipt: rebound, Records: emptyRenderInventory, Content: acceptedInput,
+			}))
+			_, complete = previousHistory(t.Context(), renderer, &current, owner)
+			assert.Equal(t, complete, true)
+			unchanged := receipt.Value().(renderFrame)
+			assert.Equal(t, unchanged.binding.equal(&binding), true)
+			assert.Equal(t, bytes.Equal(unchanged.output, priorOutput), true)
+			assert.Equal(t, source.Revision, "before")
+			assert.Equal(t, source.URL, binding.URL)
+			var engine manifest.WorkCounts
+			rows := work.Scope().Snapshot(0)
+			for i := range rows {
+				row := &rows[i]
+				if row.Key.Phase == manifest.WorkKustomize {
+					engine.Add(&row.Counts)
+				}
+			}
+			assert.Equal(t, engine, manifest.WorkCounts{Attempts: 1, Completed: 1})
+		})
+	}
 }
 
 func TestRecordRender_AcceptedLimit(t *testing.T) {

@@ -201,6 +201,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 		inputs := previous.root == root && previous.subPath == req.SubPath && previous.applyIgnore == req.ApplyIgnore
 		if inputs && previous.matchesOwner(c, &req) && previous.matchesSource(req.Source) {
 			req.Work.Fingerprint(previous.key)
+			previous.bindSource(&req)
 			return renderRequest{Preparation: *previous}, nil
 		}
 	}
@@ -210,35 +211,45 @@ func (c *TreeCache) prepareRender(ctx context.Context, incoming *RenderRequest) 
 	work.Add(&manifest.WorkCounts{Attempts: 1, OwnerPrepares: 1})
 	key := renderKey(&req, root, ignore)
 	req.Work.Fingerprint(key)
-	source := manifest.BootstrapSourceID
-	if req.Spec != nil {
-		source = req.Spec.EffectiveSourceID()
-	}
 	work.Finish(nil)
 	prepared := Preparation{
-		cache: c, spec: req.Spec, source: req.Source, label: req.Label, subPath: req.SubPath,
-		applyIgnore: req.ApplyIgnore, complete: true,
-		lower: lower, root: root, key: key,
-		binding: renderBinding{
-			key,
-			source,
-			req.Source.Kind,
-			req.Source.URL,
-			req.Source.LocalPath,
-			req.Source.LocalRoot,
-			req.Source.Key,
-			req.Source.Revision,
-			req.Source.Digest,
-			req.Source.InputAlias,
-
-			req.StrictSubstitutions,
-			slices.Clone(req.SkipKinds),
-		},
+		cache: c, spec: req.Spec, label: req.Label, subPath: req.SubPath,
+		applyIgnore: req.ApplyIgnore,
+		lower:       lower, root: root, key: key,
 	}
+	prepared.bindSource(&req)
 	if req.Preparation != nil {
 		*req.Preparation = prepared
 	}
 	return renderRequest{Preparation: prepared}, nil
+}
+
+func (p *Preparation) bindSource(req *RenderRequest) {
+	source := manifest.BootstrapSourceID
+	if req.Spec != nil {
+		source = req.Spec.EffectiveSourceID()
+	}
+	skip := p.binding.Skip
+	if !p.complete {
+		skip = slices.Clone(req.SkipKinds)
+	}
+	p.binding = renderBinding{
+		p.key,
+		source,
+		req.Source.Kind,
+		req.Source.URL,
+		req.Source.LocalPath,
+		req.Source.LocalRoot,
+		req.Source.Key,
+		req.Source.Revision,
+		req.Source.Digest,
+		req.Source.InputAlias,
+
+		req.StrictSubstitutions,
+		skip,
+	}
+	p.source = req.Source
+	p.complete = true
 }
 
 // Mutable files are validated by the read set; immutable generations are part

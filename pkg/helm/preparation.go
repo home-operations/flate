@@ -100,6 +100,7 @@ func (c *Client) prepareTemplate(
 		previous.matchesInputs(source, hrValues)
 	if reusable && source.Content != "" {
 		input.Work.Fingerprint(previous.key)
+		previous.bindSource(hr, source, input)
 		return previous.request(hr, input), nil
 	}
 	loaded, err := c.describeChart(ctx, hr, source)
@@ -126,6 +127,7 @@ func (c *Client) prepareTemplate(
 		loaded.valuesErr == nil &&
 		previous.loaded.valuesErr == nil {
 		input.Work.Fingerprint(previous.key)
+		previous.bindSource(hr, source, input)
 		return previous.request(hr, input), nil
 	}
 	if previous != nil {
@@ -138,41 +140,51 @@ func (c *Client) prepareTemplate(
 	}
 	key := computeTemplateKey(&loaded, hrValues, opts, hr)
 	input.Work.Fingerprint(key)
-	binding := templateBinding{
-		Policy:   hr.HistoryPolicy(),
-		Source:   hr.ChartSource(),
-		Kind:     loaded.artifact.Kind,
-		URL:      loaded.artifact.URL,
-		Path:     loaded.artifact.LocalPath,
-		Root:     loaded.artifact.LocalRoot,
-		Key:      loaded.artifact.Key,
-		Revision: loaded.artifact.Revision,
-		Digest:   loaded.artifact.Digest,
-		Alias:    loaded.artifact.InputAlias,
-		Options:  input.Options,
-	}
-	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(&binding) {
-		binding = loaded.record.binding
-	} else {
-		binding.Options.SkipKinds = nil
-		if len(input.SkipKinds) > 0 {
-			binding.Options.SkipKinds = slices.Clone(input.SkipKinds)
-		}
-	}
 	work.Finish(nil)
 	prepared := Preparation{
-		client: c, declaration: hr, source: source, complete: true,
+		client: c, declaration: hr,
 		loaded:        loaded,
 		caps:          caps,
 		capabilityErr: capabilityErr,
 		key:           key,
 		values:        hrValues,
-		binding:       binding,
 	}
+	prepared.bindSource(hr, source, input)
 	if input.Preparation != nil {
 		*input.Preparation = prepared
 	}
 	return prepared.request(hr, input), nil
+}
+
+func (p *Preparation) bindSource(hr *manifest.HelmRelease, source *store.SourceArtifact, input *RenderOptions) {
+	binding := templateBinding{
+		Policy:   hr.HistoryPolicy(),
+		Source:   hr.ChartSource(),
+		Kind:     source.Kind,
+		URL:      source.URL,
+		Path:     source.LocalPath,
+		Root:     source.LocalRoot,
+		Key:      source.Key,
+		Revision: source.Revision,
+		Digest:   source.Digest,
+		Alias:    source.InputAlias,
+		Options:  input.Options,
+	}
+	switch {
+	case p.complete:
+		binding.Options.SkipKinds = p.binding.Options.SkipKinds
+	case p.loaded.record != nil && p.loaded.record.key == p.key && p.loaded.record.binding.same(&binding):
+		binding = p.loaded.record.binding
+	default:
+		binding.Options.SkipKinds = nil
+		if len(input.SkipKinds) > 0 {
+			binding.Options.SkipKinds = slices.Clone(input.SkipKinds)
+		}
+	}
+	p.source = source
+	p.loaded.artifact = *source
+	p.binding = binding
+	p.complete = true
 }
 
 func (p *Preparation) request(hr *manifest.HelmRelease, input *RenderOptions) templateRequest {

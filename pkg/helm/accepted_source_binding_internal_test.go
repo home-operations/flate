@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 
 func TestPreviousRender_SourceBinding(t *testing.T) {
 	t.Parallel()
+	t.Logf("render persistence reason=%q backing=disk", cache.RenderPersistenceDisabledReason())
 	persistent := cache.RenderPersistenceDisabledReason() == ""
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
@@ -114,6 +116,99 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				_, complete := renderer.PreviousRender(t.Context(), changed, nil, current)
 				assert.FatalIf(t, complete, "%s", "foreign source coordinate borrowed history")
 			}
+		})
+	}
+	for _, field := range []string{"revision", "url"} {
+		t.Run("reuse_"+field, func(t *testing.T) {
+			t.Parallel()
+			testPreviousRenderSourceBindingReuse(t, hr, &input, field)
+		})
+	}
+}
+
+func testPreviousRenderSourceBindingReuse(t *testing.T, hr *manifest.HelmRelease, input *RenderOptions, field string) {
+	t.Helper()
+	persistent := cache.RenderPersistenceDisabledReason() == ""
+	for _, lifetime := range []string{"retained", "transferred"} {
+		t.Run(lifetime, func(t *testing.T) {
+			t.Parallel()
+			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			var preparation, successor Preparation
+			t.Cleanup(preparation.Retire)
+			t.Cleanup(successor.Retire)
+			var work manifest.WorkRecorder
+			work.Init(&manifest.WorkKey{Owner: hr.Named()}, manifest.WorkScope{})
+			source := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
+			source.Content, source.Revision = "equal-chart-content", "before"
+			objects := store.New()
+			objects.SetArtifact(hr.ChartSource(), &source)
+			current := RenderOptions{
+				Sources: NewSources(objects), Preparation: &preparation, Work: work.Scope().RenderWork(),
+			}
+			docs, receipt, err := renderer.Template(t.Context(), hr, nil, current)
+			assert.NoError(t, err)
+			output, err := manifest.EncodeRender(docs)
+			assert.NoError(t, err)
+			prior := receipt.Value().(renderFrame)
+			priorOutput := bytes.Clone(prior.output)
+			binding, key := preparation.binding, preparation.key
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+				Owner:   hr.Named(),
+				Receipt: receipt,
+				Sources: []manifest.SourceEvidence{},
+				Records: emptyRenderInventory,
+			}))
+			history, complete := renderer.PreviousRender(t.Context(), hr, nil, current)
+			assert.Equal(t, complete, persistent)
+			assert.Equal(t, history == nil, !persistent)
+			if lifetime == "transferred" {
+				assert.Equal(t, successor.Take(&preparation, renderer, hr, &current), true)
+				assert.Equal(t, preparation.complete || preparation.source != nil, false)
+				current.Preparation = &successor
+			}
+			replacement := source
+			if field == "revision" {
+				replacement.Revision = "after"
+			} else {
+				replacement.URL = "https://example.test/current-chart"
+			}
+			objects.SetArtifact(hr.ChartSource(), &replacement)
+			_, complete = renderer.PreviousRender(t.Context(), hr, nil, current)
+			assert.Equal(t, complete, false)
+			changed, rebound, err := renderer.Template(t.Context(), hr, nil, current)
+			assert.NoError(t, err)
+			encoded, err := manifest.EncodeRender(changed)
+			assert.NoError(t, err)
+			assert.Equal(t, bytes.Equal(encoded, output), true)
+			frame := rebound.Value().(renderFrame)
+			assert.Equal(t, bytes.Equal(frame.output, priorOutput), true)
+			assert.Equal(t, frame.binding.Revision, replacement.Revision)
+			assert.Equal(t, frame.binding.URL, replacement.URL)
+			assert.Equal(t, current.Preparation.key, key)
+			assert.Equal(t, current.Preparation.source, &replacement)
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{
+				Owner:   hr.Named(),
+				Receipt: rebound,
+				Sources: []manifest.SourceEvidence{},
+				Records: emptyRenderInventory,
+			}))
+			history, complete = renderer.PreviousRender(t.Context(), hr, nil, current)
+			assert.Equal(t, complete, persistent)
+			assert.Equal(t, history == nil, !persistent)
+			unchanged := receipt.Value().(renderFrame)
+			assert.Equal(t, unchanged.binding.same(&binding), true)
+			assert.Equal(t, bytes.Equal(unchanged.output, priorOutput), true)
+			assert.Equal(t, source.Revision, "before")
+			assert.Equal(t, source.URL, binding.URL)
+			var engine manifest.WorkCounts
+			rows := work.Scope().Snapshot(0)
+			for i := range rows {
+				row := &rows[i]
+				if row.Key.Phase == manifest.WorkHelm {
+					engine.Add(&row.Counts)
+				}
+			}
+			assert.Equal(t, engine, manifest.WorkCounts{Attempts: 1, Completed: 1})
 		})
 	}
 }

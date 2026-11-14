@@ -624,8 +624,7 @@ func (r *gitAcquisition) fetchPin(
 	err := r.fetchRevision(ctx, repo, fetch)
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-			errors.Is(err, transport.ErrAuthenticationRequired) ||
-			errors.Is(err, transport.ErrAuthorizationFailed) {
+			sourcecache.CredentialsUnavailable(err) {
 			return err
 		}
 		if _, loaded := f.fallback.LoadOrStore(r.options.URL, struct{}{}); !loaded {

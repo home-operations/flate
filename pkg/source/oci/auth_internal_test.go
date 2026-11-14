@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -22,7 +23,9 @@ import (
 	"github.com/home-operations/flate/internal/testutil/fetchtest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	orasregistry "oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote/auth"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -302,6 +305,67 @@ func TestFetcher_MachineFailureCauses(t *testing.T) {
 			testFetcherMachineFailureCausesCase(t, &name)
 		},
 		)
+	}
+}
+
+func TestAcquirePrepared_AnonymousDenial(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		cause   error
+		missing bool
+	}{
+		{"basic", auth.ErrBasicCredentialNotFound, true},
+		{"HTTP unauthorized", &fetcherr.ResponseError{StatusCode: http.StatusUnauthorized}, true},
+		{"HTTP forbidden", &fetcherr.ResponseError{StatusCode: http.StatusForbidden}, true},
+		{"registry unauthorized", &errcode.ErrorResponse{StatusCode: http.StatusUnauthorized}, true},
+		{"registry forbidden", &errcode.ErrorResponse{StatusCode: http.StatusForbidden}, true},
+		{"registry unauthorized code", errcode.Error{Code: errcode.ErrorCodeUnauthorized}, true},
+		{"registry denied code", errcode.Error{Code: errcode.ErrorCodeDenied}, true},
+		{"registry denied codes", errcode.Errors{{Code: errcode.ErrorCodeNameUnknown}, {Code: errcode.ErrorCodeDenied}}, true},
+		{"registry missing", errcode.Error{Code: errcode.ErrorCodeNameUnknown}, false},
+		{"unrelated response", &errcode.ErrorResponse{StatusCode: http.StatusServiceUnavailable}, false},
+		{"canceled", context.Canceled, false},
+		{"deadline", context.DeadlineExceeded, false},
+		{"canceled denial", errors.Join(context.Canceled, errcode.Error{Code: errcode.ErrorCodeDenied}), false},
+		{"deadline denial", errors.Join(context.DeadlineExceeded, errcode.Error{Code: errcode.ErrorCodeUnauthorized}), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cause := fmt.Errorf("registry acquisition: %w", tc.cause)
+			calls := 0
+			op := &operation{
+				Fetcher:              &Fetcher{Network: newTestNetwork(t)},
+				allowAnonymousDenied: true,
+				produce: func(context.Context, registryAcquisition, *sourcecache.Policy) (*store.SourceArtifact, error) {
+					calls++
+					return nil, cause
+				},
+			}
+			repo := ociRepo("denial", nil)
+			repo.URL = "oci://registry.invalid/app"
+			request := registryAcquisition{
+				reference: orasregistry.Reference{Registry: "registry.invalid", Repository: "app"},
+			}
+			artifact, err := op.acquirePrepared(
+				t.Context(),
+				new(repo.RegistryAccess()),
+				&request,
+				&sourcecache.Policy{},
+			)
+			assert.FatalIf(t, artifact != nil || !errors.Is(err, cause), "acquisition lost original cause: %v", err)
+			assert.Equal(t, calls, 1)
+			missing, ok := errors.AsType[*source.MissingSecretError](err)
+			assert.Equal(t, ok, tc.missing)
+			assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.missing)
+			if ok {
+				assert.Equal(t, missing.AnonymousDenied, true)
+				assert.Equal(t, missing.Owner, repo.RegistryAccess().Owner.ID)
+			}
+			for _, cancellation := range []error{context.Canceled, context.DeadlineExceeded} {
+				assert.Equal(t, errors.Is(err, cancellation), errors.Is(tc.cause, cancellation))
+			}
+		})
 	}
 }
 

@@ -2,9 +2,7 @@ package source
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"math"
 	"net/http"
@@ -161,12 +159,11 @@ func (h *HTTPInputs) Acquire(ctx context.Context, requestValue *HTTPRequest) (fs
 	return input, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 }
 
-//nolint:nonamedreturns // Deferred body Close must join the returned error, including during panic unwinding.
 func (h *HTTPInputs) httpGetURL(
 	ctx context.Context,
 	urlStr string,
 	w cache.ProducerInput,
-) (result cache.ProducerResult, resultErr error) {
+) (cache.ProducerResult, error) {
 	previous, err := w.Previous(ctx)
 	if err != nil {
 		return cache.ProducerResult{}, err
@@ -175,33 +172,17 @@ func (h *HTTPInputs) httpGetURL(
 	if err != nil {
 		return cache.ProducerResult{}, fmt.Errorf("create source HTTP request: %w", err)
 	}
-	if httpconditional.Apply(req, previous) {
-		work := w.Work().Validate()
-		work.Add(&manifest.WorkCounts{Attempts: 1})
-		defer func() { work.Finish(resultErr) }()
+	result, err := DownloadHTTP(req, HTTPDownload{
+		Client:   h.httpClient,
+		Writer:   w,
+		Previous: previous,
+		Work:     w.Work(),
+		Policy:   HTTPInputPolicy,
+	})
+	if !result.Unchanged {
+		result.MediaType = ""
 	}
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return cache.ProducerResult{}, err //nolint:wrapcheck // The HTTP client already returns a URL error identifying method and target, including net.Error behavior.
-	}
-	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
-	if resp.StatusCode != http.StatusNotModified && (resp.StatusCode < 200 || resp.StatusCode > 299) {
-		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
-	}
-	result.Descriptor, result.Unchanged, err = httpconditional.Metadata(req, resp, previous)
-	if err != nil {
-		return cache.ProducerResult{}, err
-	}
-	if result.Unchanged {
-		return result, nil
-	}
-	w.Work().Physical().Add(&manifest.WorkCounts{RemoteTransfers: 1})
-	size, err := io.Copy(w, resp.Body)
-	if err != nil {
-		return cache.ProducerResult{}, fmt.Errorf("copy source content: %w", err)
-	}
-	result.Size = size
-	return result, nil
+	return result, err
 }
 
 func (h *HTTPInputs) remoteWorkers() *remoteWorkers {

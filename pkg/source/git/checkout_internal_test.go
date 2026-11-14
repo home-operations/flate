@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/networktest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/fetcherr"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-git/v6"
@@ -29,7 +31,10 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/protocol/packp"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	filetransport "github.com/go-git/go-git/v6/plumbing/transport/file"
+	"github.com/minio/minio-go/v7"
 	"golang.org/x/crypto/ssh"
+	"oras.land/oras-go/v2/registry/remote/auth"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -191,6 +196,17 @@ func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
 		{"auth-required", transport.ErrAuthenticationRequired, 1},
 		{"canceled", context.Canceled, 1},
 		{"deadline", context.DeadlineExceeded, 1},
+		{"HTTP unauthorized", &fetcherr.ResponseError{StatusCode: http.StatusUnauthorized}, 1},
+		{"HTTP forbidden", &fetcherr.ResponseError{StatusCode: http.StatusForbidden}, 1},
+		{"registry unauthorized", &errcode.ErrorResponse{StatusCode: http.StatusUnauthorized}, 1},
+		{"registry forbidden", &errcode.ErrorResponse{StatusCode: http.StatusForbidden}, 1},
+		{"registry unauthorized code", errcode.Error{Code: errcode.ErrorCodeUnauthorized}, 1},
+		{"registry denied code", errcode.Error{Code: errcode.ErrorCodeDenied}, 1},
+		{"registry denied codes", fmt.Errorf("wrapped: %w", errcode.Errors{{Code: errcode.ErrorCodeNameUnknown}, {Code: errcode.ErrorCodeDenied}}), 1},
+		{"ORAS basic", auth.ErrBasicCredentialNotFound, 1},
+		{"S3 denied", minio.ErrorResponse{Code: "AccessDenied"}, 1},
+		{"canceled denial", errors.Join(context.Canceled, errcode.Error{Code: errcode.ErrorCodeDenied}), 1},
+		{"deadline denial", errors.Join(context.DeadlineExceeded, errcode.Error{Code: errcode.ErrorCodeUnauthorized}), 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -322,6 +338,10 @@ func testFetcherExactPinBeforeRecursionCase(t *testing.T, parent *string,
 	}
 	if tc.refusal != nil && tc.calls == 1 {
 		assert.FatalIf(t, !errors.Is(err, tc.refusal), "refusal: %v", err)
+		for _, cancellation := range []error{context.Canceled, context.DeadlineExceeded} {
+			assert.Equal(t, errors.Is(err, cancellation), errors.Is(tc.refusal, cancellation))
+		}
+		assert.FatalIf(t, art != nil, "refused request published an artifact")
 		return
 	}
 	assert.NoError(t, err)

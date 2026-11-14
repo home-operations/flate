@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
+	"oras.land/oras-go/v2/registry/remote/auth"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -280,6 +282,50 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 			"missing payload became miss: %v",
 			err,
 		)
+	}
+}
+
+func TestBlob_CredentialsUnavailable(t *testing.T) {
+	t.Parallel()
+	for _, disk := range []bool{false, true} {
+		for _, tc := range []struct {
+			name        string
+			cause       error
+			unavailable bool
+		}{
+			{"denied", auth.ErrBasicCredentialNotFound, true},
+			{"unrelated", fs.ErrPermission, false},
+		} {
+			t.Run(fmt.Sprintf("disk=%t/%s", disk, tc.name), func(t *testing.T) {
+				t.Parallel()
+				root := ""
+				if disk {
+					root = t.TempDir()
+				}
+				c := cachetest.New(t, root, New)
+				key := BlobKey{Content: "automatic-credential-classification"}
+				cause := fmt.Errorf("credential-canary: %w", tc.cause)
+				r, descriptor, id, err := c.Blob(t.Context(), key, &Policy{Machine: false},
+					func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+						_, writeErr := io.WriteString(w, "partial")
+						assert.NoError(t, writeErr)
+						return ProducerResult{}, cause
+					})
+				assert.FatalIf(t, r != nil || id != "" || descriptor.Digest != "",
+					"failed acquisition published content: %v", err)
+				assert.FatalIf(
+					t,
+					!errors.Is(err, cause) || !errors.Is(err, tc.cause) || !errors.Is(err, manifest.ErrFlux),
+					"producer cause lost: %v",
+					err,
+				)
+				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.unavailable)
+				assert.Equal(t, strings.Contains(err.Error(), "credential-canary"), !tc.unavailable)
+				replayed, _, replayID, replayErr := c.Blob(t.Context(), key, &Policy{MaxAge: Forever}, nil)
+				assert.FatalIf(t, replayed != nil || replayID != "" || replayErr == nil,
+					"lookup published failed content: %v", replayErr)
+			})
+		}
 	}
 }
 
